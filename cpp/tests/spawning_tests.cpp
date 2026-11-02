@@ -5770,6 +5770,9 @@ TEST(restored_termite_mound_map_allows_entry_and_returns_to_its_entrance) {
     dungeons.run(w,terrain,shipped(),spawn,combat,rng,1000,commands);commands.flush();
     dungeons.run(w,terrain,shipped(),spawn,combat,rng,1700,commands);commands.flush();
     const Realm inside=w.get<Transform>(player).realm;CHECK(inside!=home);CHECK(dungeons.isInstance(inside));
+    int brood=0,overminds=0;Query<MobTag,MobType,Transform> inhabitants{w};
+    inhabitants.each([&](Entity,MobTag&,MobType& type,Transform& t){if(t.realm!=inside)return;++brood;if(type.configIndex==shipped().mobIndex("termite_overmind"))++overminds;});
+    CHECK_EQ(brood,31);CHECK_EQ(overminds,1);
     Realm outside;Vec2 exit;CHECK(dungeons.exitFor(inside,rng,kPlayerBaseRadius,outside,exit));CHECK(outside==home);
     CHECK(distanceSq(exit,w.get<Transform>(mound).position)<1000.0*1000.0);
 }

@@ -77,7 +77,7 @@ function normMob(s) {
 
 function loadSpawnZones() {
   const p = path.join(root, 'docs/florrclone-spawn-zones.json');
-  if (!fs.existsSync(p)) require('./extract-florrclone-spawn-zones.js');
+  require('./extract-florrclone-spawn-zones.js');
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 
@@ -531,7 +531,7 @@ function buildTmj(biomeName, geom, portals, spawnZones) {
     draworder: 'topdown',
     id: nextId++,
     name: 'spawns',
-    objects: objects.filter((o) => (o.properties || []).some((p) => p.name === 'difficulty')),
+    objects: objects.filter((o) => (o.properties || []).some((p) => p.name === 'difficulty' || p.name === 'mobs')),
     opacity: 1,
     type: 'objectgroup',
     visible: true,
@@ -683,3 +683,4 @@ require("node:child_process").execFileSync(process.env.PYTHON || "python",
 // Fixed practice targets are NPCs, never part of ambient mob distribution.
 require('./restore-jungle-dps');
 require('./restore-factory-assemblers');
+require('./sync-reference-spawns');

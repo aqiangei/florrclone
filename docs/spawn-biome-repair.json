@@ -1,0 +1,83 @@
+[
+  {
+    "biome": "Garden",
+    "map": "garden",
+    "before": 41,
+    "reference": 41,
+    "spawnAreas": 41,
+    "npcAreas": 0,
+    "bands": 40
+  },
+  {
+    "biome": "Desert",
+    "map": "desert",
+    "before": 34,
+    "reference": 35,
+    "spawnAreas": 34,
+    "npcAreas": 0,
+    "bands": 34
+  },
+  {
+    "biome": "Ocean",
+    "map": "ocean",
+    "before": 37,
+    "reference": 38,
+    "spawnAreas": 37,
+    "npcAreas": 0,
+    "bands": 37
+  },
+  {
+    "biome": "Jungle",
+    "map": "jungle",
+    "before": 29,
+    "reference": 38,
+    "spawnAreas": 29,
+    "npcAreas": 0,
+    "bands": 29
+  },
+  {
+    "biome": "Hel",
+    "map": "hel",
+    "before": 14,
+    "reference": 14,
+    "spawnAreas": 14,
+    "npcAreas": 0,
+    "bands": 14
+  },
+  {
+    "biome": "Ant Hell",
+    "map": "ant_hell",
+    "before": 191,
+    "reference": 191,
+    "spawnAreas": 191,
+    "npcAreas": 0,
+    "bands": 180
+  },
+  {
+    "biome": "Sewers",
+    "map": "sewers",
+    "before": 26,
+    "reference": 26,
+    "spawnAreas": 26,
+    "npcAreas": 0,
+    "bands": 25
+  },
+  {
+    "biome": "Factory",
+    "map": "computer",
+    "before": 8,
+    "reference": 16,
+    "spawnAreas": 8,
+    "npcAreas": 8,
+    "bands": 8
+  },
+  {
+    "biome": "Pyramid",
+    "map": "pyramid",
+    "before": 56,
+    "reference": 1,
+    "spawnAreas": 1,
+    "npcAreas": 0,
+    "bands": 1
+  }
+]
