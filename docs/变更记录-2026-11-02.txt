@@ -140,3 +140,6 @@
 - scripts/smoke-auth.js
 - scripts/split-collision-tilesets.py
 - scripts/sync-map-collision.py
+
+提交前复核补充
+从提交 88d387c 的独立干净工作树完整构建客户端和服务端，通过后同步全部发布文件，并验证 .bin 与原文件逐字节一致。补充修复迁移工具将 --out 参数值误识别为输入路径的问题；模拟账户验证参数顺序及原密码哈希保留均通过。

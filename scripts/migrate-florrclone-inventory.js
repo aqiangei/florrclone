@@ -18,8 +18,8 @@ const password = (() => {
   const i = args.indexOf('--password');
   return i >= 0 ? String(args[i + 1] || '') : '';
 })();
-const srcPath = args.find((a) => !a.startsWith('--') && args[args.indexOf(a) - 1] !== '--user' &&
-  args[args.indexOf(a) - 1] !== '--password') ||
+const srcPath = args.find((a, i) => !a.startsWith('--') &&
+  !['--user', '--password', '--out'].includes(args[i - 1])) ||
   path.resolve(__dirname, '../migrate/prod-inventory.json');
 const outPath =
   args.find((a, i) => a === '--out' && args[i + 1]) ?
