@@ -126,4 +126,15 @@ SecureRandom& secureRandom();
 /// leading bytes of a guessed token or hash were correct.
 bool constantTimeEquals(const std::string& a, const std::string& b);
 
+// ---------------------------------------------------------------------------
+// florrclone scrypt (Node crypto.scrypt defaults)
+// ---------------------------------------------------------------------------
+
+/// Verifies a password against a florrclone `salt` + `passwordHash` pair
+/// (both lowercase hex; hash is 64 bytes / 128 hex chars). On the Node
+/// server build this calls `crypto.scryptSync` with the same parameters the
+/// JS accounts module used. Native builds without Node return false.
+bool scryptVerifyHex(const std::string& password, const std::string& saltHex,
+                     const std::string& hashHex);
+
 } // namespace flix::crypto

@@ -466,6 +466,7 @@ private:
         /// body takes (bounceOffMob). False for a nest or a cactus, which
         /// nothing moves, and for an NPC, which never gives way.
         bool givesWay = false;
+        bool suppressPlayerShove = false;
         /// A bead of a gardn chain (MobConfig::gardnChain) that gives way: a
         /// flower touching it pushes it by the flower's share of the overlap,
         /// gardn's _deal_push, and the chain pass turns that into a swing.

@@ -167,11 +167,14 @@ inline constexpr const char* kDiscordInvite = "https://discord.gg/mDQRVWeEq5";
 inline constexpr const char* kAshflorQqGroupId = "227990150";
 inline constexpr const char* kAshflorQqInvite = "https://qm.qq.com/q/E0OG9CLIg";
 
+/// AshFlor public feedback board (opened by the title-screen Feedback button).
+inline constexpr const char* kAshflorFeedbackBoard = "https://ashflor.com/feedback.html?";
+
 /// Slots in the icon strip: across the top-left corner, three down the
 /// bottom-left one. Not every one is shown at once -- see drawIconStrip -- and
 /// three of the top row open no panel (Discord / QQ are links and exit leaves
 /// the game), so this is not `kMenuCount`.
-inline constexpr int kStripSlotCount = 17;
+inline constexpr int kStripSlotCount = 18;
 
 /// The range ClientSettings::zoom is held to, and how far one press of a zoom
 /// key moves it. The step is the browser's own ZOOM_STEP; the range is this
@@ -1220,7 +1223,7 @@ public:
 
 private:
     struct Node {
-        SkillId skill = SkillId::Damage;
+        SkillId skill = SkillId::SharpEdges;
         int tier = 0;
         /// Where it stands on florr's grid: columns across, rows up.
         Vec2 grid;
@@ -1693,7 +1696,7 @@ private:
     /// One slot of the icon strip. The strip is not a projection of MenuId:
     /// three of its buttons open no panel at all, and the order on screen is
     /// the browser's, not the enum's.
-    enum class StripAction : std::uint8_t { OpenMenu, Discord, Qq, Exit };
+    enum class StripAction : std::uint8_t { OpenMenu, Discord, Qq, Feedback, Exit };
     struct StripSlot {
         MenuId menu;
         StripAction action;

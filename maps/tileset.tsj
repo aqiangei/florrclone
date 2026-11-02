@@ -2235,12 +2235,12 @@
     "objects": [
      {
       "height": 256,
+      "width": 256,
       "id": 1,
       "name": "",
       "rotation": 0,
       "type": "",
       "visible": true,
-      "width": 256,
       "x": 0,
       "y": 0
      }
@@ -2250,7 +2250,14 @@
     "visible": true,
     "x": 0,
     "y": 0
-   }
+   },
+   "properties": [
+    {
+     "name": "covers_everything",
+     "type": "bool",
+     "value": true
+    }
+   ]
   },
   {
    "id": 90,
@@ -2427,12 +2434,12 @@
     "objects": [
      {
       "height": 256,
+      "width": 256,
       "id": 1,
       "name": "",
       "rotation": 0,
       "type": "",
       "visible": true,
-      "width": 130,
       "x": 0,
       "y": 0
      }
@@ -2461,53 +2468,31 @@
     "name": "",
     "objects": [
      {
-      "height": 0,
       "id": 1,
-      "name": "",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "rotation": 0,
+      "visible": true,
       "polygon": [
        {
         "x": 0,
         "y": 0
        },
        {
-        "x": 130,
+        "x": 128,
         "y": 0
        },
        {
-        "x": 130,
-        "y": 64
-       },
-       {
-        "x": 140,
-        "y": 86
-       },
-       {
-        "x": 137,
-        "y": 113
-       },
-       {
-        "x": 113,
-        "y": 137
-       },
-       {
-        "x": 86,
-        "y": 140
-       },
-       {
-        "x": 64,
-        "y": 130
+        "x": 128,
+        "y": 256
        },
        {
         "x": 0,
-        "y": 130
+        "y": 256
        }
-      ],
-      "rotation": 0,
-      "type": "",
-      "visible": true,
-      "width": 0,
-      "x": 0,
-      "y": 0
+      ]
      }
     ],
     "opacity": 1,
@@ -2515,7 +2500,8 @@
     "visible": true,
     "x": 0,
     "y": 0
-   }
+   },
+   "properties": []
   },
   {
    "id": 100,
@@ -2528,15 +2514,35 @@
     "name": "",
     "objects": [
      {
-      "height": 256,
-      "width": 256,
       "id": 1,
-      "name": "",
-      "rotation": 0,
-      "type": "",
-      "visible": true,
       "x": 0,
-      "y": 0
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "rotation": 0,
+      "visible": true,
+      "polygon": [
+       {
+        "x": 0,
+        "y": 0
+       },
+       {
+        "x": 128,
+        "y": 0
+       },
+       {
+        "x": 128,
+        "y": 96
+       },
+       {
+        "x": 96,
+        "y": 128
+       },
+       {
+        "x": 0,
+        "y": 128
+       }
+      ]
      }
     ],
     "opacity": 1,
@@ -2544,7 +2550,8 @@
     "visible": true,
     "x": 0,
     "y": 0
-   }
+   },
+   "properties": []
   },
   {
    "id": 101,
@@ -2557,15 +2564,43 @@
     "name": "",
     "objects": [
      {
-      "height": 256,
-      "width": 256,
       "id": 1,
-      "name": "",
-      "rotation": 0,
-      "type": "",
-      "visible": true,
       "x": 0,
-      "y": 0
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "rotation": 0,
+      "visible": true,
+      "polygon": [
+       {
+        "x": 0,
+        "y": 0
+       },
+       {
+        "x": 256,
+        "y": 0
+       },
+       {
+        "x": 256,
+        "y": 128
+       },
+       {
+        "x": 160,
+        "y": 128
+       },
+       {
+        "x": 128,
+        "y": 160
+       },
+       {
+        "x": 128,
+        "y": 256
+       },
+       {
+        "x": 0,
+        "y": 256
+       }
+      ]
      }
     ],
     "opacity": 1,
@@ -2573,7 +2608,8 @@
     "visible": true,
     "x": 0,
     "y": 0
-   }
+   },
+   "properties": []
   },
   {
    "id": 102,

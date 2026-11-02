@@ -1,4 +1,4 @@
-#include "server/systems/petals.h"
+﻿#include "server/systems/petals.h"
 
 #include <algorithm>
 #include <array>
@@ -124,7 +124,7 @@ constexpr double kStarfishHealthThreshold = 75.0;
 
 /// A scripted heal is a steeper curve than a burst petal's. `stats.heal`
 /// already carries its rarity; a script's literal does not, so the reference
-/// multiplies it by sqrt(3) per tier. The flat player heal ×3 lives in
+/// multiplies it by sqrt(3) per tier. The flat player heal 脳3 lives in
 /// `CombatSystem::landHeal` (kPlayerHealMultiplier), so it is not repeated here.
 constexpr double kBehaviourHealScale = 1.0;
 
@@ -1657,18 +1657,18 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     // build, never a per-slot bonus that a five-petal loadout collects five
     // times over.
     if (const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player)) {
-        aggregate.modifiers.damageScale *= tree->skills.statScale(SkillId::Damage);
+        // Sharp Edges is body damage only (florrclone); petal damage untalented.
         // The SAME talent, on a different curve. The reference scales a body
         // slam on the stat table and everything a petal does -- ring contact,
         // a shot, a pollen puff, a radiation pulse -- on the steeper effect
         // table, and it folds no petal `playerModifiers.damage` into the petal
         // side at all. Collapsing the two costs an apex-talented ring 2.5x its
         // damage, so the two factors are published separately.
-        aggregate.modifiers.petalDamageScale = tree->skills.effectScale(SkillId::Damage);
-        aggregate.modifiers.maxHealthScale *= tree->skills.statScale(SkillId::PlayerHealth);
+        aggregate.modifiers.petalDamageScale = 1.0;
+        aggregate.modifiers.maxHealthScale *= tree->skills.statScale(SkillId::Health);
         const double petalHealing = aggregate.modifiers.passiveHealPerSecond - 1.0;
         aggregate.modifiers.passiveHealPerSecond =
-            1.0 + petalHealing * tree->skills.effectScale(SkillId::Healing);
+            1.0 + petalHealing * tree->skills.effectScale(SkillId::Medic);
         // Reach is added, not multiplied: a flower with no magnet petal has
         // nothing for a factor to scale.
         aggregate.modifiers.magnetism += tree->skills.magnetismBonus();
@@ -2338,7 +2338,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 if (touched || overdue) {
                     if (wantsHeal) {
                         const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player);
-                        const double scale = tree ? tree->skills.effectScale(SkillId::Healing) : 1.0;
+                        const double scale = tree ? tree->skills.effectScale(SkillId::Medic) : 1.0;
                         healPlayer(world, player, stats.heal * scale, nowMillis);
                     } else if (wantsShield) {
                         shield.amount = std::min(shield.amount + stats.shield, shieldCap);
@@ -2937,7 +2937,7 @@ void PetalSystem::healFromBehaviour(World& world, Entity player, double amount, 
     // flower. Only the positive half is refused.
     if (amount > 0.0 && CombatSystem::healingBlocked(world, player, nowMillis)) return;
     const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player);
-    const double talent = tree ? tree->skills.effectScale(SkillId::Healing) : 1.0;
+    const double talent = tree ? tree->skills.effectScale(SkillId::Medic) : 1.0;
     const double scaled = amount * std::pow(std::sqrt(3.0), ladderIndex(rarity)) * talent *
                           kBehaviourHealScale;
     if (scaled > 0.0) {
@@ -3589,7 +3589,7 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     // read when the slot's pool is sized, so a tier bought while the squad is
     // out reaches the next one summoned.
     if (const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player)) {
-        mob.health *= tree->skills.healthScale(SkillId::PetHealth);
+        mob.health *= tree->skills.healthScale(SkillId::Summoner);
     }
     // Zero means "unstated", and an unstated range reads as the default chase
     // range wherever a pet's target acquisition consumes it -- so the bonus is

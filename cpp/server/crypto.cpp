@@ -684,4 +684,43 @@ bool constantTimeEquals(const std::string& a, const std::string& b) {
     return diff == 0;
 }
 
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+
+namespace {
+
+/// Node's crypto.scryptSync with the same defaults florrclone/accounts.js used
+/// (N=16384, r=8, p=1, keylen = hash byte length). Returns 1 on match.
+EM_JS(int, flix_scrypt_verify_hex, (const char* password, const char* saltHex,
+                                    const char* hashHex), {
+  try {
+    const crypto = require('crypto');
+    // accounts.js passes the hex-looking salt as text, not decoded bytes.
+    const salt = UTF8ToString(saltHex);
+    const want = Buffer.from(UTF8ToString(hashHex), 'hex');
+    if (salt.length === 0 || want.length === 0) return 0;
+    const got = crypto.scryptSync(UTF8ToString(password), salt, want.length);
+    if (got.length !== want.length) return 0;
+    return crypto.timingSafeEqual(got, want) ? 1 : 0;
+  } catch (e) {
+    return 0;
+  }
+});
+
+} // namespace
+#endif
+
+bool scryptVerifyHex(const std::string& password, const std::string& saltHex,
+                     const std::string& hashHex) {
+    if (password.empty() || saltHex.empty() || hashHex.empty()) return false;
+#if defined(__EMSCRIPTEN__)
+    return flix_scrypt_verify_hex(password.c_str(), saltHex.c_str(), hashHex.c_str()) != 0;
+#else
+    (void)password;
+    (void)saltHex;
+    (void)hashHex;
+    return false;
+#endif
+}
+
 } // namespace flix::crypto

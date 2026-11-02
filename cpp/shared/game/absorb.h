@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // Absorbing: petals traded in for XP, from the craft window's Absorb side.
 //
 // One header because both ends price a request -- the client to print the
@@ -56,11 +56,10 @@ inline bool absorbable(const PetalConfig& petal, Rarity rarity) {
     return rarityIndex(rarity) < kLadderRarityCount && petal.id != kUnabsorbablePetalId;
 }
 
-/// The Absorption talent's multiplier for a tree: the one the flower is
-/// playing on, which is the one its Profile carries -- so the client prices a
-/// request with exactly the tree the server will.
-inline double absorbXpScale(const SkillSet& skills) {
-    return scaleAt(kAbsorbSkillScale, skills.level(SkillId::Absorbing));
+/// Absorb XP scale. florrclone has no Absorption talent; keep neutral 1x
+/// (Luck affects drop rarity, not absorb XP).
+inline double absorbXpScale(const SkillSet& /*skills*/) {
+    return 1.0;
 }
 
 /// What absorbing a whole request grants: `units` (the sum of

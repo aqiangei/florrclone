@@ -1,0 +1,83 @@
+{
+  "maps": [
+    {
+      "map": "Garden",
+      "boundaryCells": 2832,
+      "blockedCells": 8733,
+      "freeArea": 473233564.2517284
+    },
+    {
+      "map": "Desert",
+      "boundaryCells": 2022,
+      "blockedCells": 7890,
+      "freeArea": 505018837.8121267
+    },
+    {
+      "map": "Ocean",
+      "boundaryCells": 3482,
+      "blockedCells": 9725,
+      "freeArea": 429749567.0106717
+    },
+    {
+      "map": "Jungle",
+      "boundaryCells": 2960,
+      "blockedCells": 6814,
+      "freeArea": 608342768.2902851
+    },
+    {
+      "map": "Hel",
+      "boundaryCells": 422,
+      "blockedCells": 5574,
+      "freeArea": 178007621.7964264
+    },
+    {
+      "map": "Ant Hell",
+      "boundaryCells": 4346,
+      "blockedCells": 10974,
+      "freeArea": 403265355.3294529
+    },
+    {
+      "map": "Sewers",
+      "boundaryCells": 1284,
+      "blockedCells": 5695,
+      "freeArea": 209380063.90131623
+    },
+    {
+      "map": "Factory",
+      "boundaryCells": 2936,
+      "blockedCells": 4983,
+      "freeArea": 301486388.4399173
+    },
+    {
+      "map": "Worm",
+      "boundaryCells": 74,
+      "blockedCells": 132,
+      "freeArea": 3106407.9512187527
+    },
+    {
+      "map": "Pyramid",
+      "boundaryCells": 1319,
+      "blockedCells": 2139,
+      "freeArea": 62610053.12499972
+    },
+    {
+      "map": "Swarm",
+      "boundaryCells": 0,
+      "blockedCells": 0,
+      "freeArea": 419430400.0
+    },
+    {
+      "map": "Super",
+      "boundaryCells": 0,
+      "blockedCells": 0,
+      "freeArea": 419430400.0
+    },
+    {
+      "map": "dps test",
+      "boundaryCells": 0,
+      "blockedCells": 0,
+      "freeArea": 163840000.0
+    }
+  ],
+  "uniqueShapes": 17296
+}

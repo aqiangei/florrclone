@@ -1,0 +1,4328 @@
+{
+  "source": "D:/ashflor/florrclone",
+  "count": 118,
+  "missing": [],
+  "petals": [
+    {
+      "name": "Square",
+      "id": "square",
+      "source": {
+        "name": "Square",
+        "zh": "Square",
+        "damage": 0,
+        "hp": 1,
+        "reload": 60,
+        "size": 9,
+        "description": "Square",
+        "hatch": "Square",
+        "hatchDelay": 0,
+        "summonLimit": 1,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Square",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 60000,
+        "price": 1000,
+        "description": "This shape... it looks familiar...",
+        "color": "#000000",
+        "count": 1,
+        "petMobType": "square",
+        "petMobRarity": "common",
+        "isAdminPetal": false,
+        "tradable": false,
+        "rarityFills": {
+          "super": "#8AFF69"
+        },
+        "zh": "Square"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Beetle Egg",
+      "id": "beetle_egg",
+      "source": {
+        "name": "Beetle Egg",
+        "zh": "Beetle Egg",
+        "damage": 0,
+        "hp": 1,
+        "reload": 30,
+        "size": 9,
+        "description": "Beetle Egg",
+        "hatch": "Beetle",
+        "hatchDelay": 1,
+        "summonLimit": 1
+      },
+      "current": {
+        "name": "Beetle Egg",
+        "zh": "Beetle Egg",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 30000,
+        "price": 10,
+        "description": "Beetle Egg",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "petMobType": "beetle",
+        "petMobRarity": "common"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Ant Egg",
+      "id": "egg",
+      "source": {
+        "name": "Ant Egg",
+        "zh": "Ant Egg",
+        "damage": 0,
+        "hp": 1,
+        "reload": 60,
+        "size": 9,
+        "description": "Ant Egg",
+        "count": 4,
+        "hatch": "Soldier Ant",
+        "summonLimit": 4,
+        "summonCount": 4,
+        "summonOffset": 0
+      },
+      "current": {
+        "name": "Ant Egg",
+        "damage": 0,
+        "health": 1,
+        "cooldown": 60000,
+        "price": 10,
+        "description": "Spawns soldier ants that fight alongside you",
+        "color": "#FFD700",
+        "count": 4,
+        "petMobType": "soldier_ant",
+        "petMobRarity": "common",
+        "petCount": 4,
+        "isAdminPetal": false,
+        "size": 1,
+        "zh": "蚂蚁蛋"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Mysterious Stick",
+      "id": "mysterious_stick",
+      "source": {
+        "name": "Stick",
+        "zh": "Stick",
+        "damage": 0,
+        "hp": 1,
+        "reload": 4,
+        "size": 9,
+        "description": "Stick",
+        "minRarity": 3,
+        "hatch": "Sandstorm",
+        "hatchDelay": 5,
+        "summonCount": 2,
+        "summonLimit": 4,
+        "summonTime": 20,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Stick",
+        "zh": "Stick",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 4000,
+        "price": 10,
+        "description": "Stick",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "epic",
+        "petMobType": "sandstorm",
+        "petMobRarity": "common",
+        "petCount": 2
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Mana Orb",
+      "id": "mana_orb",
+      "source": {
+        "name": "Mana Orb",
+        "zh": "Mana Orb",
+        "damage": 0,
+        "hp": 25,
+        "reload": 2.5,
+        "size": 9,
+        "description": "Mana Orb",
+        "manaBase": 57.75,
+        "manaBurst": 8.25,
+        "activationDelay": 1.5
+      },
+      "current": {
+        "name": "Mana Orb",
+        "zh": "Mana Orb",
+        "damage": 0,
+        "health": 25,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "Mana Orb",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magic Leaf",
+      "id": "magic_leaf",
+      "source": {
+        "name": "Magic Leaf",
+        "zh": "Magic Leaf",
+        "damage": 16,
+        "hp": 12,
+        "reload": 1.8,
+        "size": 9,
+        "description": "Magic Leaf",
+        "minRarity": 1,
+        "manaBase": 57.75,
+        "manaRegen": 2.55
+      },
+      "current": {
+        "name": "Magic Leaf",
+        "damage": 16,
+        "health": 12,
+        "size": 1,
+        "cooldown": 1800,
+        "price": 10,
+        "description": "Gathers mana from the environment passively.",
+        "color": "#000000",
+        "count": 1,
+        "passiveMana": 2.55,
+        "baseMaxMana": 57.75,
+        "isAdminPetal": false,
+        "zh": "Magic Leaf"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magic Cactus",
+      "id": "magic_cactus",
+      "source": {
+        "name": "Magic Cactus",
+        "zh": "Magic Cactus",
+        "damage": 7,
+        "hp": 15,
+        "reload": 1,
+        "size": 9,
+        "description": "Magic Cactus",
+        "manaCapacity": 115.5
+      },
+      "current": {
+        "name": "Magic Cactus",
+        "damage": 7,
+        "health": 15,
+        "size": 1,
+        "cooldown": 1000,
+        "price": 10,
+        "description": "Increases maximum mana capacity.",
+        "color": "#000000",
+        "count": 1,
+        "baseMaxMana": 115.5,
+        "playerModifiers": {
+          "maxHealth": 1.1
+        },
+        "isAdminPetal": false,
+        "zh": "Magic Cactus"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magic Cotton",
+      "id": "magic_cotton",
+      "source": {
+        "name": "Magic Cotton",
+        "zh": "Magic Cotton",
+        "damage": 0,
+        "hp": 1,
+        "reload": 1.5,
+        "size": 9,
+        "description": "Magic Cotton",
+        "invulnerable": true,
+        "manaAbsorb": 0.5
+      },
+      "current": {
+        "name": "Magic Cotton",
+        "zh": "Magic Cotton",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 10,
+        "description": "Magic Cotton",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magic Stinger",
+      "id": "magic_stinger",
+      "source": {
+        "name": "Magic Stinger",
+        "zh": "Magic Stinger",
+        "damage": 100,
+        "hp": 1,
+        "reload": 1,
+        "size": 9,
+        "description": "Magic Stinger",
+        "manaCost": 10
+      },
+      "current": {
+        "name": "Magic Stinger",
+        "damage": 100,
+        "health": 1,
+        "size": 1,
+        "cooldown": 1000,
+        "price": 10,
+        "description": "It really hurts, but it's very fragile.",
+        "color": "#222222",
+        "count": 1,
+        "isAdminPetal": false,
+        "requiredMana": 10,
+        "zh": "Magic Stinger"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magic Eye",
+      "id": "magic_eye",
+      "source": {
+        "name": "Magic Eye",
+        "zh": "Magic Eye",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2,
+        "size": 9,
+        "description": "Magic Eye",
+        "minRarity": 5,
+        "wearable": true,
+        "stackable": false,
+        "manaEye": 3.3,
+        "chain": 7,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Magic Eye",
+        "zh": "Magic Eye",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "description": "Magic Eye",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "mythic",
+        "noPhysics": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magic Missile",
+      "id": "magic_missile",
+      "source": {
+        "name": "Magic Missile",
+        "zh": "Magic Missile",
+        "damage": 35,
+        "hp": 2,
+        "reload": 0,
+        "size": 9,
+        "description": "Magic Missile",
+        "minRarity": 1,
+        "projectile": true,
+        "manaCost": 5.4,
+        "activationDelay": 0.2
+      },
+      "current": {
+        "name": "Magic Missile",
+        "damage": 35,
+        "health": 2,
+        "size": 1,
+        "cooldown": 0,
+        "price": 10,
+        "description": "You can actually shoot this one... with magic.",
+        "color": "#222222",
+        "count": 1,
+        "isAdminPetal": false,
+        "requiredMana": 6,
+        "projectile": {
+          "count": 1,
+          "distance": 500,
+          "speed": 300,
+          "spreadAngle": 0
+        },
+        "zh": "Magic Missile"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magic Stick",
+      "id": "magic_stick",
+      "source": {
+        "name": "Magic Stick",
+        "zh": "Magic Stick",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2,
+        "size": 9,
+        "description": "Magic Stick",
+        "minRarity": 3,
+        "hatch": "Sandstorm",
+        "hatchDelay": 0.3,
+        "summonLimit": 15,
+        "summonTime": 20,
+        "manaCost": 20
+      },
+      "current": {
+        "name": "Magic Stick",
+        "damage": 0,
+        "health": 1,
+        "size": 1.3,
+        "cooldown": 2000,
+        "price": 10,
+        "description": "A mysterious stick that summons the forces of the wind... with magic.",
+        "color": "#8c6239",
+        "count": 1,
+        "petMobType": "sandstorm",
+        "petMobRarity": "common",
+        "petCount": 1,
+        "petLifetimeMs": 20000,
+        "petManaCost": 50,
+        "isAdminPetal": false,
+        "zh": "Magic Stick"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magic Bubble",
+      "id": "magic_bubble",
+      "source": {
+        "name": "Magic Bubble",
+        "zh": "Magic Bubble",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2,
+        "size": 9,
+        "description": "Magic Bubble",
+        "invulnerable": true,
+        "stackable": false,
+        "manaCost": 5,
+        "activationDelay": 0.7
+      },
+      "current": {
+        "name": "Magic Bubble",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "secondaryCooldown": 700,
+        "cooldownScale": "2000-250r",
+        "description": "Physics are for the magicless.",
+        "color": "rgba(255, 255, 255, 0)",
+        "count": 1,
+        "requiredMana": 5,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "zh": "Magic Bubble"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Mimic",
+      "id": "mimic",
+      "source": {
+        "name": "Mimic",
+        "zh": "Mimic",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "description": "Mimic",
+        "minRarity": 6,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Mimic",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 0,
+        "price": 99999,
+        "description": "Copies the petal to the left of this, with the same rarity as this.",
+        "color": "#FFA500",
+        "count": 1,
+        "zh": "Mimic"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Fragment",
+      "id": "fragment",
+      "source": {
+        "name": "Fragment",
+        "zh": "Fragment",
+        "damage": 1,
+        "hp": 1,
+        "reload": 10,
+        "size": 9,
+        "description": "Fragment",
+        "social": "Craft Super Fragments into Eternal Fragments. Unique forging creates Mjolnir."
+      },
+      "current": {
+        "name": "Fragment",
+        "zh": "Fragment",
+        "damage": 1,
+        "health": 1,
+        "size": 1,
+        "cooldown": 10000,
+        "price": 10,
+        "description": "Fragment",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Mecha Missile",
+      "id": "mecha_missile",
+      "source": {
+        "name": "Mecha Missile",
+        "zh": "Mecha Missile",
+        "damage": 35,
+        "hp": 2,
+        "reload": 1.5,
+        "size": 9,
+        "description": "Mecha Missile",
+        "minRarity": 1,
+        "projectile": true,
+        "activationDelay": 0.5
+      },
+      "current": {
+        "name": "Mecha Missile",
+        "zh": "Mecha Missile",
+        "damage": 35,
+        "health": 2,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 10,
+        "description": "Mecha Missile",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "unusual"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Mecha Antennae",
+      "id": "observer",
+      "source": {
+        "name": "Mecha Antennae",
+        "zh": "Mecha Antennae",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "description": "Mecha Antennae",
+        "minRarity": 2,
+        "wearable": true,
+        "stackable": false,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Mecha Antennae",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "speed": 0,
+        "range": 0,
+        "cooldown": 0,
+        "price": 75,
+        "fixedDirection": 0,
+        "visualOffsetY": -1e+100,
+        "description": "Allows your flower to sense foes farther away.\nAnd it has a blinking red light on top.",
+        "color": "#000000",
+        "count": 0,
+        "equipFlags": "Observer",
+        "noPhysics": true,
+        "isAdminPetal": false,
+        "cameraZoom": 0.85,
+        "zh": "Mecha Antennae"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Dark Mark",
+      "id": "dark_mark",
+      "source": {
+        "name": "Mark",
+        "zh": "Mark",
+        "damage": 0,
+        "hp": 10,
+        "reload": 1,
+        "size": 9,
+        "description": "Mark",
+        "activationDelay": 960,
+        "social": "Binds to a fallen flower and sends it to Hel after preparing."
+      },
+      "current": {
+        "name": "Mark",
+        "zh": "Mark",
+        "damage": 0,
+        "health": 10,
+        "size": 1,
+        "cooldown": 1000,
+        "price": 10,
+        "description": "Mark",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Blood Sacrifice",
+      "id": "blood_sacrifice",
+      "source": {
+        "name": "Blood Sacrifice",
+        "zh": "Blood Sacrifice",
+        "damage": 0,
+        "hp": 1,
+        "reload": 10,
+        "size": 9,
+        "description": "Blood Sacrifice",
+        "minRarity": 7,
+        "invulnerable": true,
+        "stackable": false,
+        "social": "Consumed on death in difficulty 21+ areas; summons a hostile mob after 10 seconds."
+      },
+      "current": {
+        "name": "Blood Sacrifice",
+        "zh": "Blood Sacrifice",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 10000,
+        "price": 10,
+        "description": "Blood Sacrifice",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "super"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Basic",
+      "id": "basic",
+      "source": {
+        "name": "Basic",
+        "zh": "基础",
+        "damage": 10,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "description": "一片普通的花瓣。可靠的开始。"
+      },
+      "current": {
+        "name": "Basic",
+        "damage": 10,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "A nice petal, not too strong but not too weak.",
+        "color": "#90EE90",
+        "count": 1,
+        "tradable": false,
+        "zh": "基础"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Rose",
+      "id": "rose",
+      "source": {
+        "name": "Rose",
+        "zh": "玫瑰",
+        "damage": 5,
+        "hp": 5,
+        "reload": 3.5,
+        "size": 9,
+        "heal": 7.5,
+        "burstHeal": true,
+        "healDelay": 1.5,
+        "description": "受伤时收回花瓣，为花朵恢复生命。"
+      },
+      "current": {
+        "name": "Rose",
+        "damage": 5,
+        "health": 5,
+        "size": 0.9,
+        "cooldown": 3500,
+        "price": 15,
+        "description": "Its healing properties are amazing. Not so good at combat though.",
+        "color": "#FF69B4",
+        "count": 1,
+        "burstHeal": 7.5,
+        "burstHealChargeMs": 1500,
+        "defendOnly": true,
+        "zh": "玫瑰"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Light",
+      "id": "light",
+      "source": {
+        "name": "Light",
+        "zh": "轻",
+        "damage": 13,
+        "hp": 5,
+        "reload": 0.8,
+        "size": 6,
+        "description": "轻巧的花瓣，恢复得非常快。"
+      },
+      "current": {
+        "name": "Light",
+        "damage": 13,
+        "health": 5,
+        "size": 1,
+        "cooldown": 800,
+        "price": 12,
+        "description": "Weaker than most petals, but recharges very quickly.",
+        "color": "#90EE90",
+        "count": 1,
+        "independentHealth": true,
+        "zh": "轻"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Rock",
+      "id": "rock",
+      "source": {
+        "name": "Rock",
+        "zh": "岩石",
+        "damage": 22,
+        "hp": 30,
+        "reload": 3,
+        "size": 12,
+        "description": "坚硬的岩石。高耐久，重击敌人。"
+      },
+      "current": {
+        "name": "Rock",
+        "damage": 22,
+        "health": 30,
+        "size": 1,
+        "cooldown": 3000,
+        "price": 18,
+        "description": "Extremely durable, but takes a bit longer to recharge.",
+        "color": "#8B0000",
+        "count": 1,
+        "zh": "岩石"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Stinger",
+      "id": "stinger",
+      "source": {
+        "name": "Stinger",
+        "zh": "毒刺",
+        "damage": 100,
+        "hp": 1,
+        "reload": 10,
+        "size": 9,
+        "description": "极高的伤害，但也十分脆弱。"
+      },
+      "current": {
+        "name": "Stinger",
+        "damage": 100,
+        "health": 1,
+        "size": 1,
+        "cooldown": 10000,
+        "price": 20,
+        "description": "It really hurts, but it's very fragile.",
+        "color": "#FFD700",
+        "count": 1,
+        "clumped": true,
+        "clumpFacesInward": true,
+        "zh": "毒刺"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Leaf",
+      "id": "leaf",
+      "source": {
+        "name": "Leaf",
+        "zh": "叶子",
+        "damage": 16,
+        "hp": 12,
+        "reload": 1.8,
+        "size": 10,
+        "heal": 1,
+        "minRarity": 1,
+        "description": "缓慢持续恢复花朵的生命。"
+      },
+      "current": {
+        "name": "Leaf",
+        "damage": 16,
+        "health": 12,
+        "size": 1,
+        "cooldown": 1800,
+        "price": 14,
+        "description": "Gathers energy from the sun to heal your flower passively.",
+        "color": "#000000",
+        "count": 1,
+        "passiveHeal": 1,
+        "isAdminPetal": false,
+        "zh": "叶子"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Iris",
+      "id": "iris",
+      "source": {
+        "name": "Iris",
+        "zh": "鸢尾",
+        "damage": 5,
+        "hp": 5,
+        "reload": 4,
+        "size": 10,
+        "poison": 23.333333333333332,
+        "minRarity": 1,
+        "description": "使敌人中毒，伤害会在数秒内持续生效。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Iris",
+        "damage": 5,
+        "health": 5,
+        "size": 0.7,
+        "cooldown": 4000,
+        "price": 18,
+        "poison": 0.009,
+        "poisonDuration": 1000,
+        "description": "Very poisonous, but takes a little while to do its work.\n-50% damage vs other flowers.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "鸢尾"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Wing",
+      "id": "wing",
+      "source": {
+        "name": "Wing",
+        "zh": "翅膀",
+        "damage": 20,
+        "hp": 10,
+        "reload": 3,
+        "size": 11,
+        "description": "轻轻扇动，在花朵周围灵活环绕。"
+      },
+      "current": {
+        "name": "Wing",
+        "damage": 20,
+        "health": 10,
+        "size": 1,
+        "cooldown": 3000,
+        "price": 23,
+        "speed": 5,
+        "description": "It comes and goes.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "翅膀"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Faster",
+      "id": "faster",
+      "source": {
+        "name": "Faster",
+        "zh": "加速",
+        "damage": 12,
+        "hp": 5,
+        "reload": 2.5,
+        "size": 8,
+        "passive": "faster",
+        "rotationSpeedBonus": 0.5,
+        "description": "提高所有花瓣的旋转速度。"
+      },
+      "current": {
+        "name": "Faster",
+        "damage": 12,
+        "health": 5,
+        "size": 0.5,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "It's so light it makes your other petals spin faster.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "playerModifiers": {
+          "rotationSpeed": 1.1
+        },
+        "zh": "加速"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Cactus",
+      "id": "cactus",
+      "source": {
+        "name": "Cactus",
+        "zh": "仙人掌",
+        "damage": 7,
+        "hp": 15,
+        "reload": 1,
+        "size": 11,
+        "passive": "health",
+        "flowerHealth": 30,
+        "description": "装备后提高花朵的最大生命值。"
+      },
+      "current": {
+        "name": "Cactus",
+        "damage": 7,
+        "health": 15,
+        "size": 1,
+        "cooldown": 1000,
+        "price": 19,
+        "description": "Not very strong, but somehow increases your maximum health.",
+        "color": "#000000",
+        "count": 1,
+        "playerModifiers": {
+          "maxHealth": 1.1
+        },
+        "isAdminPetal": false,
+        "zh": "仙人掌"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Bubble",
+      "id": "bubble",
+      "source": {
+        "name": "Bubble",
+        "zh": "气泡",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2,
+        "activationDelay": 0.7,
+        "size": 13,
+        "passive": "bubble",
+        "description": "防御时破裂，沿气泡到花朵的方向推一把。"
+      },
+      "current": {
+        "name": "Bubble",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "secondaryCooldown": 700,
+        "cooldownScale": "2000-250r",
+        "description": "Physics are for the weak.",
+        "color": "rgba(255, 255, 255, 0)",
+        "count": 1,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "zh": "气泡"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Missile",
+      "id": "missile",
+      "source": {
+        "name": "Missile",
+        "zh": "导弹",
+        "damage": 35,
+        "hp": 2,
+        "reload": 1.5,
+        "size": 10,
+        "passive": "missile",
+        "minRarity": 1,
+        "description": "进攻时沿径向发射。"
+      },
+      "current": {
+        "name": "Missile",
+        "damage": 35,
+        "health": 2,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 21,
+        "description": "You can actually shoot this one.",
+        "color": "#222222",
+        "count": 1,
+        "isAdminPetal": false,
+        "projectile": {
+          "count": 1,
+          "distance": 500,
+          "speed": 300,
+          "spreadAngle": 0
+        },
+        "zh": "导弹"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Peas",
+      "id": "peas",
+      "source": {
+        "name": "Peas",
+        "zh": "豌豆",
+        "damage": 15,
+        "hp": 5,
+        "reload": 1.5,
+        "activationDelay": 0.5,
+        "size": 5,
+        "count": 4,
+        "description": "四颗小豌豆，占用一格花瓣槽。"
+      },
+      "current": {
+        "name": "Peas",
+        "damage": 15,
+        "health": 5,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 10,
+        "description": "It goes poof.",
+        "color": "#000000",
+        "count": 4,
+        "clumped": true,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "projectile": {
+          "count": 1,
+          "spreadAngle": 1.5708,
+          "speed": 800,
+          "distance": 1000
+        },
+        "zh": "豌豆"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Pollen",
+      "id": "pollen",
+      "source": {
+        "name": "Pollen",
+        "zh": "花粉",
+        "damage": 38,
+        "hp": 5,
+        "reload": 2,
+        "activationDelay": 0.5,
+        "size": 5,
+        "count": 1,
+        "minRarity": 1,
+        "description": "细小的花粉，组成紧密的花瓣簇。"
+      },
+      "current": {
+        "name": "Pollen",
+        "damage": 38,
+        "health": 5,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "description": "Asthmatics beware.",
+        "color": "#000000",
+        "count": 1,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "zh": "花粉"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Sand",
+      "id": "sand",
+      "source": {
+        "name": "Sand",
+        "zh": "沙子",
+        "damage": 5,
+        "hp": 1.25,
+        "reload": 1.5,
+        "size": 5,
+        "count": 4,
+        "description": "多颗砂砾，适合近距离持续攻击。"
+      },
+      "current": {
+        "name": "Sand",
+        "damage": 5,
+        "health": 1.25,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 14,
+        "description": "A bunch of sand particles.",
+        "color": "#8B0000",
+        "count": 4,
+        "clumped": true,
+        "zh": "沙子"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Antennae",
+      "id": "antennae",
+      "source": {
+        "name": "Antennae",
+        "zh": "触角",
+        "damage": 0,
+        "hp": 1,
+        "reload": 1,
+        "size": 9,
+        "passive": "vision",
+        "minRarity": 2,
+        "description": "扩大视野，更早发现远处的生物。",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Antennae",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "speed": 0,
+        "range": 0,
+        "cooldown": 1000,
+        "price": 10,
+        "fixedDirection": 0,
+        "visualOffsetY": -1e+100,
+        "description": "Allows your flower to sense foes farther away.",
+        "color": "#000000",
+        "count": 0,
+        "equipFlags": "Antennae",
+        "noPhysics": true,
+        "isAdminPetal": false,
+        "playerModifiers": {
+          "magnetism": 50
+        },
+        "cameraZoom": 0.98,
+        "zh": "触角"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Lentil",
+      "id": "lentil",
+      "source": {
+        "name": "Lentil",
+        "zh": "小扁豆",
+        "damage": 13,
+        "hp": 12,
+        "reload": 2,
+        "size": 9,
+        "passive": "lentil",
+        "petalAttraction": 8,
+        "description": "装备后提高花瓣对敌人的吸引范围。"
+      },
+      "current": {
+        "name": "Lentil",
+        "damage": 13,
+        "health": 12,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "description": "Increases petal attraction to enemies.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "attractionForce": 2000,
+        "playerModifiers": {
+          "petalAttractionRadius": 20
+        },
+        "zh": "小扁豆"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Corn",
+      "id": "corn",
+      "source": {
+        "name": "Corn",
+        "zh": "玉米",
+        "damage": 8,
+        "hp": 200,
+        "reload": 7,
+        "size": 12,
+        "knockback": 150,
+        "orbitScale": 0.86,
+        "description": "装填很久，但极其耐打，击退很强。"
+      },
+      "current": {
+        "name": "Corn",
+        "damage": 8,
+        "health": 200,
+        "size": 1,
+        "cooldown": 7000,
+        "price": 10,
+        "description": "Takes a long time to spawn, but has a lot of health.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "玉米"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Grapes",
+      "id": "grapes",
+      "source": {
+        "name": "Grapes",
+        "zh": "葡萄",
+        "damage": 3,
+        "hp": 5,
+        "reload": 1.5,
+        "size": 5,
+        "count": 4,
+        "poison": 35.714285714285715,
+        "poisonTime": 0.7,
+        "projectile": true,
+        "description": "可发射并分裂成4颗，整体与碎粒都会使敌人中毒。"
+      },
+      "current": {
+        "name": "Grapes",
+        "damage": 3,
+        "health": 5,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 15,
+        "poison": 0.00625,
+        "poisonDuration": 500,
+        "description": "It goes poof. Now with a secret ingredient: poison.",
+        "color": "#000000",
+        "count": 4,
+        "clumped": true,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "projectile": {
+          "count": 1,
+          "spreadAngle": 1.5708,
+          "speed": 800,
+          "distance": 1000
+        },
+        "zh": "葡萄"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Rice",
+      "id": "rice",
+      "source": {
+        "name": "Rice",
+        "zh": "大米",
+        "damage": 4,
+        "hp": 1,
+        "reload": 0.05,
+        "size": 5,
+        "description": "几乎瞬间重新生成，但非常脆弱。"
+      },
+      "current": {
+        "name": "Rice",
+        "damage": 4,
+        "health": 1,
+        "size": 1.3,
+        "cooldown": 50,
+        "price": 10,
+        "description": "Spawns very quickly, but not very strong.",
+        "color": "#ffffff",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "大米"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Pincer",
+      "id": "pincer",
+      "source": {
+        "name": "Pincer",
+        "zh": "钳子",
+        "damage": 5,
+        "hp": 5,
+        "reload": 2.5,
+        "size": 9,
+        "poison": 20,
+        "poisonTime": 0.75,
+        "slow": true,
+        "minRarity": 1,
+        "description": "命中时使敌人中毒并减速。"
+      },
+      "current": {
+        "name": "Pincer",
+        "damage": 5,
+        "health": 5,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "poison": 0.02,
+        "poisonDuration": 750,
+        "slowFactor": 0.5,
+        "slowDuration": 2000,
+        "description": "Debilitates enemies temporarily, reducing their movement speed.",
+        "color": "#333333",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "钳子"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Pearl",
+      "id": "pearl",
+      "source": {
+        "name": "Pearl",
+        "zh": "珍珠",
+        "damage": 20,
+        "hp": 50,
+        "reload": 4,
+        "activationDelay": 0.5,
+        "size": 12,
+        "passive": "pearl",
+        "minRarity": 1,
+        "description": "攻击时抛出，松开后飞回花朵，途中可撞击敌人。"
+      },
+      "current": {
+        "name": "Pearl",
+        "damage": 20,
+        "health": 50,
+        "size": 1.25,
+        "cooldown": 4000,
+        "price": 34,
+        "visual_scale": 1.5,
+        "description": "Just drop it off somewhere and use your kinetic powers so you don't lose it.",
+        "color": "#000000",
+        "count": 1,
+        "zh": "珍珠"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Honey",
+      "id": "honey",
+      "source": {
+        "name": "Honey",
+        "zh": "蜂蜜",
+        "damage": 0,
+        "hp": 50,
+        "reload": 2,
+        "activationDelay": 0.5,
+        "size": 13,
+        "passive": "honey",
+        "minRarity": 2,
+        "description": "抛出后吸引周围的生物，被吸引者会逐渐产生免疫。"
+      },
+      "current": {
+        "name": "Honey",
+        "damage": 0,
+        "health": 50,
+        "size": 1.1,
+        "cooldown": 2000,
+        "price": 10,
+        "slowFactor": 0.8,
+        "slowDuration": 5000,
+        "description": "Mobs love this. Attracts them in a large radius.\nMobs will prioritize this over flowers.\nAffected units develop immunity to its effects after some time.",
+        "color": "#f7cf2f",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "蜂蜜"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Heavy",
+      "id": "heavy",
+      "source": {
+        "name": "Heavy",
+        "zh": "重",
+        "damage": 9,
+        "hp": 50,
+        "reload": 10,
+        "size": 13,
+        "passive": "heavy",
+        "knockback": 220,
+        "orbitScale": 0.82,
+        "minRarity": 2,
+        "description": "装填极慢；击退很强，并降低花瓣旋转速度。"
+      },
+      "current": {
+        "name": "Heavy",
+        "zh": "重",
+        "damage": 9,
+        "health": 50,
+        "size": 1,
+        "cooldown": 10000,
+        "price": 10,
+        "description": "装填极慢；击退很强，并降低花瓣旋转速度。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "rare"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Bean",
+      "id": "bean",
+      "source": {
+        "name": "Bean",
+        "zh": "豆子",
+        "damage": 20,
+        "hp": 12,
+        "reload": 2,
+        "size": 9,
+        "damageMult": 1.5,
+        "description": "周围没有友方花朵时伤害×1.5。"
+      },
+      "current": {
+        "name": "Bean",
+        "zh": "豆子",
+        "damage": 20,
+        "health": 12,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "description": "周围没有友方花朵时伤害×1.5。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Bone",
+      "id": "bone",
+      "source": {
+        "name": "Bone",
+        "zh": "骨头",
+        "damage": 14,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "armor": 10,
+        "description": "护甲降低受到的伤害，每次受击护甲减半。"
+      },
+      "current": {
+        "name": "Bone",
+        "health": 10,
+        "damage": 14,
+        "petalArmor": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 23,
+        "description": "Sturdy. Loses half of its armor each hit.",
+        "color": "#FFFFFF",
+        "count": 1,
+        "zh": "骨头"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Claw",
+      "id": "claw",
+      "source": {
+        "name": "Claw",
+        "zh": "爪",
+        "damage": 5,
+        "hp": 10,
+        "reload": 3.5,
+        "size": 9,
+        "highHpMult": 20,
+        "highHpExtra": 100,
+        "description": "对生命≥80%的目标造成20倍伤害。"
+      },
+      "current": {
+        "name": "Claw",
+        "damage": 5,
+        "health": 10,
+        "clawCritDamage": 100,
+        "size": 1,
+        "cooldown": 3500,
+        "price": 18,
+        "visual_scale": 1.5,
+        "description": "Deals extra damage if the victim is above 80% health.\n-50% damage vs other flowers.",
+        "color": "#000000",
+        "count": 1,
+        "zh": "爪"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Coin",
+      "id": "coin",
+      "source": {
+        "name": "Coin",
+        "zh": "硬币",
+        "damage": 15,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "description": "仅可通过交易获得。"
+      },
+      "current": {
+        "name": "Coin",
+        "damage": 15,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "The power of capitalism compels you!",
+        "color": "#90EE90",
+        "count": 1,
+        "tradable": false,
+        "zh": "硬币"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Dahlia",
+      "id": "dahlia",
+      "source": {
+        "name": "Dahlia",
+        "zh": "大丽花",
+        "damage": 1.7,
+        "hp": 1.7,
+        "reload": 1.5,
+        "healDelay": 1.5,
+        "size": 9,
+        "count": 3,
+        "heal": 1.25,
+        "burstHeal": true,
+        "minRarity": 1,
+        "description": "成簇花瓣，命中时爆发治疗（每片约为玫瑰的1/6）。"
+      },
+      "current": {
+        "name": "Dahlia",
+        "damage": 1.7,
+        "health": 1.7,
+        "size": 0.33,
+        "cooldown": 1500,
+        "price": 10,
+        "description": "A small amount of heal but fairly consistent.",
+        "color": "#FF00FF",
+        "count": 3,
+        "burstHeal": 1.25,
+        "burstHealChargeMs": 1000,
+        "clumped": true,
+        "defendOnly": true,
+        "zh": "大丽花"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Dandelion",
+      "id": "dandelion",
+      "source": {
+        "name": "Dandelion",
+        "zh": "蒲公英",
+        "damage": 8,
+        "hp": 8,
+        "reload": 1,
+        "size": 9,
+        "orbitScale": 1.25,
+        "minRarity": 1,
+        "description": "攻击时伸得更远；命中使目标治疗降低20%，持续30秒，可叠加。"
+      },
+      "current": {
+        "name": "Dandelion",
+        "damage": 8,
+        "health": 8,
+        "size": 1,
+        "cooldown": 1000,
+        "price": 13,
+        "description": "Its interesting properties inhibits healing effects on affected units.\nAffected units have their healing reduced by 20%. Stacks with itself.",
+        "color": "#FFD700",
+        "count": 1,
+        "visual_scale": 1.95,
+        "noHealDuration": 30000,
+        "zh": "蒲公英"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Dice",
+      "id": "dice",
+      "source": {
+        "name": "Dice",
+        "zh": "骰子",
+        "damage": 10,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "crit": 0.05,
+        "critMult": 35,
+        "description": "5%概率造成35倍伤害。"
+      },
+      "current": {
+        "name": "Dice",
+        "zh": "骰子",
+        "damage": 10,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "5%概率造成35倍伤害。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Fang",
+      "id": "fang",
+      "source": {
+        "name": "Fang",
+        "zh": "尖牙",
+        "damage": 15,
+        "hp": 1,
+        "reload": 3.5,
+        "size": 9,
+        "healOnHit": 0.35,
+        "minRarity": 1,
+        "description": "按造成伤害的一定比例为花朵回血。"
+      },
+      "current": {
+        "name": "Fang",
+        "damage": 15,
+        "health": 1,
+        "lifesteal": 0.35,
+        "size": 1,
+        "cooldown": 3500,
+        "price": 18,
+        "visual_scale": 1.5,
+        "description": "Heals based on damage dealt by this petal.",
+        "color": "#000000",
+        "count": 1,
+        "zh": "尖牙"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Jelly",
+      "id": "jelly",
+      "source": {
+        "name": "Jelly",
+        "zh": "水母",
+        "damage": 10,
+        "hp": 10,
+        "reload": 10,
+        "size": 9,
+        "knockback": 300,
+        "description": "命中时产生击退。"
+      },
+      "current": {
+        "name": "Jelly",
+        "damage": 10,
+        "health": 10,
+        "size": 1,
+        "cooldown": 10000,
+        "price": 20,
+        "knockback": 15,
+        "description": "No one likes touching this.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "水母"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Laser",
+      "id": "laser",
+      "source": {
+        "name": "Laser",
+        "zh": "激光",
+        "damage": 5,
+        "hp": 10,
+        "reload": 5,
+        "size": 9,
+        "laserDps": 50,
+        "description": "持续发射直线光束，另有身体接触伤害。"
+      },
+      "current": {
+        "name": "Laser",
+        "zh": "激光",
+        "damage": 5,
+        "health": 10,
+        "size": 1,
+        "cooldown": 5000,
+        "price": 10,
+        "description": "持续发射直线光束，另有身体接触伤害。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Orange",
+      "id": "orange",
+      "source": {
+        "name": "Orange",
+        "zh": "橙子",
+        "damage": 8,
+        "hp": 6.666666666666667,
+        "reload": 3.5,
+        "size": 9,
+        "count": 3,
+        "orbitScale": 1.25,
+        "minRarity": 1,
+        "description": "攻击时伸得比其他花瓣更远。"
+      },
+      "current": {
+        "name": "Oranges",
+        "damage": 8,
+        "health": 6.666666666666667,
+        "size": 1.25,
+        "cooldown": 3500,
+        "price": 53,
+        "visual_scale": 1.5,
+        "description": "A sweet citrus fruit.",
+        "color": "#000000",
+        "count": 3,
+        "clumped": true,
+        "clumpSpacing": 3,
+        "clumpOutsideRing": true,
+        "zh": "橙子"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Plank",
+      "id": "plank",
+      "source": {
+        "name": "Plank",
+        "zh": "木板",
+        "damage": 18,
+        "hp": 15,
+        "reload": 2.5,
+        "size": 9,
+        "description": "对抛射物与花瓣造成20倍伤害。"
+      },
+      "current": {
+        "name": "Plank",
+        "damage": 18,
+        "health": 15,
+        "size": 3,
+        "cooldown": 2500,
+        "price": 25,
+        "visual_scale": 0.742,
+        "description": "Does 20x damage vs projectiles and petals.",
+        "color": "#B86C32",
+        "count": 1,
+        "zh": "木板"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Rubber",
+      "id": "rubber",
+      "source": {
+        "name": "Rubber",
+        "zh": "橡胶",
+        "damage": 1,
+        "hp": 30,
+        "reload": 2.5,
+        "size": 9,
+        "description": "Increases knockback received and absorbs lightning damage."
+      },
+      "current": {
+        "name": "Rubber",
+        "damage": 1,
+        "health": 30,
+        "size": 1.2,
+        "cooldown": 2500,
+        "price": 25,
+        "visual_scale": 0.979,
+        "description": "Increases knockback received. Also absorbs lightning damage dealt to the flower.",
+        "color": "#EEEEEE",
+        "count": 1,
+        "zh": "橡胶"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Salt",
+      "id": "salt",
+      "source": {
+        "name": "Salt",
+        "zh": "盐",
+        "damage": 10,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "reflect": 1,
+        "minRarity": 1,
+        "description": "反射受到的伤害。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Salt",
+        "damage": 10,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 20,
+        "visual_scale": 1.3,
+        "description": "Reflects some of the damage you take back to the enemy that dealt it.\nHigher rarity mobs have higher resistance to damage reflection.",
+        "color": "#FFFFFF",
+        "count": 1,
+        "playerModifiers": {
+          "damageReflection": 1
+        },
+        "zh": "盐"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Sawblade",
+      "id": "sawblade",
+      "source": {
+        "name": "Sawblade",
+        "zh": "锯片",
+        "damage": 40,
+        "hp": 25,
+        "reload": 2.5,
+        "size": 9,
+        "description": "不受Reach天赋或Third Eye的延伸影响。"
+      },
+      "current": {
+        "name": "Sawblade",
+        "damage": 40,
+        "health": 25,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 100,
+        "visual_scale": 1,
+        "description": "This looks like it'd hurt.",
+        "color": "#AAAAAA",
+        "count": 1,
+        "defendOnly": true,
+        "zh": "锯片"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Shell",
+      "id": "shell",
+      "source": {
+        "name": "Shell",
+        "zh": "贝壳",
+        "damage": 5,
+        "hp": 25,
+        "reload": 3.5,
+        "activationDelay": 1.5,
+        "size": 9,
+        "shield": 7,
+        "description": "为花朵提供护盾。"
+      },
+      "current": {
+        "name": "Shell",
+        "damage": 5,
+        "health": 25,
+        "size": 1.1,
+        "cooldown": 3500,
+        "price": 15,
+        "description": "Adds a temporary shield to yourself or allies.",
+        "color": "#fcdd86",
+        "count": 1,
+        "burstShield": 22,
+        "burstHealChargeMs": 1000,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "zh": "贝壳"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Soil",
+      "id": "soil",
+      "source": {
+        "name": "Soil",
+        "zh": "土壤",
+        "damage": 10,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "flowerHealth": 50,
+        "sizeBonus": 10,
+        "speedMult": 0.9,
+        "description": "提高最大生命与体型，但降低移动速度。"
+      },
+      "current": {
+        "name": "Soil",
+        "damage": 10,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "Increases health, but also increases flower size and decreases movement speed.",
+        "color": "#000000",
+        "count": 1,
+        "playerModifiers": {
+          "maxHealth": 1.1,
+          "playerRadius": 1.05,
+          "speed": 0.95
+        },
+        "isAdminPetal": false,
+        "zh": "土壤"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Starfish",
+      "id": "starfish",
+      "source": {
+        "name": "Starfish",
+        "zh": "海星",
+        "damage": 5,
+        "hp": 7,
+        "reload": 1.5,
+        "size": 9,
+        "healPerSecond": 2,
+        "healBelow": 0.75,
+        "minRarity": 1,
+        "description": "生命低于75%时持续回血。"
+      },
+      "current": {
+        "name": "Starfish",
+        "damage": 5,
+        "health": 7,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 10,
+        "description": "Increases health regen while below 75% health.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "海星"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Talisman of Evasion",
+      "id": "talisman_of_evasion",
+      "source": {
+        "name": "Talisman of Evasion",
+        "zh": "闪避护符",
+        "damage": 10,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "dodge": 0.03,
+        "description": "有几率闪避敌人攻击。"
+      },
+      "current": {
+        "name": "Talisman of Evasion",
+        "zh": "闪避护符",
+        "damage": 10,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "有几率闪避敌人攻击。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Third Eye",
+      "id": "third_eye",
+      "source": {
+        "name": "Third Eye",
+        "zh": "第三只眼",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "rangeBonus": 40,
+        "minRarity": 5,
+        "description": "扩大花瓣的攻击范围。",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Third Eye",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "speed": 0,
+        "range": 0,
+        "cooldown": 2500,
+        "price": 10,
+        "fixedDirection": 0,
+        "visualOffsetY": -1e+100,
+        "description": "Allows your flower to expand your petals further out.",
+        "color": "#000000",
+        "count": 0,
+        "equipFlags": "ThirdEye",
+        "noPhysics": true,
+        "isAdminPetal": false,
+        "minRarity": "legendary",
+        "playerModifiers": {
+          "attackRange": 40
+        },
+        "zh": "第三只眼"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Tomato",
+      "id": "tomato",
+      "source": {
+        "name": "Tomato",
+        "zh": "番茄",
+        "damage": 5,
+        "hp": 10,
+        "reload": 2.5,
+        "activationDelay": 1,
+        "size": 9,
+        "damageMax": 70,
+        "growing": true,
+        "description": "在3秒内逐渐变大、伤害提高。"
+      },
+      "current": {
+        "name": "Tomato",
+        "damage": 5,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 30,
+        "visual_scale": 1.975,
+        "description": "Gets stronger over time.",
+        "color": "#ED2D2D",
+        "count": 1,
+        "zh": "番茄"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Wax",
+      "id": "wax",
+      "source": {
+        "name": "Wax",
+        "zh": "蜡",
+        "damage": 0,
+        "hp": 1000,
+        "reload": 30,
+        "size": 12,
+        "minRarity": 2,
+        "waxRadius": 30,
+        "description": "生成高生命值的蜡块，可阻挡怪物。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Wax",
+        "damage": 0,
+        "health": 1000,
+        "size": 1,
+        "cooldown": 30000,
+        "price": 65,
+        "description": "Don't ask where it came from.",
+        "color": "#ffff00",
+        "count": 1,
+        "visual_scale": 1,
+        "zh": "蜡"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Web",
+      "id": "web",
+      "source": {
+        "name": "Web",
+        "zh": "蛛网",
+        "damage": 5,
+        "hp": 5,
+        "reload": 3,
+        "activationDelay": 0.5,
+        "size": 9,
+        "slow": true,
+        "projectile": true,
+        "poisonTime": 0.75,
+        "minRarity": 1,
+        "webRadius": 50,
+        "description": "抛射物，命中后减速敌人。"
+      },
+      "current": {
+        "name": "Web",
+        "damage": 5,
+        "health": 5,
+        "size": 1.2,
+        "cooldown": 3000,
+        "price": 10,
+        "description": "It's really sticky.",
+        "color": "#FFFFFF",
+        "count": 1,
+        "defendOnly": true,
+        "webRadius": 90,
+        "isAdminPetal": false,
+        "zh": "蛛网"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Yucca",
+      "id": "yucca",
+      "source": {
+        "name": "Yucca",
+        "zh": "丝兰",
+        "damage": 5,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "healPerSecond": 2,
+        "healOnDefend": true,
+        "minRarity": 1,
+        "description": "防御时持续回血。"
+      },
+      "current": {
+        "name": "Yucca",
+        "damage": 5,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 15,
+        "description": "Heals your flower but only while in the defensive position.",
+        "color": "#000000",
+        "count": 1,
+        "passiveHeal": 1,
+        "passiveHealDefendOnly": true,
+        "isAdminPetal": false,
+        "zh": "丝兰"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Clover",
+      "id": "clover",
+      "source": {
+        "name": "Clover",
+        "zh": "三叶草",
+        "damage": 10,
+        "hp": 10,
+        "reload": 2.5,
+        "size": 9,
+        "luck": 0.1,
+        "description": "提高幸运值，改善掉落。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Clover",
+        "damage": 10,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 16,
+        "description": "Increases your luck.\nLuck is used by specific petals to change their stats.\nLuck also increases the rarity of mobs that spawn around you.",
+        "color": "#FFD700",
+        "count": 1,
+        "playerModifiers": {
+          "luck": 0.08
+        },
+        "zh": "三叶草"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Magnet",
+      "id": "magnet",
+      "source": {
+        "name": "Magnet",
+        "zh": "磁铁",
+        "damage": 1,
+        "hp": 30,
+        "reload": 1.5,
+        "size": 9,
+        "pickup": 60,
+        "minRarity": 2,
+        "description": "扩大拾取范围。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Magnet",
+        "damage": 1,
+        "health": 30,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 10,
+        "description": "Increases drop pick up range.",
+        "color": "#000000",
+        "count": 1,
+        "defendOnly": true,
+        "playerModifiers": {
+          "magnetism": 500
+        },
+        "isAdminPetal": false,
+        "zh": "磁铁"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Lightning",
+      "id": "lightning",
+      "source": {
+        "name": "Lightning",
+        "zh": "闪电",
+        "damage": 0,
+        "hp": 20,
+        "reload": 2.5,
+        "size": 9,
+        "lightning": true,
+        "lightningDamage": 12,
+        "chain": 2,
+        "minRarity": 1,
+        "description": "命中时释放可弹跳的闪电。"
+      },
+      "current": {
+        "name": "Lightning",
+        "damage": 0,
+        "health": 20,
+        "cooldown": 2500,
+        "price": 25,
+        "size": 1,
+        "visual_scale": 1.05,
+        "count": 1,
+        "description": "Strikes several nearby enemies.",
+        "color": "#FFFFFF",
+        "zh": "闪电"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Mjolnir",
+      "id": "mjolnir",
+      "source": {
+        "name": "Mjolnir",
+        "zh": "雷神之锤",
+        "damage": 0,
+        "hp": 50,
+        "reload": 8,
+        "size": 13,
+        "lightning": true,
+        "lightningDamage": 50,
+        "chain": 0,
+        "minRarity": 8,
+        "description": "Deals pure lightning damage on contact without chaining. Forged from five Super Fragments."
+      },
+      "current": {
+        "name": "Mjolnir",
+        "zh": "雷神之锤",
+        "damage": 0,
+        "health": 50,
+        "size": 1,
+        "cooldown": 8000,
+        "price": 10,
+        "description": "Deals pure lightning damage on contact without chaining. Forged from five Super Fragments.",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "unique"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Poo",
+      "id": "poo",
+      "source": {
+        "name": "Poo",
+        "zh": "便便",
+        "damage": 5,
+        "hp": 5,
+        "reload": 2.5,
+        "size": 9,
+        "aggroReduce": 0.25,
+        "minRarity": 1,
+        "description": "降低怪物的仇恨范围。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Poo",
+        "damage": 5,
+        "health": 5,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 25,
+        "visual_scale": 2,
+        "description": "Makes mobs less likely to want to attack you.",
+        "color": "#8B4513",
+        "count": 1,
+        "playerModifiers": {
+          "aggroRange": 0.75
+        },
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "zh": "便便"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Broccoli",
+      "id": "broccoli",
+      "source": {
+        "name": "Broccoli",
+        "zh": "西兰花",
+        "damage": 15,
+        "hp": 10,
+        "reload": 2.8,
+        "size": 9,
+        "onDestroyMissiles": 3,
+        "description": "被摧毁时炸裂成导弹。"
+      },
+      "current": {
+        "name": "Broccoli",
+        "zh": "西兰花",
+        "damage": 15,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2800,
+        "price": 10,
+        "description": "被摧毁时炸裂成导弹。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Bur",
+      "id": "bur",
+      "source": {
+        "name": "Bur",
+        "zh": "芒刺",
+        "damage": 5,
+        "hp": 5,
+        "reload": 2,
+        "size": 9,
+        "armorDebuff": 1.5,
+        "description": "降低敌人护甲（可为负）。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Bur",
+        "damage": 5,
+        "health": 5,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "armorReduction": 1.5,
+        "description": "Decreases armor of affected unit. Does not stack with itself.",
+        "color": "#8B4513",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "芒刺"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Carrot",
+      "id": "carrot",
+      "source": {
+        "name": "Carrot",
+        "zh": "胡萝卜",
+        "damage": 18,
+        "hp": 18,
+        "reload": 1,
+        "activationDelay": 0.5,
+        "size": 9,
+        "projectile": true,
+        "bounce": true,
+        "description": "可发射，碰到墙壁会反弹。"
+      },
+      "current": {
+        "name": "Carrot",
+        "damage": 18,
+        "health": 18,
+        "size": 1.4,
+        "cooldown": 1000,
+        "price": 25,
+        "visual_scale": 2.146,
+        "description": "Sturdy and reliable. Can be shot and bounces off walls.",
+        "color": "#F09148",
+        "count": 1,
+        "projectile": {
+          "count": 1,
+          "distance": 500,
+          "speed": 300,
+          "spreadAngle": 0
+        },
+        "zh": "胡萝卜"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Clay",
+      "id": "clay",
+      "source": {
+        "name": "Clay",
+        "zh": "黏土",
+        "damage": 5,
+        "hp": 10,
+        "reload": 2,
+        "size": 9,
+        "damageMax": 100,
+        "distanceDamage": true,
+        "description": "飞得越远伤害与体积越大。"
+      },
+      "current": {
+        "name": "Clay",
+        "zh": "黏土",
+        "damage": 5,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "description": "飞得越远伤害与体积越大。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Cutter",
+      "id": "cutter",
+      "source": {
+        "name": "Cutter",
+        "zh": "切割者",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "bodyDamage": 27,
+        "wearable": true,
+        "description": "提高花朵的身体伤害。",
+        "stackable": false,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Cutter",
+        "damage": 0,
+        "health": 1,
+        "size": 4,
+        "cooldown": 0,
+        "price": 50,
+        "description": "A friend used to own this... now it's time for revenge.\nIncreases body damage.",
+        "color": "#000000",
+        "speed": 2,
+        "count": 0,
+        "range": 0,
+        "bodyDamage": 10,
+        "equipFlags": "Cutter",
+        "noPhysics": true,
+        "isAdminPetal": false,
+        "zh": "切割者"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Disc",
+      "id": "disc",
+      "source": {
+        "name": "Disc",
+        "zh": "圆盘",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "bodyResist": 0.09,
+        "wearable": true,
+        "description": "降低花朵受到的接触伤害。",
+        "stackable": false,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Disc",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "speed": 0,
+        "range": 0,
+        "cooldown": 2500,
+        "price": 40,
+        "visual_scale": 1.5,
+        "description": "Reduces damage taken from collisions with mobs and flowers.",
+        "color": "#111111",
+        "count": 0,
+        "equipFlags": "Disc",
+        "noPhysics": true,
+        "zh": "圆盘"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Dust",
+      "id": "dust",
+      "source": {
+        "name": "Dust",
+        "zh": "尘埃",
+        "damage": 4.3,
+        "hp": 1.7,
+        "reload": 0.8,
+        "size": 5,
+        "count": 3,
+        "description": "由3颗尘埃粒子组成。"
+      },
+      "current": {
+        "name": "Dust",
+        "zh": "尘埃",
+        "damage": 4.3,
+        "health": 1.7,
+        "size": 1,
+        "cooldown": 800,
+        "price": 10,
+        "description": "由3颗尘埃粒子组成。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Electric Web",
+      "id": "electric_web",
+      "source": {
+        "name": "Electric Web",
+        "zh": "电蛛网",
+        "damage": 5,
+        "hp": 5,
+        "reload": 3,
+        "activationDelay": 0.5,
+        "size": 9,
+        "projectile": true,
+        "slow": true,
+        "minRarity": 2,
+        "webRadius": 50,
+        "description": "抛射物，命中时造成闪电伤害并减速。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Electric Web",
+        "zh": "电蛛网",
+        "damage": 5,
+        "health": 5,
+        "size": 1,
+        "cooldown": 3000,
+        "price": 10,
+        "description": "抛射物，命中时造成闪电伤害并减速。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "rare"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Glass",
+      "id": "glasss",
+      "source": {
+        "name": "Glass",
+        "zh": "玻璃",
+        "damage": 22,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "invulnerable": true,
+        "description": "不会被敌人破坏，但同一目标每秒只能受击一次。"
+      },
+      "current": {
+        "name": "Glasss",
+        "damage": 22,
+        "health": 1,
+        "size": 1.1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "Fragile-looking but unbreakable. Hits hard but needs time between strikes",
+        "color": "#808080",
+        "knockback": 0,
+        "count": 1,
+        "damageCooldown": 1001,
+        "isAdminPetal": true,
+        "zh": "玻璃"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Golden Leaf",
+      "id": "golden_leaf",
+      "source": {
+        "name": "Golden Leaf",
+        "zh": "金叶",
+        "damage": 16,
+        "hp": 12,
+        "reload": 2.5,
+        "size": 9,
+        "reloadReduce": 0.025,
+        "minRarity": 6,
+        "description": "降低所有花瓣的装填时间。"
+      },
+      "current": {
+        "name": "Golden Leaf",
+        "damage": 16,
+        "health": 12,
+        "size": 1.2,
+        "cooldown": 2500,
+        "price": 18,
+        "description": "A very special leaf, seems to allow you to use your other petals even more.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "zh": "金叶"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Light Bulb",
+      "id": "bulb",
+      "source": {
+        "name": "Light Bulb",
+        "zh": "灯泡",
+        "damage": 5,
+        "hp": 10,
+        "reload": 1,
+        "activationDelay": 0.5,
+        "size": 9,
+        "lure": 300,
+        "description": "把怪物吸引到花朵所在位置。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Bulb",
+        "damage": 5,
+        "health": 10,
+        "size": 1.5,
+        "cooldown": 1000,
+        "price": 10,
+        "description": "A shiny lightbulb. Draws aggro from mobs.",
+        "color": "#ffff00",
+        "count": 1,
+        "emissive": true,
+        "lightRadius": 50,
+        "lightColor": "#ffff00",
+        "wallCollide": true,
+        "playerModifiers": {
+          "aggroRange": 1.33
+        },
+        "isAdminPetal": false,
+        "defendOnly": true,
+        "zh": "灯泡"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Lotus",
+      "id": "lotus",
+      "source": {
+        "name": "Lotus",
+        "zh": "莲花",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "description": "抵消每秒中毒伤害，可叠加。",
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Lotus",
+        "damage": 0,
+        "health": 1,
+        "size": 1.2,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "Absorbs poison damage taken by the flower.",
+        "color": "#ce76db",
+        "count": 1,
+        "playerModifiers": {
+          "poisonArmor": 14
+        },
+        "isAdminPetal": false,
+        "zh": "莲花"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Mysterious Powder",
+      "id": "mysterious_powder",
+      "source": {
+        "name": "Mysterious Powder",
+        "zh": "神秘粉末",
+        "damage": 0,
+        "hp": 10,
+        "reload": 4,
+        "size": 9,
+        "speedBonus": 0.25,
+        "minRarity": 2,
+        "description": "提高移动速度。",
+        "stackable": false
+      },
+      "current": {
+        "name": "Mysterious Powder",
+        "zh": "神秘粉末",
+        "damage": 0,
+        "health": 10,
+        "size": 1,
+        "cooldown": 4000,
+        "price": 10,
+        "description": "提高移动速度。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "rare"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Poker Chip",
+      "id": "poker_chip",
+      "source": {
+        "name": "Poker Chip",
+        "zh": "筹码",
+        "damage": 7,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "petalEvade": 0.9,
+        "description": "有90%概率闪避一次伤害。"
+      },
+      "current": {
+        "name": "Poker Chip",
+        "zh": "筹码",
+        "damage": 7,
+        "health": 1,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "有90%概率闪避一次伤害。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Root",
+      "id": "root",
+      "source": {
+        "name": "Root",
+        "zh": "根",
+        "damage": 0,
+        "hp": 1,
+        "reload": 5,
+        "size": 9,
+        "armorStack": 2.5,
+        "description": "每隔一段时间提高花朵护甲，受击消耗一层。",
+        "stackable": false,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Root",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 5000,
+        "price": 10,
+        "armorPerStack": 12,
+        "description": "Provides a layer of additional armor every interval, a layer is removed each time damage is taken.",
+        "color": "#b86c32",
+        "count": 1,
+        "defendOnly": true,
+        "visual_scale": 1.87,
+        "isAdminPetal": false,
+        "zh": "根"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Sponge",
+      "id": "sponge",
+      "source": {
+        "name": "Sponge",
+        "zh": "海绵",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "healthMult": 0.5,
+        "absorbTime": 3,
+        "minRarity": 1,
+        "description": "受到的伤害分摊到数秒内；花朵生命减半。",
+        "stackable": false,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Sponge",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "visual_scale": 1.755,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "Spreads damage taken by the flower over a period of time.\nIf destroyed, deals remaining damage all at once.\nDoes not delay <c val=\"#CE76DB\">Poison</c> damage.",
+        "color": "#000000",
+        "count": 1,
+        "spongeDamageDuration": 1000,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "zh": "海绵"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Triangle",
+      "id": "triangle",
+      "source": {
+        "name": "Triangle",
+        "zh": "三角",
+        "damage": 5,
+        "hp": 10,
+        "reload": 2,
+        "size": 9,
+        "synergy": 4,
+        "description": "为同稀有度的其他三角提供额外伤害。"
+      },
+      "current": {
+        "name": "Triangle",
+        "damage": 5,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 30,
+        "description": "Each copy of this petal equipped grants additional damage to it.",
+        "color": "#FFD700",
+        "count": 1,
+        "zh": "三角"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Uranium",
+      "id": "uranium",
+      "source": {
+        "name": "Uranium",
+        "zh": "铀",
+        "damage": 0,
+        "hp": 75,
+        "reload": 2.5,
+        "activationDelay": 1.5,
+        "size": 9,
+        "aura": 50,
+        "minRarity": 2,
+        "description": "每秒对周围大范围内的怪物造成伤害。"
+      },
+      "current": {
+        "name": "Uranium",
+        "damage": 0,
+        "health": 75,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "Periodically releases radiation.\n-75% damage versus other flowers.\nEffect strength depends on distance to petal.",
+        "color": "#63bf2e",
+        "count": 1,
+        "radiation": {
+          "radius": 160,
+          "intervalMs": 1000,
+          "poisonDurationMs": 2000,
+          "selfPoisonScale": 1
+        },
+        "emissive": true,
+        "lightColor": "#63bf2e",
+        "isAdminPetal": false,
+        "zh": "铀"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Yin Yang",
+      "id": "yin_yang",
+      "source": {
+        "name": "Yin Yang",
+        "zh": "阴阳",
+        "damage": 10,
+        "hp": 10,
+        "reload": 2,
+        "size": 9,
+        "rotationMult": -1,
+        "minRarity": 2,
+        "description": "让花瓣的环绕方向反转。"
+      },
+      "current": {
+        "name": "Yin Yang",
+        "damage": 10,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 10,
+        "description": "This mysterious petal affects the rotation of your petals in unpredictable ways.",
+        "color": "#000000",
+        "count": 1,
+        "isAdminPetal": false,
+        "playerModifiers": {
+          "rotationSpeed": -1
+        },
+        "zh": "阴阳"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Nazar Amulet",
+      "id": "nazar_amulet",
+      "source": {
+        "name": "Nazar Amulet",
+        "zh": "邪眼护符",
+        "damage": 0,
+        "hp": 1,
+        "reload": 60,
+        "size": 9,
+        "damageReduce": 0.98,
+        "description": "大幅降低单次受到的伤害。",
+        "stackable": false,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Nazar Amulet",
+        "zh": "邪眼护符",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 60000,
+        "price": 10,
+        "description": "大幅降低单次受到的伤害。",
+        "color": "#90EE90",
+        "count": 1,
+        "noPhysics": false,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Air",
+      "id": "air",
+      "source": {
+        "name": "Air",
+        "zh": "空气",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "sizeBonus": 8,
+        "description": "增大花朵的体型与判定范围。",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Air",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "It's literally nothing.",
+        "color": "#000000",
+        "count": 0,
+        "playerModifiers": {
+          "playerRadius": 1.1
+        },
+        "isAdminPetal": false,
+        "tradable": false,
+        "zh": "空气"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Basil",
+      "id": "basil",
+      "source": {
+        "name": "Basil",
+        "zh": "罗勒",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "healBonus": 0.2,
+        "minRarity": 5,
+        "description": "增强所有治疗花瓣的效果。",
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Basil",
+        "damage": 0,
+        "health": 1,
+        "size": 1.3,
+        "cooldown": 2500,
+        "price": 40,
+        "visual_scale": 1.615,
+        "description": "Increases all healing received.",
+        "color": "#319E40",
+        "count": 1,
+        "defendOnly": true,
+        "ignoresMobs": true,
+        "minRarity": "mythic",
+        "zh": "罗勒"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Blood Stinger",
+      "id": "blood_stinger",
+      "source": {
+        "name": "Blood Stinger",
+        "zh": "血刺",
+        "damage": 100,
+        "hp": 1,
+        "reload": 7.5,
+        "size": 9,
+        "selfDamage": 5,
+        "description": "生成时对花朵造成自伤。"
+      },
+      "current": {
+        "name": "Blood Stinger",
+        "zh": "血刺",
+        "damage": 100,
+        "health": 1,
+        "size": 1,
+        "cooldown": 7500,
+        "price": 10,
+        "description": "生成时对花朵造成自伤。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Ankh",
+      "id": "ankh",
+      "source": {
+        "name": "Ankh",
+        "zh": "安卡",
+        "damage": 0,
+        "hp": 10,
+        "reload": 256,
+        "size": 9,
+        "activationDelay": 0.5,
+        "description": "被摧毁时把花朵传送到它的位置。"
+      },
+      "current": {
+        "name": "Ankh",
+        "zh": "安卡",
+        "damage": 0,
+        "health": 10,
+        "size": 1,
+        "cooldown": 256000,
+        "price": 10,
+        "description": "被摧毁时把花朵传送到它的位置。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Dead Leaf",
+      "id": "dead_leaf",
+      "source": {
+        "name": "Dead Leaf",
+        "zh": "枯叶",
+        "damage": 16,
+        "hp": 12,
+        "reload": 1.8,
+        "size": 9,
+        "minRarity": 5,
+        "petalHealthBuff": 0,
+        "reloadPenalty": 0.05,
+        "description": "提高所有花瓣的耐久，但使装填变慢 5%。"
+      },
+      "current": {
+        "name": "Dead Leaf",
+        "zh": "枯叶",
+        "damage": 16,
+        "health": 12,
+        "size": 1,
+        "cooldown": 1800,
+        "price": 10,
+        "description": "提高所有花瓣的耐久，但使装填变慢 5%。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "mythic"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Coral",
+      "id": "coral",
+      "source": {
+        "name": "Coral",
+        "zh": "珊瑚",
+        "damage": 11,
+        "hp": 1,
+        "reload": 1.5,
+        "size": 9,
+        "splitOnHit": 4,
+        "description": "受到伤害时碎裂成最多 4 块，每块伤害为前一块的 50%。"
+      },
+      "current": {
+        "name": "Coral",
+        "damage": 11,
+        "health": 1,
+        "size": 1.25,
+        "cooldown": 1500,
+        "price": 53,
+        "visual_scale": 1.5,
+        "description": "Breaks apart on impact.\nEach piece has 50% of the stats of the predecessor.",
+        "color": "#000000",
+        "count": 1,
+        "zh": "珊瑚"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Privet Berry",
+      "id": "privet_berry",
+      "source": {
+        "name": "Privet Berry",
+        "zh": "女贞果",
+        "damage": 0,
+        "hp": 1,
+        "reload": 4,
+        "size": 9,
+        "minRarity": 1,
+        "poisonAmp": 0.2,
+        "description": "Deals the original poison damage received in the last 0.2 seconds again. Does not amplify previous Privet hits."
+      },
+      "current": {
+        "name": "Privet Berry",
+        "zh": "女贞果",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 4000,
+        "price": 10,
+        "description": "Deals the original poison damage received in the last 0.2 seconds again. Does not amplify previous Privet hits.",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "unusual"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Cotton",
+      "id": "cotton",
+      "source": {
+        "name": "Cotton",
+        "zh": "棉花",
+        "damage": 0,
+        "hp": 2,
+        "reload": 1.5,
+        "size": 9,
+        "absorb": 2,
+        "description": "替花朵承受所有伤害，自身耐久耗尽后消失。"
+      },
+      "current": {
+        "name": "Cotton",
+        "damage": 0,
+        "health": 2,
+        "size": 1,
+        "cooldown": 1500,
+        "price": 12,
+        "visual_scale": 1.5,
+        "description": "Absorbs damage taken by the flower.",
+        "color": "#000000",
+        "defendOnly": true,
+        "count": 1,
+        "zh": "棉花"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Amulet",
+      "id": "amulet",
+      "source": {
+        "name": "Amulet",
+        "zh": "护符",
+        "damage": 0,
+        "hp": 10,
+        "reload": 2,
+        "size": 9,
+        "overhealShield": 0.05,
+        "description": "把治疗花瓣造成的过量治疗按比例转化为护盾。"
+      },
+      "current": {
+        "name": "Amulet",
+        "damage": 0,
+        "health": 10,
+        "size": 1,
+        "cooldown": 2000,
+        "price": 40,
+        "visual_scale": 1.15,
+        "description": "Converts a percentage of overheal into shields.",
+        "color": "#FF94C9",
+        "count": 1,
+        "defendOnly": true,
+        "zh": "护符"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Compass",
+      "id": "compass",
+      "source": {
+        "name": "Compass",
+        "zh": "指南针",
+        "damage": 1,
+        "hp": 40,
+        "reload": 2.5,
+        "activationDelay": 9,
+        "size": 9,
+        "minRarity": 6,
+        "compass": true,
+        "description": "指向最近的 Super 及以上生物。"
+      },
+      "current": {
+        "name": "Compass",
+        "damage": 1,
+        "health": 40,
+        "size": 1.4,
+        "cooldown": 2500,
+        "price": 100,
+        "visual_scale": 1.018,
+        "description": "This crappy thing might be able to find something interesting...",
+        "color": "#3498DB",
+        "count": 1,
+        "zh": "指南针"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Moon Rock",
+      "id": "moon_rock",
+      "source": {
+        "name": "Moon Rock",
+        "zh": "月岩",
+        "damage": 3,
+        "hp": 5000,
+        "reload": 100,
+        "size": 20,
+        "minRarity": 6,
+        "orbitCenter": true,
+        "stackable": false,
+        "description": "其他花瓣围绕它旋转；它自身几乎不移动。"
+      },
+      "current": {
+        "name": "Moon Rock",
+        "zh": "月岩",
+        "damage": 3,
+        "health": 5000,
+        "size": 1,
+        "cooldown": 100000,
+        "price": 10,
+        "description": "其他花瓣围绕它旋转；它自身几乎不移动。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "ultra"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Totem",
+      "id": "totem",
+      "source": {
+        "name": "Totem",
+        "zh": "图腾",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "minRarity": 1,
+        "healOnKill": 1,
+        "description": "击杀生物后获得持续 10 秒的生命恢复。",
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Totem",
+        "zh": "图腾",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "击杀生物后获得持续 10 秒的生命恢复。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "unusual"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Monstera",
+      "id": "monstera",
+      "source": {
+        "name": "Monstera",
+        "zh": "龟背竹",
+        "damage": 0,
+        "hp": 75,
+        "reload": 2.5,
+        "activationDelay": 0.5,
+        "size": 9,
+        "minRarity": 4,
+        "healAura": 1.4,
+        "stackable": false,
+        "description": "每秒治疗半径内的所有花朵。"
+      },
+      "current": {
+        "name": "Monstera",
+        "zh": "龟背竹",
+        "damage": 0,
+        "health": 75,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "每秒治疗半径内的所有花朵。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "legendary"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Cogwheel",
+      "id": "cogwheel",
+      "source": {
+        "name": "Cogwheel",
+        "zh": "齿轮",
+        "damage": 19,
+        "hp": 13,
+        "reload": 2.5,
+        "size": 9,
+        "stopOrbit": true,
+        "description": "装备后周期性地让花瓣停止旋转。"
+      },
+      "current": {
+        "name": "Cogwheel",
+        "zh": "齿轮",
+        "damage": 19,
+        "health": 13,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "装备后周期性地让花瓣停止旋转。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Shovel",
+      "id": "shovel",
+      "source": {
+        "name": "Shovel",
+        "zh": "铲子",
+        "damage": 0,
+        "hp": 1,
+        "reload": 15,
+        "activationDelay": 2,
+        "size": 9,
+        "invulnTime": 2,
+        "stackable": false,
+        "description": "准备后防御可潜地2秒，地下Worm和Desert Centipede仍能命中。",
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Shovel",
+        "zh": "铲子",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 15000,
+        "price": 10,
+        "description": "准备后防御可潜地2秒，地下Worm和Desert Centipede仍能命中。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Blueberries",
+      "id": "magic_peas",
+      "source": {
+        "name": "Blueberries",
+        "zh": "蓝莓",
+        "damage": 0,
+        "hp": 5,
+        "reload": 0.05,
+        "activationDelay": 0.5,
+        "size": 5,
+        "count": 4,
+        "projectile": true,
+        "projectileLightning": true,
+        "lightningDamage": 30,
+        "manaCost": 1.2,
+        "description": "分裂成 4 颗射出，命中时释放闪电。"
+      },
+      "current": {
+        "name": "Blueberries",
+        "damage": 0,
+        "health": 5,
+        "size": 1,
+        "cooldown": 50,
+        "price": 20,
+        "requiredMana": 1.2,
+        "lightningDamage": true,
+        "description": "It goes poof. Now with the extra secret ingredient: lightning.",
+        "color": "#000000",
+        "count": 4,
+        "clumped": true,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "projectile": {
+          "count": 1,
+          "spreadAngle": 1.5708,
+          "speed": 800,
+          "distance": 1000
+        },
+        "zh": "蓝莓"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Domino",
+      "id": "domino",
+      "source": {
+        "name": "Domino",
+        "zh": "多米诺",
+        "damage": 1,
+        "hp": 16,
+        "reload": 1,
+        "size": 9,
+        "damageRandom": true,
+        "damageMax": 36,
+        "description": "伤害按点数随机决定（0 到最大值）。"
+      },
+      "current": {
+        "name": "Domino",
+        "zh": "多米诺",
+        "damage": 1,
+        "health": 16,
+        "size": 1,
+        "cooldown": 1000,
+        "price": 10,
+        "description": "伤害按点数随机决定（0 到最大值）。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Card",
+      "id": "card",
+      "source": {
+        "name": "Card",
+        "zh": "扑克牌",
+        "damage": 5,
+        "hp": 30,
+        "reload": 2.5,
+        "size": 9,
+        "minRarity": 2,
+        "suit": true,
+        "description": "四种花色拥有不同的伤害与耐久。"
+      },
+      "current": {
+        "name": "Card",
+        "zh": "扑克牌",
+        "damage": 5,
+        "health": 30,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "四种花色拥有不同的伤害与耐久。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "rare"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Battery",
+      "id": "battery",
+      "source": {
+        "name": "Battery",
+        "zh": "电池",
+        "damage": 0,
+        "hp": 1,
+        "reload": 2.5,
+        "size": 9,
+        "onHurtLightning": 12,
+        "onHurtBounces": 2,
+        "description": "花朵受到身体伤害时释放连锁闪电。",
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Battery",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "cooldown": 2500,
+        "price": 10,
+        "description": "Discharges electricity whenever the flower gets hit.",
+        "color": "#fcdd86",
+        "count": 1,
+        "defendOnly": true,
+        "isAdminPetal": false,
+        "zh": "电池"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Yggdrasil",
+      "id": "yggdrasil",
+      "source": {
+        "name": "Yggdrasil",
+        "zh": "世界树",
+        "damage": 0,
+        "hp": 10,
+        "reload": 5,
+        "size": 9,
+        "minRarity": 4,
+        "revive": true,
+        "activationDelay": 5,
+        "reviveCooldown": 48600,
+        "description": "花朵死亡时将其复活并恢复全部生命。"
+      },
+      "current": {
+        "name": "Yggdrasil",
+        "damage": 0,
+        "health": 10,
+        "size": 1,
+        "cooldown": 5000,
+        "price": 200,
+        "cooldownScale": "2048000/(2^r)",
+        "description": "A dried leaf from the Yggdrasil tree.\nRumored to be able to bring the fallen back to life.",
+        "color": "#FFD700",
+        "count": 1,
+        "zh": "世界树"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Bandage",
+      "id": "bandage",
+      "source": {
+        "name": "Bandage",
+        "zh": "绷带",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "minRarity": 5,
+        "undeadTime": 1.5,
+        "undeadResist": 0.75,
+        "description": "死亡时化为亡灵，延迟死亡；期间身体伤害 -75%，之后一段时间无法复活。",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Bandage",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "speed": 0,
+        "range": 0,
+        "cooldown": 0,
+        "price": 60,
+        "visual_scale": 1.56,
+        "description": "Turns the flower <c val=\"#83B05D\">Undead</c> for a limited time on death.\nDelays death until expiration.\nFlower <c val=\"#FF6666\">Body Damage</c> is reduced during this period.\nPrevents revival for some time afterwards.",
+        "color": "#E5DAA1",
+        "count": 0,
+        "noPhysics": true,
+        "equipFlags": "Bandage",
+        "zh": "绷带"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Mysterious Relic",
+      "id": "mysterious_relic",
+      "source": {
+        "name": "Mysterious Relic",
+        "zh": "神秘遗物",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "minRarity": 1,
+        "flowerHealthPct": 0.1,
+        "description": "佩戴者之间分摊伤害；本作单人，只保留其最大生命加成。",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Mysterious Relic",
+        "zh": "神秘遗物",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 0,
+        "price": 10,
+        "description": "佩戴者之间分摊伤害；本作单人，只保留其最大生命加成。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "unusual",
+        "noPhysics": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Paranormal Goggles",
+      "id": "paranormal_goggles",
+      "source": {
+        "name": "Paranormal Goggles",
+        "zh": "灵异护目镜",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "visionPenalty": 0.2,
+        "description": "可以看到并伤害幽灵；视野降低 20%。",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Paranormal Goggles",
+        "zh": "灵异护目镜",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 0,
+        "price": 10,
+        "description": "可以看到并伤害幽灵；视野降低 20%。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "noPhysics": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Champion's Crown",
+      "id": "champion_crown",
+      "source": {
+        "name": "Champion's Crown",
+        "zh": "冠军之冠",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "minRarity": 8,
+        "social": "Grants temporary Super Basics; never adds permanent inventory items.",
+        "description": "Grants up to 25 nearby flowers a temporary Super Basic. Its damage credits the crown owner.",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Champion's Crown",
+        "damage": 0,
+        "health": 1,
+        "size": 1,
+        "speed": 0,
+        "range": 0,
+        "cooldown": 0,
+        "price": 2000,
+        "visual_scale": 2.08,
+        "description": "Gives flowers around you a {rarity} Basic.\nYou receive credit for damage dealt using it.",
+        "color": "#FFDC06",
+        "count": 0,
+        "equipFlags": "Crown",
+        "noPhysics": true,
+        "zh": "冠军之冠"
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": false,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Pharaoh's Crown",
+      "id": "pharaoh_crown",
+      "source": {
+        "name": "Pharaoh's Crown",
+        "zh": "法老之冠",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "minRarity": 8,
+        "summon": "Mummy Beetle",
+        "summonTime": 6,
+        "summonRarity": 5,
+        "description": "每秒召唤一只 Mythic 亡灵绷带甲虫，持续 6 秒；重复佩戴不叠加。",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": null,
+      "art": null,
+      "mechanismStatus": "requires behavior verification"
+    },
+    {
+      "name": "Corruption",
+      "id": "corruption",
+      "source": {
+        "name": "Corruption",
+        "zh": "腐化",
+        "damage": 0,
+        "hp": 1,
+        "reload": 0,
+        "size": 9,
+        "minRarity": 6,
+        "social": "Enables PvP for level 20+ flowers. Locked while alive; Ultra is consumed on death.",
+        "description": "Enables PvP outside Hel for level 20+ flowers.",
+        "stackable": false,
+        "wearable": true,
+        "invulnerable": true
+      },
+      "current": {
+        "name": "Corruption",
+        "zh": "腐化",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 0,
+        "price": 10,
+        "description": "Enables PvP outside Hel for level 20+ flowers.",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "ultra",
+        "noPhysics": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
+      "mechanismStatus": "requires behavior verification"
+    }
+  ]
+}

@@ -1,11 +1,9 @@
 #pragma once
-// The talent tree: what a branch is, what a tier costs, and what it multiplies.
+// Talent tree aligned with florrclone (mirrored client talent table).
 //
-// Talent points are DERIVED, never stored: a player has earned one per level
-// and spent whatever their tiers cost. Keeping a balance as well is a second
-// source of truth that drifts the first time a level-up and a spend race, and
-// the refund rule -- "resetting hands back your level in points" -- only makes
-// sense if the two were the same number all along.
+// Talent points are DERIVED: one per level, minus what tiers cost. The save
+// stores only per-branch levels (0 = unbought in florrclone JSON; we store
+// tier index 0..n-1 for the highest owned tier, or -1 when none).
 
 #include <array>
 #include <cstddef>
@@ -13,334 +11,356 @@
 #include <string>
 #include <vector>
 
-#include "shared/game/rarity.h"
-
 namespace flix {
 
 enum class SkillId : std::uint8_t {
-    Damage = 0,
+    Health = 0,
+    Loadout,
+    Rotation,
+    Antennae,
+    Luck,
+    Medic,
     PetalHealth,
-    PlayerHealth,
-    Healing,
-    Absorbing,
+    Poison,
+    Reach,
     Reload,
+    SharpEdges,
     SecondChance,
-    /// Appended rather than filed beside Petal Health: the wire and the
-    /// profile both carry a branch by this index, so a new branch goes on the
-    /// end where it cannot renumber one an older build already knows.
-    PetHealth,
-    /// Two tiers under one id: Duplicator, then Triplicator. One branch rather
-    /// than two because the second REPLACES the first -- a tier that is bought
-    /// in order and supersedes the one below is exactly what a tier already is,
-    /// and the refund, the wire and the "bought in order" rule come with it.
-    Duplicator,
-    /// Widens the pickup reach, the way a magnet petal does.
     Magnetism,
-    /// One node at the root: unlocks the prestige biomes (shared/game/
-    /// prestige.h). Owned or not; it multiplies nothing.
-    Prestige,
+    Duplicator,
+    BodyToxicity,
+    ConcentratedPoison,
+    Summoner,
     Count,
 };
 
 inline constexpr int kSkillCount = static_cast<int>(SkillId::Count);
 
-/// The keys the database stores: the TypeScript build's names, kept so the
-/// trees it saved still load. Stored rather than derived from the enum so a
-/// reordering here cannot silently rename a saved branch out from under an
-/// account.
+/// Database / wire keys — exact florrclone `save.talents` field names.
 inline constexpr std::array<const char*, kSkillCount> kSkillKeys = {
-    "damage", "petalHealth", "playerHealth", "healingMultiplier", "absorbing", "reload",
-    "secondChance", "petHealth", "duplicator", "magnetism", "prestige",
+    "health", "loadout", "rotation", "antennae", "luck", "medic", "petalHealth",
+    "poison", "reach", "reload", "sharpEdges", "secondChance", "magnetism",
+    "duplicator", "bodyToxicity", "concentratedPoison", "summoner",
 };
 
 inline constexpr std::array<const char*, kSkillCount> kSkillLabels = {
-    "Damage", "Petal Health", "Flower Health", "Healing", "Absorption", "Reload", "Second Chance",
-    "Pet Health", "Duplicator", "Magnetism", "Prestige",
+    "Health", "Loadout", "Petal Rotation", "Antennae", "Luck", "Medic",
+    "Petal Health", "Poison", "Reach", "Reload", "Sharp Edges", "Second Chance",
+    "Magnetism", "Duplicator", "Body Toxicity", "Concentrated Poison", "Summoner",
 };
 
-/// How many tiers each branch has. Six of them stop short of the full
-/// ladder: Healing tops out at epic, Reload at unique (no apex tier to buy),
-/// the three forks -- Second Chance, Duplicator, Magnetism -- after two or
-/// three tiers, and Prestige is a single node. None reaches past the ladder:
-/// universal is a petal tier, not a talent one.
+inline constexpr std::array<const char*, kSkillCount> kSkillLabelsZh = {
+    "血量", "槽位", "转速", "触角", "幸运", "治疗", "花瓣耐久", "剧毒", "攻击范围",
+    "刷新", "锐利边缘", "第二次机会", "磁性", "重瓣", "身体毒性", "浓缩剧毒", "召唤师",
+};
+
+/// How many buyable tiers each branch has (florrclone costs[].length).
 inline constexpr std::array<int, kSkillCount> kSkillTiers = {
-    kLadderRarityCount, kLadderRarityCount, kLadderRarityCount, 4, kLadderRarityCount,
-    rarityIndex(Rarity::Unique) + 1, 2, kLadderRarityCount, 2, 3, 1,
+    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 1, 4, 1, 1, 9,
 };
 
-/// What one tier costs in talent points. Steep at the top, so the last tiers
-/// are a long-term goal rather than an afternoon's levelling.
-inline constexpr std::array<int, kLadderRarityCount> kTierCost = {
-    1, 2, 3, 5, 8, 12, 18, 25, 26, 30,
-};
-
-/// The Duplicator branch is priced on its own: Duplicator 15, Triplicator 20.
-/// It sits past a mythic tier, so the ladder's own 1 and 2 would make the
-/// strongest node on the tree the cheapest one.
-inline constexpr std::array<int, 2> kDuplicatorTierCost = {15, 20};
-
-/// Magnetism is priced on from where it forks: legendary Absorption's own
-/// price and the two ladder steps after it, not the ladder's opening 1-2-3.
-inline constexpr std::array<int, 3> kMagnetismTierCost = {5, 8, 12};
-
-/// Prestige's one node. Priced as an endgame goal on its own rather than off
-/// the ladder: it opens a whole second world.
-inline constexpr int kPrestigeCost = 225;
-
-/// What a tier costs, on the branch it belongs to. Every caller that prices a
-/// tier -- the purchase, the refund total, the panel -- asks this rather than
-/// indexing kTierCost, so a branch with its own prices cannot be charged at
-/// one rate and refunded at another.
-inline int skillTierCost(SkillId id, int tier) {
-    if (tier < 0) return 0;
-    const std::size_t t = static_cast<std::size_t>(tier);
-    if (id == SkillId::Duplicator) return t < kDuplicatorTierCost.size() ? kDuplicatorTierCost[t] : 0;
-    if (id == SkillId::Magnetism) return t < kMagnetismTierCost.size() ? kMagnetismTierCost[t] : 0;
-    if (id == SkillId::Prestige) return t == 0 ? kPrestigeCost : 0;
-    return t < kTierCost.size() ? kTierCost[t] : 0;
-}
-
-/// Second Chance forks off Flower Health and stays locked until that branch
-/// reaches rare.
-inline constexpr SkillId kSecondChanceParent = SkillId::PlayerHealth;
-inline constexpr Rarity kSecondChanceRequirement = Rarity::Rare;
-
-/// Duplicator forks off Absorption at mythic.
-inline constexpr SkillId kDuplicatorParent = SkillId::Absorbing;
-inline constexpr Rarity kDuplicatorRequirement = Rarity::Mythic;
-
-/// Magnetism forks off Absorption one tier earlier, at legendary.
-inline constexpr SkillId kMagnetismParent = SkillId::Absorbing;
-inline constexpr Rarity kMagnetismRequirement = Rarity::Legendary;
-
-/// A branch that grows out of another branch's node rather than out of the
-/// flower, and stays locked until that parent reaches `requirement`.
-struct SkillFork {
-    SkillId child;
-    SkillId parent;
-    Rarity requirement;
-};
-
-inline constexpr std::array<SkillFork, 3> kSkillForks = {{
-    {SkillId::SecondChance, kSecondChanceParent, kSecondChanceRequirement},
-    {SkillId::Duplicator, kDuplicatorParent, kDuplicatorRequirement},
-    {SkillId::Magnetism, kMagnetismParent, kMagnetismRequirement},
+/// Per-tier point costs from florrclone.
+inline constexpr std::array<std::array<int, 9>, kSkillCount> kSkillCosts = {{
+    {{2, 5, 8, 11, 14, 17, 20, 21, 24}},       // health
+    {{3, 6, 9, 12, 15, 0, 0, 0, 0}},             // loadout
+    {{1, 2, 3, 4, 5, 0, 0, 0, 0}},               // rotation
+    {{1, 3, 5, 0, 0, 0, 0, 0, 0}},               // antennae
+    {{2, 3, 4, 5, 6, 7, 8, 9, 10}},              // luck
+    {{2, 5, 8, 11, 14, 17, 20, 23, 26}},         // medic
+    {{2, 4, 6, 8, 10, 12, 14, 16, 18}},          // petalHealth
+    {{1, 2, 3, 3, 3, 3, 3, 3, 3}},               // poison
+    {{3, 6, 9, 0, 0, 0, 0, 0, 0}},               // reach
+    {{2, 6, 10, 12, 16, 20, 24, 28, 32}},        // reload
+    {{2, 3, 4, 5, 6, 7, 8, 9, 0}},               // sharpEdges
+    {{10, 20, 0, 0, 0, 0, 0, 0, 0}},             // secondChance
+    {{15, 0, 0, 0, 0, 0, 0, 0, 0}},              // magnetism
+    {{10, 20, 30, 40, 0, 0, 0, 0, 0}},           // duplicator
+    {{10, 0, 0, 0, 0, 0, 0, 0, 0}},              // bodyToxicity
+    {{15, 0, 0, 0, 0, 0, 0, 0, 0}},              // concentratedPoison
+    {{2, 5, 8, 11, 14, 17, 20, 23, 26}},         // summoner
 }};
 
-/// The fork `id` hangs off, or nullptr for a branch that grows from the flower.
-inline const SkillFork* skillFork(SkillId id) {
-    for (const SkillFork& fork : kSkillForks) {
-        if (fork.child == id) return &fork;
+inline int skillTierCost(SkillId id, int tier) {
+    const std::size_t i = static_cast<std::size_t>(id);
+    if (i >= kSkillCount || tier < 0 || tier >= kSkillTiers[i]) return 0;
+    return kSkillCosts[i][static_cast<std::size_t>(tier)];
+}
+
+inline int skillTierCount(SkillId id) {
+    const std::size_t i = static_cast<std::size_t>(id);
+    return i < kSkillCount ? kSkillTiers[i] : 0;
+}
+
+// Child → parent requirement (florrclone `requires`).
+struct SkillGate {
+    SkillId child;
+    SkillId parent;
+    int parentLevel;  ///< 1-based owned level required on parent
+};
+
+inline constexpr std::array<SkillGate, 7> kSkillGates = {{
+    {SkillId::Antennae, SkillId::Loadout, 1},
+    {SkillId::Reach, SkillId::Loadout, 2},
+    {SkillId::SecondChance, SkillId::Health, 3},
+    {SkillId::Magnetism, SkillId::Loadout, 5},
+    {SkillId::Duplicator, SkillId::Loadout, 4},
+    {SkillId::BodyToxicity, SkillId::SharpEdges, 6},
+    {SkillId::ConcentratedPoison, SkillId::Poison, 3},
+}};
+
+inline const SkillGate* skillGate(SkillId id) {
+    for (const SkillGate& gate : kSkillGates) {
+        if (gate.child == id) return &gate;
     }
     return nullptr;
 }
 
-/// What a node is called. Duplicator's second tier has a name of its own; every
-/// other tier is its branch's label.
-inline const char* skillTierLabel(SkillId id, int tier) {
-    if (id == SkillId::Duplicator && tier == 1) return "Triplicator";
+inline const char* skillTierLabel(SkillId id, int /*tier*/) {
     const std::size_t i = static_cast<std::size_t>(id);
     return i < kSkillLabels.size() ? kSkillLabels[i] : "";
 }
 
-/// Copies Duplicator (+1) and Triplicator (+2) add to a petal. The second tier
-/// replaces the first rather than stacking on it.
-inline constexpr std::array<int, 2> kDuplicatorExtraCopies = {1, 2};
-/// The fewest copies a petal must already field to be duplicated. A single
-/// petal is left alone: the talent multiplies clumps, it does not turn a rose
-/// into two roses.
-inline constexpr int kDuplicatorMinCopies = 2;
-/// The most petals one slot may field: the config loader's cap on `count`,
-/// which the petal system's per-slot bitmask is sized to.
-inline constexpr int kMaxPetalCopies = 64;
+// -- effect tables (florrclone client) ----------------------------------------
 
-/// Pickup reach each Magnetism tier adds, in world units; each tier replaces
-/// the one below. Steps of a common antennae's 50, topping out under a third
-/// of a common magnet's 500 -- a talent that matched the petal would make the
-/// petal pointless.
-inline constexpr std::array<double, 3> kMagnetismBonus = {50.0, 100.0, 150.0};
-
-/// What a Second Chance tier buys: the killing blow leaves the flower at 1 HP
-/// with this much invulnerability, then locks the talent out for the cooldown.
-///
-/// Only two tiers, matching kSkillTiers. The reference's tables define common
-/// and uncommon and nothing else, and its `if (!duration) return false` makes
-/// every higher tier a no-op rather than an extrapolation -- so a tier outside
-/// this range must not revive at all.
+/// Health: base HP multiplier by owned tier index.
+inline constexpr std::array<double, 9> kHealthTalentScale = {
+    1.3, 1.69, 2.2, 2.86, 3.71, 4.83, 6.27, 8.16, 10.6,
+};
+/// Medic / petal healing multiplier.
+inline constexpr std::array<double, 9> kMedicTalentScale = {
+    1.15, 1.322, 1.521, 1.749, 2.011, 2.313, 2.66, 3.059, 4.046,
+};
+/// Petal Health multiplier (same curve as medic in florrclone).
+inline constexpr std::array<double, 9> kPetalHealthTalentScale = {
+    1.15, 1.322, 1.521, 1.749, 2.011, 2.313, 2.66, 3.059, 4.046,
+};
+/// Reload time reduction fractions; cooldown *= (1 - value).
+inline constexpr std::array<double, 9> kReloadReduce = {
+    0.1, 0.19, 0.271, 0.344, 0.475, 0.58, 0.664, 0.731, 0.812,
+};
+/// Rotation speed rad/s.
+inline constexpr std::array<double, 5> kRotationRad = {3.1, 3.7, 4.3, 4.9, 5.5};
+/// Antennae FOV bonus.
+inline constexpr std::array<double, 3> kAntennaeFov = {0.25, 0.5, 1.0};
+/// Luck values.
+inline constexpr std::array<double, 9> kLuckTalent = {
+    0.1, 0.3, 0.5, 0.7, 1.0, 1.4, 1.8, 2.3, 2.8,
+};
+/// Poison damage bonus fractions.
+inline constexpr std::array<double, 9> kPoisonBonus = {
+    0.0625, 0.125, 0.1875, 0.25, 0.3125, 0.375, 0.4375, 0.5, 0.5625,
+};
+/// Reach attack-range bonus.
+inline constexpr std::array<double, 3> kReachBonus = {50.0, 100.0, 150.0};
+/// Summon health multiplier.
+inline constexpr std::array<double, 9> kSummonerScale = {
+    1.1, 1.21, 1.331, 1.464, 1.611, 1.772, 1.949, 2.144, 2.594,
+};
+/// Second Chance: duration / cooldown ms by tier.
 inline constexpr std::array<double, 2> kSecondChanceDurationMillis = {300.0, 1500.0};
 inline constexpr std::array<double, 2> kSecondChanceCooldownMillis = {60000.0, 30000.0};
 
-/// The window and lockout for a tier, or {0, 0} when that tier does nothing.
+inline constexpr int kMaxPetalCopies = 64;
+inline constexpr int kDuplicatorMinCopies = 2;
+inline constexpr int kBaseLoadoutSlots = 5;
+inline constexpr int kMaxLoadoutSlots = 10;
+
+inline double tableAt(const double* table, int size, int tier) {
+    return (tier >= 0 && tier < size) ? table[tier] : 1.0;
+}
+
+template <std::size_t N>
+inline double tableAt(const std::array<double, N>& table, int tier) {
+    return (tier >= 0 && tier < static_cast<int>(N)) ? table[static_cast<std::size_t>(tier)] : 1.0;
+}
+
+/// Compatibility name used by talent UI helpers.
+template <std::size_t N>
+inline double scaleAt(const std::array<double, N>& table, int tier) {
+    return tableAt(table, tier);
+}
+
 inline std::array<double, 2> secondChanceEffect(int tier) {
-    if (tier < 0 || tier >= static_cast<int>(kSecondChanceDurationMillis.size())) return {0.0, 0.0};
-    const std::size_t t = static_cast<std::size_t>(tier);
-    return {kSecondChanceDurationMillis[t], kSecondChanceCooldownMillis[t]};
+    if (tier < 0 || tier >= 2) return {0.0, 0.0};
+    return {kSecondChanceDurationMillis[static_cast<std::size_t>(tier)],
+            kSecondChanceCooldownMillis[static_cast<std::size_t>(tier)]};
 }
 
-/// Applied to the player's own numbers: max health and body damage.
-/// A gentle curve -- these compound with level and with petal modifiers.
-inline constexpr std::array<double, kLadderRarityCount> kStatSkillScale = {
-    1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9,
-};
-
-/// Applied to petal EFFECTS: healing output. Steeper than the stat curve.
-inline constexpr std::array<double, kLadderRarityCount> kEffectSkillScale = {
-    1.0, 1.1, 1.2, 1.35, 1.6, 2.0, 2.6, 3.3, 4.0, 4.8,
-};
-
-/// Applied to the health of what the flower fields: its petals (Petal Health)
-/// and its summons (Pet Health). One table for the tooltip and the server, so
-/// the percentage a tier advertises is the percentage it grants. The effect
-/// curve's shape through unique, and 4.5x at apex.
-inline constexpr std::array<double, kLadderRarityCount> kHealthSkillScale = {
-    1.0, 1.1, 1.2, 1.35, 1.6, 2.0, 2.6, 3.3, 4.0, 4.5,
-};
-
-/// Applied to absorbed-petal XP. Geometric, so apex lands on exactly 8x.
-inline constexpr std::array<double, kLadderRarityCount> kAbsorbSkillScale = {
-    1.0, 1.26, 1.59, 2.0, 2.52, 3.17, 4.0, 5.04, 6.35, 8.0,
-};
-
-/// Applied to petal COOLDOWNS, and the only table that shrinks its input: a
-/// reload is a wait, so the branch is worth having when the number goes DOWN.
-/// Geometric like the absorb curve, so every step is worth the same proportion
-/// of the last. The branch stops at unique (0.292); the apex entry is there
-/// only because every table spans the ladder, and no tree can reach it.
-inline constexpr std::array<double, kLadderRarityCount> kReloadSkillScale = {
-    1.0, 0.857, 0.735, 0.630, 0.540, 0.463, 0.397, 0.340, 0.292, 0.25,
-};
-
-/// `tier` is a rarity index, or -1 for a branch never touched. Out-of-range
-/// tiers read as neutral rather than clamping, because the only way to get one
-/// is a corrupt record, and a corrupt record must not grant a bonus.
-inline double scaleAt(const std::array<double, kLadderRarityCount>& table, int tier) {
-    return (tier >= 0 && tier < kLadderRarityCount) ? table[static_cast<std::size_t>(tier)] : 1.0;
-}
-
-/// One account's tree.
 struct SkillSet {
+    /// Highest owned tier index per branch, or -1 if none.
+    /// florrclone JSON stores 1-based levels (0 = none); convert on load/save.
     std::array<std::int8_t, kSkillCount> tier{};
 
     SkillSet() { clear(); }
-
     void clear() { tier.fill(-1); }
 
     int level(SkillId id) const { return tier[static_cast<std::size_t>(id)]; }
     void set(SkillId id, int t) { tier[static_cast<std::size_t>(id)] = static_cast<std::int8_t>(t); }
 
-    /// Points already committed to the tree: every tier up to and including
-    /// the one bought, on every branch.
+    /// florrclone save uses 0 for none, 1..n for owned level.
+    int florrLevel(SkillId id) const {
+        const int t = level(id);
+        return t < 0 ? 0 : t + 1;
+    }
+    void setFlorrLevel(SkillId id, int florrLevel) {
+        if (florrLevel <= 0) set(id, -1);
+        else set(id, florrLevel - 1);
+    }
+
     int spent() const {
         int total = 0;
         for (int s = 0; s < kSkillCount; ++s) {
-            for (int t = 0; t <= tier[static_cast<std::size_t>(s)] && t < kLadderRarityCount; ++t) {
-                total += skillTierCost(static_cast<SkillId>(s), t);
-            }
+            const int owned = tier[static_cast<std::size_t>(s)];
+            for (int t = 0; t <= owned; ++t) total += skillTierCost(static_cast<SkillId>(s), t);
         }
         return total;
     }
 
-    double statScale(SkillId id) const { return scaleAt(kStatSkillScale, level(id)); }
-    double effectScale(SkillId id) const { return scaleAt(kEffectSkillScale, level(id)); }
-    /// Petal Health's or Pet Health's multiplier. See kHealthSkillScale.
-    double healthScale(SkillId id) const { return scaleAt(kHealthSkillScale, level(id)); }
-
-    /// What every petal cooldown is multiplied by. A factor below one, so it
-    /// is the one scale a caller must not clamp UP to 1.0 on a missing tree.
-    double reloadScale() const { return scaleAt(kReloadSkillScale, level(SkillId::Reload)); }
-
-    /// True when `id` may be bought: always for a branch off the flower, and
-    /// for a fork once its parent has reached the tier it hangs off.
     bool prerequisiteMet(SkillId id) const {
-        const SkillFork* fork = skillFork(id);
-        return fork == nullptr || level(fork->parent) >= rarityIndex(fork->requirement);
+        const SkillGate* gate = skillGate(id);
+        if (gate == nullptr) return true;
+        return florrLevel(gate->parent) >= gate->parentLevel;
     }
 
-    /// True when Second Chance's prerequisite is satisfied.
-    bool secondChanceUnlocked() const { return prerequisiteMet(SkillId::SecondChance); }
+    int loadoutSlots() const {
+        const int extra = florrLevel(SkillId::Loadout);
+        const int slots = kBaseLoadoutSlots + extra;
+        return slots > kMaxLoadoutSlots ? kMaxLoadoutSlots : slots;
+    }
 
-    /// How many petals a slot fields once Duplicator has had its say, given
-    /// the `copies` its petal and tier field on their own. Gated on the fork's
-    /// prerequisite as well as the tier, so a record that holds the branch
-    /// without the mythic Absorption under it grants nothing.
+    double healthScale() const {
+        const int t = level(SkillId::Health);
+        return t < 0 ? 1.0 : tableAt(kHealthTalentScale, t);
+    }
+    double petalHealthScale() const {
+        const int t = level(SkillId::PetalHealth);
+        return t < 0 ? 1.0 : tableAt(kPetalHealthTalentScale, t);
+    }
+    double medicScale() const {
+        const int t = level(SkillId::Medic);
+        return t < 0 ? 1.0 : tableAt(kMedicTalentScale, t);
+    }
+    /// Cooldown multiplier (≤ 1). Also applies florrclone feel half-reload outside.
+    double reloadScale() const {
+        const int t = level(SkillId::Reload);
+        if (t < 0) return 1.0;
+        return 1.0 - tableAt(kReloadReduce, t);
+    }
+    double rotationSpeed() const {
+        const int t = level(SkillId::Rotation);
+        return t < 0 ? 2.5 : tableAt(kRotationRad, t);  // base ~2.5 if unknown
+    }
+    double antennaeFovBonus() const {
+        const int t = level(SkillId::Antennae);
+        return t < 0 || !prerequisiteMet(SkillId::Antennae) ? 0.0 : tableAt(kAntennaeFov, t);
+    }
+    double luck() const {
+        const int t = level(SkillId::Luck);
+        return t < 0 ? 0.0 : tableAt(kLuckTalent, t);
+    }
+    double poisonBonus() const {
+        const int t = level(SkillId::Poison);
+        return t < 0 ? 0.0 : tableAt(kPoisonBonus, t);
+    }
+    double reachBonus() const {
+        const int t = level(SkillId::Reach);
+        return t < 0 || !prerequisiteMet(SkillId::Reach) ? 0.0 : tableAt(kReachBonus, t);
+    }
+    double summonerScale() const {
+        const int t = level(SkillId::Summoner);
+        return t < 0 ? 1.0 : tableAt(kSummonerScale, t);
+    }
+    /// Body damage × 1.38^(tier+1) when Sharp Edges owned.
+    double bodyDamageScale() const {
+        const int t = level(SkillId::SharpEdges);
+        if (t < 0) return 1.0;
+        double m = 1.0;
+        for (int i = 0; i <= t; ++i) m *= 1.38;  // 1.38^(t+1)
+        return m;
+    }
+    bool bodyToxicity() const {
+        return level(SkillId::BodyToxicity) >= 0 && prerequisiteMet(SkillId::BodyToxicity);
+    }
+    bool concentratedPoison() const {
+        return level(SkillId::ConcentratedPoison) >= 0 &&
+               prerequisiteMet(SkillId::ConcentratedPoison);
+    }
+    bool secondChanceUnlocked() const { return prerequisiteMet(SkillId::SecondChance); }
+    bool magnetismUnlocked() const {
+        return level(SkillId::Magnetism) >= 0 && prerequisiteMet(SkillId::Magnetism);
+    }
+    double magnetismBonus() const { return magnetismUnlocked() ? 250.0 : 0.0; }
+
+    /// florrclone duplicator: tiers unlock higher rarity duplication; bonus copies
+    /// for multi-petal slots. Conservative: +1 at tier0, +2 at tier1+.
     int petalCopies(int copies) const {
+        if (copies < 2 || !prerequisiteMet(SkillId::Duplicator)) return copies;
         const int t = level(SkillId::Duplicator);
-        if (copies < kDuplicatorMinCopies || t < 0 ||
-            t >= static_cast<int>(kDuplicatorExtraCopies.size()) ||
-            !prerequisiteMet(SkillId::Duplicator)) {
-            return copies;
-        }
-        const int boosted = copies + kDuplicatorExtraCopies[static_cast<std::size_t>(t)];
+        if (t < 0) return copies;
+        const int extra = t >= 1 ? 2 : 1;
+        const int boosted = copies + extra;
         return boosted < kMaxPetalCopies ? boosted : kMaxPetalCopies;
     }
 
-    /// Pickup reach the Magnetism branch adds. Gated on legendary Absorption
-    /// the same way petalCopies is gated on mythic.
-    double magnetismBonus() const {
-        const int t = level(SkillId::Magnetism);
-        if (t < 0 || t >= static_cast<int>(kMagnetismBonus.size()) ||
-            !prerequisiteMet(SkillId::Magnetism)) {
-            return 0.0;
-        }
-        return kMagnetismBonus[static_cast<std::size_t>(t)];
+    // Compatibility shims for call sites still using old flowrix SkillId names
+    // via overloaded helpers below — prefer the methods above.
+    double healthScale(SkillId id) const {
+        if (id == SkillId::PetalHealth) return petalHealthScale();
+        if (id == SkillId::Health) return healthScale();
+        if (id == SkillId::Summoner) return summonerScale();
+        return 1.0;
     }
-
-    /// Whether this tree may join the prestige biomes.
-    bool prestigeUnlocked() const { return level(SkillId::Prestige) >= 0; }
+    double effectScale(SkillId id) const {
+        if (id == SkillId::Medic) return medicScale();
+        return 1.0;
+    }
+    double statScale(SkillId id) const {
+        if (id == SkillId::Health) return healthScale();
+        if (id == SkillId::SharpEdges) return bodyDamageScale();
+        return 1.0;
+    }
+    bool prestigeUnlocked() const { return false; }
 };
 
-/// A slot's copy count for a flower that may or may not carry a tree. Bots and
-/// test rigs without one field the petal's own count.
 inline int petalCopies(int copies, const SkillSet* skills) {
     return skills != nullptr ? skills->petalCopies(copies) : copies;
 }
 
-/// Points available: one per level, less what the tree already holds. Clamped
-/// at zero so a rebalance that raises a tier cost can never mint negative TP.
 inline int availableTalentPoints(int level, const SkillSet& skills) {
     const int free = level - skills.spent();
     return free > 0 ? free : 0;
 }
 
-/// Resolves a database key. Returns SkillId::Count for anything unknown, which
-/// is how an older record's retired branch is ignored rather than misapplied.
 inline SkillId skillFromKey(const std::string& key) {
     for (int i = 0; i < kSkillCount; ++i) {
         if (key == kSkillKeys[static_cast<std::size_t>(i)]) return static_cast<SkillId>(i);
     }
+    // Legacy flowrix keys → nearest florrclone branch (import only).
+    if (key == "playerHealth" || key == "damage") return SkillId::Health;
+    if (key == "healingMultiplier" || key == "healing") return SkillId::Medic;
+    if (key == "absorbing" || key == "petHealth") return SkillId::Count;  // drop
+    if (key == "prestige") return SkillId::Count;
     return SkillId::Count;
 }
 
-inline int skillTierCount(SkillId id) {
-    const std::size_t i = static_cast<std::size_t>(id);
-    return i < kSkillTiers.size() ? kSkillTiers[i] : kLadderRarityCount;
-}
-
-/// One tier to buy: a branch and the tier on it.
 struct SkillStep {
-    SkillId id = SkillId::Damage;
+    SkillId id = SkillId::Health;
     int tier = 0;
 };
 
-/// Every tier still missing on the way to `tier` of `id`, in the order the
-/// server accepts them: a fork's parent up to the tier the fork hangs off
-/// first, then the branch itself from its next tier. Empty when `tier` is
-/// already owned or is not a tier of the branch. The talent tree buys a node
-/// and everything under it in one go, the way florr's does, by sending these
-/// one at a time -- each is a request the server checks on its own.
 inline std::vector<SkillStep> skillPurchasePath(const SkillSet& skills, SkillId id, int tier) {
     std::vector<SkillStep> path;
     if (tier < 0 || tier >= skillTierCount(id) || tier <= skills.level(id)) return path;
-    if (const SkillFork* fork = skillFork(id); fork != nullptr && !skills.prerequisiteMet(id)) {
-        for (int t = skills.level(fork->parent) + 1; t <= rarityIndex(fork->requirement); ++t) {
-            path.push_back({fork->parent, t});
+    if (const SkillGate* gate = skillGate(id); gate != nullptr && !skills.prerequisiteMet(id)) {
+        const int needTier = gate->parentLevel - 1;
+        for (int t = skills.level(gate->parent) + 1; t <= needTier; ++t) {
+            path.push_back({gate->parent, t});
         }
     }
     for (int t = skills.level(id) + 1; t <= tier; ++t) path.push_back({id, t});
     return path;
 }
 
-/// What skillPurchasePath costs in talent points.
 inline int skillPurchaseCost(const SkillSet& skills, SkillId id, int tier) {
     int total = 0;
     for (const SkillStep& step : skillPurchasePath(skills, id, tier)) {
@@ -349,17 +369,17 @@ inline int skillPurchaseCost(const SkillSet& skills, SkillId id, int tier) {
     return total;
 }
 
-/// Drops `id` to `newLevel` (-1 = unlearned) and clears every fork child whose
-/// prerequisite is then unmet. Used by hold-to-refund: removing Absorption
-/// below mythic also drops Duplicator, and so on.
 inline void skillRefundTo(SkillSet& skills, SkillId id, int newLevel) {
     if (newLevel < -1) newLevel = -1;
     if (newLevel >= skillTierCount(id)) newLevel = skillTierCount(id) - 1;
     skills.set(id, newLevel);
-    for (const SkillFork& fork : kSkillForks) {
-        if (fork.parent != id) continue;
-        if (!skills.prerequisiteMet(fork.child)) skills.set(fork.child, -1);
+    for (const SkillGate& gate : kSkillGates) {
+        if (gate.parent != id) continue;
+        if (!skills.prerequisiteMet(gate.child)) skills.set(gate.child, -1);
     }
 }
 
-} // namespace flix
+// Dead aliases kept so older docs/comments still compile if referenced as ints.
+inline constexpr SkillId kSecondChanceParent = SkillId::Health;
+
+}  // namespace flix

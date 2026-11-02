@@ -1,4 +1,4 @@
-#include "server/game_server.h"
+﻿#include "server/game_server.h"
 
 #include "shared/core/process_stats.h"
 
@@ -355,59 +355,6 @@ WornSlot wornSlot(const PlayerRecord& record, std::size_t slot, Realm realm) {
     return worn;
 }
 
-/// Every petal at every rarity it can come at, stacked to kMaxStackCount.
-/// Used for the seeded Ashflor admin account so the bag reads as "infinite".
-void grantOmniInventory(PlayerRecord& record) {
-    // florrclone's L stops at Devine (Universal index). Admin is give-only and
-    // must not paint every stacked tile gold. Wipe first so a prior Admin fill
-    // cannot linger under the new caps.
-    record.inventory = Json::object();
-    for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
-        const PetalConfig& petal = content().petal(i);
-        if (petal.isAdminPetal) continue;
-        for (int r = 0; r <= rarityIndex(Rarity::Universal); ++r) {
-            const Rarity rarity = clampRarity(r);
-            if (!petalComesAt(petal, rarity)) continue;
-            record.setItemCount(rarity, inventoryKey(i), kMaxStackCount);
-        }
-    }
-    const std::uint16_t basic = content().petalIndex("basic");
-    if (basic == kInvalidIndex) return;
-    record.loadout.assign(kLoadoutSlots, std::nullopt);
-    for (int i = 0; i < 5; ++i) {
-        StoredItem item;
-        item.type = "petal";
-        item.petalType = content().petal(basic).id;
-        item.rarity = Rarity::Super;
-        record.loadout[static_cast<std::size_t>(i)] = item;
-    }
-}
-
-/// Seeded operator account: username `admin`, password `admin1234`, owner
-/// admin, omni bag. Created on first boot if missing; bag refilled whenever
-/// that account signs in.
-void ensureDefaultAdminAccount(Database& database) {
-    constexpr const char* kName = "admin";
-    constexpr const char* kPass = "admin1234";
-    Account* account = database.findUser(kName);
-    if (account == nullptr) {
-        const CreateResult created = database.createUser(kName, kPass, "ashflor-default-admin");
-        if (!created.ok() || created.account == nullptr) {
-            std::fprintf(stderr, "[admin] could not seed default admin account: %s\n",
-                         created.reason.c_str());
-            return;
-        }
-        account = created.account;
-        std::printf("[admin] seeded default account \"%s\" / \"%s\" (owner, omni inventory)\n",
-                    kName, kPass);
-    }
-    account->admin = true;
-    account->adminBanned = false;
-    account->adminTier = kOwnerAdminTier;
-    grantOmniInventory(database.progress(account->id));
-    database.markDirty();
-}
-
 /// What a brand-new account starts with.
 ///
 /// Keep five Common Basic petals equipped so the first minute is playable
@@ -540,7 +487,6 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // worse, save that over the file they still had.
     if (!database_.load(config.databasePath, errorOut)) return false;
     foldLookAlikeSkins();
-    ensureDefaultAdminAccount(database_);
 
     // Kept in a file beside the database, never anywhere a client can reach:
     // reading it is what proves an admin also has the machine. A first start
@@ -1787,11 +1733,6 @@ void GameServer::handleLogin(Session& session, net::Connection& connection, Byte
     session.username = account->username;
     session.admin = account->adminActive();
     session.adminTier = account->adminTier;
-    // Ashflor default admin: keep the bag topped up so it stays "infinite".
-    if (session.admin && account->username == "admin") {
-        grantOmniInventory(database_.progress(account->id));
-        database_.markDirty();
-    }
     session.token = database_.createSession(account->id, account->username);
     session.stage = SessionStage::Authenticated;
     sendAuthResult(connection, net::AuthStatus::Ok, session.token, account->username, "");
@@ -1830,10 +1771,6 @@ void GameServer::handleResume(Session& session, net::Connection& connection, Byt
     Account* account = database_.findUser(username);
     session.admin = account != nullptr && account->adminActive();
     session.adminTier = account != nullptr ? account->adminTier : kTopAdminTier;
-    if (account != nullptr && session.admin && account->username == "admin") {
-        grantOmniInventory(database_.progress(account->id));
-        database_.markDirty();
-    }
     sendAuthResult(connection, net::AuthStatus::Ok, token, username, "");
     sendDailyStreak(session, connection);
     sendProfile(session, connection);
@@ -2395,8 +2332,14 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     if (session.playing()) return;
 
     // The nameplate, not the account. Kept on the session so a respawn keeps
-    // the name the player typed rather than reverting to their login.
+    // the name the player typed rather than reverting to their login. An empty
+    // lobby field becomes "Unnamed" from sanitizePlayerName — replace that
+    // with the account name so logged-in players spawn as themselves.
     session.displayName = sanitizePlayerName(name);
+    if ((session.displayName.empty() || session.displayName == "Unnamed") &&
+        !session.username.empty()) {
+        session.displayName = session.username;
+    }
 
     // Remembered on the session so a respawn returns to the spawn point the
     // player chose, rather than quietly sending them back to the beginner
@@ -3835,14 +3778,6 @@ void GameServer::handleUpgradeSkill(Session& session, net::Connection& connectio
     const bool maze = session.playing() && session.realm == Realm::Maze;
     SkillSet& skills = maze ? record.mazeSkills : record.skills;
     const int points = maze ? record.mazeTalentPoints() : record.talentPoints();
-    // Prestige opens the prestige biomes, which the maze track never visits:
-    // bought there it would be points spent on nothing.
-    if (maze && id == SkillId::Prestige) {
-        sendNotice(connection, net::NoticeSeverity::Warning,
-                   "Prestige cannot be bought on the maze's tree.");
-        return;
-    }
-
     // Tiers are bought one at a time, in order. Accepting an arbitrary target
     // would let a client skip the tiers below it and pay for one of them.
     if (tier < 0 || tier >= skillTierCount(id) || tier != skills.level(id) + 1) {
@@ -3850,11 +3785,11 @@ void GameServer::handleUpgradeSkill(Session& session, net::Connection& connectio
         return;
     }
     if (!skills.prerequisiteMet(id)) {
-        const SkillFork& fork = *skillFork(id);
+        const SkillGate& gate = *skillGate(id);
         sendNotice(connection, net::NoticeSeverity::Warning,
                    std::string(skillTierLabel(id, tier)) + " needs " +
-                       rarityLabel(fork.requirement) + " " +
-                       kSkillLabels[static_cast<std::size_t>(fork.parent)] + ".");
+                       kSkillLabels[static_cast<std::size_t>(gate.parent)] + " " +
+                       std::to_string(gate.parentLevel) + ".");
         return;
     }
 
@@ -3893,34 +3828,9 @@ void GameServer::handleDowngradeSkill(Session& session, net::Connection& connect
         return;
     }
 
-    // Drop this tier and everything above on the branch; fork children whose
-    // parent no longer reaches their requirement go with it.
+    // Drop this tier and everything above on the branch; gated children whose
+    // parent no longer meets their requirement go with it.
     skillRefundTo(skills, id, tier - 1);
-
-    // Prestige leaving the tree while standing in a prestige biome: same exit
-    // as a full reset -- the biomes require the talent.
-    if (!maze && id == SkillId::Prestige && !skills.prestigeUnlocked()) {
-        session.prestige = false;
-        bool inPrestige = false;
-        if (session.playing()) {
-            for (const Entity body : bodiesOf(session)) {
-                if (body == NULL_ENTITY || !world_.isAlive(body)) continue;
-                const Transform* at = world_.tryGet<Transform>(body);
-                if (at != nullptr && worldMaps_.isPrestige(at->realm)) inPrestige = true;
-            }
-        }
-        if (inPrestige) {
-            leaveWorld(session);
-            ByteWriter w;
-            w.u8(static_cast<std::uint8_t>(net::ServerMessage::LeftWorld));
-            connection.send(w);
-            database_.markDirty();
-            sendProfile(session, connection);
-            sendNotice(connection, net::NoticeSeverity::Info,
-                       "Prestige refunded. Without it you are back on the title screen.");
-            return;
-        }
-    }
 
     database_.markDirty();
     if (session.playing() && world_.isAlive(session.entity)) applyAccountToSession(session);
@@ -4918,7 +4828,7 @@ void GameServer::guildCreate(Session& session, net::Connection& connection,
     }
     if (!validGuildName(name)) {
         sendNotice(connection, net::NoticeSeverity::Warning,
-                   "Guild tag must be exactly 5 alphanumeric characters (A–Z, 0–9).");
+                   "Guild tag must be exactly 5 alphanumeric characters (A鈥揨, 0鈥?).");
         return;
     }
     // No display name is the tag: the card always has something to say.
@@ -6230,7 +6140,7 @@ void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity)
     const double previousFraction = health.max > 0 ? health.current / health.max : 1.0;
     health.max = realm == Realm::Arena
                      ? kArenaMaxHealth
-                     : maxHealthForLevel(level) * skills.statScale(SkillId::PlayerHealth);
+                     : maxHealthForLevel(level) * skills.statScale(SkillId::Health);
     // Preserve the FRACTION across a max-health change, so levelling up mid
     // fight neither heals you to full nor leaves you proportionally worse off.
     //

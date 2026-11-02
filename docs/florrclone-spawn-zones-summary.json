@@ -1,0 +1,4590 @@
+{
+  "byMob": {
+    "garden": [
+      {
+        "id": 208,
+        "mobs": "garden",
+        "difficulty": -5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 21
+      },
+      {
+        "id": 209,
+        "mobs": "garden",
+        "difficulty": -2.5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 37
+      },
+      {
+        "id": 210,
+        "mobs": "garden",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 26
+      },
+      {
+        "id": 211,
+        "mobs": "garden",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 29
+      },
+      {
+        "id": 212,
+        "mobs": "garden",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 31
+      },
+      {
+        "id": 213,
+        "mobs": "garden",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 39
+      },
+      {
+        "id": 214,
+        "mobs": "garden",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 42
+      },
+      {
+        "id": 215,
+        "mobs": "garden",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 35
+      },
+      {
+        "id": 218,
+        "mobs": "garden",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 28
+      },
+      {
+        "id": 219,
+        "mobs": "garden",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 22
+      },
+      {
+        "id": 221,
+        "mobs": "garden",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 32
+      },
+      {
+        "id": 222,
+        "mobs": "garden",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 52
+      },
+      {
+        "id": 224,
+        "mobs": "garden",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 46
+      },
+      {
+        "id": 225,
+        "mobs": "garden",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 46
+      },
+      {
+        "id": 226,
+        "mobs": "garden",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 38
+      },
+      {
+        "id": 227,
+        "mobs": "garden",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 25
+      },
+      {
+        "id": 228,
+        "mobs": "garden",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 32
+      },
+      {
+        "id": 229,
+        "mobs": "garden",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 26
+      },
+      {
+        "id": 230,
+        "mobs": "garden",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 40
+      },
+      {
+        "id": 231,
+        "mobs": "garden",
+        "difficulty": 75,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 28
+      },
+      {
+        "id": 233,
+        "mobs": "garden",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 77
+      },
+      {
+        "id": 234,
+        "mobs": "garden",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 79
+      },
+      {
+        "id": 235,
+        "mobs": "garden",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 74
+      },
+      {
+        "id": 237,
+        "mobs": "garden",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 27
+      },
+      {
+        "id": 238,
+        "mobs": "garden",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 39
+      },
+      {
+        "id": 240,
+        "mobs": "garden",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 54
+      },
+      {
+        "id": 241,
+        "mobs": "garden",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 55
+      },
+      {
+        "id": 242,
+        "mobs": "garden",
+        "difficulty": 32.5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 41
+      },
+      {
+        "id": 243,
+        "mobs": "garden",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 56
+      },
+      {
+        "id": 244,
+        "mobs": "garden",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 38
+      },
+      {
+        "id": 245,
+        "mobs": "garden",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 38
+      },
+      {
+        "id": 246,
+        "mobs": "garden",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 33
+      }
+    ],
+    "spider:1;\\\\ngarden:1;": [
+      {
+        "id": 216,
+        "mobs": "spider:1;\\\\ngarden:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 23
+      },
+      {
+        "id": 217,
+        "mobs": "spider:1;\\\\ngarden:1;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      }
+    ],
+    "rock:0.25;\\\\nant_soldier:1;\\\\ngarden:1;": [
+      {
+        "id": 220,
+        "mobs": "rock:0.25;\\\\nant_soldier:1;\\\\ngarden:1;",
+        "difficulty": 17.5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 9
+      }
+    ],
+    "dandelion:0.05;\\\\nhornet:1;\\\\ngarden:1;": [
+      {
+        "id": 223,
+        "mobs": "dandelion:0.05;\\\\nhornet:1;\\\\ngarden:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 49
+      }
+    ],
+    "ant_baby:0.3;\\\\nant_worker:1;\\\\nant_soldier:2;\\\\nant_hole:0.05;\\\\nrock:0.5;\\\\ngarden:0.5;": [
+      {
+        "id": 232,
+        "mobs": "ant_baby:0.3;\\\\nant_worker:1;\\\\nant_soldier:2;\\\\nant_hole:0.05;\\\\nrock:0.5;\\\\ngarden:0.5;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.8,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 118
+      }
+    ],
+    "bee:1;\\\\nbumble_bee:0.1;\\\\ngarden:1;": [
+      {
+        "id": 236,
+        "mobs": "bee:1;\\\\nbumble_bee:0.1;\\\\ngarden:1;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 31
+      }
+    ],
+    "ant_baby:0.1;\\\\nladybug:1;\\\\ngarden:1;": [
+      {
+        "id": 239,
+        "mobs": "ant_baby:0.1;\\\\nladybug:1;\\\\ngarden:1;",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 27
+      }
+    ],
+    "ant_worker:5;\\\\nant_soldier:1;": [
+      {
+        "id": 247,
+        "mobs": "ant_worker:5;\\\\nant_soldier:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 50,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "mecha_flower:1;wasp_mecha:1;spider_mecha:1;crab_mecha:1;": [
+      {
+        "id": 263,
+        "mobs": "mecha_flower:1;wasp_mecha:1;spider_mecha:1;crab_mecha:1;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": 60,
+        "team": "2.0",
+        "pointsLen": 7
+      }
+    ],
+    "fire_ant_baby:1;fire_ant_worker:1;fire_ant_soldier:8;worm:0.3;": [
+      {
+        "id": 70,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:1;fire_ant_soldier:8;worm:0.3;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 35
+      },
+      {
+        "id": 74,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:1;fire_ant_soldier:8;worm:0.3;",
+        "difficulty": 75,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 29
+      },
+      {
+        "id": 72,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:1;fire_ant_soldier:8;worm:0.3;",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 36
+      },
+      {
+        "id": 73,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:1;fire_ant_soldier:8;worm:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 31
+      },
+      {
+        "id": 85,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:1;fire_ant_soldier:8;worm:0.3;",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 39
+      },
+      {
+        "id": 86,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:1;fire_ant_soldier:8;worm:0.3;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 24
+      }
+    ],
+    "fire_ant_egg:1;": [
+      {
+        "id": 71,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 75,
+        "forceRarity": null,
+        "density": 1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 75,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 77,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 78,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 106,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 107,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 108,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 109,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 5,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 110,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 5,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 114,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 10,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 115,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 10,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 116,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 117,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 118,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 119,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 120,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 122,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 123,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 124,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 125,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      },
+      {
+        "id": 126,
+        "mobs": "fire_ant_egg:1;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 4
+      }
+    ],
+    "ant_baby:2;ant_worker:6;ant_soldier:2;worm:0.3;": [
+      {
+        "id": 79,
+        "mobs": "ant_baby:2;ant_worker:6;ant_soldier:2;worm:0.3;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 37
+      },
+      {
+        "id": 148,
+        "mobs": "ant_baby:2;ant_worker:6;ant_soldier:2;worm:0.3;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 50
+      }
+    ],
+    "fire_ant_baby:1;fire_ant_worker:2;fire_ant_soldier:7;worm:0.3;": [
+      {
+        "id": 87,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:2;fire_ant_soldier:7;worm:0.3;",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 28
+      },
+      {
+        "id": 88,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:2;fire_ant_soldier:7;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 21
+      }
+    ],
+    "fire_ant_baby:1;fire_ant_worker:3;fire_ant_soldier:6;worm:0.3;": [
+      {
+        "id": 89,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:3;fire_ant_soldier:6;worm:0.3;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 24
+      },
+      {
+        "id": 90,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:3;fire_ant_soldier:6;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 24
+      },
+      {
+        "id": 102,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:3;fire_ant_soldier:6;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 14
+      }
+    ],
+    "fire_ant_baby:1;fire_ant_worker:4;fire_ant_soldier:5;worm:0.3;": [
+      {
+        "id": 91,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:4;fire_ant_soldier:5;worm:0.3;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 32
+      },
+      {
+        "id": 92,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:4;fire_ant_soldier:5;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 32
+      },
+      {
+        "id": 100,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:4;fire_ant_soldier:5;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 101,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:4;fire_ant_soldier:5;worm:0.3;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 18
+      }
+    ],
+    "fire_ant_baby:1;fire_ant_worker:6;fire_ant_soldier:3;worm:0.3;": [
+      {
+        "id": 93,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:6;fire_ant_soldier:3;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 34
+      },
+      {
+        "id": 98,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:6;fire_ant_soldier:3;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 65
+      },
+      {
+        "id": 99,
+        "mobs": "fire_ant_baby:1;fire_ant_worker:6;fire_ant_soldier:3;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 15
+      }
+    ],
+    "fire_ant_baby:2;fire_ant_worker:6;fire_ant_soldier:2;worm:0.3;": [
+      {
+        "id": 95,
+        "mobs": "fire_ant_baby:2;fire_ant_worker:6;fire_ant_soldier:2;worm:0.3;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 27
+      },
+      {
+        "id": 97,
+        "mobs": "fire_ant_baby:2;fire_ant_worker:6;fire_ant_soldier:2;worm:0.3;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 31
+      }
+    ],
+    "fire_ant_soldier:10;worm:0.3;": [
+      {
+        "id": 104,
+        "mobs": "fire_ant_soldier:10;worm:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 105,
+        "mobs": "fire_ant_soldier:10;worm:0.3;",
+        "difficulty": 57.5,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 43
+      },
+      {
+        "id": 111,
+        "mobs": "fire_ant_soldier:10;worm:0.3;",
+        "difficulty": 42.5,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 15
+      },
+      {
+        "id": 112,
+        "mobs": "fire_ant_soldier:10;worm:0.3;",
+        "difficulty": 52.5,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 113,
+        "mobs": "fire_ant_soldier:10;worm:0.3;",
+        "difficulty": 32.5,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 14
+      }
+    ],
+    "ant_baby:1;ant_worker:1;ant_soldier:8;worm:0.3;": [
+      {
+        "id": 127,
+        "mobs": "ant_baby:1;ant_worker:1;ant_soldier:8;worm:0.3;",
+        "difficulty": 75,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 43
+      },
+      {
+        "id": 128,
+        "mobs": "ant_baby:1;ant_worker:1;ant_soldier:8;worm:0.3;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 41
+      },
+      {
+        "id": 130,
+        "mobs": "ant_baby:1;ant_worker:1;ant_soldier:8;worm:0.3;",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 19
+      },
+      {
+        "id": 131,
+        "mobs": "ant_baby:1;ant_worker:1;ant_soldier:8;worm:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 19
+      },
+      {
+        "id": 132,
+        "mobs": "ant_baby:1;ant_worker:1;ant_soldier:8;worm:0.3;",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 27
+      },
+      {
+        "id": 133,
+        "mobs": "ant_baby:1;ant_worker:1;ant_soldier:8;worm:0.3;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 23
+      }
+    ],
+    "ant_baby:1;ant_worker:2;ant_soldier:7;worm:0.3;": [
+      {
+        "id": 134,
+        "mobs": "ant_baby:1;ant_worker:2;ant_soldier:7;worm:0.3;",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 25
+      },
+      {
+        "id": 135,
+        "mobs": "ant_baby:1;ant_worker:2;ant_soldier:7;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 35
+      },
+      {
+        "id": 137,
+        "mobs": "ant_baby:1;ant_worker:2;ant_soldier:7;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 111
+      }
+    ],
+    "ant_baby:1;ant_worker:3;ant_soldier:6;worm:0.3;": [
+      {
+        "id": 136,
+        "mobs": "ant_baby:1;ant_worker:3;ant_soldier:6;worm:0.3;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 66
+      },
+      {
+        "id": 138,
+        "mobs": "ant_baby:1;ant_worker:3;ant_soldier:6;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 20
+      },
+      {
+        "id": 140,
+        "mobs": "ant_baby:1;ant_worker:3;ant_soldier:6;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 32
+      },
+      {
+        "id": 153,
+        "mobs": "ant_baby:1;ant_worker:3;ant_soldier:6;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 21
+      }
+    ],
+    "ant_baby:1;ant_worker:4;ant_soldier:5;worm:0.3;": [
+      {
+        "id": 139,
+        "mobs": "ant_baby:1;ant_worker:4;ant_soldier:5;worm:0.3;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 20
+      },
+      {
+        "id": 141,
+        "mobs": "ant_baby:1;ant_worker:4;ant_soldier:5;worm:0.3;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 26
+      },
+      {
+        "id": 142,
+        "mobs": "ant_baby:1;ant_worker:4;ant_soldier:5;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 43
+      },
+      {
+        "id": 143,
+        "mobs": "ant_baby:1;ant_worker:4;ant_soldier:5;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 55
+      },
+      {
+        "id": 151,
+        "mobs": "ant_baby:1;ant_worker:4;ant_soldier:5;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 61
+      },
+      {
+        "id": 152,
+        "mobs": "ant_baby:1;ant_worker:4;ant_soldier:5;worm:0.3;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 27
+      }
+    ],
+    "ant_baby:1;ant_worker:6;ant_soldier:3;worm:0.3;": [
+      {
+        "id": 145,
+        "mobs": "ant_baby:1;ant_worker:6;ant_soldier:3;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 57
+      },
+      {
+        "id": 146,
+        "mobs": "ant_baby:1;ant_worker:6;ant_soldier:3;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 45
+      },
+      {
+        "id": 147,
+        "mobs": "ant_baby:1;ant_worker:6;ant_soldier:3;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 15
+      },
+      {
+        "id": 149,
+        "mobs": "ant_baby:1;ant_worker:6;ant_soldier:3;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 28
+      },
+      {
+        "id": 150,
+        "mobs": "ant_baby:1;ant_worker:6;ant_soldier:3;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 41
+      }
+    ],
+    "ant_soldier:10;worm:0.3;": [
+      {
+        "id": 154,
+        "mobs": "ant_soldier:10;worm:0.3;",
+        "difficulty": 67.5,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 155,
+        "mobs": "ant_soldier:10;worm:0.3;",
+        "difficulty": 57.5,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 156,
+        "mobs": "ant_soldier:10;worm:0.3;",
+        "difficulty": 47.5,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      },
+      {
+        "id": 157,
+        "mobs": "ant_soldier:10;worm:0.3;",
+        "difficulty": 37.5,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "ant_egg:1;": [
+      {
+        "id": 158,
+        "mobs": "ant_egg:1;",
+        "difficulty": 75,
+        "forceRarity": null,
+        "density": 0.5,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 159,
+        "mobs": "ant_egg:1;",
+        "difficulty": 75,
+        "forceRarity": null,
+        "density": 0.5,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 23
+      },
+      {
+        "id": 160,
+        "mobs": "ant_egg:1;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 0.5,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 15
+      },
+      {
+        "id": 161,
+        "mobs": "ant_egg:1;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 0.5,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 162,
+        "mobs": "ant_egg:1;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 0.5,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 163,
+        "mobs": "ant_egg:1;",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 164,
+        "mobs": "ant_egg:1;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 165,
+        "mobs": "ant_egg:1;",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 166,
+        "mobs": "ant_egg:1;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 167,
+        "mobs": "ant_egg:1;",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 168,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 172,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 173,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 174,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 175,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 176,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 177,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 178,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 179,
+        "mobs": "ant_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 180,
+        "mobs": "ant_egg:1;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 5,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 181,
+        "mobs": "ant_egg:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 10,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 183,
+        "mobs": "ant_egg:1;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 10,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 184,
+        "mobs": "ant_egg:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 10,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 185,
+        "mobs": "ant_egg:1;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 10,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 186,
+        "mobs": "ant_egg:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 187,
+        "mobs": "ant_egg:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 188,
+        "mobs": "ant_egg:1;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 17
+      },
+      {
+        "id": 189,
+        "mobs": "ant_egg:1;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 190,
+        "mobs": "ant_egg:1;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 191,
+        "mobs": "ant_egg:1;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 192,
+        "mobs": "ant_egg:1;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 193,
+        "mobs": "ant_egg:1;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 194,
+        "mobs": "ant_egg:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 195,
+        "mobs": "ant_egg:1;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 196,
+        "mobs": "ant_egg:1;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 197,
+        "mobs": "ant_egg:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 19
+      },
+      {
+        "id": 198,
+        "mobs": "ant_egg:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 199,
+        "mobs": "ant_egg:1;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 10,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 200,
+        "mobs": "ant_egg:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 10,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      }
+    ],
+    "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;": [
+      {
+        "id": 202,
+        "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 69
+      },
+      {
+        "id": 203,
+        "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+        "difficulty": 75,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 57
+      },
+      {
+        "id": 209,
+        "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 99
+      },
+      {
+        "id": 210,
+        "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 39
+      },
+      {
+        "id": 211,
+        "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 89
+      },
+      {
+        "id": 212,
+        "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 135
+      }
+    ],
+    "termite_overmind:1;worm:0.3;": [
+      {
+        "id": 206,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 18
+      },
+      {
+        "id": 278,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 60,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 284,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 12
+      },
+      {
+        "id": 291,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 310,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 311,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 312,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 313,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 314,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 317,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 318,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 319,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 320,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 17
+      },
+      {
+        "id": 323,
+        "mobs": "termite_overmind:1;worm:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 14
+      }
+    ],
+    "fire_ant_queen:1;worm:0.3;": [
+      {
+        "id": 207,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 6
+      },
+      {
+        "id": 255,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 256,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 6
+      },
+      {
+        "id": 257,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 258,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 259,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 260,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 262,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 6
+      },
+      {
+        "id": 264,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 265,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 316,
+        "mobs": "fire_ant_queen:1;worm:0.3;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 11
+      }
+    ],
+    "ant_queen:1;worm:0.3;": [
+      {
+        "id": 208,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 16
+      },
+      {
+        "id": 230,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 8
+      },
+      {
+        "id": 231,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 10
+      },
+      {
+        "id": 232,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 233,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 27
+      },
+      {
+        "id": 234,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 242,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 243,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 245,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 246,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 10
+      },
+      {
+        "id": 248,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 324,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 18
+      },
+      {
+        "id": 325,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 326,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 25
+      },
+      {
+        "id": 327,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 23
+      },
+      {
+        "id": 329,
+        "mobs": "ant_queen:1;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": 30,
+        "team": null,
+        "pointsLen": 31
+      }
+    ],
+    "termite_baby:1;termite_worker:2;termite_soldier:7;worm:0.3;": [
+      {
+        "id": 213,
+        "mobs": "termite_baby:1;termite_worker:2;termite_soldier:7;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 43
+      },
+      {
+        "id": 214,
+        "mobs": "termite_baby:1;termite_worker:2;termite_soldier:7;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 29
+      },
+      {
+        "id": 229,
+        "mobs": "termite_baby:1;termite_worker:2;termite_soldier:7;worm:0.3;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 45
+      }
+    ],
+    "termite_baby:1;termite_worker:3;termite_soldier:6;worm:0.3;": [
+      {
+        "id": 215,
+        "mobs": "termite_baby:1;termite_worker:3;termite_soldier:6;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 31
+      },
+      {
+        "id": 216,
+        "mobs": "termite_baby:1;termite_worker:3;termite_soldier:6;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 39
+      },
+      {
+        "id": 228,
+        "mobs": "termite_baby:1;termite_worker:3;termite_soldier:6;worm:0.3;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 135
+      }
+    ],
+    "termite_baby:1;termite_worker:4;termite_soldier:5;worm:0.3;": [
+      {
+        "id": 217,
+        "mobs": "termite_baby:1;termite_worker:4;termite_soldier:5;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 35
+      },
+      {
+        "id": 224,
+        "mobs": "termite_baby:1;termite_worker:4;termite_soldier:5;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 79
+      },
+      {
+        "id": 226,
+        "mobs": "termite_baby:1;termite_worker:4;termite_soldier:5;worm:0.3;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 87
+      }
+    ],
+    "termite_baby:1;termite_worker:6;termite_soldier:3;worm:0.3;": [
+      {
+        "id": 219,
+        "mobs": "termite_baby:1;termite_worker:6;termite_soldier:3;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 25
+      },
+      {
+        "id": 222,
+        "mobs": "termite_baby:1;termite_worker:6;termite_soldier:3;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 35
+      },
+      {
+        "id": 225,
+        "mobs": "termite_baby:1;termite_worker:6;termite_soldier:3;worm:0.3;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 83
+      }
+    ],
+    "termite_baby:2;termite_worker:6;termite_soldier:2;worm:0.3;": [
+      {
+        "id": 220,
+        "mobs": "termite_baby:2;termite_worker:6;termite_soldier:2;worm:0.3;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 37
+      }
+    ],
+    "termite_egg:1;": [
+      {
+        "id": 292,
+        "mobs": "termite_egg:1;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 0.01,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 294,
+        "mobs": "termite_egg:1;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 0.02,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 21
+      },
+      {
+        "id": 296,
+        "mobs": "termite_egg:1;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 0.03,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 32
+      },
+      {
+        "id": 297,
+        "mobs": "termite_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0.04,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 299,
+        "mobs": "termite_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0.04,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 298,
+        "mobs": "termite_egg:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0.04,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 10
+      },
+      {
+        "id": 300,
+        "mobs": "termite_egg:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 301,
+        "mobs": "termite_egg:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 14
+      },
+      {
+        "id": 302,
+        "mobs": "termite_egg:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 22
+      },
+      {
+        "id": 303,
+        "mobs": "termite_egg:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0.1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 25
+      },
+      {
+        "id": 304,
+        "mobs": "termite_egg:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0.1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 305,
+        "mobs": "termite_egg:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0.1,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 26
+      },
+      {
+        "id": 306,
+        "mobs": "termite_egg:1;",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 0.3,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 307,
+        "mobs": "termite_egg:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0.2,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 21
+      },
+      {
+        "id": 308,
+        "mobs": "termite_egg:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0.2,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 14
+      },
+      {
+        "id": 309,
+        "mobs": "termite_egg:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0.2,
+        "extraSpawnDelay": 120,
+        "team": null,
+        "pointsLen": 18
+      }
+    ],
+    "trader:1": [
+      {
+        "id": 448,
+        "mobs": "trader:1",
+        "difficulty": null,
+        "forceRarity": 0,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "0.0",
+        "pointsLen": 5
+      }
+    ],
+    "cactus:1;\\\\nsandstorm:1;\\\\ndesert:1;": [
+      {
+        "id": 453,
+        "mobs": "cactus:1;\\\\nsandstorm:1;\\\\ndesert:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 20,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 25
+      }
+    ],
+    "desert": [
+      {
+        "id": 390,
+        "mobs": "desert",
+        "difficulty": -5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 393,
+        "mobs": "desert",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 39
+      },
+      {
+        "id": 394,
+        "mobs": "desert",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 40
+      },
+      {
+        "id": 395,
+        "mobs": "desert",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 36
+      },
+      {
+        "id": 396,
+        "mobs": "desert",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 32
+      },
+      {
+        "id": 397,
+        "mobs": "desert",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 74
+      },
+      {
+        "id": 398,
+        "mobs": "desert",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 399,
+        "mobs": "desert",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 49
+      },
+      {
+        "id": 400,
+        "mobs": "desert",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 37
+      },
+      {
+        "id": 401,
+        "mobs": "desert",
+        "difficulty": 42.5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 33
+      },
+      {
+        "id": 402,
+        "mobs": "desert",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 40
+      },
+      {
+        "id": 403,
+        "mobs": "desert",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 56
+      },
+      {
+        "id": 404,
+        "mobs": "desert",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 29
+      },
+      {
+        "id": 407,
+        "mobs": "desert",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 41
+      },
+      {
+        "id": 408,
+        "mobs": "desert",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 38
+      },
+      {
+        "id": 409,
+        "mobs": "desert",
+        "difficulty": 47.5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 40
+      },
+      {
+        "id": 410,
+        "mobs": "desert",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 34
+      },
+      {
+        "id": 411,
+        "mobs": "desert",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 101
+      },
+      {
+        "id": 414,
+        "mobs": "desert",
+        "difficulty": 62.5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 21
+      },
+      {
+        "id": 415,
+        "mobs": "desert",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 58
+      },
+      {
+        "id": 416,
+        "mobs": "desert",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 43
+      },
+      {
+        "id": 417,
+        "mobs": "desert",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 28
+      },
+      {
+        "id": 418,
+        "mobs": "desert",
+        "difficulty": 57.5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 28
+      },
+      {
+        "id": 452,
+        "mobs": "desert",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 19
+      }
+    ],
+    "cactus:0.25;\\\\nfire_ant_burrow:0.01;\\\\ndesert:1;": [
+      {
+        "id": 391,
+        "mobs": "cactus:0.25;\\\\nfire_ant_burrow:0.01;\\\\ndesert:1;",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 419,
+        "mobs": "cactus:0.25;\\\\nfire_ant_burrow:0.01;\\\\ndesert:1;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 29
+      }
+    ],
+    "cactus:0.1;\\\\ndesert:1;": [
+      {
+        "id": 392,
+        "mobs": "cactus:0.1;\\\\ndesert:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 35
+      }
+    ],
+    "sandstorm:1;\\\\ndesert:1;": [
+      {
+        "id": 406,
+        "mobs": "sandstorm:1;\\\\ndesert:1;",
+        "difficulty": 42.5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 39
+      }
+    ],
+    "fire_ant_soldier:1;": [
+      {
+        "id": 412,
+        "mobs": "fire_ant_soldier:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 50,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "beetle:1;\\\\ndesert:1;": [
+      {
+        "id": 413,
+        "mobs": "beetle:1;\\\\ndesert:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 19
+      }
+    ],
+    "cactus:1;\\\\nladybug_shiny:0.025;\\\\ndesert:1;": [
+      {
+        "id": 420,
+        "mobs": "cactus:1;\\\\nladybug_shiny:0.025;\\\\ndesert:1;",
+        "difficulty": -5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      }
+    ],
+    "cactus:1;\\\\nfire_ant_burrow:0.025;\\\\ndesert:1;": [
+      {
+        "id": 421,
+        "mobs": "cactus:1;\\\\nfire_ant_burrow:0.025;\\\\ndesert:1;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 2.8,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 19
+      }
+    ],
+    "beetle_mummy": [
+      {
+        "id": 451,
+        "mobs": "beetle_mummy",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": 60,
+        "team": null,
+        "pointsLen": 6
+      }
+    ],
+    "crab:1;\\\\nbush:0.25;": [
+      {
+        "id": 307,
+        "mobs": "crab:1;\\\\nbush:0.25;",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 53
+      }
+    ],
+    "jungle": [
+      {
+        "id": 309,
+        "mobs": "jungle",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 19
+      },
+      {
+        "id": 310,
+        "mobs": "jungle",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 179
+      },
+      {
+        "id": 311,
+        "mobs": "jungle",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 25
+      },
+      {
+        "id": 312,
+        "mobs": "jungle",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 33
+      },
+      {
+        "id": 313,
+        "mobs": "jungle",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 63
+      },
+      {
+        "id": 314,
+        "mobs": "jungle",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 54
+      },
+      {
+        "id": 316,
+        "mobs": "jungle",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 105
+      },
+      {
+        "id": 323,
+        "mobs": "jungle",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 54
+      },
+      {
+        "id": 324,
+        "mobs": "jungle",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 83
+      },
+      {
+        "id": 325,
+        "mobs": "jungle",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 82
+      },
+      {
+        "id": 327,
+        "mobs": "jungle",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 23
+      },
+      {
+        "id": 328,
+        "mobs": "jungle",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 177
+      },
+      {
+        "id": 330,
+        "mobs": "jungle",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 178
+      },
+      {
+        "id": 331,
+        "mobs": "jungle",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 113
+      },
+      {
+        "id": 332,
+        "mobs": "jungle",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 173
+      },
+      {
+        "id": 333,
+        "mobs": "jungle",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 122
+      },
+      {
+        "id": 334,
+        "mobs": "jungle",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 30
+      },
+      {
+        "id": 308,
+        "mobs": "jungle",
+        "difficulty": -5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 67
+      }
+    ],
+    "leafbug:1;\\\\nbush:1;\\\\njungle:1;": [
+      {
+        "id": 315,
+        "mobs": "leafbug:1;\\\\nbush:1;\\\\njungle:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 34
+      }
+    ],
+    "bush:1;\\\\ntermite_mound:0.1;\\\\njungle:1;": [
+      {
+        "id": 317,
+        "mobs": "bush:1;\\\\ntermite_mound:0.1;\\\\njungle:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 318,
+        "mobs": "bush:1;\\\\ntermite_mound:0.1;\\\\njungle:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0.7,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 319,
+        "mobs": "bush:1;\\\\ntermite_mound:0.1;\\\\njungle:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0.7,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 51
+      },
+      {
+        "id": 321,
+        "mobs": "bush:1;\\\\ntermite_mound:0.1;\\\\njungle:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0.7,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 11
+      }
+    ],
+    "bush:1;\\\\ntermite_mound:0.05;\\\\njungle:1;": [
+      {
+        "id": 320,
+        "mobs": "bush:1;\\\\ntermite_mound:0.05;\\\\njungle:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0.7,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 13
+      }
+    ],
+    "termite_soldier:1;": [
+      {
+        "id": 322,
+        "mobs": "termite_soldier:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 50,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 6
+      }
+    ],
+    "firefly:1;\\\\nmantis:1;\\\\njungle:1;": [
+      {
+        "id": 326,
+        "mobs": "firefly:1;\\\\nmantis:1;\\\\njungle:1;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 25
+      }
+    ],
+    "wasp:1;\\\\njungle:1;": [
+      {
+        "id": 329,
+        "mobs": "wasp:1;\\\\njungle:1;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 49
+      }
+    ],
+    "termite_soldier:1;\\\\ntermite_worker:0.2;\\\\ntermite_mound:0.1;\\\\nbush:0.5;\\\\njungle:1;": [
+      {
+        "id": 343,
+        "mobs": "termite_soldier:1;\\\\ntermite_worker:0.2;\\\\ntermite_mound:0.1;\\\\nbush:0.5;\\\\njungle:1;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 93
+      }
+    ],
+    "crab:1;\\\\nbubble:0.20;\\\\nocean:0.5;": [
+      {
+        "id": 335,
+        "mobs": "crab:1;\\\\nbubble:0.20;\\\\nocean:0.5;",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 48
+      }
+    ],
+    "crab:1;\\\\nbubble:0.15;\\\\nocean:0.25;": [
+      {
+        "id": 263,
+        "mobs": "crab:1;\\\\nbubble:0.15;\\\\nocean:0.25;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 19
+      }
+    ],
+    "ocean": [
+      {
+        "id": 264,
+        "mobs": "ocean",
+        "difficulty": -5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 28
+      },
+      {
+        "id": 265,
+        "mobs": "ocean",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 33
+      },
+      {
+        "id": 266,
+        "mobs": "ocean",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 40
+      },
+      {
+        "id": 267,
+        "mobs": "ocean",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 68
+      },
+      {
+        "id": 269,
+        "mobs": "ocean",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 50
+      },
+      {
+        "id": 270,
+        "mobs": "ocean",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 42
+      },
+      {
+        "id": 271,
+        "mobs": "ocean",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 52
+      },
+      {
+        "id": 272,
+        "mobs": "ocean",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 90
+      },
+      {
+        "id": 273,
+        "mobs": "ocean",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 52
+      },
+      {
+        "id": 274,
+        "mobs": "ocean",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 74
+      },
+      {
+        "id": 275,
+        "mobs": "ocean",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 53
+      },
+      {
+        "id": 276,
+        "mobs": "ocean",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 80
+      },
+      {
+        "id": 277,
+        "mobs": "ocean",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 69
+      },
+      {
+        "id": 278,
+        "mobs": "ocean",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 38
+      },
+      {
+        "id": 280,
+        "mobs": "ocean",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 77
+      },
+      {
+        "id": 282,
+        "mobs": "ocean",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 46
+      },
+      {
+        "id": 283,
+        "mobs": "ocean",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 75
+      },
+      {
+        "id": 285,
+        "mobs": "ocean",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 56
+      },
+      {
+        "id": 286,
+        "mobs": "ocean",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 48
+      },
+      {
+        "id": 287,
+        "mobs": "ocean",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 36
+      },
+      {
+        "id": 296,
+        "mobs": "ocean",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 461
+      },
+      {
+        "id": 297,
+        "mobs": "ocean",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 53
+      }
+    ],
+    "bubble:3;\\\\njellyfish:1;\\\\nsponge:0.5;\\\\nocean:1;": [
+      {
+        "id": 268,
+        "mobs": "bubble:3;\\\\njellyfish:1;\\\\nsponge:0.5;\\\\nocean:1;",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 35
+      }
+    ],
+    "sponge:1;\\\\njellyfish:0.25;\\\\nocean:0.5;": [
+      {
+        "id": 279,
+        "mobs": "sponge:1;\\\\njellyfish:0.25;\\\\nocean:0.5;",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 2.8,
+        "extraSpawnDelay": 60,
+        "team": null,
+        "pointsLen": 26
+      }
+    ],
+    "crab:1;\\\\nbubble:0.25;\\\\nocean:1;": [
+      {
+        "id": 281,
+        "mobs": "crab:1;\\\\nbubble:0.25;\\\\nocean:1;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 19
+      }
+    ],
+    "leech:1;\\\\nshell:1.5;\\\\nocean:1;": [
+      {
+        "id": 284,
+        "mobs": "leech:1;\\\\nshell:1.5;\\\\nocean:1;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 44
+      }
+    ],
+    "shell:1;\\\\nsponge:0.25;\\\\nocean:1;": [
+      {
+        "id": 288,
+        "mobs": "shell:1;\\\\nsponge:0.25;\\\\nocean:1;",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 38
+      }
+    ],
+    "jellyfish:1;\\\\nocean:1;": [
+      {
+        "id": 289,
+        "mobs": "jellyfish:1;\\\\nocean:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 63
+      },
+      {
+        "id": 290,
+        "mobs": "jellyfish:1;\\\\nocean:1;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 85
+      },
+      {
+        "id": 291,
+        "mobs": "jellyfish:1;\\\\nocean:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 73
+      },
+      {
+        "id": 292,
+        "mobs": "jellyfish:1;\\\\nocean:1;",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 71
+      },
+      {
+        "id": 293,
+        "mobs": "jellyfish:1;\\\\nocean:1;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 63
+      },
+      {
+        "id": 294,
+        "mobs": "jellyfish:1;\\\\nocean:1;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 65
+      }
+    ],
+    "starfish:3;\\\\njellyfish:1;\\\\nbubble:1;\\\\nocean:1;": [
+      {
+        "id": 295,
+        "mobs": "starfish:3;\\\\njellyfish:1;\\\\nbubble:1;\\\\nocean:1;",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 122
+      }
+    ],
+    "crab:1;\\\\nshell:0.05;": [
+      {
+        "id": 298,
+        "mobs": "crab:1;\\\\nshell:0.05;",
+        "difficulty": 5,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      }
+    ],
+    "sewers": [
+      {
+        "id": 325,
+        "mobs": "sewers",
+        "difficulty": null,
+        "forceRarity": null,
+        "density": 1.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 12
+      },
+      {
+        "id": 20,
+        "mobs": "sewers",
+        "difficulty": 15,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 23
+      },
+      {
+        "id": 22,
+        "mobs": "sewers",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 23,
+        "mobs": "sewers",
+        "difficulty": 25,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 25
+      },
+      {
+        "id": 27,
+        "mobs": "sewers",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 21
+      },
+      {
+        "id": 28,
+        "mobs": "sewers",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 15
+      },
+      {
+        "id": 29,
+        "mobs": "sewers",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 7
+      },
+      {
+        "id": 31,
+        "mobs": "sewers",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 11
+      },
+      {
+        "id": 32,
+        "mobs": "sewers",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 13
+      },
+      {
+        "id": 33,
+        "mobs": "sewers",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 9
+      },
+      {
+        "id": 34,
+        "mobs": "sewers",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      },
+      {
+        "id": 35,
+        "mobs": "sewers",
+        "difficulty": 45,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 23
+      },
+      {
+        "id": 37,
+        "mobs": "sewers",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 15
+      },
+      {
+        "id": 38,
+        "mobs": "sewers",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      },
+      {
+        "id": 40,
+        "mobs": "sewers",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      },
+      {
+        "id": 42,
+        "mobs": "sewers",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 31
+      },
+      {
+        "id": 44,
+        "mobs": "sewers",
+        "difficulty": 65,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      },
+      {
+        "id": 45,
+        "mobs": "sewers",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 46,
+        "mobs": "sewers",
+        "difficulty": 75,
+        "forceRarity": null,
+        "density": 5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 47,
+        "mobs": "sewers",
+        "difficulty": 55,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "sewers:1;garbage:1;": [
+      {
+        "id": 21,
+        "mobs": "sewers:1;garbage:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "sewers:1;roach:1;": [
+      {
+        "id": 24,
+        "mobs": "sewers:1;roach:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      },
+      {
+        "id": 25,
+        "mobs": "sewers:1;roach:1;",
+        "difficulty": 35,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "sewers:1;spider:1;": [
+      {
+        "id": 26,
+        "mobs": "sewers:1;spider:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 2,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "sewers:1;moth:0.25;": [
+      {
+        "id": 30,
+        "mobs": "sewers:1;moth:0.25;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 2.5,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "sewers:1;garbage:0.3;silverfish:0.3;": [
+      {
+        "id": 36,
+        "mobs": "sewers:1;garbage:0.3;silverfish:0.3;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 3,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 5
+      }
+    ],
+    "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;": [
+      {
+        "id": 1,
+        "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 6,
+        "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 8,
+        "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 10,
+        "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 12,
+        "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 34,
+        "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 36,
+        "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 38,
+        "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": null,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      }
+    ],
+    "assembler:1;": [
+      {
+        "id": 17,
+        "mobs": "assembler:1;",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 21,
+        "mobs": "assembler:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 22,
+        "mobs": "assembler:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 24,
+        "mobs": "assembler:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 26,
+        "mobs": "assembler:1;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 37,
+        "mobs": "assembler:1;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 39,
+        "mobs": "assembler:1;",
+        "difficulty": 70,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 35,
+        "mobs": "assembler:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0,
+        "extraSpawnDelay": null,
+        "team": "1.0",
+        "pointsLen": 5
+      }
+    ],
+    "beetle_hel:3;\\\\nwasp_hel:1;\\\\nspider_hel:1;\\\\ncentipede_hel:0.1;": [
+      {
+        "id": 17,
+        "mobs": "beetle_hel:3;\\\\nwasp_hel:1;\\\\nspider_hel:1;\\\\ncentipede_hel:0.1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 31
+      },
+      {
+        "id": 18,
+        "mobs": "beetle_hel:3;\\\\nwasp_hel:1;\\\\nspider_hel:1;\\\\ncentipede_hel:0.1;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 39
+      },
+      {
+        "id": 19,
+        "mobs": "beetle_hel:3;\\\\nwasp_hel:1;\\\\nspider_hel:1;\\\\ncentipede_hel:0.1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 44
+      },
+      {
+        "id": 20,
+        "mobs": "beetle_hel:3;\\\\nwasp_hel:1;\\\\nspider_hel:1;\\\\ncentipede_hel:0.1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 29
+      },
+      {
+        "id": 21,
+        "mobs": "beetle_hel:3;\\\\nwasp_hel:1;\\\\nspider_hel:1;\\\\ncentipede_hel:0.1;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 1.4,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 17
+      },
+      {
+        "id": 22,
+        "mobs": "beetle_hel:3;\\\\nwasp_hel:1;\\\\nspider_hel:1;\\\\ncentipede_hel:0.1;",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 0.7,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 32
+      },
+      {
+        "id": 24,
+        "mobs": "beetle_hel:3;\\\\nwasp_hel:1;\\\\nspider_hel:1;\\\\ncentipede_hel:0.1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0.7,
+        "extraSpawnDelay": null,
+        "team": null,
+        "pointsLen": 32
+      }
+    ],
+    "gambler:1;": [
+      {
+        "id": 25,
+        "mobs": "gambler:1;",
+        "difficulty": 0,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": null,
+        "team": "0.0",
+        "pointsLen": 5
+      },
+      {
+        "id": 27,
+        "mobs": "gambler:1;",
+        "difficulty": 50,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": null,
+        "team": "0.0",
+        "pointsLen": 4
+      },
+      {
+        "id": 28,
+        "mobs": "gambler:1;",
+        "difficulty": 20,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": null,
+        "team": "0.0",
+        "pointsLen": 4
+      },
+      {
+        "id": 29,
+        "mobs": "gambler:1;",
+        "difficulty": 40,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": null,
+        "team": "0.0",
+        "pointsLen": 4
+      },
+      {
+        "id": 30,
+        "mobs": "gambler:1;",
+        "difficulty": 60,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": null,
+        "team": "0.0",
+        "pointsLen": 4
+      },
+      {
+        "id": 31,
+        "mobs": "gambler:1;",
+        "difficulty": 30,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": null,
+        "team": "0.0",
+        "pointsLen": 4
+      },
+      {
+        "id": 32,
+        "mobs": "gambler:1;",
+        "difficulty": 10,
+        "forceRarity": null,
+        "density": 0.05,
+        "extraSpawnDelay": null,
+        "team": "0.0",
+        "pointsLen": 5
+      }
+    ]
+  },
+  "factory": [
+    {
+      "id": 263,
+      "mobs": "mecha_flower:1;wasp_mecha:1;spider_mecha:1;crab_mecha:1;",
+      "difficulty": null,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": 60,
+      "team": "2.0",
+      "pointsLen": 7
+    },
+    {
+      "id": 1,
+      "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+      "difficulty": 0,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": null,
+      "team": "1.0",
+      "pointsLen": 5
+    },
+    {
+      "id": 6,
+      "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+      "difficulty": 30,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": null,
+      "team": "1.0",
+      "pointsLen": 5
+    },
+    {
+      "id": 8,
+      "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": null,
+      "team": "1.0",
+      "pointsLen": 5
+    },
+    {
+      "id": 10,
+      "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+      "difficulty": 50,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": null,
+      "team": "1.0",
+      "pointsLen": 5
+    },
+    {
+      "id": 12,
+      "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+      "difficulty": 10,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": null,
+      "team": "1.0",
+      "pointsLen": 5
+    },
+    {
+      "id": 34,
+      "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+      "difficulty": 20,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": null,
+      "team": "1.0",
+      "pointsLen": 5
+    },
+    {
+      "id": 36,
+      "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+      "difficulty": 60,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": null,
+      "team": "1.0",
+      "pointsLen": 5
+    },
+    {
+      "id": 38,
+      "mobs": "mecha_flower:1;wasp_mecha:4;spider_mecha:4;crab_mecha:2;barrel:0.2;",
+      "difficulty": 70,
+      "forceRarity": null,
+      "density": null,
+      "extraSpawnDelay": null,
+      "team": "1.0",
+      "pointsLen": 5
+    }
+  ],
+  "superZ": [
+    {
+      "id": 104,
+      "mobs": "fire_ant_soldier:10;worm:0.3;",
+      "difficulty": 60,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 5
+    },
+    {
+      "id": 105,
+      "mobs": "fire_ant_soldier:10;worm:0.3;",
+      "difficulty": 57.5,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 43
+    },
+    {
+      "id": 107,
+      "mobs": "fire_ant_egg:1;",
+      "difficulty": 50,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 4
+    },
+    {
+      "id": 108,
+      "mobs": "fire_ant_egg:1;",
+      "difficulty": 45,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 4
+    },
+    {
+      "id": 111,
+      "mobs": "fire_ant_soldier:10;worm:0.3;",
+      "difficulty": 42.5,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 15
+    },
+    {
+      "id": 112,
+      "mobs": "fire_ant_soldier:10;worm:0.3;",
+      "difficulty": 52.5,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 11
+    },
+    {
+      "id": 113,
+      "mobs": "fire_ant_soldier:10;worm:0.3;",
+      "difficulty": 32.5,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 14
+    },
+    {
+      "id": 137,
+      "mobs": "ant_baby:1;ant_worker:2;ant_soldier:7;worm:0.3;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 111
+    },
+    {
+      "id": 154,
+      "mobs": "ant_soldier:10;worm:0.3;",
+      "difficulty": 67.5,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 11
+    },
+    {
+      "id": 155,
+      "mobs": "ant_soldier:10;worm:0.3;",
+      "difficulty": 57.5,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 156,
+      "mobs": "ant_soldier:10;worm:0.3;",
+      "difficulty": 47.5,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 17
+    },
+    {
+      "id": 157,
+      "mobs": "ant_soldier:10;worm:0.3;",
+      "difficulty": 37.5,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 5
+    },
+    {
+      "id": 167,
+      "mobs": "ant_egg:1;",
+      "difficulty": 45,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 11
+    },
+    {
+      "id": 168,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 7
+    },
+    {
+      "id": 172,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 173,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 174,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 175,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 176,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 177,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 178,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 179,
+      "mobs": "ant_egg:1;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": 120,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 202,
+      "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+      "difficulty": 70,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 69
+    },
+    {
+      "id": 203,
+      "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+      "difficulty": 75,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 57
+    },
+    {
+      "id": 209,
+      "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+      "difficulty": 65,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 99
+    },
+    {
+      "id": 210,
+      "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+      "difficulty": 60,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 39
+    },
+    {
+      "id": 211,
+      "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+      "difficulty": 60,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 89
+    },
+    {
+      "id": 212,
+      "mobs": "termite_baby:1;termite_worker:1;termite_soldier:8;worm:0.3;",
+      "difficulty": 50,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 135
+    },
+    {
+      "id": 213,
+      "mobs": "termite_baby:1;termite_worker:2;termite_soldier:7;worm:0.3;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 43
+    },
+    {
+      "id": 214,
+      "mobs": "termite_baby:1;termite_worker:2;termite_soldier:7;worm:0.3;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 29
+    },
+    {
+      "id": 215,
+      "mobs": "termite_baby:1;termite_worker:3;termite_soldier:6;worm:0.3;",
+      "difficulty": 30,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 31
+    },
+    {
+      "id": 216,
+      "mobs": "termite_baby:1;termite_worker:3;termite_soldier:6;worm:0.3;",
+      "difficulty": 30,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 39
+    },
+    {
+      "id": 217,
+      "mobs": "termite_baby:1;termite_worker:4;termite_soldier:5;worm:0.3;",
+      "difficulty": 20,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 35
+    },
+    {
+      "id": 219,
+      "mobs": "termite_baby:1;termite_worker:6;termite_soldier:3;worm:0.3;",
+      "difficulty": 10,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 25
+    },
+    {
+      "id": 220,
+      "mobs": "termite_baby:2;termite_worker:6;termite_soldier:2;worm:0.3;",
+      "difficulty": null,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 37
+    },
+    {
+      "id": 222,
+      "mobs": "termite_baby:1;termite_worker:6;termite_soldier:3;worm:0.3;",
+      "difficulty": 10,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 35
+    },
+    {
+      "id": 224,
+      "mobs": "termite_baby:1;termite_worker:4;termite_soldier:5;worm:0.3;",
+      "difficulty": 20,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 79
+    },
+    {
+      "id": 225,
+      "mobs": "termite_baby:1;termite_worker:6;termite_soldier:3;worm:0.3;",
+      "difficulty": 10,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 83
+    },
+    {
+      "id": 226,
+      "mobs": "termite_baby:1;termite_worker:4;termite_soldier:5;worm:0.3;",
+      "difficulty": 20,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 87
+    },
+    {
+      "id": 228,
+      "mobs": "termite_baby:1;termite_worker:3;termite_soldier:6;worm:0.3;",
+      "difficulty": 30,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 135
+    },
+    {
+      "id": 229,
+      "mobs": "termite_baby:1;termite_worker:2;termite_soldier:7;worm:0.3;",
+      "difficulty": 40,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 45
+    },
+    {
+      "id": 343,
+      "mobs": "termite_soldier:1;\\\\ntermite_worker:0.2;\\\\ntermite_mound:0.1;\\\\nbush:0.5;\\\\njungle:1;",
+      "difficulty": 15,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 93
+    },
+    {
+      "id": 33,
+      "mobs": "sewers",
+      "difficulty": 55,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 9
+    },
+    {
+      "id": 36,
+      "mobs": "sewers:1;garbage:0.3;silverfish:0.3;",
+      "difficulty": 60,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 5
+    },
+    {
+      "id": 44,
+      "mobs": "sewers",
+      "difficulty": 65,
+      "forceRarity": null,
+      "density": 3,
+      "extraSpawnDelay": null,
+      "team": null,
+      "pointsLen": 17
+    }
+  ]
+}

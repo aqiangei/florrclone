@@ -1,0 +1,385 @@
+[
+  {
+    "id": "health",
+    "name": "Health",
+    "zh": "血量",
+    "costs": [
+      2,
+      5,
+      8,
+      11,
+      14,
+      17,
+      20,
+      21,
+      24
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "requires": null
+  },
+  {
+    "id": "loadout",
+    "name": "Loadout",
+    "zh": "槽位",
+    "costs": [
+      3,
+      6,
+      9,
+      12,
+      15
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "requires": null
+  },
+  {
+    "id": "rotation",
+    "name": "Petal Rotation",
+    "zh": "转速",
+    "costs": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "requires": null
+  },
+  {
+    "id": "antennae",
+    "name": "Antennae",
+    "zh": "触角",
+    "costs": [
+      1,
+      3,
+      5
+    ],
+    "rarity": [
+      2,
+      3,
+      4
+    ],
+    "requires": {
+      "id": "loadout",
+      "level": 1
+    }
+  },
+  {
+    "id": "luck",
+    "name": "Luck",
+    "zh": "幸运",
+    "costs": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "requires": null
+  },
+  {
+    "id": "medic",
+    "name": "Medic",
+    "zh": "治疗",
+    "costs": [
+      2,
+      5,
+      8,
+      11,
+      14,
+      17,
+      20,
+      23,
+      26
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "requires": null
+  },
+  {
+    "id": "petalHealth",
+    "name": "Petal Health",
+    "zh": "Petal health",
+    "costs": [
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16,
+      18
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "requires": null
+  },
+  {
+    "id": "poison",
+    "name": "Poison",
+    "zh": "剧毒",
+    "costs": [
+      1,
+      2,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "requires": null
+  },
+  {
+    "id": "reach",
+    "name": "Reach",
+    "zh": "Attack range",
+    "costs": [
+      3,
+      6,
+      9
+    ],
+    "rarity": [
+      2,
+      5,
+      7
+    ],
+    "requires": {
+      "id": "loadout",
+      "level": 2
+    }
+  },
+  {
+    "id": "reload",
+    "name": "Reload",
+    "zh": "刷新",
+    "costs": [
+      2,
+      6,
+      10,
+      12,
+      16,
+      20,
+      24,
+      28,
+      32
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "requires": null
+  },
+  {
+    "id": "sharpEdges",
+    "name": "Sharp Edges",
+    "zh": "锐利边缘",
+    "costs": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "requires": null
+  },
+  {
+    "id": "secondChance",
+    "name": "Second Chance",
+    "zh": "第二次机会",
+    "costs": [
+      10,
+      20
+    ],
+    "rarity": [
+      4,
+      5
+    ],
+    "requires": {
+      "id": "health",
+      "level": 3
+    }
+  },
+  {
+    "id": "magnetism",
+    "name": "Magnetism",
+    "zh": "磁性",
+    "costs": [
+      15
+    ],
+    "rarity": [
+      5
+    ],
+    "requires": {
+      "id": "loadout",
+      "level": 5
+    }
+  },
+  {
+    "id": "duplicator",
+    "name": "Duplicator",
+    "zh": "重瓣",
+    "costs": [
+      10,
+      20,
+      30,
+      40
+    ],
+    "rarity": [
+      4,
+      6,
+      7,
+      8
+    ],
+    "requires": {
+      "id": "loadout",
+      "level": 4
+    }
+  },
+  {
+    "id": "bodyToxicity",
+    "name": "Body Toxicity",
+    "zh": "身体毒性",
+    "costs": [
+      10
+    ],
+    "rarity": [
+      6
+    ],
+    "requires": {
+      "id": "sharpEdges",
+      "level": 6
+    }
+  },
+  {
+    "id": "concentratedPoison",
+    "name": "Concentrated Poison",
+    "zh": "浓缩剧毒",
+    "costs": [
+      15
+    ],
+    "rarity": [
+      7
+    ],
+    "requires": {
+      "id": "poison",
+      "level": 3
+    }
+  },
+  {
+    "id": "summoner",
+    "name": "Summoner",
+    "zh": "召唤师",
+    "costs": [
+      2,
+      5,
+      8,
+      11,
+      14,
+      17,
+      20,
+      23,
+      26
+    ],
+    "rarity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "requires": null
+  }
+]

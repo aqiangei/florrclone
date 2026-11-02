@@ -226,7 +226,7 @@ bool spend(double& allowance, double cost = 1.0);
 
 /// Strips control characters and clamps a typed flower name to the browser
 /// build's twenty characters. An empty or all-blank name becomes "Unnamed"
-/// here; JoinGame replaces that with the account username when one is known.
+/// here; handleJoin then substitutes the account username when one is known.
 std::string sanitizePlayerName(const std::string& name);
 
 /// Strips control characters and clamps length for anything a player typed

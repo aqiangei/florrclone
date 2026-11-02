@@ -136,6 +136,8 @@ struct Account {
     std::string id;
     std::string username;
     std::string passwordHash;
+    /// florrclone scrypt salt (lowercase hex). Empty for bcrypt / plaintext.
+    std::string passwordSalt;
     /// Set by an ancient import that stored passwords in the clear. Advisory
     /// only -- the stored value's shape decides how it is checked.
     bool isPlainText = false;

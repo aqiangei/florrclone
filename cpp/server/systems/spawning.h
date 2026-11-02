@@ -730,6 +730,7 @@ private:
         /// `latent.size() + liveMobs` is measured against it, and the band
         /// stocks itself until they meet.
         int targetMobs = 1;
+        int forceRarity = -1;
         /// This band holds one mob however big it is drawn, and rolls that
         /// mob's position over the whole outline again when it dies rather
         /// than handing the slot back where it fell. See MapElement::singular:

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>flowrix.pro</title>
+    <title>florrc.lone</title>
     <meta name="description" content="florr.io clone">
     <meta name="keywords" content="florr, florr.io, florr clone, flowrix, flowrix pro, flowrix.pro, florrclone cryodome, zorr, zorr.pro, gardn, io games, online game, multiplayer game, browser game, web game">
     <link rel="icon" type="image/x-icon" href="/favicon.ico?v=2">
@@ -84,16 +84,10 @@
   const port = query.get('port') || location.port || defaultPort;
 
   const args = ['--data', 'data', '--host', host, '--port', port];
-  // Local loops (page or game host) land on the seeded admin account so a
-  // developer does not have to type credentials or wait on a guest. Query
-  // params still win when present; production hosts never get this default.
-  const localHost = (name) => {
-    const h = (name || '').toLowerCase();
-    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
-  };
-  const localDev = localHost(location.hostname) || localHost(host);
-  const user = query.get('user') ?? (localDev ? 'admin' : null);
-  const password = query.get('password') ?? (localDev ? 'admin1234' : null);
+  // Credentials only from the URL (?user=&password=) for scripted captures.
+  // Ordinary players get guest / login UI with nothing prefilled.
+  const user = query.get('user');
+  const password = query.get('password');
   if (user !== null) args.push('--user', user);
   if (password !== null) args.push('--password', password);
   if (query.get('lobby') !== null) args.push('--lobby');

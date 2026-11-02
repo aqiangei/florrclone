@@ -23,6 +23,7 @@
 #include "client/ui/menu_style.h"
 #include "client/ui/menu_theme.h"
 #include "shared/core/types.h"
+#include "shared/game/rarity.h"
 #include "shared/game/skills.h"
 
 namespace flix::ui {

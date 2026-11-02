@@ -13,7 +13,10 @@
     "dev:cert": "node scripts/gen-dev-cert.js",
     "start": "npm run build && npm run start_nobuild",
     "build:dev": "FLIX_BUILD=dev node scripts/build-web.js all",
-    "start_nobuild": "node dist/server.js --port 3001 --db dist/inventory.json --web-root dist",
+    "start_nobuild": "node dist/server.js --port 3001 --db dist/inventory.json --data data --web-root dist",
+    "start:aqa": "node dist/server.js --port 3001 --db dist/inventory.aqa.json --data data --web-root dist",
+    "smoke:auth": "node scripts/smoke-auth.js",
+    "check:shell": "node scripts/_check-prod-shell.js",
     "build:wsl": "node scripts/build-wsl.js",
     "test:ws": "node scripts/ws-conformance.js"
   },

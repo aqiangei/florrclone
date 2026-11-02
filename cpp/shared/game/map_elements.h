@@ -128,6 +128,7 @@ struct MapElement {
     /// mythic side by side, the way the reference's unbanded world did.
     double difficulty = 0.0;
     bool hasDifficulty = false;
+    int forceRarity = -1;
 
     /// What this shape spawns, as weighted rows of group names and mob ids.
     /// Empty on a band means "whatever the region under it says".
@@ -150,6 +151,10 @@ struct MapElement {
     /// district while stocking one mob, and painting the district in that
     /// mob's tier would tell a player the whole district is that dangerous.
     bool singular = false;
+
+    /// Population multiplier relative to the default band density (1.0).
+    /// florrclone authoring uses this for Super (3x) and packed ant rooms.
+    double density = 1.0;
 
     /// True when this `spawn` object owns a POPULATION: a difficulty band,
     /// stocked to a density of its own.

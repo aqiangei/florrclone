@@ -70,13 +70,11 @@ constexpr std::uint32_t kGuestBadge = 0xFFDD66u;
 /// Database::validUsername's length. The server checks the rest of the rule
 /// and says which part a name broke; this is only what a field cuts at.
 constexpr std::size_t kMaxUsernameBytes = 16;
-/// The settings card's three password limits, which moved here with the form:
 /// bcrypt stops at 72 bytes, so a new password may not run past it; the
-/// current one takes what the login box takes, because an imported account may
-/// hold something longer; and eight is Database::validPassword's floor.
+/// current one takes what the login box takes (imported accounts may be longer).
+/// No minimum length — cutover accepts whatever florrclone allowed.
 constexpr std::size_t kMaxNewPasswordBytes = 72;
 constexpr std::size_t kMaxTypedPasswordBytes = 100;
-constexpr std::size_t kMinNewPasswordBytes = 8;
 /// The login box's cap (App::updateLogin): an account made under an older rule
 /// can be longer than the sixteen a new one may have.
 constexpr std::size_t kMaxLoginNameBytes = 50;
@@ -244,8 +242,8 @@ void submitPassword(MenuContext& ctx, PanelState& st) {
         st.password.message = "The new passwords do not match.";
         return;
     }
-    if (next.size() < kMinNewPasswordBytes) {
-        st.password.message = "New password must be at least 8 characters.";
+    if (next.empty()) {
+        st.password.message = "New password cannot be empty.";
         return;
     }
     if (hasPassword && next == current) {

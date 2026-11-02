@@ -1,0 +1,142 @@
+2026-11-02 代码变更记录（中文）
+
+目标与范围
+游戏内容以 D:/ashflor/florrclone 为参照，保留现有 C++/WASM 引擎及操作方式。本次收录工作区已有的天赋、账号和界面改动，以及本次排查中的修复；不包含本地账号数据库、迁移原档、密钥、构建日志和临时账号重置脚本。不修改 README.md。
+
+一、账号与迁移
+支持旧站 scrypt 密码哈希及盐值。修复将十六进制外观的盐值错误解码为字节的问题，按旧站原逻辑将盐值作为字符串参与 scrypt；成功登录后升级为 bcrypt。保留迁移的经验、星星、背包、装备、天赋及击杀记录。兼容数字等级天赋存档，新增迁移转换工具。转换工具不再提供隐含共享密码，缺少密码哈希时必须显式指定密码。
+移除本地页面隐含的管理员账号和密码，以及自动管理员库存填充相关行为。账号菜单、登录和注册流程同步调整；登录成功后默认使用当前账号用户名作为大厅昵称。登录、注册界面提示旧站存档保留、使用原账号密码登录。原有公会名称校验相关改动一并收录。
+
+二、天赋与客户端界面
+按旧站天赋表调整技能编号、分支、等级、费用、前置条件、退款与对应属性计算；同步服务端、存档、拆分角色和客户端天赋界面。加入天赋图标生成及提取工具。
+调整背包网格，使不满一行的物品也居中；调整物品名称、中文文本、菜单图标、账号页和大厅展示。网页标题及登录默认行为同步至发布页面。
+
+三、地图碰撞与刷怪
+从固定版本旧站引擎提取静态通行轮廓，并取得金字塔生成轮廓；Super、Swarm、测试场地遵循旧引擎开放场地规则。13 张地图改用独立的原站轮廓碰撞层，不再沿用参考贴图的碰撞形状或以整格墙代替边角。保留贴图层；碰撞图块表按地图拆分，避免每张地图加载整套碰撞形状。
+保留没有威胁度的生物分布覆盖区，导入固定稀有度字段。按原站地图的生物名单及重复权重生成默认刷怪名单。补齐蚂蚁、火蚁、白蚁、地狱甲虫、木乃伊甲虫等名称映射，修复因名称不存在而只剩 Worm 等少数怪物的问题。将 test_dummy 与 target_dummy 一并排除自然生成。
+新增碰撞轮廓提取、转换、图块拆分、地图通行抽样和实际协议快照检查工具。地图重新导入后自动重建原站碰撞层，Python 工具依赖 shapely。
+
+四、怪物、速度与掉落
+移除 Worm 残留的洞口、不可碰撞及地下城入口属性，恢复可受击及主动攻击配置。正方形由模糊位图改为矢量图。
+修复所有怪物速度错误依赖玩家提速基准的问题：玩家维持 1125，怪物采用独立的参考引擎基准 300，游走、追击、巡航不再随玩家提速。同步速度配置回归测试。Worm 恢复普通参考追击倍率；水蛭保留用户指定的慢速 135、较小警觉范围，并移除水蛭头部与身体接触玩家时的冲撞推力，保留接触伤害。
+掉落统一为 20 倍，不再叠加 Super 以上额外倍率。
+
+五、发布与工具
+同步 dist 的客户端、服务端、网页和配套 .bin 文件；本地存档与迁移目录加入忽略规则。保留可复用的构建、认证冒烟、内容提取、审计和迁移工具。提取工具使用相邻 florrclone 源目录；正常运行服务端不需要这些开发依赖。
+
+验证结果与限制
+1. 13 张地图约 104 万个通行采样点与参照轮廓一致；该检查不等于所有角色半径、滑墙或战斗场景的完整实玩验收。
+2. 原密码登录迁移账号验证通过，返回等级 77、累计经验 67609；原档经验、星星、背包、装备、技能及击杀记录对比通过。真实账号数据和密码不提交。
+3. 认证冒烟覆盖游客、注册、登录、错误密码；所有地图刷怪表名称可解析。快照已看到多个地图的各自怪物种类，花园有蚁穴、蚁后及新增兵蚁记录。
+4. 怪物速度专项回归通过，蜜蜂常规速度为 30；玩家速度保留 1125，水蛭速度为 135。发布构建通过，配套 .bin 解压后与原文件一致。
+5. 完整配置测试执行 62 项，其中 17 项失败（170 条断言），包含旧内容数量、自动虫卵及美术等旧期望；本次未将其视为全部通过，也未为通过测试改回旧内容。
+6. 部分地图无怪或密度异常仍需继续定位（下水道入口检查尚未看到怪物）；未认定所有群系、威胁度、稀有度分布、118 种花瓣特殊机制及全部美术均已完成原版一致性验收。Worm、水蛭改动仍需要持续实战检查。
+
+本次文件清单（不含本记录文件自身）
+- .gitignore
+- cpp/client/app.cpp
+- cpp/client/app_lobby.cpp
+- cpp/client/app_login.cpp
+- cpp/client/net_client.cpp
+- cpp/client/ui/content_i18n.cpp
+- cpp/client/ui/item_tile.cpp
+- cpp/client/ui/menu_account.cpp
+- cpp/client/ui/menu_icons.h
+- cpp/client/ui/menu_inventory.cpp
+- cpp/client/ui/menu_talents.cpp
+- cpp/client/ui/menu_widgets.h
+- cpp/client/ui/menus.cpp
+- cpp/client/ui/menus.h
+- cpp/client/ui/talent_icons.h
+- cpp/client/web/shell.html
+- cpp/server/crypto.cpp
+- cpp/server/crypto.h
+- cpp/server/db.cpp
+- cpp/server/db.h
+- cpp/server/game_server.cpp
+- cpp/server/session.h
+- cpp/server/splitter.cpp
+- cpp/server/systems/combat.cpp
+- cpp/server/systems/combat.h
+- cpp/server/systems/loot.cpp
+- cpp/server/systems/petals.cpp
+- cpp/server/systems/spawning.cpp
+- cpp/server/systems/spawning.h
+- cpp/shared/game/absorb.h
+- cpp/shared/game/config.cpp
+- cpp/shared/game/constants.h
+- cpp/shared/game/map_elements.cpp
+- cpp/shared/game/map_elements.h
+- cpp/shared/game/skills.h
+- cpp/shared/game/tiled_map.cpp
+- cpp/tests/config_tests.cpp
+- data/mobs.json
+- dist/bundle.js
+- dist/bundle.js.bin
+- dist/bundle.wasm
+- dist/bundle.wasm.bin
+- dist/index.html
+- dist/server.js
+- dist/server.wasm
+- docs/ant_hell-collision-audit.json
+- docs/computer-collision-audit.json
+- docs/desert-collision-audit.json
+- docs/dps_test-collision-audit.json
+- docs/florrclone-collision-contours.json
+- docs/florrclone-spawn-zones-summary.json
+- docs/florrclone-spawn-zones.json
+- docs/florrclone-talents-preamble.txt
+- docs/florrclone-talents.json
+- docs/florrclone-talents.raw.js
+- docs/garden-collision-audit.json
+- docs/hel-collision-audit.json
+- docs/jungle-collision-audit.json
+- docs/map-collision-conversion.json
+- docs/ocean-collision-audit.json
+- docs/petal-content-audit.json
+- docs/pyramid-collision-audit.json
+- docs/sewers-collision-audit.json
+- docs/super-collision-audit.json
+- docs/swarm-collision-audit.json
+- docs/sync-petal-stats-report.json
+- docs/worm-collision-audit.json
+- maps/ant_hell.tmj
+- maps/ant_hell_collision.tsj
+- maps/computer.tmj
+- maps/computer_collision.tsj
+- maps/desert.tmj
+- maps/desert_collision.tsj
+- maps/dps_test.tmj
+- maps/garden.tmj
+- maps/garden_collision.tsj
+- maps/hel.tmj
+- maps/hel_collision.tsj
+- maps/jungle.tmj
+- maps/jungle_collision.tsj
+- maps/ocean.tmj
+- maps/ocean_collision.tsj
+- maps/pyramid.tmj
+- maps/pyramid_collision.tsj
+- maps/sewers.tmj
+- maps/sewers_collision.tsj
+- maps/super.tmj
+- maps/swarm.tmj
+- maps/tiles/collision_empty.svg
+- maps/tileset.tsj
+- maps/worm.tmj
+- maps/worm_collision.tsj
+- package.json
+- scripts/_check-prod-shell.js
+- scripts/_probe-world.js
+- scripts/audit-factory-collision.js
+- scripts/audit-petal-content.js
+- scripts/embed-florrclone-talent-icons.js
+- scripts/extract-florrclone-collision.js
+- scripts/extract-florrclone-spawn-zones.js
+- scripts/extract-florrclone-talent-effects.js
+- scripts/extract-florrclone-talents.js
+- scripts/migrate-florrclone-inventory.js
+- scripts/port-florrclone-maps.js
+- scripts/smoke-auth.js
+- scripts/split-collision-tilesets.py
+- scripts/sync-map-collision.py

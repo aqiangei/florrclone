@@ -4,6 +4,21 @@
   "unresolvedCount": 1,
   "changes": [
     {
+      "florName": "Ant Egg",
+      "cppKey": "egg",
+      "before": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 60000
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 60000,
+        "zh": "Ant Egg"
+      }
+    },
+    {
       "florName": "Mysterious Stick",
       "cppKey": "mysterious_stick",
       "before": {
@@ -65,32 +80,17 @@
     },
     {
       "florName": "Nazar Amulet",
-      "cppKey": "amulet",
+      "cppKey": "nazar_amulet",
       "before": {
         "damage": 0,
-        "health": 10,
-        "cooldown": 2000
+        "health": null,
+        "cooldown": 60000
       },
       "after": {
         "damage": 0,
         "health": 1,
         "cooldown": 60000,
         "zh": "邪眼护符"
-      }
-    },
-    {
-      "florName": "Amulet",
-      "cppKey": "amulet",
-      "before": {
-        "damage": 0,
-        "health": 1,
-        "cooldown": 60000
-      },
-      "after": {
-        "damage": 0,
-        "health": 10,
-        "cooldown": 2000,
-        "zh": "护符"
       }
     },
     {

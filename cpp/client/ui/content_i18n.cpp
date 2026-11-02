@@ -1,5 +1,6 @@
 #include "client/ui/content_i18n.h"
 #include "client/ui/i18n.h"
+#include "shared/game/skills.h"
 #include <cstddef>
 #include <string>
 namespace flix {
@@ -509,17 +510,13 @@ const char* rarityTr(Rarity r) {
     return zh() ? kZh[i] : kEn[i];
 }
 
-const char* skillTr(SkillId id, int tier) {
-    if (id == SkillId::Duplicator && tier == 1) return zh() ? "三倍复制" : "Triplicator";
-    static constexpr const char* kEn[] = {
-        "Damage","Petal Health","Flower Health","Healing","Absorption","Reload",
-        "Second Chance","Pet Health","Duplicator","Magnetism","Prestige"};
-    static constexpr const char* kZh[] = {
-        "伤害","花瓣生命","花朵生命","治疗","吸收","装填",
-        "第二次机会","宠物生命","复制","磁力","声望"};
+const char* skillTr(SkillId id, int /*tier*/) {
+    // Labels live on skills.h (florrclone tree). Do not keep a second parallel
+    // table here — the old flowrix names were indexed wrong after the port.
     const int i = static_cast<int>(id);
     if (i < 0 || i >= kSkillCount) return "";
-    return zh() ? kZh[i] : kEn[i];
+    return zh() ? kSkillLabelsZh[static_cast<std::size_t>(i)]
+                : kSkillLabels[static_cast<std::size_t>(i)];
 }
 
 const char* petalNameTr(const std::string& id, const char* fallback) {

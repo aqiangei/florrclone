@@ -73,7 +73,13 @@ constexpr double kSectionLabelSize = 15.0;
 /// against. Deliberately the panel's own bottom padding rather than the
 /// kMenuBorder the content is CLIPPED to: the wider strip is reserved, so the
 /// last few units of the clip rect are never scrolled into.
-constexpr double kViewBottomPad = 14.0;
+///
+/// Sized past a single cell so a trailing row that would otherwise sit flush
+/// against the panel's floor -- and read as stacked on the row above -- is
+/// pushed into the scroll range instead. Smaller than this and a short bag
+/// still fits without a thumb; at one cell the thumb appears as soon as a
+/// second row would crowd the bottom.
+constexpr double kViewBottomPad = kCellSize + kCellGap;
 
 /// One wheel notch is a raw ~100px deltaY in the browser; SDL reports ±1, so
 /// the step is spelled out here.
@@ -133,26 +139,20 @@ bool matchesSearch(std::uint16_t petalIndex, const std::string& needle) {
            lowerCase(config.id).find(needle) != std::string::npos;
 }
 
-/// Places `entries` as a centred five-column block starting at `y`, then
-/// advances `y` past it. The last row is centred on its own, which is what
-/// stops a trailing pair of petals from hugging the left edge.
+/// Centre each row within the scrolling content area, including partial rows.
 void layoutRun(Grid& grid, const std::vector<Cell>& entries, double left, double innerWidth,
                double& y) {
     if (entries.empty()) return;
     const int rows = static_cast<int>((entries.size() + kColumns - 1) / kColumns);
-    const int lastRowCount =
-        static_cast<int>(entries.size()) - (rows - 1) * kColumns;
-    const double fullWidth = kColumns * kCellSize + (kColumns - 1) * kCellGap;
-    const double fullStart = left + (innerWidth - fullWidth) * 0.5;
-    const double lastWidth = lastRowCount * kCellSize + (lastRowCount - 1) * kCellGap;
-    const double lastStart = left + (innerWidth - lastWidth) * 0.5;
 
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const int row = static_cast<int>(i) / kColumns;
         const int column = static_cast<int>(i) % kColumns;
-        const double startX = (row == rows - 1) ? lastStart : fullStart;
+        const int rowCount = std::min(kColumns, static_cast<int>(entries.size()) - row * kColumns);
+        const double rowWidth = rowCount * kCellSize + (rowCount - 1) * kCellGap;
+        const double rowStart = left + (innerWidth - rowWidth) * 0.5;
         Cell cell = entries[i];
-        cell.rect = {startX + column * (kCellSize + kCellGap), y + row * (kCellSize + kCellGap),
+        cell.rect = {rowStart + column * (kCellSize + kCellGap), y + row * (kCellSize + kCellGap),
                      kCellSize, kCellSize};
         grid.cells.push_back(cell);
     }
@@ -313,7 +313,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     const PetalConfig& config = content().petal(petalIndex);
     const PetalStats stats = content().petalStats(petalIndex, rarity);
     const double health = std::round(stats.health * skills.healthScale(SkillId::PetalHealth));
-    const double damage = std::round(stats.damage * skills.effectScale(SkillId::Damage));
+    const double damage = std::round(stats.damage);
 
     std::vector<TooltipLine> lines;
     // florr's header: on the name's right, what bringing the petal out costs
@@ -392,7 +392,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Burst / passive heal: field value includes kPlayerHealMultiplier (and the
     // Healing talent for the amount the flower actually receives).
-    const double healTalent = skills.effectScale(SkillId::Healing);
+    const double healTalent = skills.effectScale(SkillId::Medic);
     if (stats.heal > 0.0) {
         const double heal =
             std::round(stats.heal * healTalent * kPlayerHealMultiplier);
@@ -536,7 +536,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Claw. Petal damage like the line above, so it carries the same talent.
     if (stats.critDamage > 0.0) {
-        const double crit = std::round(stats.critDamage * skills.effectScale(SkillId::Damage));
+        const double crit = std::round(stats.critDamage);
         TooltipLine bonus{std::string(tipCritDamage()) + "+" + abbreviate(crit), 12.0};
         bonus.alpha = 0.56;
         bonus.labelColor = kStatDamage;

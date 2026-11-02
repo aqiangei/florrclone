@@ -531,6 +531,7 @@ void MapData::adopt(const Json& array) {
                                    "was read as a mob region\n");
                 }
             }
+            element.forceRarity = properties["forceRarity"].asInt(-1);
             const std::string mobs = properties["mobs"].asString();
             if (!mobs.empty()) {
                 std::string warning;
@@ -552,6 +553,13 @@ void MapData::adopt(const Json& array) {
                                    "`difficulty`, so it is a mob region and owns no population; "
                                    "the flag does nothing\n");
                 }
+            }
+            if (properties.contains("density") && properties["density"].isNumber()) {
+                const double d = properties["density"].asDouble(1.0);
+                // Non-positive density means "do not pack by area" in florrclone
+                // (boss/singular-ish); treat as a tiny positive so the band still
+                // exists, and let `singular` handle true one-mob hunts.
+                element.density = d > 0.0 ? d : 0.01;
             }
 
             element.spawnId = properties["spawnId"].asString();

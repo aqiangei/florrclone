@@ -59,13 +59,12 @@ std::uint32_t biomePickerColor(const std::string& biome) {
 }
 
 /// Biomes offered on the title-screen picker. Dungeon / test maps
-/// (termite, worm, swarm, super, dps_test) are reached through pads, not
-/// as top-level buttons -- matching florrclone's lobby row.
+/// (termite, worm, swarm, super, dps_test, pyramid) are reached through
+/// pads, not as top-level buttons -- matching florrclone's lobby row.
 bool biomeOnPicker(const std::string& biome) {
     return biome == "garden" || biome == "desert" || biome == "computer" ||
            biome == "factory" || biome == "ocean" || biome == "jungle" ||
-           biome == "hel" || biome == "ant_hell" || biome == "sewers" ||
-           biome == "pyramid";
+           biome == "hel" || biome == "ant_hell" || biome == "sewers";
 }
 
 /// The spawn picker's two rows. A row is sized so all of its buttons fit the
@@ -398,6 +397,12 @@ void App::startGame() {
     // loading screen, but Enter in the name field and the scripted join --
     // which asks again every frame until it is in -- both come through here.
     if (net_.joinPending()) return;
+    // Logged-in players who left the flower name blank (or on "Unnamed") join
+    // under their account name so the nameplate matches the minimap.
+    if ((playerName_.empty() || playerName_ == "Unnamed") &&
+        !net_.profile().username.empty()) {
+        playerName_ = net_.profile().username;
+    }
     // A scripted --spawn overrides the picker for this join only. It is
     // deliberately NOT written back to the settings: the file is the player's,
     // and a screenshot run that left "maze" in it would send their next

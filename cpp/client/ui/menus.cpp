@@ -122,6 +122,24 @@ void openAshflorQqGroup() {
 #endif
 }
 
+#ifdef __EMSCRIPTEN__
+EM_JS(void, flix_open_ashflor_feedback, (const char* boardBase), {
+    const base = UTF8ToString(boardBase);
+    const from = encodeURIComponent(location.origin || "");
+    const sep = base.indexOf("?") >= 0 ? "&" : "?";
+    const opened = window.open(base + sep + "from=" + from, "_blank");
+    if (opened) opened.opener = null;
+});
+#endif
+
+void openAshflorFeedbackBoard() {
+#ifdef __EMSCRIPTEN__
+    flix_open_ashflor_feedback(kAshflorFeedbackBoard);
+#else
+    openExternalLink(std::string(kAshflorFeedbackBoard) + "&from=native");
+#endif
+}
+
 namespace {
 
 struct MenuMeta {
@@ -1212,7 +1230,8 @@ const SvgDocument* MenuSystem::icon(int index) {
 const std::array<MenuSystem::StripSlot, kStripSlotCount>& MenuSystem::strip() {
     using A = StripAction;
     static const std::array<StripSlot, kStripSlotCount> kSlots = {{
-        // Far-left like ashflor's title-screen QQ badge.
+        // Far-left like ashflor: Feedback (moss notepad) then QQ badge.
+        {MenuId::None,          A::Feedback, "feedback",      true,  0x4ECB71u, 0x3EA35Au},
         {MenuId::None,          A::Qq,       "qq",            true,  0x12B7F5u, 0x0E92C4u},
         {MenuId::Settings,      A::OpenMenu, "settings",      true,  0xB3B3B3u, 0x8F8F8Fu},
         {MenuId::Changelog,     A::OpenMenu, "changelog",     true,  0x00DB3Eu, 0x00AF32u},
@@ -1242,6 +1261,7 @@ void MenuSystem::activateStripSlot(int index) {
     const StripSlot& slot = strip()[static_cast<std::size_t>(index)];
     switch (slot.action) {
         case StripAction::Exit: exitRequested_ = true; return;
+        case StripAction::Feedback: openAshflorFeedbackBoard(); return;
         case StripAction::Discord: openExternalLink(kDiscordInvite); return;
         case StripAction::Qq: openAshflorQqGroup(); return;
         case StripAction::OpenMenu: break;
@@ -1267,8 +1287,8 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
         if (slot.action == StripAction::Exit) visible[static_cast<std::size_t>(i)] = inGame_;
         // What changed and where to talk about it are read before a run, not
         // during one: both belong to the title screen only.
-        else if (slot.action == StripAction::Discord || slot.action == StripAction::Qq ||
-                 slot.menu == MenuId::Changelog)
+        else if (slot.action == StripAction::Feedback || slot.action == StripAction::Discord ||
+                 slot.action == StripAction::Qq || slot.menu == MenuId::Changelog)
             visible[static_cast<std::size_t>(i)] = !inGame_;
         else if (slot.menu == MenuId::Debug)
             visible[static_cast<std::size_t>(i)] = settings_.showDebugButton;
@@ -1416,6 +1436,21 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
             glyph->renderFitted(canvas, static_cast<float>(r.x + (r.w - style.glyph) * 0.5),
                                 static_cast<float>(r.y + (r.h - style.glyph) * 0.5),
                                 static_cast<float>(style.glyph), static_cast<float>(timeSeconds));
+        }
+
+        // Feedback only: ashflor-style caption under the button (11px on a
+        // 46px face → same ratio on this strip's side).
+        if (slot.action == StripAction::Feedback) {
+            TextStyle tip;
+            tip.size = style.side * (11.0 / 46.0);
+            tip.fill = kPaper;
+            tip.stroke = kInk;
+            tip.strokeWidth = 2.0;
+            tip.roundJoin = true;
+            tip.align = Align::Centre;
+            tip.baseline = Baseline::Top;
+            text(canvas, trEnZh("Feedback", "给作者留言"),
+                 r.x + r.w * 0.5, r.bottom() + style.side * (4.0 / 46.0), tip);
         }
 
         // The hotkey, over the glyph in the corner it is least in the way of.

@@ -61,7 +61,71 @@ const collideLayers = new Set([
 ]);
 
 function normMob(s) {
-  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  let id = String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  // florrclone client keys → cpp mobs.json ids
+  const alias = {
+    ant_worker: 'worker_ant', ant_baby: 'baby_ant', ant_soldier: 'soldier_ant', ant_queen: 'queen_ant',
+    termite_baby: 'baby_termite', termite_worker: 'worker_termite', termite_soldier: 'soldier_termite',
+    fire_ant_baby: 'baby_fire_ant', fire_ant_worker: 'worker_fire_ant', fire_ant_soldier: 'soldier_fire_ant', fire_ant_queen: 'queen_fire_ant',
+    beetle_hel: 'hel_beetle', beetle_mummy: 'mummy_beetle',
+    wasp_mecha: 'mecha_wasp',
+    spider_mecha: 'mecha_spider',
+    crab_mecha: 'mecha_crab',
+  };
+  return alias[id] || id;
+}
+
+function loadSpawnZones() {
+  const p = path.join(root, 'docs/florrclone-spawn-zones.json');
+  if (!fs.existsSync(p)) require('./extract-florrclone-spawn-zones.js');
+  return JSON.parse(fs.readFileSync(p, 'utf8'));
+}
+
+/** Convert florrclone `a:1;b:2` mobs string into cpp-friendly weights. */
+function normalizeMobsString(raw) {
+  return String(raw || '')
+    .replace(/\\n/g, ' ')
+    .split(/[;\n]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const m = part.match(/^([^:=\s]+)\s*[:=]?\s*([\d.]+)?/);
+      if (!m) return null;
+      const name = normMob(m[1]);
+      const w = m[2] != null && m[2] !== '' ? Number(m[2]) : 1;
+      if (!name || !(w > 0)) return null;
+      return `${name}:${w}`;
+    })
+    .filter(Boolean)
+    .join(' ');
+}
+
+function zonesForBiome(spawnZones, biomeName) {
+  const by = (spawnZones && spawnZones.byBiome) || {};
+  if (biomeName === 'Super') {
+    // Super has no authored polygons; reuse Garden outlines at 3× density.
+    return (by.Garden || []).map((z) => ({
+      ...z,
+      density: (z.density > 0 ? z.density : 1.4) * 3,
+      mobs: mobDistribution('Super'),
+    }));
+  }
+  if (biomeName === 'Swarm') {
+    return (by.Garden || []).map((z) => ({
+      ...z,
+      density: (z.density > 0 ? z.density : 1.4) * 3,
+      mobs: mobDistribution('Swarm'),
+    }));
+  }
+  if (biomeName === 'dps test') {
+    return [{
+      points: [[0, 0], [1, 0], [1, 1], [0, 1]],
+      difficulty: 0,
+      density: 1,
+      mobs: 'test_dummy:1',
+    }];
+  }
+  return by[biomeName] || [];
 }
 
 function loadGeometry() {
@@ -127,6 +191,12 @@ function ensureTileset(tileDefs) {
           existing.properties = existing.properties.filter((p) => p.name !== 'covers_everything');
           if (!existing.properties.length) delete existing.properties;
         }
+      } else if (/wall_c_0\.svg$/i.test(file)) {
+        // Centre wall tiles are full solids (dirt_c / castle_c / organic_wall_c).
+        // An old factory_wall_c_0 entry only blocked a 130px strip, so Factory
+        // rooms read as half-open corridors.
+        existing.objectgroup = fullTileCollision();
+        existing.properties = [{ name: 'covers_everything', type: 'bool', value: true }];
       }
       continue;
     }
@@ -156,6 +226,21 @@ function ensureTileset(tileDefs) {
     byFile.set(file, tile);
     added++;
   }
+  // Factory wall silhouettes come from florrclone world tiles. Do not reuse
+  // the reference project's same-named tile collision geometry.
+  const factoryShapes = {
+    'factory_wall_l_0.svg': [[0,0],[128,0],[128,256],[0,256]],
+    'factory_wall_tl_0.svg': [[0,0],[128,0],[128,96],[96,128],[0,128]],
+    'factory_wall_tli.svg': [[0,0],[256,0],[256,128],[160,128],[128,160],[128,256],[0,256]],
+  };
+  for (const tile of tsj.tiles) {
+    const points = factoryShapes[path.basename(tile.image)];
+    if (!points) continue;
+    tile.objectgroup = fullTileCollision();
+    tile.objectgroup.objects[0] = {id:1, x:0, y:0, width:0, height:0,
+      rotation:0, visible:true, polygon:points.map(([x,y]) => ({x,y}))};
+    tile.properties = (tile.properties || []).filter(p => p.name !== 'covers_everything');
+  }
   tsj.tiles.sort((a, b) => a.id - b.id);
   tsj.tilecount = tsj.tiles.length;
   fs.writeFileSync(tsjPath, JSON.stringify(tsj, null, 1) + '\n');
@@ -178,12 +263,11 @@ function decodeLayer(layer) {
 
 function mobDistribution(biomeName) {
   const group = groupOf[biomeName] || 'garden';
-  const types = [...new Set((api.maps[biomeName] && api.maps[biomeName].types) || [])];
+  const types = (api.maps[biomeName] && api.maps[biomeName].types) || [];
   if (!types.length) return group;
-  const share = 50 / types.length;
-  const parts = [`${group} 50%`];
-  for (const t of types) parts.push(`${normMob(t)} ${share.toFixed(2)}%`);
-  return parts.join(' ');
+  const counts = new Map();
+  for (const type of types) counts.set(normMob(type), (counts.get(normMob(type)) || 0) + 1);
+  return [...counts].map(([id, count]) => `${id}:${count}`).join(' ');
 }
 
 function biomeDifficulty(biomeName) {
@@ -267,7 +351,7 @@ function spawnFraction(biomeName) {
   return spawnFracOf[biomeName] || spawnFracOf.Garden;
 }
 
-function buildTmj(biomeName, geom, portals) {
+function buildTmj(biomeName, geom, portals, spawnZones) {
   const cols = geom.columns;
   const rows = geom.rows;
   const layers = [];
@@ -276,13 +360,19 @@ function buildTmj(biomeName, geom, portals) {
   const sorted = [...(geom.layers || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
   for (const layer of sorted) {
     const collide = collideLayers.has(layer.name) || /wall|dirt|castle|grate|hut|cliff/i.test(layer.name);
+    // Vents / foliage shortcuts punch holes through walls below (same role as
+    // a bridge over water). Without negation, Factory vents sit on solid
+    // wall_c cells and the rooms stay sealed.
+    const negate = /shortcut/i.test(layer.name);
+    const properties = [{ name: 'has_collision', type: 'bool', value: collide && !negate }];
+    if (negate) properties.push({ name: 'negate_collision', type: 'bool', value: true });
     layers.push({
       data: decodeLayer(layer),
       height: layer.h,
       id: nextId++,
       name: layer.name,
       opacity: 1,
-      properties: [{ name: 'has_collision', type: 'bool', value: collide }],
+      properties,
       type: 'tilelayer',
       visible: true,
       width: layer.w,
@@ -297,6 +387,9 @@ function buildTmj(biomeName, geom, portals) {
 
   // florrclone engine `nS` / `Nx`: fractional spawn of the map (not centre).
   // Place a tight rect centred on that point so defaultSpawn lands there.
+  // Dungeon / test maps hang off in-world pads — not the title-screen row —
+  // so their doors stay unpickable and the lobby stays a single biome row.
+  const lobbyPickable = !['Worm', 'Swarm', 'Super', 'dps test'].includes(biomeName);
   const [fx, fy] = spawnFraction(biomeName);
   const spawnW = Math.min(pxW * 0.08, 800);
   const spawnH = Math.min(pxH * 0.08, 800);
@@ -309,7 +402,7 @@ function buildTmj(biomeName, geom, portals) {
     properties: [
       { name: 'biome', type: 'string', value: groupOf[biomeName] || geom.slug },
       { name: 'label', type: 'string', value: biomeName },
-      { name: 'pickable', type: 'bool', value: true },
+      { name: 'pickable', type: 'bool', value: lobbyPickable },
       { name: 'order', type: 'float', value: 0 },
     ],
     rotation: 0,
@@ -320,22 +413,66 @@ function buildTmj(biomeName, geom, portals) {
     y: spawnY,
   });
 
-  // full-map spawn band
-  objects.push({
-    height: pxH,
-    id: nextId++,
-    name: '',
-    properties: [
+  // florrclone polygon bands (difficulty / density / mobs). Fallback: one
+  // full-map band so empty overlays still grow something.
+  const zoneList = zonesForBiome(spawnZones, biomeName);
+  let bandCount = 0;
+  for (const z of zoneList) {
+    const hasDifficulty = z.difficulty != null && Number.isFinite(Number(z.difficulty));
+    const pts = Array.isArray(z.points) ? z.points : [];
+    if (pts.length < 3) continue;
+    const abs = pts.map(([fx, fy]) => [fx * pxW, fy * pxH]);
+    const ox = abs[0][0];
+    const oy = abs[0][1];
+    const polygon = abs.map(([x, y]) => ({ x: x - ox, y: y - oy }));
+    // florrclone authoring uses `a:1;b:2;`. cpp mobDistribution already emits
+    // `group 50% id n%` — only the semicolon form needs rewriting.
+    const rawMobs = z.mobs == null ? '' : String(z.mobs);
+    let mobs = /;/.test(rawMobs)
+      ? (normalizeMobsString(rawMobs) || mobDistribution(biomeName))
+      : (rawMobs.trim() || mobDistribution(biomeName));
+    if (mobs === (groupOf[biomeName] || 'garden')) mobs = mobDistribution(biomeName);
+    const props = [{ name: 'mobs', type: 'string', value: mobs }];
+    if (hasDifficulty) props.push({ name: 'difficulty', type: 'float', value: Number(z.difficulty) });
+    if (z.forceRarity != null) props.push({ name: 'forceRarity', type: 'int', value: Number(z.forceRarity) });
+    if (z.density != null && Number.isFinite(Number(z.density))) {
+      props.push({ name: 'density', type: 'float', value: Number(z.density) });
+    }
+    objects.push({
+      height: 0,
+      id: nextId++,
+      name: '',
+      polygon,
+      properties: props,
+      rotation: 0,
+      type: '',
+      visible: true,
+      width: 0,
+      x: ox,
+      y: oy,
+    });
+    if (hasDifficulty) bandCount++;
+  }
+  if (bandCount === 0) {
+    const dens = biomeName === 'Super' || biomeName === 'Swarm' ? 3 : 1;
+    const props = [
       { name: 'difficulty', type: 'float', value: biomeDifficulty(biomeName) },
       { name: 'mobs', type: 'string', value: mobDistribution(biomeName) },
-    ],
-    rotation: 0,
-    type: '',
-    visible: true,
-    width: pxW,
-    x: 0,
-    y: 0,
-  });
+      { name: 'density', type: 'float', value: dens },
+    ];
+    objects.push({
+      height: pxH,
+      id: nextId++,
+      name: '',
+      properties: props,
+      rotation: 0,
+      type: '',
+      visible: true,
+      width: pxW,
+      x: 0,
+      y: 0,
+    });
+  }
 
   // teleporters from engine portal list (preferred) + decorative objects
   const seen = new Set();
@@ -476,6 +613,7 @@ if (!fs.existsSync(backupDir)) {
 }
 
 const tilesetInfo = ensureTileset(tileDefs);
+const spawnZones = loadSpawnZones();
 
 const portalDoc = JSON.parse(fs.readFileSync(path.join(root, 'docs/florrclone-portals.json'), 'utf8'));
 const written = [];
@@ -485,7 +623,7 @@ for (const [biomeName, geom] of Object.entries(geometry)) {
   const file = nameToFile[biomeName];
   if (!file) continue;
   const portals = scalePortals(portalDoc[biomeName]?.portals, geom);
-  const tmj = buildTmj(biomeName, geom, portals);
+  const tmj = buildTmj(biomeName, geom, portals, spawnZones);
   fs.writeFileSync(path.join(mapsDir, file), JSON.stringify(tmj));
   written.push({ biome: biomeName, file, cols: geom.columns, rows: geom.rows, layers: geom.layers.length });
 }
@@ -496,7 +634,7 @@ for (const biomeName of ['Pyramid', 'dps test', 'Swarm', 'Super']) {
   const size = biomeName === 'Swarm' || biomeName === 'Super' ? 80 : 50;
   const geom = makeFlatGeometry(biomeName, size, size);
   const portals = scalePortals(portalDoc[biomeName]?.portals, geom);
-  const tmj = buildTmj(biomeName, geom, portals);
+  const tmj = buildTmj(biomeName, geom, portals, spawnZones);
   fs.writeFileSync(path.join(mapsDir, file), JSON.stringify(tmj));
   written.push({ biome: biomeName, file, cols: size, rows: size, layers: 1, flat: true });
 }
@@ -535,3 +673,7 @@ fs.writeFileSync(path.join(mapsDir, 'maps.json'), JSON.stringify(mapsJson, null,
 const report = { tilesetInfo, written, mapsJson: mapsJson.maps };
 fs.writeFileSync(path.join(root, 'docs/port-florrclone-maps-report.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report, null, 2));
+
+// Rebuild authoritative collision after map art and annotations are imported.
+require("node:child_process").execFileSync(process.env.PYTHON || "python",
+  [path.join(__dirname, "sync-map-collision.py")], {cwd: root, stdio: "inherit"});

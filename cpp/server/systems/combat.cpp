@@ -2248,6 +2248,7 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
             source.poisonDurationMillis = stats.poisonDurationMillis;
             source.rarity = rarity;
             source.glitchInfecting = config.glitchInfecting;
+            source.suppressPlayerShove = config.id == "leech" || config.id == "leech_body";
             // Wild only: a pet's velocity is published raw by its own pass,
             // which would drop the recoil on the next tick anyway.
             source.gardnRecoil = source.isMobBody && !source.isPet && stats.gardnMotion;
@@ -2472,8 +2473,10 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
                 // -- a ladybug shoved across the map by a flower leaning on it.
                 if (firstBump) {
                     mobContactedPlayers_.push_back(victim);
-                    bounceOffMob(world, terrain, victim, source.attacker, source.givesWay, offset,
-                                 source.radius + body->radius - offset.length());
+                    if (!source.suppressPlayerShove) {
+                        bounceOffMob(world, terrain, victim, source.attacker, source.givesWay, offset,
+                                     source.radius + body->radius - offset.length());
+                    }
                 }
                 // Every mob touching the flower recoils, the one-bump rule
                 // notwithstanding: that rule stops a pile stacking shoves on

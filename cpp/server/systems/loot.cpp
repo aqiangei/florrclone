@@ -639,7 +639,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const bool gradeEveryRow = rarityIndex(mobRarity) <= rarityIndex(Rarity::Uncommon);
         const std::size_t featured = gradeEveryRow ? 0 : pickFeatured(rng);
 
-        // florrclone feel.js: 10× every kill, ×3 again for Super+ (→ 30).
+        // Requested reward rate: 20 copies at every mob rarity.
         const int copies =
             kLootFeelCopies *
             (rarityIndex(mobRarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);

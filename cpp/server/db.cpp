@@ -210,10 +210,17 @@ PlayerRecord playerFromJson(const Json& value) {
                 if (unknown != nullptr) (*unknown)[key] = skills[key];
                 continue;
             }
-            // A tier past the branch's top is clamped to it, not dropped: a
-            // branch that was later cut short (Reload lost apex) keeps every
-            // tier that still exists and refunds only the ones that don't.
-            const int tier = rarityIndex(parseRarity(skills[key].asString()));
+            // florrclone stores 1-based integer levels (0 = none). Older
+            // flowrix files stored a rarity name for the highest tier.
+            int tier = -1;
+            const Json& cell = skills[key];
+            if (cell.isNumber()) {
+                const int florr = static_cast<int>(cell.asDouble(0));
+                tier = florr > 0 ? florr - 1 : -1;
+            } else if (cell.isString()) {
+                tier = rarityIndex(parseRarity(cell.asString()));
+            }
+            if (tier < 0) continue;
             out.set(id, std::min(tier, skillTierCount(id) - 1));
         }
     };
@@ -288,10 +295,10 @@ Json playerToJson(const PlayerRecord& record) {
     if (record.mobKills.isObject() && record.mobKills.size() > 0) out["mobKills"] = record.mobKills;
     const auto writeSkills = [](const SkillSet& set, Json skills) {
         for (int i = 0; i < kSkillCount; ++i) {
-            const int tier = set.tier[static_cast<std::size_t>(i)];
-            if (tier < 0) continue;
-            skills[kSkillKeys[static_cast<std::size_t>(i)]] =
-                std::string(rarityName(clampRarity(tier)));
+            const int florr = set.florrLevel(static_cast<SkillId>(i));
+            if (florr <= 0) continue;
+            // Match florrclone `save.talents`: integer levels, 0 omitted.
+            skills[kSkillKeys[static_cast<std::size_t>(i)]] = florr;
         }
         return skills;
     };
@@ -328,7 +335,11 @@ Account accountFromJson(const Json& value, const std::string& storedKey) {
 
     account.id = value["id"].asString();
     account.username = value["username"].asString(storedKey);
+    // cpp inventory uses `password`; florrclone migrate may also write
+    // `passwordHash` (same hex string) beside a `salt`.
     account.passwordHash = value["password"].asString();
+    if (account.passwordHash.empty()) account.passwordHash = value["passwordHash"].asString();
+    account.passwordSalt = value["salt"].asString();
     account.isPlainText = value["isPlainText"].asBool(false);
     account.admin = value["admin"].asBool(false);
     if (value["owner"].asBool(false)) {
@@ -357,10 +368,10 @@ Account accountFromJson(const Json& value, const std::string& storedKey) {
     account.guest = value["guest"].asBool(false);
     account.passwordChosen = value["passwordChosen"].asBool(true);
 
-    collectExtras(value, {"id", "username", "password", "isPlainText", "admin", "owner",
-                          "adminTier", "adminBanned", "adminBannedAt", "adminBannedBy",
-                          "lastActiveAt", "muted", "mutedAt", "mutedBy", "createdAt",
-                          "createdFromHash", "guest", "passwordChosen"},
+    collectExtras(value, {"id", "username", "password", "passwordHash", "salt", "isPlainText",
+                          "admin", "owner", "adminTier", "adminBanned", "adminBannedAt",
+                          "adminBannedBy", "lastActiveAt", "muted", "mutedAt", "mutedBy",
+                          "createdAt", "createdFromHash", "guest", "passwordChosen"},
                   account.extra);
     return account;
 }
@@ -370,6 +381,7 @@ Json accountToJson(const Account& account) {
     out["id"] = account.id;
     out["username"] = account.username;
     out["password"] = account.passwordHash;
+    if (!account.passwordSalt.empty()) out["salt"] = account.passwordSalt;
     if (account.isPlainText) out["isPlainText"] = true;
     if (account.admin) out["admin"] = true;
     // Kept whether or not `admin` is set, so taking the flag away for a while
@@ -1096,24 +1108,16 @@ bool Database::validUsername(const std::string& username, std::string& reasonOut
 }
 
 bool Database::validPassword(const std::string& password, std::string& reasonOut) {
-    if (password.size() < 8) {
-        reasonOut = "Password must be at least 8 characters.";
+    // Cutover / florrclone: no minimum length or character-class rules. Empty
+    // is still refused; bcrypt's 72-byte cap stays so a longer secret cannot
+    // silently match on its prefix alone.
+    if (password.empty()) {
+        reasonOut = "Password cannot be empty.";
         return false;
     }
-    // bcrypt silently ignores everything past its 72nd byte. Accepting a
-    // longer password would mean anyone who typed the first 72 characters got
-    // in -- so the limit is enforced here, where it can be explained, rather
-    // than hidden inside the hash.
     if (password.size() > crypto::kBcryptMaxPasswordBytes) {
         reasonOut = "Password must be at most 72 bytes.";
         return false;
-    }
-    for (char c : password) {
-        const auto byte = static_cast<unsigned char>(c);
-        if (byte < 0x20 || byte == 0x7F) {
-            reasonOut = "Password may not contain control characters.";
-            return false;
-        }
     }
     return true;
 }
@@ -1414,6 +1418,15 @@ bool Database::verifyPassword(const std::string& username, const std::string& pa
         // for a plaintext password. A bcrypt hash is never something a player
         // typed, so this branch is always the right one when it matches.
         ok = crypto::bcryptVerify(password, account->passwordHash);
+    } else if (!account->passwordSalt.empty()) {
+        // florrclone accounts.js: scrypt(password, saltHex, 64) → hex hash.
+        ok = crypto::scryptVerifyHex(password, account->passwordSalt, account->passwordHash);
+        if (ok) {
+            // Upgrade to bcrypt so subsequent logins do not need Node scrypt.
+            account->passwordHash = crypto::bcryptHash(password, passwordCost_);
+            account->passwordSalt.clear();
+            account->isPlainText = false;
+        }
     } else {
         ok = crypto::constantTimeEquals(account->passwordHash, password);
         if (ok) {
@@ -1442,6 +1455,7 @@ bool Database::setPassword(const std::string& username, const std::string& passw
     }
 
     account->passwordHash = crypto::bcryptHash(password, passwordCost_);
+    account->passwordSalt.clear();
     // An account imported with a bare password stops being one here, the same
     // way a successful verify upgrades it: whatever the record was before, it
     // holds a hash now and the flag has to say so.

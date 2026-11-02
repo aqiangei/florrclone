@@ -1,31 +1,8 @@
-// The talent tree: florr's Talents window.
+// Talents panel: florrclone talent tree only.
 //
-// Measured out of florr's own client rather than off screenshots: the screen
-// render's talents slice (sub_1008d1230, 0x1008da402..0x1008da9c8, screen
-// state 7) was run under the ~/florr_images emulator and every Skia call it
-// made recorded, with the tree's body (0x10097c760), its tooltip builder
-// (0x1009812e0) and the overlay pass that paints tooltips. The numbers below
-// are those, at one window unit to the design unit.
-//
-// The window is 650 square at x = 95, its bottom 20 above the view's, rising
-// from 50 below the view and fading in on florr's open ease (MenuSystem).
-// Inside, 3 in from the edge and clipped there, the tree stands on florr's
-// grid: columns 65 apart, rows 65 apart going up, under a projection that
-// spreads the upper rows apart and bends the far columns down -- the tree is
-// a dome you scroll across. Every root runs down to the flower in the middle
-// of the bottom. Dragging the window sideways scrolls it, a column per 65
-// units; so does the wheel, a column a notch.
-//
-// A node is bought by HOLDING it: 250 ms down on one the account can afford
-// buys it and every tier still missing below it, the cost its badge shows.
-// Holding an already-owned node refunds that tier and everything above it on
-// the branch (and fork children that then lose their prerequisite) -- florr's
-// hold-to-unlearn.
-//
-// What is ours: the talents; how they are arranged -- the long branches wear
-// florr's zig-zag and spiral, but which branch stands where and everything
-// that forks off another is laid out for our tree (see branches()); and the
-// icons, which are the ones this tree always had.
+// Layout, camera projection, talent ids/costs and node icons come from
+// florrclone (mirrored client + assets/talents/*.svg). The flowrix/reference
+// procedural icons and zigZag/spiral tree are not used.
 
 #include <algorithm>
 #include <array>
@@ -35,6 +12,9 @@
 #include <vector>
 
 #include "client/ui/content_i18n.h"
+#include "client/ui/talent_icons.h"
+#include "svg.h"
+#include <memory>
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
 #include "client/render/mob_art.h"
@@ -91,18 +71,18 @@ constexpr double kBadgeTipSize = 16.0;
 
 // -- the tree -----------------------------------------------------------------
 
-/// florr's grid: 65 between columns and between rows, and the projection's
-/// two bends -- a row `y` up is spread 1 + y/4 times wider about the centre
-/// column, and a node X across drops X tanh(X/200).
-constexpr double kStep = 65.0;
-constexpr double kSpread = 0.25;
-constexpr double kBend = 0.005;
-/// The top row sits this far above the inner area's bottom, less the rows,
-/// and the flower 120 below the bottom row.
-constexpr double kTreeBottom = 190.0;
-constexpr double kFlowerDrop = 120.0;
+/// florrclone talent-wheel stage is an 880×880 viewBox. Nodes are projected
+/// with Nv(tier, phase, camera); only |phase−camera|<3 are shown.
+constexpr double kWheelSize = 880.0;
+constexpr double kCameraMax = 14.5;
+constexpr double kPhaseVisible = 3.0;
+constexpr double kFlowerX = 440.0;
+constexpr double kFlowerY = 777.0;
 constexpr double kFlowerRadius = 50.0;
 constexpr double kHubRadius = 20.0;
+/// Drag across the wheel: same coefficient as florrclone Mv(..., n=0).
+constexpr double kDragCamera = 0.0028;
+constexpr double kWheelCameraStep = 0.55;
 
 /// A node: a 38.5 disc in its rim colour under a 32.5 one in its fill. The
 /// cursor finds it within 32.5, and within 35.75 once it is already found.
@@ -184,30 +164,6 @@ struct GridPoint {
     double y;
 };
 
-/// florr's two shapes for a long branch, nine tiers each, as columns from the
-/// shape's left edge and rows up: the zig-zag its Petal Health climbs in, and
-/// the spiral its Reload winds in.
-constexpr std::array<GridPoint, 9> kZigZag = {{
-    {2, 0}, {1, 1}, {0, 0}, {0, 2}, {2, 2}, {2, 4}, {1, 3}, {0, 4}, {1, 5},
-}};
-constexpr std::array<GridPoint, 9> kSpiral = {{
-    {1, 0}, {0, 2}, {0, 3.5}, {1, 4}, {2, 4}, {3, 3}, {3, 1}, {1, 1.5}, {2, 2},
-}};
-
-/// The zig-zag from column `left`, mirrored when asked, with our apex tier
-/// added on top at `apex` (a column of the shape and a row).
-std::vector<GridPoint> zigZag(double left, bool mirrored, GridPoint apex) {
-    std::vector<GridPoint> points;
-    for (const GridPoint& p : kZigZag) points.push_back({left + (mirrored ? 2.0 - p.x : p.x), p.y});
-    points.push_back({left + apex.x, apex.y});
-    return points;
-}
-
-std::vector<GridPoint> spiral(double left) {
-    std::vector<GridPoint> points;
-    for (const GridPoint& p : kSpiral) points.push_back({left + p.x, p.y});
-    return points;
-}
 
 struct Branch {
     SkillId skill;
@@ -230,33 +186,52 @@ struct Branch {
 /// tree comes to 81), Magnetism's none closer than 116, and no connector
 /// crosses another.
 const std::vector<Branch>& branches() {
+    // Exact florrclone client grid ([tier, phase] → {x,y}). No flowrix zigZag/spiral.
     static const std::vector<Branch> kBranches = {
-        {SkillId::PetalHealth, zigZag(0.0, false, {2, 5.5})},
-        {SkillId::PetHealth, zigZag(3.5, false, {2, 5.5})},
-        {SkillId::PlayerHealth, zigZag(7.0, true, {0, 5.5})},
-        {SkillId::SecondChance, {{10.2, 1.0}, {10.7, 2.4}}},
-        {SkillId::Prestige, {{12.2, 0}}},
-        {SkillId::Damage, zigZag(13.7, false, {2, 5.5})},
-        {SkillId::Reload, spiral(17.2)},
-        {SkillId::Healing, {{21.7, 0}, {22.7, 1}, {21.7, 2}, {21.7, 4}}},
-        {SkillId::Magnetism, {{25.3, 2.5}, {23.7, 2.2}, {24.4, 0.6}}},
-        {SkillId::Absorbing, zigZag(27.0, true, {2, 5.5})},
-        {SkillId::Duplicator, {{26.0, 4.8}, {25.2, 5.5}}},
+        {SkillId::PetalHealth,
+         {{4, 1}, {5, 0.5}, {4, 0}, {6, 0}, {6, 1}, {8, 1}, {7, 0.5}, {8, 0}, {9, 0.5}}},
+        {SkillId::Loadout, {{4, 3.5}, {5, 3}, {6, 3.5}, {7, 3}, {8, 3.5}}},
+        {SkillId::Antennae, {{4, 2.5}, {5, 2}, {6, 1.5}}},
+        {SkillId::Reach, {{6, 2.5}, {7, 2}, {8, 1.5}}},
+        {SkillId::Duplicator, {{8, 2.5}, {9.5, 2.5}, {9, 2}, {9.5, 1.5}}},
+        {SkillId::Magnetism, {{9, 4}}},
+        {SkillId::Reload,
+         {{4, 4.5}, {6, 4}, {7.5, 4}, {8, 4.5}, {8, 5}, {7, 5.5}, {5, 5.5}, {5.5, 4.5}, {6, 5}}},
+        {SkillId::Rotation, {{5, 6}, {7, 6}, {9, 5.5}, {9.5, 5}, {9.5, 4.5}}},
+        {SkillId::Health,
+         {{4, 7}, {5, 6.5}, {6, 7}, {7, 6.5}, {8.5, 6}, {9, 6.5}, {8, 7}, {8, 7.5}, {9.5, 7}}},
+        {SkillId::SecondChance, {{5, 7.5}, {6.5, 7.5}}},
+        {SkillId::Medic,
+         {{4, 8}, {5, 8.5}, {6, 8}, {8, 8}, {9.5, 7.5}, {9.5, 8}, {9, 8.5}, {7, 8.5}, {6, 9}}},
+        {SkillId::Summoner,
+         {{4, 9.5}, {5, 10}, {6, 9.5}, {6, 10.5}, {7, 10}, {8, 10.5}, {9, 10}, {8, 9.5}, {9, 9}}},
+        {SkillId::SharpEdges,
+         {{4, 10.5}, {5, 11}, {6, 11.5}, {7, 11}, {8, 11.5}, {9.5, 11.5}, {9, 11}, {9.5, 10.5}}},
+        {SkillId::BodyToxicity, {{9, 12}}},
+        {SkillId::Luck,
+         {{4, 11.5}, {5, 12}, {4, 12.5}, {6, 12.5}, {7, 12}, {8, 12.5}, {9, 13}, {7.5, 13}, {6, 13}}},
+        {SkillId::Poison,
+         {{4, 13.5}, {5.5, 13.5}, {5, 13}, {5, 14}, {7, 13}, {7, 13.5}, {7, 14}, {9, 13}, {9, 14}}},
+        {SkillId::ConcentratedPoison, {{9, 13.5}}},
     };
     return kBranches;
 }
 
-/// Where the window first opens: the middle of the tree, Flower Health and
-/// Second Chance to the left of the flower and Prestige beside it.
-constexpr double kStartColumn = 11.0;
+/// Open at florrclone's mid camera (Av/2).
+constexpr double kStartCamera = kCameraMax * 0.5;
 
-/// The grid point `grid` under a scroll that has column `scroll` at the
-/// centre, relative to the tree's origin: florr's 0x100982860.
-Vec2 project(Vec2 grid, double scroll, double topRow) {
-    const double gx = grid.x - scroll;
-    const double across = gx * kStep;
-    return {across + kSpread * gx * grid.y * kStep,
-            kStep * (topRow - grid.y) + across * std::tanh(kBend * across)};
+/// florrclone Nv: grid.x = tier, grid.y = phase; camera scrolls phase.
+Vec2 projectWheel(Vec2 grid, double camera) {
+    const double n = grid.y - camera;
+    return {440.21856 + 43.37949 * grid.x * n,
+            964.36761 - 86.80999 * grid.x + 159.61889 * (1.0 - std::cos(n * 1.184))};
+}
+
+Vec2 mapWheel(Vec2 wheel, Rect inner) {
+    const double scale = std::min(inner.w, inner.h) / kWheelSize;
+    const double ox = inner.x + (inner.w - kWheelSize * scale) * 0.5;
+    const double oy = inner.y + (inner.h - kWheelSize * scale) * 0.5;
+    return {ox + wheel.x * scale, oy + wheel.y * scale};
 }
 
 double ease(double dtMs, double rate) { return 1.0 - std::exp(-rate * dtMs); }
@@ -270,9 +245,9 @@ std::uint32_t mixChannels(std::uint32_t c, double k, double toward) {
     return channel(16) | channel(8) | channel(0);
 }
 
-/// A tier's own colour: its rarity's, or Prestige's yellow.
-std::uint32_t tierColor(SkillId skill, int tier) {
-    return skill == SkillId::Prestige ? kPrestigeYellow : rarityColor(clampRarity(tier));
+/// A tier's own colour from its rarity ladder index.
+std::uint32_t tierColor(SkillId /*skill*/, int tier) {
+    return rarityColor(clampRarity(tier));
 }
 
 /// florr's labels: white unless told, black outline at 0.12 of the size, round
@@ -358,7 +333,8 @@ std::string percent(double fraction) {
 
 /// "from X% to Y%" over one of the tree's tables: what the tier below gave,
 /// or 100% with nothing below, and what this one gives.
-std::string fromTo(const std::array<double, kLadderRarityCount>& table, int tier) {
+template <std::size_t N>
+std::string fromTo(const std::array<double, N>& table, int tier) {
     const double before = tier > 0 ? scaleAt(table, tier - 1) : 1.0;
     return "from " + percent(before) + " to " + percent(scaleAt(table, tier)) + ".";
 }
@@ -371,47 +347,47 @@ std::vector<TipRow> description(SkillId skill, int tier) {
     const bool cn = language() == Language::Zh;
     char buffer[128];
     switch (skill) {
-        case SkillId::PlayerHealth:
-            if (cn) row({{"提升基础"}, {"花朵生命", kStatHealth}, {" " + fromTo(kStatSkillScale, tier)}});
+        case SkillId::Health:
+            if (cn) row({{"提升基础"}, {"花朵生命", kStatHealth}, {" " + fromTo(kHealthTalentScale, tier)}});
             else row({{"Increases base "}, {"Flower Health", kStatHealth},
-                      {" " + fromTo(kStatSkillScale, tier)}});
+                      {" " + fromTo(kHealthTalentScale, tier)}});
             break;
-        case SkillId::Damage:
+        case SkillId::SharpEdges:
             if (cn) {
-                row({{"提升"}, {"体伤", kStatDamage}, {" " + fromTo(kStatSkillScale, tier)}});
-                row({{"提升花瓣"}, {"伤害", kStatDamage}, {" " + fromTo(kEffectSkillScale, tier)}});
+                row({{"提升"}, {"体伤", kStatDamage}, {" " + fromTo(kHealthTalentScale, tier)}});
+                row({{"提升花瓣"}, {"伤害", kStatDamage}, {" " + fromTo(kMedicTalentScale, tier)}});
             } else {
                 row({{"Increases "}, {"Body Damage", kStatDamage},
-                     {" " + fromTo(kStatSkillScale, tier)}});
+                     {" " + fromTo(kHealthTalentScale, tier)}});
                 row({{"Increases petal "}, {"Damage", kStatDamage},
-                     {" " + fromTo(kEffectSkillScale, tier)}});
+                     {" " + fromTo(kMedicTalentScale, tier)}});
             }
             break;
         case SkillId::PetalHealth:
             if (cn) row({{"提升"}, {"花瓣生命", kStatHealth},
-                         {" " + fromTo(kHealthSkillScale, tier)}});
+                         {" " + fromTo(kPetalHealthTalentScale, tier)}});
             else row({{"Increases "}, {"Petal Health", kStatHealth},
-                      {" " + fromTo(kHealthSkillScale, tier)}});
+                      {" " + fromTo(kPetalHealthTalentScale, tier)}});
             break;
-        case SkillId::PetHealth:
+        case SkillId::Summoner:
             if (cn) row({{"提升召唤物"}, {"生命", kStatHealth},
-                         {" " + fromTo(kHealthSkillScale, tier)}});
+                         {" " + fromTo(kPetalHealthTalentScale, tier)}});
             else row({{"Increases "}, {"Health", kStatHealth},
-                      {" of summoned mobs " + fromTo(kHealthSkillScale, tier)}});
+                      {" of summoned mobs " + fromTo(kPetalHealthTalentScale, tier)}});
             break;
-        case SkillId::Healing:
+        case SkillId::Medic:
             if (cn) row({{"提升花瓣"}, {"治疗", kStatHeal},
-                         {" " + fromTo(kEffectSkillScale, tier)}});
+                         {" " + fromTo(kMedicTalentScale, tier)}});
             else row({{"Increases "}, {"Healing", kStatHeal},
-                      {" from your petals " + fromTo(kEffectSkillScale, tier)}});
+                      {" from your petals " + fromTo(kMedicTalentScale, tier)}});
             break;
-        case SkillId::Absorbing:
-            if (cn) row({{"提升吸收经验 " + fromTo(kAbsorbSkillScale, tier)}});
-            else row({{"Increases absorb XP " + fromTo(kAbsorbSkillScale, tier)}});
+        case SkillId::Luck:
+            if (cn) row({{"提升吸收经验 " + fromTo(kLuckTalent, tier)}});
+            else row({{"Increases absorb XP " + fromTo(kLuckTalent, tier)}});
             break;
         case SkillId::Reload: {
-            const double before = tier > 0 ? 1.0 - scaleAt(kReloadSkillScale, tier - 1) : 0.0;
-            const double after = 1.0 - scaleAt(kReloadSkillScale, tier);
+            const double before = tier > 0 ? 1.0 - scaleAt(kReloadReduce, tier - 1) : 0.0;
+            const double after = 1.0 - scaleAt(kReloadReduce, tier);
             if (cn) {
                 row({{"将花瓣装填时间从 -" + percent(before) + " 降至 -" + percent(after) + "。"}});
             } else {
@@ -461,25 +437,14 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             const auto at = static_cast<std::size_t>(std::clamp(tier, 0, 2));
             if (cn) {
                 std::snprintf(buffer, sizeof buffer, "花瓣拾取范围增加 %.0f。",
-                              kMagnetismBonus[at]);
+                              kReachBonus[at]);
             } else {
                 std::snprintf(buffer, sizeof buffer, "Increases petal pick up range by %.0f.",
-                              kMagnetismBonus[at]);
+                              kReachBonus[at]);
             }
             row({{buffer}});
             break;
         }
-        case SkillId::Prestige:
-            if (cn) {
-                row({{"解锁"}, {"声望", kPrestigeYellow}, {" 生物群系。"}});
-                row({{"其中每个怪物稀有度 +1。"}});
-                row({{"不会生成永恒或顶点怪物。"}});
-            } else {
-                row({{"Unlocks the "}, {"Prestige", kPrestigeYellow}, {" biomes."}});
-                row({{"Every mob there is +1 rarity."}});
-                row({{"No Unique or Apex mobs spawn there."}});
-            }
-            break;
         default: break;
     }
     return rows;
@@ -490,7 +455,7 @@ std::vector<TipRow> description(SkillId skill, int tier) {
 std::vector<TipRow> tooltipRows(SkillId skill, int tier) {
     std::vector<TipRow> rows;
     rows.push_back({kTipNameSize, {{skillTr(skill, tier)}}});
-    if (skill != SkillId::Prestige) {
+    {
         const Rarity rarity = clampRarity(tier);
         rows.push_back({kTipBodySize, {{rarityTr(rarity), rarityColor(rarity)}}});
     }
@@ -502,323 +467,23 @@ std::vector<TipRow> tooltipRows(SkillId skill, int tier) {
 
 // -- icons --------------------------------------------------------------------
 
-/// The icon's full extent inside a node: our own marks, unchanged from the
-/// tree they were drawn for.
+/// florrclone talent SVGs (assets/talents/*.svg), not flowrix procedural marks.
 constexpr double kIconExtent = 35.0 * 0.89;
 
-/// A rounded plus. Two overlapping capsules rather than one traced outline:
-/// the corners the reference rounds are the four outer ends, and every one of
-/// them is the end of a bar.
-void roundedCross(Canvas& canvas, Vec2 at, double extent, double thickness) {
-    const double half = extent * 0.5;
-    const double bar = thickness * 0.5;
-    const auto round = static_cast<float>(thickness * 0.22);
-    canvas.beginPath();
-    canvas.roundRect(static_cast<float>(at.x - bar), static_cast<float>(at.y - half),
-                     static_cast<float>(thickness), static_cast<float>(extent), round);
-    canvas.fill();
-    canvas.beginPath();
-    canvas.roundRect(static_cast<float>(at.x - half), static_cast<float>(at.y - bar),
-                     static_cast<float>(extent), static_cast<float>(thickness), round);
-    canvas.fill();
-}
-
-void drawIcon(Canvas& canvas, SkillId id, int tier, Vec2 at, double size) {
-    // `size` is the glyph's FULL extent, not a radius and not a font size, so
-    // every branch's mark occupies the same square of the node however it is
-    // built. Everything below is a fraction of it. `tier` matters only to a
-    // branch whose tiers wear different marks.
-    const double half = size * 0.5;
-
-    canvas.save();
-    setFill(canvas, kPaper);
-    setStroke(canvas, kPaper);
-    canvas.setLineCap("round");
-    canvas.setLineJoin("round");
-
-    switch (id) {
-        case SkillId::PlayerHealth: {   // a medical cross
-            roundedCross(canvas, at, size, size * 0.37);
-            break;
-        }
-        case SkillId::Damage: {         // a five-petal flower
-            for (int i = 0; i < 5; ++i) {
-                const double a = (i / 5.0) * kTau - kPi * 0.5;
-                const Vec2 petal = at + Vec2::fromAngle(a, half * 0.58);
-                canvas.beginPath();
-                // The long axis points OUTWARD -- radiusX is measured along the
-                // ellipse's own rotation -- so five petals read as a flower
-                // rather than as a clover with its lobes touching.
-                canvas.ellipse(static_cast<float>(petal.x), static_cast<float>(petal.y),
-                               static_cast<float>(half * 0.42), static_cast<float>(half * 0.29),
-                               static_cast<float>(a), 0.0f, static_cast<float>(kTau));
-                canvas.fill();
-            }
-            canvas.fillCircle(static_cast<float>(at.x), static_cast<float>(at.y),
-                              static_cast<float>(half * 0.30));
-            break;
-        }
-        case SkillId::PetalHealth: {    // a plus inside a ring
-            // The same mark Flower Health wears, boxed in: the two branches do
-            // the same thing to two different pools, and reading as a pair is
-            // the point. The ring is what says WHOSE health -- the petal is the
-            // thing that goes round the flower.
-            const double weight = size * 0.12;
-            const double ring = half - weight * 0.5;
-            canvas.setLineWidth(static_cast<float>(weight));
-            canvas.beginPath();
-            canvas.arc(static_cast<float>(at.x), static_cast<float>(at.y),
-                       static_cast<float>(ring), 0.0f, static_cast<float>(kTau));
-            canvas.stroke();
-            // Sized so the cross's corners clear the ring's inner edge with a
-            // little air: the arms reach 0.54 of the glyph and the bar is 0.20
-            // of it, putting the furthest corner inside the 0.76 the ring
-            // leaves. Filling that gap makes the two read as one blob.
-            roundedCross(canvas, at, size * 0.54, size * 0.20);
-            break;
-        }
-        case SkillId::PetHealth: {      // an egg
-            // The third of the health family: the outline that says whose
-            // health, with no cross inside. A pet is hatched from an egg, so
-            // the outline is one -- a narrow crown and a wide base, widest a
-            // little below the middle.
-            const double weight = size * 0.11;
-            const double tall = half - weight * 0.5;
-            const double wide = tall * 0.76;
-            // Where the egg is widest, and the one quarter-ellipse split: the
-            // crown is the taller quarter, which is what narrows it.
-            const double belly = tall * 0.12;
-            constexpr double kKappa = 0.5523;
-            const double crown = tall + belly;
-            const double base = tall - belly;
-            const auto x = [&](double dx) { return static_cast<float>(at.x + dx); };
-            const auto y = [&](double dy) { return static_cast<float>(at.y + dy); };
-
-            canvas.setLineWidth(static_cast<float>(weight));
-            canvas.beginPath();
-            canvas.moveTo(x(0.0), y(-tall));
-            canvas.bezierCurveTo(x(wide * kKappa), y(-tall), x(wide), y(belly - crown * kKappa),
-                                 x(wide), y(belly));
-            canvas.bezierCurveTo(x(wide), y(belly + base * kKappa), x(wide * kKappa), y(tall),
-                                 x(0.0), y(tall));
-            canvas.bezierCurveTo(x(-wide * kKappa), y(tall), x(-wide), y(belly + base * kKappa),
-                                 x(-wide), y(belly));
-            canvas.bezierCurveTo(x(-wide), y(belly - crown * kKappa), x(-wide * kKappa), y(-tall),
-                                 x(0.0), y(-tall));
-            canvas.closePath();
-            canvas.stroke();
-            break;
-        }
-        case SkillId::Healing: {        // a heart, drawn as an outline
-            const double s = half * 0.92;
-            canvas.setLineWidth(static_cast<float>(size * 0.11));
-            canvas.beginPath();
-            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y + s * 0.86));
-            canvas.bezierCurveTo(static_cast<float>(at.x + s * 1.35), static_cast<float>(at.y - s * 0.10),
-                                 static_cast<float>(at.x + s * 0.62), static_cast<float>(at.y - s * 1.05),
-                                 static_cast<float>(at.x), static_cast<float>(at.y - s * 0.24));
-            canvas.bezierCurveTo(static_cast<float>(at.x - s * 0.62), static_cast<float>(at.y - s * 1.05),
-                                 static_cast<float>(at.x - s * 1.35), static_cast<float>(at.y - s * 0.10),
-                                 static_cast<float>(at.x), static_cast<float>(at.y + s * 0.86));
-            canvas.stroke();
-            break;
-        }
-        case SkillId::SecondChance: {   // a shield
-            const double s = half * 0.92;
-            canvas.beginPath();
-            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y + s));
-            canvas.lineTo(static_cast<float>(at.x - s * 0.78), static_cast<float>(at.y + s * 0.09));
-            canvas.lineTo(static_cast<float>(at.x - s * 0.78), static_cast<float>(at.y - s * 0.45));
-            canvas.quadraticCurveTo(static_cast<float>(at.x), static_cast<float>(at.y - s * 1.0),
-                                    static_cast<float>(at.x + s * 0.78), static_cast<float>(at.y - s * 0.45));
-            canvas.lineTo(static_cast<float>(at.x + s * 0.78), static_cast<float>(at.y + s * 0.09));
-            canvas.closePath();
-            canvas.fill();
-            break;
-        }
-        case SkillId::Reload: {         // a stopwatch
-            const double face = half * 0.80;
-            const double weight = size * 0.11;
-            canvas.setLineWidth(static_cast<float>(weight));
-            // The case, left open at the top so the crown has somewhere to sit:
-            // a closed ring with a stub on it reads as a balloon.
-            canvas.beginPath();
-            canvas.arc(static_cast<float>(at.x), static_cast<float>(at.y + half * 0.12),
-                       static_cast<float>(face), static_cast<float>(-kPi * 0.36),
-                       static_cast<float>(kPi + kPi * 0.36), false);
-            canvas.stroke();
-            // The crown: a short bar across the gap, and a stem joining it to
-            // the two ends of the case.
-            canvas.beginPath();
-            canvas.moveTo(static_cast<float>(at.x - half * 0.30),
-                          static_cast<float>(at.y - half * 0.86));
-            canvas.lineTo(static_cast<float>(at.x + half * 0.30),
-                          static_cast<float>(at.y - half * 0.86));
-            canvas.stroke();
-            canvas.beginPath();
-            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y - half * 0.86));
-            canvas.lineTo(static_cast<float>(at.x), static_cast<float>(at.y - half * 0.52));
-            canvas.stroke();
-            // The hands: noon and three. Both stop well inside the case -- a
-            // round cap adds half the line width to each end, and a minute hand
-            // drawn to the rim joins the crown's stem into one stalk through
-            // the middle of the face.
-            canvas.beginPath();
-            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y + half * 0.12));
-            canvas.lineTo(static_cast<float>(at.x), static_cast<float>(at.y - half * 0.22));
-            canvas.stroke();
-            canvas.beginPath();
-            canvas.moveTo(static_cast<float>(at.x), static_cast<float>(at.y + half * 0.12));
-            canvas.lineTo(static_cast<float>(at.x + half * 0.36),
-                          static_cast<float>(at.y + half * 0.12));
-            canvas.stroke();
-            break;
-        }
-        case SkillId::Absorbing: {      // a fork and a knife
-            // Absorbing a petal is EATING it, and the place setting is the one
-            // mark for that a player does not have to be taught. Both pieces
-            // are built the same way -- a filled handle with a head on top --
-            // so they sit at the same weight beside each other.
-            const double fork = at.x - half * 0.45;
-            const double blade = at.x + half * 0.45;
-
-            canvas.setLineWidth(static_cast<float>(size * 0.10));
-            for (int tine = -1; tine <= 1; ++tine) {
-                const double x = fork + tine * half * 0.26;
-                canvas.beginPath();
-                canvas.moveTo(static_cast<float>(x), static_cast<float>(at.y - half * 0.80));
-                canvas.lineTo(static_cast<float>(x), static_cast<float>(at.y - half * 0.34));
-                canvas.stroke();
-            }
-            // The head the three tines run into, and the handle below it. Two
-            // shapes rather than one outline: the tines are strokes, and a
-            // traced fork would have to re-describe every one of them.
-            canvas.beginPath();
-            canvas.roundRect(static_cast<float>(fork - half * 0.37),
-                             static_cast<float>(at.y - half * 0.44),
-                             static_cast<float>(half * 0.74), static_cast<float>(half * 0.32),
-                             static_cast<float>(half * 0.12));
-            canvas.fill();
-            canvas.beginPath();
-            canvas.roundRect(static_cast<float>(fork - half * 0.13),
-                             static_cast<float>(at.y - half * 0.25),
-                             static_cast<float>(half * 0.26), static_cast<float>(half * 1.10),
-                             static_cast<float>(half * 0.13));
-            canvas.fill();
-
-            // The blade: a straight spine down the left, the cutting edge
-            // bellying out to the right and tapering back to the point. The
-            // belly carries the whole shape -- at a third of the glyph wide it
-            // is a knife, and at the handle's own width it is a second fork
-            // handle with nothing on the end.
-            canvas.beginPath();
-            canvas.moveTo(static_cast<float>(blade - half * 0.12),
-                          static_cast<float>(at.y - half * 0.88));
-            canvas.quadraticCurveTo(
-                static_cast<float>(blade + half * 0.34), static_cast<float>(at.y - half * 0.52),
-                static_cast<float>(blade + half * 0.26), static_cast<float>(at.y - half * 0.08));
-            canvas.lineTo(static_cast<float>(blade - half * 0.12),
-                          static_cast<float>(at.y - half * 0.08));
-            canvas.closePath();
-            canvas.fill();
-            canvas.beginPath();
-            canvas.roundRect(static_cast<float>(blade - half * 0.13),
-                             static_cast<float>(at.y - half * 0.16),
-                             static_cast<float>(half * 0.26), static_cast<float>(half * 1.02),
-                             static_cast<float>(half * 0.13));
-            canvas.fill();
-            break;
-        }
-        case SkillId::Duplicator: {
-            if (tier == 0) {        // two circles splitting apart
-                // Overlapping by a sliver, so the pair still shares a pinched
-                // neck: a cell caught mid-division, not two coins side by side.
-                // The arcs outside each half say which way they are going.
-                // Wider than the glyph square: two discs in a row are short,
-                // and kept inside it they read a size smaller than every other
-                // mark on the tree. The node has the room either side.
-                const double r = half * 0.48;
-                const double apart = half * 0.44;
-                for (const double side : {-1.0, 1.0}) {
-                    canvas.fillCircle(static_cast<float>(at.x + side * apart),
-                                      static_cast<float>(at.y), static_cast<float>(r));
-                }
-                canvas.setLineWidth(static_cast<float>(size * 0.08));
-                for (const double side : {-1.0, 1.0}) {
-                    const double facing = side < 0.0 ? kPi : 0.0;
-                    canvas.beginPath();
-                    canvas.arc(static_cast<float>(at.x + side * apart), static_cast<float>(at.y),
-                               static_cast<float>(r + half * 0.22), static_cast<float>(facing - 0.6),
-                               static_cast<float>(facing + 0.6), false);
-                    canvas.stroke();
-                }
-            } else {                // three circles
-                // Point-up triangle, lowered by half the difference between
-                // its top and bottom reach so the three sit centred in the node.
-                const double r = half * 0.46;
-                const double spoke = half * 0.64;
-                const double lift = (spoke - spoke * 0.5) * 0.5;
-                for (int i = 0; i < 3; ++i) {
-                    const Vec2 c = at + Vec2::fromAngle(-kPi * 0.5 + kTau * i / 3.0, spoke) +
-                                   Vec2{0.0, lift};
-                    canvas.fillCircle(static_cast<float>(c.x), static_cast<float>(c.y),
-                                      static_cast<float>(r));
-                }
-            }
-            break;
-        }
-        case SkillId::Magnetism: {      // a horseshoe magnet
-            // A thick U opening upward, its two poles cut off by a gap across
-            // each arm -- the cut is what makes a U a magnet. Filled shapes
-            // rather than one stroke, so the poles are solid blocks and not
-            // capped line ends.
-            const double weight = half * 0.50;
-            const double outer = half * 0.92;
-            const double inner = outer - weight;
-            const double bendY = at.y + half * 0.04;
-            const double cut = at.y - half * 0.42;
-            const double gap = half * 0.14;
-            const double top = at.y - half * 0.94;
-            const auto x = [&](double dx) { return static_cast<float>(at.x + dx); };
-            const auto y = [&](double py) { return static_cast<float>(py); };
-
-            canvas.beginPath();
-            canvas.moveTo(x(-outer), y(cut));
-            canvas.lineTo(x(-outer), y(bendY));
-            canvas.arc(x(0.0), y(bendY), static_cast<float>(outer), static_cast<float>(kPi), 0.0f, true);
-            canvas.lineTo(x(outer), y(cut));
-            canvas.lineTo(x(inner), y(cut));
-            canvas.lineTo(x(inner), y(bendY));
-            canvas.arc(x(0.0), y(bendY), static_cast<float>(inner), 0.0f, static_cast<float>(kPi), false);
-            canvas.lineTo(x(-inner), y(cut));
-            canvas.fill();
-            for (const double side : {-1.0, 1.0}) {
-                const double left = side < 0.0 ? -outer : inner;
-                canvas.beginPath();
-                canvas.rect(x(left), y(top), static_cast<float>(weight), static_cast<float>(cut - gap - top));
-                canvas.fill();
-            }
-            break;
-        }
-        case SkillId::Prestige: {      // two chevrons climbing
-            // Stroked rather than filled: a chevron is a bent line, and round
-            // caps and joins give it the same soft ends every other mark has.
-            canvas.setLineWidth(static_cast<float>(size * 0.16));
-            for (const double lift : {-0.30, 0.22}) {
-                const double tipY = at.y + half * (lift - 0.30);
-                canvas.beginPath();
-                canvas.moveTo(static_cast<float>(at.x - half * 0.62),
-                              static_cast<float>(tipY + half * 0.52));
-                canvas.lineTo(static_cast<float>(at.x), static_cast<float>(tipY));
-                canvas.lineTo(static_cast<float>(at.x + half * 0.62),
-                              static_cast<float>(tipY + half * 0.52));
-                canvas.stroke();
-            }
-            break;
-        }
-        default: break;
+void drawIcon(Canvas& canvas, SkillId id, int /*tier*/, Vec2 at, double size) {
+    const char* svg = talentSvg(id);
+    if (svg == nullptr || *svg == '\0') return;
+    static std::array<std::shared_ptr<SvgDocument>, kSkillCount> cache{};
+    const std::size_t idx = static_cast<std::size_t>(id);
+    if (idx >= cache.size()) return;
+    if (!cache[idx]) {
+        cache[idx] = std::make_shared<SvgDocument>(SvgDocument::fromString(svg));
     }
-    canvas.restore();
+    const SvgDocument& doc = *cache[idx];
+    if (doc.empty()) return;
+    const double half = size * 0.5;
+    doc.renderFitted(canvas, static_cast<float>(at.x - half), static_cast<float>(at.y - half),
+                     static_cast<float>(size), static_cast<float>(size), 0.0f);
 }
 
 // -- the flower ---------------------------------------------------------------
@@ -943,14 +608,14 @@ void TalentsPanel::reset() {
     grains_.clear();
     // The scroll is kept from one opening to the next, as florr keeps it.
     if (!scrollSet_) {
-        scroll_ = scrollTarget_ = std::min(kStartColumn, maxColumn_);
+        scroll_ = scrollTarget_ = kStartCamera;
         scrollSet_ = true;
     }
 }
 
 void TalentsPanel::layout() {
     nodes_.clear();
-    maxColumn_ = 0;
+    maxColumn_ = kCameraMax;
     for (const Branch& branch : branches()) {
         const int tiers = skillTierCount(branch.skill);
         for (int tier = 0; tier < tiers; ++tier) {
@@ -961,9 +626,9 @@ void TalentsPanel::layout() {
             Node node;
             node.skill = branch.skill;
             node.tier = tier;
+            // grid.x = florrclone tier, grid.y = phase
             node.grid = {point.x, point.y};
             nodes_.push_back(node);
-            maxColumn_ = std::max(maxColumn_, point.x);
         }
     }
     laidOut_ = true;
@@ -984,10 +649,7 @@ bool TalentsPanel::render(MenuContext& ctx) {
 
     const Rect inner{panel.x + kInset, panel.y + kInset, panel.w - kInset * 2.0,
                      panel.h - kInset * 2.0};
-    double topRow = 0;
-    for (const Node& node : nodes_) topRow = std::max(topRow, node.grid.y);
-    const Vec2 origin{inner.x + inner.w * 0.5, inner.bottom() - kStep * topRow - kTreeBottom};
-    const Vec2 flower = origin + Vec2{0.0, kStep * topRow + kFlowerDrop};
+    const Vec2 flower = mapWheel({kFlowerX, kFlowerY}, inner);
 
     // -- the chrome's rects ---------------------------------------------------
     const double rowMiddle = panel.y + kPad + kTitleSize * kLine * 0.5;
@@ -1013,16 +675,19 @@ bool TalentsPanel::render(MenuContext& ctx) {
     const bool overReset = live && anyOwned && resetHit.contains(mouse);
     if (!overReset) confirmingReset_ = false;
 
-    // -- scroll ---------------------------------------------------------------
+    // -- camera (florrclone phase scroll) -------------------------------------
     if (dragging_) {
-        scrollTarget_ += (dragLastX_ - mouse.x) / kStep;
+        scrollTarget_ += (dragLastX_ - mouse.x) * kDragCamera;
         dragLastX_ = mouse.x;
     }
-    if (live && panel.contains(mouse)) scrollTarget_ -= ctx.wheel();
-    scrollTarget_ = std::clamp(scrollTarget_, 0.0, maxColumn_);
+    if (live && panel.contains(mouse)) scrollTarget_ -= ctx.wheel() * kWheelCameraStep;
+    scrollTarget_ = std::clamp(scrollTarget_, 0.0, kCameraMax);
     scroll_ += (scrollTarget_ - scroll_) * ease(dtMs, kScrollRate);
 
-    for (Node& node : nodes_) node.at = origin + project(node.grid, scroll_, topRow);
+    const auto visible = [&](const Node& node) {
+        return std::abs(node.grid.y - scroll_) < kPhaseVisible;
+    };
+    for (Node& node : nodes_) node.at = mapWheel(projectWheel(node.grid, scroll_), inner);
 
     // -- what each node is ----------------------------------------------------
     const auto owned = [&](const Node& node) {
@@ -1042,6 +707,7 @@ bool TalentsPanel::render(MenuContext& ctx) {
         !resetHit.contains(mouse)) {
         for (int i = static_cast<int>(nodes_.size()) - 1; i >= 0; --i) {
             const Node& node = nodes_[static_cast<std::size_t>(i)];
+            if (!visible(node)) continue;
             const double reach = i == hoveredNode_ ? kHitRadiusHovered : kHitRadius;
             if (distance(mouse, node.at) <= reach) {
                 hovered = i;
@@ -1180,21 +846,22 @@ bool TalentsPanel::render(MenuContext& ctx) {
     canvas.setLineJoin("round");
     for (std::size_t i = 0; i < nodes_.size(); ++i) {
         const Node& node = nodes_[i];
+        if (!visible(node)) continue;
         const bool dashed = !owned(node);
         if (node.tier > 0) {
-            drawLink(canvas, nodes_[i - 1].at, node.at, dashed);
+            const Node& prev = nodes_[i - 1];
+            if (visible(prev)) drawLink(canvas, prev.at, node.at, dashed);
             continue;
         }
-        if (const SkillFork* fork = skillFork(node.skill)) {
+        if (const SkillGate* fork = skillGate(node.skill)) {
             for (const Node& parent : nodes_) {
-                if (parent.skill == fork->parent && parent.tier == rarityIndex(fork->requirement)) {
-                    drawLink(canvas, parent.at, node.at, dashed);
+                if (parent.skill == fork->parent && parent.tier == fork->parentLevel - 1) {
+                    if (visible(parent)) drawLink(canvas, parent.at, node.at, dashed);
                     break;
                 }
             }
             continue;
         }
-        // A root's dashes start at the node, florr's order.
         drawLink(canvas, node.at, flower, dashed);
     }
 
@@ -1208,8 +875,9 @@ bool TalentsPanel::render(MenuContext& ctx) {
                {std::cos(look) * kFlowerEyeTravelX, std::sin(look) * kFlowerEyeTravelY});
     grains_.drawGrains(canvas, dtMs);
 
-    // The nodes.
+    // The nodes (only the phase window florrclone shows).
     for (const Node& node : nodes_) {
+        if (!visible(node)) continue;
         const bool isOwned = owned(node);
         const int cost = isOwned ? 0 : costOf(node);
         const bool canBuy = !isOwned && cost <= points;
@@ -1249,22 +917,6 @@ bool TalentsPanel::render(MenuContext& ctx) {
         canvas.restore();
     }
 
-    // What the flower in the middle is worth now. The live max health, which
-    // the tree already multiplies; outside the world -- or steering somebody
-    // else's flower -- the level curve stands in.
-    const SelfState& self = ctx.net.view().self();
-    const double health = self.maxHealth > 0.0 && !ctx.net.controllingFlower()
-                              ? self.maxHealth
-                              : maxHealthForLevel(profile.level) * skills.statScale(SkillId::PlayerHealth);
-    const double bodyDamage = kDisplayBodyDamage * skills.statScale(SkillId::Damage);
-    const double statX = flower.x + kStatX;
-    const auto statLine = [&](const char* name, std::uint32_t color, double value, double middle) {
-        text(canvas, name, statX, middle, florrLabel(kStatSize, color));
-        text(canvas, " " + abbreviateStat(value), statX + measure(name, kStatSize), middle,
-             florrLabel(kStatSize));
-    };
-    statLine("Flower Health:", kStatHealth, health, flower.y - kStatSize * kLine * 0.5);
-    statLine("Body Damage:", kStatDamage, bodyDamage, flower.y + kStatSize * kLine * 0.5);
 
     canvas.restore();  // the tree's clip
 

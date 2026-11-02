@@ -174,7 +174,7 @@ void GameServer::syncSplitProgress(const Session& session) {
         const double fraction = health->max > 0 ? health->current / health->max : 1.0;
         health->max = arena ? kArenaMaxHealth
                             : maxHealthForLevel(level) *
-                                  (tree != nullptr ? tree->skills.statScale(SkillId::PlayerHealth)
+                                  (tree != nullptr ? tree->skills.statScale(SkillId::Health)
                                                    : 1.0) *
                                   (modifiers != nullptr ? modifiers->maxHealthScale : 1.0);
         health->current = clamp(health->max * clamp(fraction, 0.0, 1.0), 0.0, health->max);

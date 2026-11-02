@@ -427,6 +427,8 @@ void App::pollNetwork() {
             loginMessage_.clear();
             autoLogin_ = AutoLogin::Done;
             focusedField_ = -1;
+            // A successful sign-in defaults the flower name to this account.
+            playerName_ = net_.profile().username;
             saveSession();
             // A sign-in from the Account panel in the middle of a run: the
             // server has already taken the body out (leaveWorld) and the

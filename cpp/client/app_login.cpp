@@ -172,15 +172,15 @@ void App::updateConnecting() {
     // has logged in before: a stored token would otherwise resume past it.
     if (config_.forceLogin) storedToken_.clear();
 
-    if (!config_.forceLogin && !config_.autoUsername.empty()) {
-        // A scripted run has no one to type. It also must not race a stored
-        // token: the two answers would arrive interleaved and whichever lost
-        // would look like a rejection.
+    if (!config_.forceLogin && !config_.autoUsername.empty() &&
+        !config_.autoPassword.empty()) {
+        // Scripted runs only (?user=&password= / --user --password). A bare
+        // username without a password must not block guest or the login form.
         storedToken_.clear();
         usernameField_ = config_.autoUsername;
         passwordField_ = config_.autoPassword;
-        autoLogin_ = AutoLogin::Registering;
-        net_.requestRegister(config_.autoUsername, config_.autoPassword);
+        autoLogin_ = AutoLogin::LoggingIn;
+        net_.requestLogin(config_.autoUsername, config_.autoPassword);
     } else if (!storedToken_.empty()) {
         // A returning player skips the form entirely. If the server rejects
         // the token, handleAuthResult clears its own copy and the login form
@@ -237,10 +237,9 @@ void App::updateLogin(double dt) {
     if (authInFlight()) return;
     autoAuthSentAt_ = -1;
 
-    if (!config_.autoUsername.empty()) {
-        // A name already taken is the normal case on a second run against the
-        // same database, so fall back to logging in exactly once. Anything
-        // else is a real refusal and must not be retried in a loop.
+    if (autoLogin_ == AutoLogin::LoggingIn || autoLogin_ == AutoLogin::Registering) {
+        // Wait out a scripted sign-in; the form stays inert until it finishes
+        // or fails (same as authInFlight for guest/resume).
         if (autoLogin_ == AutoLogin::Registering &&
             net_.authStatus != net::AuthStatus::Ok) {
             if (net_.authStatus == net::AuthStatus::UsernameTaken) {
@@ -535,6 +534,16 @@ void App::drawLogin(Canvas& canvas, double time) {
     heading.align = Align::Centre;
     text(canvas, registering_ ? ui::tr(ui::Msg::Register) : ui::tr(ui::Msg::Login), centreX,
          layout.headingY, heading);
+
+    TextStyle migrationHint;
+    migrationHint.size = 16;
+    migrationHint.align = Align::Centre;
+    text(canvas, ui::trEnZh("Your save from 154.219.105.161:8088 is preserved.",
+                              "旧站 154.219.105.161:8088 的存档已保留。"),
+         centreX, layout.headingY - 60.0, migrationHint);
+    text(canvas, ui::trEnZh("Please log in with your previous username and password.",
+                              "请使用之前的账号和密码登录，无需重新注册。"),
+         centreX, layout.headingY - 36.0, migrationHint);
 
     const int serverField = registering_ ? 3 : 2;
     // The four fields share one caret, so only the focused one is handed it:

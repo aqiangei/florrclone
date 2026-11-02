@@ -1340,7 +1340,7 @@ void NetClient::handleProfile(ByteReader& reader) {
     for (std::uint16_t i = 0; i < skillCount; ++i) {
         const std::uint8_t id = reader.u8();
         const std::uint8_t tier = reader.u8();
-        if (id < kSkillCount && tier < kLadderRarityCount) {
+        if (id < kSkillCount && tier < skillTierCount(static_cast<SkillId>(id))) {
             next.skills.set(static_cast<SkillId>(id), tier);
         }
     }

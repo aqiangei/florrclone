@@ -1545,6 +1545,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             zone.bounds = element.bounds;
             zone.polygon = element.polygon;
             zone.difficulty = element.difficulty;
+            zone.forceRarity = element.forceRarity;
             zone.realm = map.realm();
             zone.singular = element.singular;
             zone.prestige = map.prestige();
@@ -1593,7 +1594,8 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             zone.targetMobs =
                 element.singular
                     ? 1
-                    : std::max(1, static_cast<int>(std::ceil(kTargetMobDensity * element.area())));
+                    : std::max(1, static_cast<int>(std::ceil(
+                          kTargetMobDensity * element.density * element.area())));
             zones_.push_back(std::move(zone));
         }
 
@@ -1996,12 +1998,23 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // Stopped at super. Everything above it belongs to the biome's clocks
     // (below): a band steep enough to roll uniques on its own would spawn them
     // far faster than kUniqueSpawnCooldownMillis allows.
-    Rarity rarity = rollSpawnRarity(zone.difficulty, luck, rng);
+    // Species-only overlays retain the band's threat while overriding its roster.
+    const SpawnZone* roster = &zone;
+    for (const SpawnZone& region : regions_) {
+        if (region.realm == zone.realm && zoneContains(region.bounds, region.polygon, at)) {
+            roster = &region;
+            break;
+        }
+    }
+    const int forcedTier = roster->forceRarity >= 0 ? roster->forceRarity : zone.forceRarity;
+    Rarity rarity = forcedTier >= 0 ? clampLadderRarity(forcedTier)
+                                   : rollSpawnRarity(zone.difficulty, luck, rng);
     if (rarityIndex(rarity) > rarityIndex(Rarity::Super)) rarity = Rarity::Super;
     // A prestige twin's band grows what the plain band would, a tier up --
     // and still never past super (shared/game/prestige.h).
     if (zone.prestige) rarity = prestigeRarity(rarity);
-    std::uint16_t type = chooseZoneMobType(content, zone, at, rarity, rng);
+    std::uint16_t type = roster == &zone ? chooseZoneMobType(content, zone, at, rarity, rng)
+                                        : rollResolvedRows(content, roster->resolved, rarity, rng);
     if (type == kInvalidIndex) return false;
     // A band naming a mob outright can name one below its own tier; the mob's
     // floor wins, exactly as it does on every other spawn path. Read the tier

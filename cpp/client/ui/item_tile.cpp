@@ -534,15 +534,17 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         const PetalConfig& config = content().petal(tile.petalIndex);
         const bool facesInward = config.clumpFacesInward &&
                                  !(config.id == "stinger" && copies == 3);
-        // No cap: gardn's own oversize rule lives inside the cluster, and every
-        // petal it measures already fits its plate. The face clip is what
-        // catches anything this game later adds that does not.
+        // Cap to the face in icon space. gardn-measured petals already fit;
+        // florrclonePort PNGs (magic eye, monstera, stick, …) can land a
+        // diameter that paints straight into the next cell -- the face clip
+        // alone still left neighbours looking stacked in the bag.
         // The petal alone flashes, as it does on the field; the tint is not
         // part of save()/restore(), so it is put back by hand.
         const Color outerTint = canvas.colorTint();
         if (tile.flash.a != 0) canvas.setColorTint(tile.flash);
+        const double iconCap = kFaceSide / kItemTileIconScale;
         drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,
-                         0.0, 0.0, 0.0, tile.timeSeconds, facesInward);
+                         0.0, 0.0, iconCap, tile.timeSeconds, facesInward);
         canvas.setColorTint(outerTint);
         canvas.restore();
     }

@@ -66,10 +66,9 @@ constexpr double kMaxWaveAmplitude = 100.0;
 /// report for a human, and a human stops reading long before this.
 constexpr std::size_t kMaxWarnings = 512;
 
-/// A mob's `speed` is in flower top speeds: 1 moves as fast as a player can,
-/// 0.5 at half that. (The TypeScript unit was 60 u/s, a fifth of this, and
-/// mobs.json was rescaled by 1/5 when it changed.)
-constexpr double kMobSpeedUnitsPerSecond = kPlayerMaxSpeed;
+/// Mob speed values use the reference engine's original 300-unit scale.
+/// Player-only speed buffs must never alter roaming, pursuit or cruise speeds.
+constexpr double kMobSpeedUnitsPerSecond = kMobBaseSpeed;
 
 /// Config `size` to a petal's own hit radius, in world units.
 ///
@@ -1076,7 +1075,7 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
     // Rules the reference states by NAME rather than in the JSON. They are
     // resolved once here so no spawner, no combat path, no summon and no
     // despawn sweep has to repeat a string compare per tick.
-    m.neverAmbient = id == "target_dummy";
+    m.neverAmbient = id == "target_dummy" || id == "test_dummy";
     m.glitchInfecting = id == "glitch" || id == "glitch_flower";
     if (id == "digger") {
         m.petHealthScale = 0.5;
