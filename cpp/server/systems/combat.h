@@ -441,6 +441,9 @@ private:
         /// the pet/wild contact gap and the one-mob-per-tick body rule all key
         /// off these.
         bool isPetal = false;
+        /// The default 50ms hit throttle does not grant immunity to wear.
+        /// Only petals without a breakable health pool skip contact damage.
+        bool petalBreakable = false;
         /// A petal that is a body on the ground -- the moon -- rather than a
         /// place on the ring. It hits mobs as a ring petal does, but leaves
         /// flowers alone, meets mobs with the slack a loose victim gets, and

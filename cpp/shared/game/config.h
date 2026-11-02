@@ -971,7 +971,7 @@ struct PetalConfig {
     /// off the world rather than a number anything should compute with.
     bool hidden = false;
 
-    /// The `damageCooldown` key, or kPetalHitIntervalMillis (zero) when the
+    /// The `damageCooldown` key, or kPetalHitIntervalMillis when the
     /// petal declares none. Non-zero therefore means exactly what truthiness
     /// means in the reference: this petal is throttled, and per INSTANCE
     /// rather than per victim. Three petals are: glass, glasss and infinity.

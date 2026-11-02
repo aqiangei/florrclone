@@ -177,6 +177,7 @@ Vec2 AssemblerPanel::size() { return {kWindowWidth, kWindowHeight}; }
 void AssemblerPanel::reset() {
     motion_.clear();
     count_ = "1";
+    countRepeat_.reset();
     countField_.blur();
     phase_ = Phase::Idle;
     resultPending_ = false;
@@ -204,6 +205,9 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
         stationMob_ = mobIndex;
         stationTier_ = tier;
         stationRecipe_ = recipeIndex;
+        countRepeat_.reset();
+        count_ = "1";
+        countField_.blur();
         phase_ = Phase::Idle;
         resultPending_ = false;
     }
@@ -235,7 +239,8 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
     }
 
     const SlotCardLayout card =
-        drawSlotCard(canvas, ctx.bounds, kAssemblerSkin, "Assemble", "Assemble", mouse);
+        drawSlotCard(canvas, ctx.bounds, kAssemblerSkin, trEnZh("Assemble", "转换机"),
+                     trEnZh("Assemble", "转换"), mouse);
     const Rect panel = card.panel;
     const Vec2 body = card.body;
 
@@ -348,7 +353,7 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
 
     // --- the button, the count and the line ---------------------------------
     const bool overButton = card.button.contains(mouse);
-    drawSlotButton(canvas, card.button, "Assemble",
+    drawSlotButton(canvas, card.button, trEnZh("Assemble", "转换"),
                    canAssemble ? std::optional<std::uint32_t>(rarityColor(tier)) : std::nullopt,
                    overButton && canAssemble,
                    overButton && canAssemble && ctx.window.mouseDown(MouseButton::Left));
@@ -367,7 +372,8 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
         drawSlotLine(canvas, card, refusal_, kSlotCardRefusalInk);
     } else {
         refusal_.clear();
-        drawSlotLine(canvas, card, kAssemblerInstructions);
+        drawSlotLine(canvas, card, trEnZh(kAssemblerInstructions,
+                     "按配方转换同稀有度花瓣；长按左右箭头可加速调整数量。"));
     }
 
     // Tiles on their way out go over everything.
@@ -402,6 +408,15 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
     }
     if (countRect.contains(mouse)) ctx.window.setCursorShape(CursorShape::Text);
 
+    const int arrow = idle && lessHit.contains(mouse) && canLess ? -1
+                    : idle && moreHit.contains(mouse) && canMore ? 1 : 0;
+    const int adjustment = countRepeat_.update(arrow, ctx.pressed(),
+                                               ctx.window.mouseDown(MouseButton::Left), now);
+    if (adjustment != 0) {
+        countField_.blur();
+        count_ = std::to_string(std::clamp(count + adjustment, most > 0 ? 1 : 0, most));
+        return true;
+    }
     if (!ctx.pressed()) return true;
     if (card.close.contains(mouse)) return false;
     // The field answered for its own press above.
@@ -428,14 +443,6 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
             motion_.burst(card.slot, tier, slotBurstGrains(tier), kBurst);
             count_ = "1";
         }
-        return true;
-    }
-    if (canLess && lessHit.contains(mouse)) {
-        count_ = std::to_string(count - 1);
-        return true;
-    }
-    if (canMore && moreHit.contains(mouse)) {
-        count_ = std::to_string(count + 1);
         return true;
     }
     return true;

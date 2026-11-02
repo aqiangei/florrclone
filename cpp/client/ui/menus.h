@@ -33,6 +33,7 @@
 #include "client/interpolation.h"
 #include "client/render/world_renderer.h"
 #include "client/ui/menu_widgets.h"
+#include "client/ui/accelerating_repeat.h"
 #include "client/ui/touch_scroll.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/i18n.h"
@@ -1160,6 +1161,7 @@ private:
     /// The count field: what is typed, and the field's caret and focus.
     std::string count_ = "1";
     ui::TextFieldState countField_;
+    ui::AcceleratingRepeat countRepeat_;
 
     Phase phase_ = Phase::Idle;
     double phaseStarted_ = 0;

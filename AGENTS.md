@@ -85,3 +85,8 @@ a privilege by username, display name or any other string a player chooses.
 `cpp/third_party/cpp_canvas/README.md` (the canvas library).
 
 Do not edit README.md
+
+## Production deployment
+
+- 每次部署前先开启维护等待页，再正常停服保存；将停服后的最新存档下载到用户本地电脑 `D:/ashflor/backups/florrclone/<UTC时间>/`，校验本地与服务器 SHA256 一致后才允许覆盖正式文件。不要提交任何存档或备份到 Git。
+- 使用 `scripts/deploy-with-backup.cjs` 执行部署，维护页提供小游戏；后端和协议校验通过后才恢复公网入口。更新期间应显示等待页，不能直接向玩家显示 502。

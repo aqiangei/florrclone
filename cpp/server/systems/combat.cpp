@@ -2313,6 +2313,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.radius = body.radius;
         source.damage = stats.damage;
         source.hitIntervalMillis = stats.damageIntervalMillis;
+        source.petalBreakable = stats.breakable;
         source.knockback = stats.knockback;
         source.poisonPerSecond = stats.poisonPerSecond;
         source.poisonDurationMillis = stats.poisonDurationMillis;
@@ -2636,8 +2637,9 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // thirty times a second and never bleeds is unbreakable, and the
             // break/reload rhythm is most of what paces the fight.
             //
-            // Exempt for a petal that names a `damageCooldown` -- glass and
-            // infinity never break on contact. Recoil rather than Direct, but
+            // Exempt only for an unbreakable petal (glass/infinity). The
+            // ordinary 50ms hit throttle must not disable durability loss.
+            // Recoil rather than Direct, but
             // a blow as far as armour goes: a bone shrugs off the part of the
             // bite its armour covers. The petal flashes for what it lost, and
             // carries no number: a petal is on neither of the reference's two
@@ -2650,7 +2652,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // Not a loose petal: the mobs it touches bite it already (the
             // looseVictim rule above), and charging the same contact twice
             // would halve the moon's life for nothing the player did.
-            if (landed && source.isPetal && !source.isLoose && source.hitIntervalMillis <= 0.0 &&
+            if (landed && source.isPetal && !source.isLoose && source.petalBreakable &&
                 (world.has<MobTag>(victim) || world.has<NpcTag>(victim))) {
                 applyDamage(world, source.attacker, victim, contactDamageOf(world, victim),
                             nowMillis, DamageKind::Recoil);
@@ -2889,11 +2891,11 @@ void CombatSystem::resolvePetalPvp(World& world, const MeleeSource& source, Enti
     // A flat point, never the victim's damage stat, and charged whatever the
     // swing did: the reference pays it outside applyPvpDamage's early returns,
     // so a swing at an invulnerable flower still wears the ring down. Skipped
-    // only for a petal that declares a `damageCooldown` -- the same exemption
+    // only for a petal without a breakable pool -- the same exemption
     // that makes glass and infinity unbreakable against mobs. The environment
     // is the source because the reference attributes this to nobody, and
     // naming the victim would let their own faction refuse the cost.
-    if (source.hitIntervalMillis <= 0.0) {
+    if (source.petalBreakable) {
         applyDamage(world, source.attacker, NULL_ENTITY, kPvpPetalSelfDamage, nowMillis,
                     DamageKind::Periodic);
     }

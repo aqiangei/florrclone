@@ -682,3 +682,4 @@ require("node:child_process").execFileSync(process.env.PYTHON || "python",
 
 // Fixed practice targets are NPCs, never part of ambient mob distribution.
 require('./restore-jungle-dps');
+require('./restore-factory-assemblers');
