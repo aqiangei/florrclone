@@ -1334,8 +1334,10 @@ inline bool petalControlsPets(const PetalConfig& config) { return config.id == "
 /// (GameServer::serviceSacrificeSpawn): no mob drops it, a `random` drop row
 /// never names it and the shop never sells it, because a sacrifice at a tier
 /// the market deals in would be a super boss for a handful of stars.
-inline constexpr const char* kSacrificePetalId = "sacrifice";
-inline bool petalIsSacrifice(const PetalConfig& config) { return config.id == kSacrificePetalId; }
+inline constexpr const char* kSacrificePetalId = "blood_sacrifice";
+inline bool petalIsSacrifice(const PetalConfig& config) {
+    return config.id == kSacrificePetalId || config.id == "sacrifice";
+}
 
 /// The Champion's Crown: florr's "Gives flowers around you a Super Basic. You
 /// receive credit for damage dealt using it." Worn on the head (EquipCrown),

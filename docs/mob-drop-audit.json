@@ -1,0 +1,1515 @@
+{
+  "referenceMobs": [
+    {
+      "id": "square",
+      "name": "Square",
+      "items": [
+        "square"
+      ]
+    },
+    {
+      "id": "ladybug",
+      "name": "Ladybug",
+      "items": [
+        "light",
+        "rose"
+      ]
+    },
+    {
+      "id": "baby_ant",
+      "name": "Baby Ant",
+      "items": [
+        "light",
+        "leaf",
+        "rice"
+      ]
+    },
+    {
+      "id": "worker_ant",
+      "name": "Worker Ant",
+      "items": [
+        "leaf",
+        "corn"
+      ]
+    },
+    {
+      "id": "soldier_ant",
+      "name": "Soldier Ant",
+      "items": [
+        "clover",
+        "glass"
+      ]
+    },
+    {
+      "id": "bee",
+      "name": "Bee",
+      "items": [
+        "stinger",
+        "honey",
+        "pollen"
+      ]
+    },
+    {
+      "id": "rock",
+      "name": "Rock",
+      "items": [
+        "rock",
+        "heavy",
+        "moon_rock"
+      ]
+    },
+    {
+      "id": "spider",
+      "name": "Spider",
+      "items": [
+        "faster",
+        "web",
+        "third_eye",
+        "battery"
+      ]
+    },
+    {
+      "id": "beetle",
+      "name": "Beetle",
+      "items": [
+        "beetle_egg",
+        "privet_berry"
+      ]
+    },
+    {
+      "id": "mummy_beetle",
+      "name": "Mummy Beetle",
+      "items": [
+        "ankh",
+        "lentil",
+        "bandage"
+      ]
+    },
+    {
+      "id": "scorpion",
+      "name": "Scorpion",
+      "items": [
+        "iris",
+        "pincer"
+      ]
+    },
+    {
+      "id": "sandstorm",
+      "name": "Sandstorm",
+      "items": [
+        "sand",
+        "mysterious_stick",
+        "glass"
+      ]
+    },
+    {
+      "id": "jellyfish",
+      "name": "Jellyfish",
+      "items": [
+        "lightning",
+        "jelly"
+      ]
+    },
+    {
+      "id": "starfish",
+      "name": "Starfish",
+      "items": [
+        "salt",
+        "sand",
+        "starfish"
+      ]
+    },
+    {
+      "id": "crab",
+      "name": "Crab",
+      "items": [
+        "sand",
+        "claw",
+        "battery"
+      ]
+    },
+    {
+      "id": "shell",
+      "name": "Shell",
+      "items": [
+        "magnet",
+        "shell",
+        "pearl"
+      ]
+    },
+    {
+      "id": "test_dummy",
+      "name": "Test Dummy",
+      "items": [
+        "square"
+      ]
+    },
+    {
+      "id": "cactus",
+      "name": "Cactus",
+      "items": [
+        "cactus"
+      ]
+    },
+    {
+      "id": "queen_ant",
+      "name": "Queen Ant",
+      "items": [
+        "basil",
+        "egg"
+      ]
+    },
+    {
+      "id": "ant_hole",
+      "name": "Ant Hole",
+      "items": [
+        "soil",
+        "shovel"
+      ]
+    },
+    {
+      "id": "hornet",
+      "name": "Hornet",
+      "items": [
+        "missile",
+        "antennae",
+        "orange"
+      ]
+    },
+    {
+      "id": "centipede",
+      "name": "Centipede",
+      "items": [
+        "leaf",
+        "peas"
+      ]
+    },
+    {
+      "id": "jungle_centipede",
+      "name": "Jungle Centipede",
+      "items": [
+        "grapes",
+        "iris"
+      ]
+    },
+    {
+      "id": "desert_centipede",
+      "name": "Desert Centipede",
+      "items": [
+        "salt",
+        "mysterious_powder"
+      ]
+    },
+    {
+      "id": "jungle_ladybug",
+      "name": "Jungle Ladybug",
+      "items": [
+        "yin_yang",
+        "dahlia"
+      ]
+    },
+    {
+      "id": "desert_ladybug",
+      "name": "Desert Ladybug",
+      "items": [
+        "rose",
+        "dahlia",
+        "yggdrasil"
+      ]
+    },
+    {
+      "id": "soldier_fire_ant",
+      "name": "Soldier Fire Ant",
+      "items": [
+        "yucca",
+        "triangle"
+      ]
+    },
+    {
+      "id": "fire_ant_burrow",
+      "name": "Fire Ant Burrow",
+      "items": [
+        "magnet",
+        "disc"
+      ]
+    },
+    {
+      "id": "bubble",
+      "name": "Bubble",
+      "items": [
+        "bubble",
+        "air"
+      ]
+    },
+    {
+      "id": "bumble_bee",
+      "name": "Bumble Bee",
+      "items": [
+        "pollen",
+        "honey",
+        "wax"
+      ]
+    },
+    {
+      "id": "digger",
+      "name": "Digger",
+      "items": [
+        "cutter",
+        "uranium"
+      ]
+    },
+    {
+      "id": "sponge",
+      "name": "Sponge",
+      "items": [
+        "sponge",
+        "coral"
+      ]
+    },
+    {
+      "id": "leech",
+      "name": "Leech",
+      "items": [
+        "faster",
+        "fang"
+      ]
+    },
+    {
+      "id": "dandelion",
+      "name": "Dandelion",
+      "items": [
+        "dandelion"
+      ]
+    },
+    {
+      "id": "baby_fire_ant",
+      "name": "Baby Fire Ant",
+      "items": [
+        "light",
+        "yucca",
+        "broccoli"
+      ]
+    },
+    {
+      "id": "worker_fire_ant",
+      "name": "Worker Fire Ant",
+      "items": [
+        "corn",
+        "yucca"
+      ]
+    },
+    {
+      "id": "queen_fire_ant",
+      "name": "Queen Fire Ant",
+      "items": [
+        "basil",
+        "egg"
+      ]
+    },
+    {
+      "id": "ant_egg",
+      "name": "Ant Egg",
+      "items": [
+        "egg"
+      ]
+    },
+    {
+      "id": "fire_ant_egg",
+      "name": "Fire Ant Egg",
+      "items": [
+        "egg"
+      ]
+    },
+    {
+      "id": "fly",
+      "name": "Fly",
+      "items": [
+        "wing",
+        "poo",
+        "talisman_of_evasion"
+      ]
+    },
+    {
+      "id": "leafbug",
+      "name": "Leafbug",
+      "items": [
+        "leaf",
+        "root"
+      ]
+    },
+    {
+      "id": "mantis",
+      "name": "Mantis",
+      "items": [
+        "peas",
+        "bur"
+      ]
+    },
+    {
+      "id": "baby_termite",
+      "name": "Baby Termite",
+      "items": [
+        "mysterious_relic",
+        "carrot"
+      ]
+    },
+    {
+      "id": "worker_termite",
+      "name": "Worker Termite",
+      "items": [
+        "mysterious_relic",
+        "plank"
+      ]
+    },
+    {
+      "id": "soldier_termite",
+      "name": "Soldier Termite",
+      "items": [
+        "mysterious_relic",
+        "bone"
+      ]
+    },
+    {
+      "id": "termite_overmind",
+      "name": "Termite Overmind",
+      "items": [
+        "mysterious_relic",
+        "tomato",
+        "compass"
+      ]
+    },
+    {
+      "id": "termite_mound",
+      "name": "Termite Mound",
+      "items": [
+        "soil",
+        "mysterious_relic",
+        "rubber"
+      ]
+    },
+    {
+      "id": "termite_egg",
+      "name": "Termite Egg",
+      "items": [
+        "egg",
+        "amulet"
+      ]
+    },
+    {
+      "id": "bush",
+      "name": "Bush",
+      "items": [
+        "cotton",
+        "monstera",
+        "golden_leaf"
+      ]
+    },
+    {
+      "id": "roach",
+      "name": "Roach",
+      "items": [
+        "antennae",
+        "lotus"
+      ]
+    },
+    {
+      "id": "moth",
+      "name": "Moth",
+      "items": [
+        "wing",
+        "bulb"
+      ]
+    },
+    {
+      "id": "firefly",
+      "name": "Firefly",
+      "items": [
+        "wing",
+        "bulb",
+        "battery"
+      ]
+    },
+    {
+      "id": "hel_beetle",
+      "name": "Hel Beetle",
+      "items": [
+        "beetle_egg",
+        "dice",
+        "dark_mark"
+      ]
+    },
+    {
+      "id": "wasp",
+      "name": "Wasp",
+      "items": [
+        "missile",
+        "antennae",
+        "battery",
+        "blood_stinger"
+      ]
+    },
+    {
+      "id": "hel_spider",
+      "name": "Hel Spider",
+      "items": [
+        "third_eye",
+        "dark_mark",
+        "card"
+      ]
+    },
+    {
+      "id": "hel_centipede",
+      "name": "Hel Centipede",
+      "items": [
+        "dark_mark",
+        "domino"
+      ]
+    },
+    {
+      "id": "hel_wasp",
+      "name": "Hel Wasp",
+      "items": [
+        "missile",
+        "poker_chip",
+        "dark_mark"
+      ]
+    },
+    {
+      "id": "gambler",
+      "name": "Gambler",
+      "items": [
+        "dice",
+        "poker_chip",
+        "domino",
+        "card",
+        "corruption"
+      ]
+    },
+    {
+      "id": "magic_firefly",
+      "name": "Magic Firefly",
+      "items": [
+        "battery",
+        "mana_orb"
+      ]
+    },
+    {
+      "id": "nazar_beetle",
+      "name": "Nazar Beetle",
+      "items": [
+        "beetle_egg",
+        "ankh",
+        "bean",
+        "nazar_amulet"
+      ]
+    },
+    {
+      "id": "worm",
+      "name": "Worm",
+      "items": [
+        "soil",
+        "shovel"
+      ]
+    },
+    {
+      "id": "mecha_flower",
+      "name": "Mecha Flower",
+      "items": [
+        "battery",
+        "cogwheel",
+        "fragment",
+        "mimic"
+      ]
+    },
+    {
+      "id": "mecha_wasp",
+      "name": "Mecha Wasp",
+      "items": [
+        "observer",
+        "fragment",
+        "mecha_missile",
+        "battery"
+      ]
+    },
+    {
+      "id": "mecha_spider",
+      "name": "Mecha Spider",
+      "items": [
+        "paranormal_goggles",
+        "fragment",
+        "electric_web",
+        "battery"
+      ]
+    },
+    {
+      "id": "golden_leafbug",
+      "name": "Golden Leafbug",
+      "items": [
+        "golden_leaf",
+        "root"
+      ]
+    },
+    {
+      "id": "mecha_crab",
+      "name": "Mecha Crab",
+      "items": [
+        "magnet",
+        "fragment",
+        "laser",
+        "battery"
+      ]
+    },
+    {
+      "id": "barrel",
+      "name": "Barrel",
+      "items": [
+        "uranium",
+        "fragment"
+      ]
+    },
+    {
+      "id": "pharaoh_beetle",
+      "name": "Pharaoh Beetle",
+      "items": [
+        "ankh",
+        "bandage",
+        "pharaoh_s_crown"
+      ]
+    },
+    {
+      "id": "tomb",
+      "name": "Tomb",
+      "items": [
+        "ankh",
+        "dust",
+        "totem"
+      ]
+    },
+    {
+      "id": "silverfish",
+      "name": "Silverfish",
+      "items": [
+        "dust",
+        "clay"
+      ]
+    },
+    {
+      "id": "garbage",
+      "name": "Garbage",
+      "items": [
+        "poo",
+        "broccoli"
+      ]
+    },
+    {
+      "id": "soldier_diver_ant",
+      "name": "Soldier Diver Ant",
+      "items": [
+        "bubble",
+        "dead_leaf"
+      ]
+    },
+    {
+      "id": "ghost",
+      "name": "Ghost",
+      "items": [
+        "basic"
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "id": "square",
+      "before": [
+        "square"
+      ],
+      "after": [
+        "square"
+      ]
+    },
+    {
+      "id": "ladybug",
+      "before": [
+        "rose",
+        "light"
+      ],
+      "after": [
+        "light",
+        "rose"
+      ]
+    },
+    {
+      "id": "baby_ant",
+      "before": [
+        "light",
+        "leaf",
+        "rice"
+      ],
+      "after": [
+        "light",
+        "leaf",
+        "rice"
+      ]
+    },
+    {
+      "id": "worker_ant",
+      "before": [
+        "corn",
+        "leaf"
+      ],
+      "after": [
+        "leaf",
+        "corn"
+      ]
+    },
+    {
+      "id": "soldier_ant",
+      "before": [
+        "glass",
+        "clover"
+      ],
+      "after": [
+        "clover",
+        "glass"
+      ]
+    },
+    {
+      "id": "bee",
+      "before": [
+        "stinger",
+        "faster",
+        "pollen"
+      ],
+      "after": [
+        "stinger",
+        "honey",
+        "pollen"
+      ]
+    },
+    {
+      "id": "rock",
+      "before": [
+        "rock",
+        "heavy",
+        "moon_rock"
+      ],
+      "after": [
+        "rock",
+        "heavy",
+        "moon_rock"
+      ]
+    },
+    {
+      "id": "spider",
+      "before": [
+        "third_eye",
+        "faster",
+        "web"
+      ],
+      "after": [
+        "faster",
+        "web",
+        "third_eye",
+        "battery"
+      ]
+    },
+    {
+      "id": "beetle",
+      "before": [
+        "lentil",
+        "iris",
+        "salt"
+      ],
+      "after": [
+        "beetle_egg",
+        "privet_berry"
+      ]
+    },
+    {
+      "id": "mummy_beetle",
+      "before": [
+        "bandage",
+        "lentil"
+      ],
+      "after": [
+        "ankh",
+        "lentil",
+        "bandage"
+      ]
+    },
+    {
+      "id": "scorpion",
+      "before": [
+        "pincer",
+        "iris",
+        "sand"
+      ],
+      "after": [
+        "iris",
+        "pincer"
+      ]
+    },
+    {
+      "id": "sandstorm",
+      "before": [
+        "sand",
+        "rock"
+      ],
+      "after": [
+        "sand",
+        "mysterious_stick",
+        "glass"
+      ]
+    },
+    {
+      "id": "jellyfish",
+      "before": [
+        "lightning",
+        "jelly"
+      ],
+      "after": [
+        "lightning",
+        "jelly"
+      ]
+    },
+    {
+      "id": "starfish",
+      "before": [
+        "starfish",
+        "sand",
+        "salt"
+      ],
+      "after": [
+        "salt",
+        "sand",
+        "starfish"
+      ]
+    },
+    {
+      "id": "crab",
+      "before": [
+        "sand",
+        "claw"
+      ],
+      "after": [
+        "sand",
+        "claw",
+        "battery"
+      ]
+    },
+    {
+      "id": "shell",
+      "before": [
+        "magnet",
+        "shell",
+        "pearl"
+      ],
+      "after": [
+        "magnet",
+        "shell",
+        "pearl"
+      ]
+    },
+    {
+      "id": "test_dummy",
+      "before": [],
+      "after": [
+        "square"
+      ]
+    },
+    {
+      "id": "cactus",
+      "before": [
+        "cactus"
+      ],
+      "after": [
+        "cactus"
+      ]
+    },
+    {
+      "id": "queen_ant",
+      "before": [
+        "wing",
+        "iris",
+        "stinger",
+        "basil"
+      ],
+      "after": [
+        "basil",
+        "egg"
+      ]
+    },
+    {
+      "id": "ant_hole",
+      "before": [
+        "soil",
+        "egg"
+      ],
+      "after": [
+        "soil",
+        "shovel"
+      ]
+    },
+    {
+      "id": "hornet",
+      "before": [
+        "missile",
+        "antennae",
+        "orange"
+      ],
+      "after": [
+        "missile",
+        "antennae",
+        "orange"
+      ]
+    },
+    {
+      "id": "centipede",
+      "before": [
+        "peas"
+      ],
+      "after": [
+        "leaf",
+        "peas"
+      ]
+    },
+    {
+      "id": "jungle_centipede",
+      "before": [
+        "grapes",
+        "iris"
+      ],
+      "after": [
+        "grapes",
+        "iris"
+      ]
+    },
+    {
+      "id": "desert_centipede",
+      "before": [
+        "salt"
+      ],
+      "after": [
+        "salt",
+        "mysterious_powder"
+      ]
+    },
+    {
+      "id": "jungle_ladybug",
+      "before": [
+        "dahlia",
+        "yin_yang"
+      ],
+      "after": [
+        "yin_yang",
+        "dahlia"
+      ]
+    },
+    {
+      "id": "desert_ladybug",
+      "before": [
+        "rose",
+        "dahlia",
+        "yggdrasil"
+      ],
+      "after": [
+        "rose",
+        "dahlia",
+        "yggdrasil"
+      ]
+    },
+    {
+      "id": "soldier_fire_ant",
+      "before": [
+        "bone",
+        "yucca"
+      ],
+      "after": [
+        "yucca",
+        "triangle"
+      ]
+    },
+    {
+      "id": "fire_ant_burrow",
+      "before": [
+        "disc",
+        "magnet"
+      ],
+      "after": [
+        "magnet",
+        "disc"
+      ]
+    },
+    {
+      "id": "bubble",
+      "before": [
+        "bubble",
+        "air"
+      ],
+      "after": [
+        "bubble",
+        "air"
+      ]
+    },
+    {
+      "id": "bumble_bee",
+      "before": [
+        "honey",
+        "pollen",
+        "wax"
+      ],
+      "after": [
+        "pollen",
+        "honey",
+        "wax"
+      ]
+    },
+    {
+      "id": "digger",
+      "before": [
+        "uranium",
+        "cutter"
+      ],
+      "after": [
+        "cutter",
+        "uranium"
+      ]
+    },
+    {
+      "id": "sponge",
+      "before": [
+        "sponge",
+        "coral"
+      ],
+      "after": [
+        "sponge",
+        "coral"
+      ]
+    },
+    {
+      "id": "leech",
+      "before": [
+        "fang",
+        "faster"
+      ],
+      "after": [
+        "faster",
+        "fang"
+      ]
+    },
+    {
+      "id": "dandelion",
+      "before": [
+        "dandelion"
+      ],
+      "after": [
+        "dandelion"
+      ]
+    },
+    {
+      "id": "baby_fire_ant",
+      "before": [
+        "light",
+        "leaf",
+        "rice"
+      ],
+      "after": [
+        "light",
+        "yucca",
+        "broccoli"
+      ]
+    },
+    {
+      "id": "worker_fire_ant",
+      "before": [
+        "corn",
+        "leaf"
+      ],
+      "after": [
+        "corn",
+        "yucca"
+      ]
+    },
+    {
+      "id": "queen_fire_ant",
+      "before": [
+        "basil"
+      ],
+      "after": [
+        "basil",
+        "egg"
+      ]
+    },
+    {
+      "id": "ant_egg",
+      "before": [
+        "egg"
+      ],
+      "after": [
+        "egg"
+      ]
+    },
+    {
+      "id": "fire_ant_egg",
+      "before": [
+        "egg"
+      ],
+      "after": [
+        "egg"
+      ]
+    },
+    {
+      "id": "fly",
+      "before": [
+        "wing",
+        "poo"
+      ],
+      "after": [
+        "wing",
+        "poo",
+        "talisman_of_evasion"
+      ]
+    },
+    {
+      "id": "leafbug",
+      "before": [
+        "leaf",
+        "root"
+      ],
+      "after": [
+        "leaf",
+        "root"
+      ]
+    },
+    {
+      "id": "mantis",
+      "before": [
+        "peas",
+        "bur"
+      ],
+      "after": [
+        "peas",
+        "bur"
+      ]
+    },
+    {
+      "id": "baby_termite",
+      "before": [
+        "carrot"
+      ],
+      "after": [
+        "mysterious_relic",
+        "carrot"
+      ]
+    },
+    {
+      "id": "worker_termite",
+      "before": [
+        "plank"
+      ],
+      "after": [
+        "mysterious_relic",
+        "plank"
+      ]
+    },
+    {
+      "id": "soldier_termite",
+      "before": [
+        "triangle"
+      ],
+      "after": [
+        "mysterious_relic",
+        "bone"
+      ]
+    },
+    {
+      "id": "termite_overmind",
+      "before": [
+        "tomato",
+        "compass"
+      ],
+      "after": [
+        "mysterious_relic",
+        "tomato",
+        "compass"
+      ]
+    },
+    {
+      "id": "termite_mound",
+      "before": [
+        "soil",
+        "rubber"
+      ],
+      "after": [
+        "soil",
+        "mysterious_relic",
+        "rubber"
+      ]
+    },
+    {
+      "id": "termite_egg",
+      "before": [
+        "egg",
+        "amulet"
+      ],
+      "after": [
+        "egg",
+        "amulet"
+      ]
+    },
+    {
+      "id": "bush",
+      "before": [
+        "cotton"
+      ],
+      "after": [
+        "cotton",
+        "monstera",
+        "golden_leaf"
+      ]
+    },
+    {
+      "id": "roach",
+      "before": [
+        "antennae",
+        "lotus"
+      ],
+      "after": [
+        "antennae",
+        "lotus"
+      ]
+    },
+    {
+      "id": "moth",
+      "before": [
+        "wing",
+        "bulb"
+      ],
+      "after": [
+        "wing",
+        "bulb"
+      ]
+    },
+    {
+      "id": "firefly",
+      "before": [
+        "wing",
+        "bulb",
+        "battery"
+      ],
+      "after": [
+        "wing",
+        "bulb",
+        "battery"
+      ]
+    },
+    {
+      "id": "hel_beetle",
+      "before": [
+        "bone"
+      ],
+      "after": [
+        "beetle_egg",
+        "dice",
+        "dark_mark"
+      ]
+    },
+    {
+      "id": "wasp",
+      "before": [
+        "antennae",
+        "missile"
+      ],
+      "after": [
+        "missile",
+        "antennae",
+        "battery",
+        "blood_stinger"
+      ]
+    },
+    {
+      "id": "hel_spider",
+      "before": [
+        "card",
+        "dark_mark",
+        "third_eye"
+      ],
+      "after": [
+        "third_eye",
+        "dark_mark",
+        "card"
+      ]
+    },
+    {
+      "id": "hel_centipede",
+      "before": [
+        "dark_mark",
+        "domino"
+      ],
+      "after": [
+        "dark_mark",
+        "domino"
+      ]
+    },
+    {
+      "id": "hel_wasp",
+      "before": [
+        "dark_mark",
+        "missile",
+        "poker_chip"
+      ],
+      "after": [
+        "missile",
+        "poker_chip",
+        "dark_mark"
+      ]
+    },
+    {
+      "id": "gambler",
+      "before": [
+        "poker_chip",
+        "card",
+        "dice",
+        "corruption",
+        "domino"
+      ],
+      "after": [
+        "dice",
+        "poker_chip",
+        "domino",
+        "card",
+        "corruption"
+      ]
+    },
+    {
+      "id": "magic_firefly",
+      "before": [
+        "battery"
+      ],
+      "after": [
+        "battery",
+        "mana_orb"
+      ]
+    },
+    {
+      "id": "nazar_beetle",
+      "before": [
+        "bean",
+        "ankh",
+        "nazar_amulet"
+      ],
+      "after": [
+        "beetle_egg",
+        "ankh",
+        "bean",
+        "nazar_amulet"
+      ]
+    },
+    {
+      "id": "worm",
+      "before": [
+        "soil",
+        "shovel"
+      ],
+      "after": [
+        "soil",
+        "shovel"
+      ]
+    },
+    {
+      "id": "mecha_flower",
+      "before": [
+        "cogwheel",
+        "mimic",
+        "battery",
+        "fragment"
+      ],
+      "after": [
+        "battery",
+        "cogwheel",
+        "fragment",
+        "mimic"
+      ]
+    },
+    {
+      "id": "mecha_wasp",
+      "before": [
+        "mecha_missile",
+        "battery",
+        "observer",
+        "fragment"
+      ],
+      "after": [
+        "observer",
+        "fragment",
+        "mecha_missile",
+        "battery"
+      ]
+    },
+    {
+      "id": "mecha_spider",
+      "before": [
+        "battery",
+        "electric_web",
+        "paranormal_goggles",
+        "fragment"
+      ],
+      "after": [
+        "paranormal_goggles",
+        "fragment",
+        "electric_web",
+        "battery"
+      ]
+    },
+    {
+      "id": "golden_leafbug",
+      "before": [
+        "golden_leaf",
+        "root"
+      ],
+      "after": [
+        "golden_leaf",
+        "root"
+      ]
+    },
+    {
+      "id": "mecha_crab",
+      "before": [
+        "laser",
+        "battery",
+        "magnet",
+        "fragment"
+      ],
+      "after": [
+        "magnet",
+        "fragment",
+        "laser",
+        "battery"
+      ]
+    },
+    {
+      "id": "barrel",
+      "before": [
+        "uranium",
+        "fragment"
+      ],
+      "after": [
+        "uranium",
+        "fragment"
+      ]
+    },
+    {
+      "id": "pharaoh_beetle",
+      "before": [
+        "bandage"
+      ],
+      "after": [
+        "ankh",
+        "bandage",
+        "pharaoh_s_crown"
+      ]
+    },
+    {
+      "id": "tomb",
+      "before": [
+        "bandage",
+        "ankh",
+        "soil"
+      ],
+      "after": [
+        "ankh",
+        "dust",
+        "totem"
+      ]
+    },
+    {
+      "id": "silverfish",
+      "before": [
+        "dust",
+        "clay"
+      ],
+      "after": [
+        "dust",
+        "clay"
+      ]
+    },
+    {
+      "id": "garbage",
+      "before": [
+        "random"
+      ],
+      "after": [
+        "poo",
+        "broccoli"
+      ]
+    },
+    {
+      "id": "soldier_diver_ant",
+      "before": [
+        "bubble",
+        "dead_leaf"
+      ],
+      "after": [
+        "bubble",
+        "dead_leaf"
+      ]
+    },
+    {
+      "id": "ghost",
+      "before": [
+        "basic"
+      ],
+      "after": [
+        "basic"
+      ]
+    }
+  ],
+  "preservedCustomMobs": [
+    "shiny_ladybug",
+    "dark_ladybug",
+    "leech_body",
+    "target_dummy",
+    "item_spawner",
+    "javascript",
+    "c++",
+    "dust",
+    "glitch",
+    "glitch_flower",
+    "cube",
+    "sun",
+    "sun_pet",
+    "server",
+    "centipede_body",
+    "desert_centipede_body",
+    "evil_centipede",
+    "evil_centipede_body",
+    "oracle",
+    "trader",
+    "titan",
+    "assembler"
+  ],
+  "sources": [
+    "D:/ashflor/florrclone/server/engine.js (grantLootRoll and W)",
+    "https://florrio.wiki.gg/wiki/Desert",
+    "https://florrio.wiki.gg/wiki/Queen_Ant",
+    "https://florrio.wiki.gg/wiki/Ant_Egg_%28Mob%29",
+    "https://florrio.wiki.gg/wiki/Garden"
+  ],
+  "notes": [
+    "Exact reference runtime tables take precedence over conflicting historical wiki percentages.",
+    "Each row is an independent trial except rollGroup=1, the one-choice fallback.",
+    "Percentages are per single trial; global 30 rolls and Super multiplier are unchanged."
+  ],
+  "totalMobConfigs": 96,
+  "totalDropTables": 89,
+  "withoutAuthoredTable": [
+    "leech_body",
+    "item_spawner",
+    "sun_pet",
+    "oracle",
+    "trader",
+    "titan",
+    "assembler"
+  ],
+  "unresolvedItems": []
+}

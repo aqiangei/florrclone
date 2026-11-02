@@ -3766,7 +3766,7 @@ TEST(a_magic_petal_is_never_in_the_random_drop_pool) {
 
 TEST(no_random_drop_row_turns_into_a_sacrifice) {
     // No `random` row turns into one (the shop's half is in menu_tests).
-    const std::uint16_t sacrifice = shipped().petalIndex("sacrifice");
+    const std::uint16_t sacrifice = shipped().petalIndex("blood_sacrifice");
     CHECK(sacrifice != kInvalidIndex);
     const DropTables tables = shippedTables();
     for (const std::uint16_t index : tables.droppablePetals()) CHECK(index != sacrifice);
@@ -4081,7 +4081,7 @@ TEST(a_single_copy_drop_goes_to_the_first_human_and_no_bot) {
     Rng rng(19);
 
     const Entity bot = makePlayer(world, kCentre, 0.0, 1);
-    const Entity drop = loot.spawnDrop(world, shipped().petalIndex("sacrifice"), Rarity::Apex,
+    const Entity drop = loot.spawnDrop(world, shipped().petalIndex("blood_sacrifice"), Rarity::Apex,
                                        kCentre, Realm::Overworld, {});
     world.get<DropItem>(drop).singleCopy = true;
     world.get<DropItem>(drop).humansOnly = true;

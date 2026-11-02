@@ -29,8 +29,10 @@ bool DropTables::load(const ContentRegistry& content, const std::string& path, s
     }
 
     std::vector<SourceEntry> loaded;
+    std::vector<std::string> noAutoEgg;
     for (const std::string& mobId : root.keys()) {
         const Json& table = root[mobId];
+        if(table.contains("autoEggDrops")&&!table["autoEggDrops"].asBool(true))noAutoEgg.push_back(mobId);
         if (!table.isObject() || !table["drops"].isArray()) {
             errorOut = path + ": table for '" + mobId + "' must contain a drops array";
             return false;
@@ -79,11 +81,29 @@ bool DropTables::load(const ContentRegistry& content, const std::string& path, s
             source.probability = clamp(entry["probability"].asDouble(), 0.0, 1.0);
             source.minCount = std::max(1, entry["minQuantity"].asInt(1));
             source.maxCount = std::max(source.minCount, entry["maxQuantity"].asInt(source.minCount));
+            if(entry.contains("rarityChances")){
+                if(content.mobIndex(mobId)==kInvalidIndex||content.petalIndex(itemId)==kInvalidIndex||
+                   !parseDropRates(entry["rarityChances"],source.rates)){
+                    errorOut=path+": invalid explicit drop rates for "+mobId+"/"+itemId;return false;
+                }
+                source.rollGroup=entry["rollGroup"].asInt(0);
+                if(source.rollGroup<0||source.rollGroup>1){errorOut="invalid drop roll group";return false;}
+                if(entry.contains("magicItemType")){
+                    source.magicPetalId=entry["magicItemType"].asString();
+                    if(content.petalIndex(source.magicPetalId)==kInvalidIndex){errorOut="invalid magic drop petal";return false;}
+                }
+                if(entry.contains("magicRarityChances")){
+                    if(source.magicPetalId.empty()||!parseDropRates(entry["magicRarityChances"],source.magicRates)){
+                        errorOut=path+": invalid conditional magic rates for "+mobId;return false;
+                    }
+                }
+            }
             loaded.push_back(std::move(source));
         }
     }
 
     source_ = std::move(loaded);
+    noAutoEggMobs_=std::move(noAutoEgg);
     loaded_ = true;
     content_ = nullptr;
     contentHash_ = 0;
@@ -150,6 +170,10 @@ void DropTables::resolve(const ContentRegistry& content) {
         resolved.probability = source.probability;
         resolved.minCount = source.minCount;
         resolved.maxCount = source.maxCount;
+        resolved.rates=source.rates;
+        resolved.magicRates=source.magicRates;
+        resolved.magicPetal=content.petalIndex(source.magicPetalId);
+        resolved.rollGroup=source.rollGroup;
         byMob_[mobIndex].push_back(resolved);
     }
 
@@ -158,6 +182,7 @@ void DropTables::resolve(const ContentRegistry& content) {
     // present in mob_drops.json and must be restored after linking.
     for (std::size_t i = 0; i < content.mobCount(); ++i) {
         const MobConfig& mob = content.mob(static_cast<std::uint16_t>(i));
+        if(std::find(noAutoEggMobs_.begin(),noAutoEggMobs_.end(),mob.id)!=noAutoEggMobs_.end())continue;
         if (mob.noEggDrop ||
             (mob.id.size() >= 4 && mob.id.compare(mob.id.size() - 4, 4, "_pet") == 0)) continue;
         const std::uint16_t egg = content.petalIndex(mob.id + "_egg");
@@ -193,6 +218,7 @@ void DropTables::resolve(const ContentRegistry& content) {
             Entry* into = nullptr;
             if (row.kind == Kind::Petal && row.petalIndex != kNoPetal) {
                 for (Entry& candidate : merged) {
+                    if(!row.rates.empty()||!candidate.rates.empty())continue;
                     if (candidate.kind == row.kind && candidate.petalIndex == row.petalIndex) {
                         into = &candidate;
                         break;
@@ -564,7 +590,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
     };
     // Once for the tick, not once per corpse: the conversion below asks for it
     // on every drop of every kill.
-    const std::uint16_t magicOrb = content.petalIndex("magic_orb");
+    const auto legacyOrb = content.petalIndex("magic_orb");
+    const std::uint16_t magicOrb = legacyOrb!=kInvalidIndex?legacyOrb:content.petalIndex("mana_orb");
     corpses_->collect(corpseList_);
     for (const Entity corpse : corpseList_) {
         const MobType* type = world.tryGet<MobType>(corpse);
@@ -655,13 +682,46 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // featured row selection, base rarity and all later upgrade rolls.
         const int trials = kLootFeelCopies *
             (rarityIndex(mobRarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);
+        const bool grouped=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rollGroup!=0;});
+        const bool legacy=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rates.empty();});
         for (int trial = 0; trial < trials; ++trial) {
             selected_.clear();
             rollTable(table, mobRarity, rng);
+            const double groupRoll=grouped?rng.unit():0;
+            double groupOffset=0;
             const bool gradeEveryRow = rarityIndex(mobRarity) <= rarityIndex(Rarity::Uncommon);
-            const std::size_t featured = gradeEveryRow ? 0 : pickFeatured(rng);
+            const std::size_t featured = gradeEveryRow || !legacy ? 0 : pickFeatured(rng);
             for (std::size_t row = 0; row < selected_.size(); ++row) {
                 const DropTables::Entry* entry = selected_[row];
+                if(!entry->rates.empty()){
+                    double sample=rng.unit();
+                    if(entry->rollGroup){
+                        sample=groupRoll-groupOffset;
+                        for(const auto& rate:ratesFor(entry->rates,mobRarity))groupOffset+=rate.probability;
+                    }
+                    const auto ordinary=entry->petalIndex;
+                    const auto magic=entry->magicPetal!=kNoPetal?entry->magicPetal:content.magicFormOf(ordinary);
+                    // Same underlying trial for every claimant. Orb groups
+                    // receive their own conditional conversion and cap only.
+                    for(std::size_t first=0;first<eligible_.size();++first){
+                        const int tier=eligibleOrbs_[first];
+                        if(std::find(eligibleOrbs_.begin(),eligibleOrbs_.begin()+static_cast<std::ptrdiff_t>(first),tier)!=
+                           eligibleOrbs_.begin()+static_cast<std::ptrdiff_t>(first))continue;
+                        const bool convert=magic!=kInvalidIndex&&tier!=kRarityCount&&
+                            tier>=rarityIndex(content.petal(magic).minRarity);
+                        const auto& rates=convert&&!entry->magicRates.empty()?entry->magicRates:entry->rates;
+                        int rolled=rollDropRates(rates,mobRarity,sample);
+                        if(rolled<0)continue;
+                        const auto petal=convert?magic:ordinary;
+                        if(convert)rolled=std::max(rarityIndex(content.petal(petal).minRarity),std::min(rolled,tier));
+                        const auto rarity=clampRarity(rolled);
+                        if(!petalComesAt(content.petal(petal),rarity))continue;
+                        orbGroup_.clear();
+                        for(std::size_t j=first;j<eligible_.size();++j)if(eligibleOrbs_[j]==tier)orbGroup_.push_back(eligible_[j]);
+                        stackDrop(petal,rarity,at+Vec2{rng.range(-50.0,50.0),rng.range(-50.0,50.0)},realm,orbGroup_);
+                    }
+                    continue;
+                }
                 const bool graded = gradeEveryRow || row == featured;
                 const Rarity base = graded
                     ? scaleDropRarity(clampRarity(entry->rarityOffset), mobRarity, rng)
@@ -722,6 +782,7 @@ void LootSystem::rollTable(const std::vector<DropTables::Entry>& table, Rarity m
     // nothing at all.
     if (mobRarity == Rarity::Common) {
         for (const DropTables::Entry& entry : table) {
+            if(!entry.rates.empty()){selected_.push_back(&entry);continue;}
             if (rng.chance(entry.probability)) selected_.push_back(&entry);
         }
         return;

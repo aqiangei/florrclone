@@ -27,6 +27,7 @@
 #include "shared/game/rarity.h"
 #include "shared/game/spatial.h"
 #include "shared/game/terrain.h"
+#include "shared/game/drop_rates.h"
 
 namespace flix {
 
@@ -96,6 +97,10 @@ public:
         double probability = 0.0;
         int minCount = 1;
         int maxCount = 1;
+        DropRates rates;
+        DropRates magicRates;
+        std::uint16_t magicPetal = kNoPetal;
+        int rollGroup = 0;
     };
 
     /// Parses `path`, then resolves its ids against `content`. The JSON's
@@ -149,12 +154,17 @@ private:
         double probability = 0.0;
         int minCount = 1;
         int maxCount = 1;
+        DropRates rates;
+        DropRates magicRates;
+        std::string magicPetalId;
+        int rollGroup = 0;
     };
 
     void resolve(const ContentRegistry& content);
     void loadDefault(const ContentRegistry& content);
 
     std::vector<SourceEntry> source_;
+    std::vector<std::string> noAutoEggMobs_;
     std::vector<std::vector<Entry>> byMob_;
     std::vector<std::vector<Entry>> mergedByMob_;
     std::vector<std::string> unresolved_;

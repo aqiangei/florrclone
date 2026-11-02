@@ -25,6 +25,7 @@
 #include "client/ui/text.h"
 #include "shared/core/json.h"
 #include "shared/game/config.h"
+#include "shared/game/drop_rates.h"
 
 namespace flix {
 
@@ -182,6 +183,7 @@ struct DropDef {
     /// kInvalidIndex for anything that is not a petal, which is exactly the
     /// set of drops the browser build has no icon for either.
     std::uint16_t petalIndex = kInvalidIndex;
+    DropRates rates;
 };
 
 /// The staged content directory.
@@ -274,6 +276,7 @@ std::vector<std::vector<DropDef>> loadDropTables() {
             def.probability = entry["probability"].asDouble(0.0);
             def.maxQuantity = entry["maxQuantity"].asInt(1);
             def.petalIndex = content().petalIndex(def.itemType);
+            if(entry.contains("rarityChances")&&!parseDropRates(entry["rarityChances"],def.rates))continue;
             byMob[index].push_back(std::move(def));
         }
     }
@@ -286,6 +289,7 @@ std::vector<std::vector<DropDef>> loadDropTables() {
     // row of all would overstate every other row on the card.
     for (std::size_t i = 0; i < byMob.size(); ++i) {
         const MobConfig& mob = content().mob(static_cast<std::uint16_t>(i));
+        if(root[mob.id].contains("autoEggDrops")&&!root[mob.id]["autoEggDrops"].asBool(true))continue;
         if (mob.noEggDrop ||
             (mob.id.size() >= 4 && mob.id.compare(mob.id.size() - 4, 4, "_pet") == 0)) continue;
         const std::string eggId = mob.id + "_egg";
@@ -417,6 +421,14 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         cell.probability += probability;
         usedTiers[static_cast<std::size_t>(column)] = true;
     };
+
+    // Exact reference tables are per independent trial, without the legacy
+    // featured/chaff pipeline. Both payout and tooltip use this shared CDF.
+    if(std::any_of(table.begin(),table.end(),[](const DropDef& d){return !d.rates.empty();})){
+        for(const auto& drop:table)for(const auto& rate:ratesFor(drop.rates,mobRarity))
+            push(drop,rate.rarity,rate.probability*100.0);
+        return rows;
+    }
 
     // An apex kill drops TEN of every row (LootSystem's `copies`): one base
     // rarity per row, then each copy rolls its own upgrade/downgrade. So a
@@ -838,7 +850,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
             double cy = box.y + kDropsGapY;
             TextStyle heading = galleryStyle(12.0, 0xFFD700u);
             heading.baseline = Baseline::Top;
-            text(canvas, tr(Msg::Drops), box.x, cy, heading);
+            text(canvas, trEnZh("Drops (per trial):", "掉落（单次基础概率）："), box.x, cy, heading);
             cy += kDropsHeaderH;
 
             const double tableX = tx + (size.x - tableWidth) * 0.5;

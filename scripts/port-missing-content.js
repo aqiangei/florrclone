@@ -220,3 +220,5 @@ console.log(
     2,
   ),
 );
+// Replacing names alone cannot correct obsolete drop pools or rarity odds.
+require('./sync-mob-drops');

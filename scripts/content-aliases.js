@@ -10,7 +10,7 @@ module.exports = {
     'Ant Egg': 'egg',
     'Blueberries': 'magic_peas',
     // Beetle Egg may need its own entry later; egg is ant-oriented in reference.
-    'Glass': 'glasss', // reference typo key
+    'Glass': 'glass', // glasss is a separate admin petal, never a normal drop.
     "Pharaoh's Crown": 'pharaoh_s_crown',
     // Nazar Amulet is its own petal (nazar_amulet); do not alias onto amulet.
   },
