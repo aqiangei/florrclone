@@ -59,12 +59,13 @@ std::uint32_t biomePickerColor(const std::string& biome) {
 }
 
 /// Biomes offered on the title-screen picker. Dungeon / test maps
-/// (termite, worm, swarm, super, dps_test, pyramid) are reached through
+/// (termite, worm, swarm, super, dps_test) are reached through
 /// pads, not as top-level buttons -- matching florrclone's lobby row.
 bool biomeOnPicker(const std::string& biome) {
     return biome == "garden" || biome == "desert" || biome == "computer" ||
            biome == "factory" || biome == "ocean" || biome == "jungle" ||
-           biome == "hel" || biome == "ant_hell" || biome == "sewers";
+           biome == "hel" || biome == "ant_hell" || biome == "sewers" ||
+           biome == "pyramid";
 }
 
 /// The spawn picker's two rows. A row is sized so all of its buttons fit the
