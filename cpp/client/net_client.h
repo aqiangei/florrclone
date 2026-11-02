@@ -50,6 +50,11 @@ struct Profile {
         std::uint32_t count = 0;
     };
     std::vector<Stack> inventory;
+    std::unordered_map<std::uint16_t, unsigned> titanForgeCounts;
+    unsigned titanForgeCount(std::uint16_t petal) const {
+        const auto it = titanForgeCounts.find(petal);
+        return it == titanForgeCounts.end() ? 0 : it->second;
+    }
 
     struct Slot {
         std::uint16_t petalIndex = 0xFFFF;

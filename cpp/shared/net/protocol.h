@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 72;
+inline constexpr std::uint16_t kProtocolVersion = 73;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -162,13 +162,11 @@ enum class ClientMessage : std::uint8_t {
     GuildEdit,          ///< str displayName, str description -- both replace
                         ///< what the guild has. Leader only; the tag is the
                         ///< guild's key and cannot be edited. (Version 45.)
-    TitanForge,         ///< u16 itemType -- kTitanForgeCost APEX petals of it
-                        ///< forged into one universal at a titan NPC. Never a
-                        ///< roll. Found and reached exactly as OracleCraft's
-                        ///< oracle is: the server looks for the titan itself.
-                        ///< Every other account's universal of that petal is
-                        ///< taken and refunded at kTitanForgeRefund apex
-                        ///< apiece. (Version 47.)
+    TitanForge,         ///< u16 input petal. 150/300/600 same-kind Super -> one
+                        ///< permanent next-tier petal, Fragment -> Mjolnir.
+                        ///< Per-account/per-petal price ledger; never takes
+                        ///< items from another account. Requires live body
+                        ///< near a Titan NPC. (Rules updated v73.)
     TitanHolder,        ///< u16 itemType -- who holds that petal at universal,
                         ///< for the titan to remember forging it for. Answered
                         ///< only to a flower standing at the titan, and at most
@@ -249,6 +247,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< u8 count, { u8 preset, u8 slotCount,
                         ///< { u16 itemType, u8 rarity }* }* -- the saved
                         ///< loadouts (loadoutPresetName), only those that exist
+                        ///< then u16 count, {u16 petal, u8 completed (0..2)}* titan ledger (v73).
     JoinAccepted,       ///< u32 selfNetId, f32 x, f32 y, u32 tick, i64 mazeDay,
                         ///< MapGrid (see below). `mazeDay` is the maze the
                         ///< server is playing, so the client builds the same

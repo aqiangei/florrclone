@@ -367,9 +367,8 @@ private:
     /// and refused as the oracle's craft is; all or nothing.
     void handleAssemble(Session&, net::Connection&, ByteReader&);
     void handleAbsorb(Session&, net::Connection&, ByteReader&);
-    /// kTitanForgeCost apex petals for one universal at a titan, standing at
-    /// one as the oracle's craft is; then takeUniversals for everyone else,
-    /// unless the forger is an admin (see tracksUniversals).
+    /// Permanent Super -> next-tier forge, priced by saved per-petal progress.
+    /// Requires a living flower near the Titan; no cross-account mutations.
     void handleTitanForge(Session&, net::Connection&, ByteReader&);
     /// Who holds `petalIndex` at universal, for the titan to name.
     void handleTitanHolder(Session&, net::Connection&, ByteReader&);

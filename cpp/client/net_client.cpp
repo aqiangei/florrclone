@@ -1374,6 +1374,13 @@ void NetClient::handleProfile(ByteReader& reader) {
         if (preset < kLoadoutPresetCount) next.presets[preset] = std::move(slots);
     }
 
+    const auto titanCount = reader.u16();
+    for (unsigned i = 0; i < titanCount; ++i) {
+        const auto petal = reader.u16();
+        const auto count = reader.u8();
+        next.titanForgeCounts[petal] = std::min<unsigned>(count, 2);
+    }
+
     // Replace wholesale only once the whole message decoded. A partially
     // applied inventory is how duplication bugs start.
     if (!reader.ok()) return;

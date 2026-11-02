@@ -2012,7 +2012,7 @@ int liveMobsOf(World& world, const char* id) {
 
 } // namespace
 
-TEST(the_shipped_titan_stands_in_the_jungle_wearing_a_universal_ring) {
+TEST(the_shipped_titan_stands_in_clear_jungle_space_with_next_tier_petals) {
     CHECK(ensureShippedContent());
     const std::uint16_t titan = content().mobIndex("titan");
     CHECK(titan != kInvalidIndex);
@@ -2024,13 +2024,13 @@ TEST(the_shipped_titan_stands_in_the_jungle_wearing_a_universal_ring) {
     CHECK_EQ(config.image, std::string("$titan"));
     CHECK(config.noEggDrop);
     // It cruises about its point on the oracle's leashed flight.
-    CHECK(config.beeFlight);
-    CHECK(content().mobStats(titan, Rarity::Universal).speed > 0.0);
+    
+    CHECK(content().mobStats(titan, Rarity::Unique).speed > 0.0);
     // A full bar of universals, every one a petal this build has.
     CHECK(config.npc.wearsPetals());
     CHECK_EQ(config.npc.petals.size(), static_cast<std::size_t>(kLoadoutActiveSlots));
     for (const std::uint16_t petal : config.npc.petals) CHECK(petal < content().petalCount());
-    CHECK(config.npc.petalRarity == Rarity::Universal);
+    CHECK(config.npc.petalRarity == Rarity::Unique);
 
     WorldMaps maps;
     Terrain terrain;
@@ -2056,7 +2056,7 @@ TEST(the_shipped_titan_stands_in_the_jungle_wearing_a_universal_ring) {
         ++titans;
         CHECK(site.realm == jungle);
         // Universal on its plate, as florr's titan is the top tier on its.
-        CHECK(site.rarity == Rarity::Universal);
+        CHECK(site.rarity == Rarity::Unique);
         // On open ground, body AND ring, as far as its cruise takes it -- the
         // leash and the curve back past it, the bound the oracle's cruise is
         // held to: it meets walls with its centre only, so its body and ring
@@ -2078,361 +2078,98 @@ TEST(the_shipped_titan_stands_in_the_jungle_wearing_a_universal_ring) {
     CHECK_EQ(prestigeTitans, 1);
 }
 
-TEST(a_titan_forge_turns_five_apex_into_one_universal) {
-    const std::string dir = titanWorld("titan-forge");
-    Harness h("titan-forge", [](const std::string& path) {
+TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_accounts) {
+    const std::string dir = titanWorld("titan-permanent");
+    Harness h("titan-permanent", [](const std::string& path) {
         seedAccount(path, "smith");
-        seedStack(path, "smith", "petal_rose", Rarity::Apex, 7);
-    }, dir, 0);
-    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t rose = content().petalIndex("rose");
-
-    NetClient client;
-    CHECK(joinAs(h, client, "smith"));
-    h.step(3, {&client});
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Apex) == 7u;
-    }));
-
-    standAtTitan(h, {&client}, "smith");
-    client.requestTitanForge(rose);
-    TitanForgeOutcome outcome;
-    CHECK(awaitForge(h, {&client}, client, outcome));
-    CHECK(outcome.success);
-    CHECK_EQ(outcome.petalIndex, rose);
-    // Exactly five out, exactly one universal in, no roll: the two left over
-    // are untouched.
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Apex) == 2u && p.stackCount(rose, Rarity::Universal) == 1u;
-    }));
-    // Announced, as a rare craft is -- said to be forged, and in the
-    // universal grey, as each tier announces in its own colour.
-    CHECK(h.stepUntil({&client}, [&] { return sawText(client, "Universal Rose has been forged by"); },
-                      30));
-    // "The": there is only ever one of each petal at universal.
-    CHECK(sawText(client, "<b style=\"color: #555555;\">The Universal Rose has been forged by"));
-    removeDataDir(dir);
-}
-
-TEST(the_titan_refuses_a_short_stack_and_a_flower_not_standing_at_it) {
-    const std::string dir = titanWorld("titan-refuse");
-    Harness h("titan-refuse", [](const std::string& path) {
-        seedAccount(path, "smith");
-        seedStack(path, "smith", "petal_rose", Rarity::Apex, 4);
-        seedStack(path, "smith", "petal_basic", Rarity::Apex, 5);
-        seedStack(path, "smith", "petal_basic", Rarity::Unique, 9);
-    }, dir, 0);
-    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t rose = content().petalIndex("rose");
-    const std::uint16_t basic = content().petalIndex("basic");
-
-    NetClient client;
-    CHECK(joinAs(h, client, "smith"));
-    h.step(3, {&client});
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(basic, Rarity::Apex) == 5u;
-    }));
-
-    // From the door, a field away: refused, and nothing taken.
-    TitanForgeOutcome outcome;
-    client.requestTitanForge(basic);
-    CHECK(awaitForge(h, {&client}, client, outcome));
-    CHECK(!outcome.success);
-    CHECK(outcome.reason.find("too far") != std::string::npos);
-
-    standAtTitan(h, {&client}, "smith");
-    // Four apex is not five, and nine unique is not apex at all.
-    client.requestTitanForge(rose);
-    CHECK(awaitForge(h, {&client}, client, outcome));
-    CHECK(!outcome.success);
-    CHECK(outcome.reason.find("5 Apex Rose") != std::string::npos);
-    // A petal id nobody has.
-    client.requestTitanForge(0xFFFE);
-    CHECK(awaitForge(h, {&client}, client, outcome));
-    CHECK(!outcome.success);
-    h.step(3, {&client});
-    const Profile& profile = client.profile();
-    CHECK_EQ(profile.stackCount(rose, Rarity::Apex), 4u);
-    CHECK_EQ(profile.stackCount(basic, Rarity::Apex), 5u);
-    CHECK_EQ(profile.stackCount(basic, Rarity::Unique), 9u);
-    CHECK_EQ(profile.stackCount(rose, Rarity::Universal), 0u);
-    CHECK_EQ(profile.stackCount(basic, Rarity::Universal), 0u);
-    removeDataDir(dir);
-}
-
-TEST(a_forged_universal_is_taken_from_every_other_account_and_refunded_four_apex_apiece) {
-    const std::string dir = titanWorld("titan-takeover");
-    Harness h("titan-takeover", [](const std::string& path) {
-        seedAccount(path, "smith");
-        seedStack(path, "smith", "petal_rose", Rarity::Apex, 5);
-        // Online: one in the bag and one worn.
+        seedStack(path, "smith", "petal_rose", Rarity::Super, 1650);
+        seedStack(path, "smith", "petal_wing", Rarity::Super, 150);
+        seedStack(path, "smith", "petal_fragment", Rarity::Super, 150);
         seedAccount(path, "rival");
-        seedStack(path, "rival", "petal_rose", Rarity::Universal, 1);
-        seedWorn(path, "rival", 0, "rose", Rarity::Universal);
-        // Offline, holding three.
-        seedAccount(path, "absent");
-        seedStack(path, "absent", "petal_rose", Rarity::Universal, 3);
-        // A universal of another petal is nobody's business.
-        seedAccount(path, "bystander");
-        seedStack(path, "bystander", "petal_basic", Rarity::Universal, 1);
-    }, dir, 0);
-    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t rose = content().petalIndex("rose");
-    World& world = h.server.world();
-
-    NetClient smith;
-    NetClient rival;
-    CHECK(joinAs(h, smith, "smith"));
-    CHECK(joinAs(h, rival, "rival"));
-    const std::vector<NetClient*> both{&smith, &rival};
-    h.step(3, both);
-    const Entity rivalBody = bodyNamed(world, "rival");
-    CHECK(rivalBody != NULL_ENTITY);
-    if (rivalBody == NULL_ENTITY) { removeDataDir(dir); return; }
-    CHECK_EQ(world.get<Loadout>(rivalBody).slots[0].configIndex, rose);
-
-    standAtTitan(h, both, "smith");
-    smith.requestTitanForge(rose);
-    TitanForgeOutcome outcome;
-    CHECK(awaitForge(h, both, smith, outcome));
-    CHECK(outcome.success);
-
-    // The rival's two -- bag and bar -- are gone, and eight apex are back.
-    CHECK(awaitProfile(h, rival, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Universal) == 0u &&
-               p.stackCount(rose, Rarity::Apex) == 2u * kTitanForgeRefund &&
-               !p.loadout.empty() && p.loadout[0].empty();
-    }));
-    // Off the live body too: the ring loses it at once.
-    CHECK(world.get<Loadout>(rivalBody).slots[0].empty());
-    CHECK(h.stepUntil(both, [&] { return sawText(rival, "Another player forged the Universal Rose"); },
-                      30));
-    // And the forger holds the one that is left.
-    CHECK(awaitProfile(h, smith, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Universal) == 1u && p.stackCount(rose, Rarity::Apex) == 0u;
-    }));
-
-    // The offline account's record has paid too, at four apex apiece.
-    const Database& db = h.server.database();
-    const Account* absent = db.findUser("absent");
-    const Account* bystander = db.findUser("bystander");
-    CHECK(absent != nullptr && bystander != nullptr);
-    if (absent != nullptr && bystander != nullptr) {
-        const PlayerRecord* gone = db.findProgress(absent->id);
-        const PlayerRecord* kept = db.findProgress(bystander->id);
-        CHECK(gone != nullptr && kept != nullptr);
-        if (gone != nullptr && kept != nullptr) {
-            CHECK_EQ(gone->itemCount(Rarity::Universal, "petal_rose"), 0);
-            CHECK_EQ(gone->itemCount(Rarity::Apex, "petal_rose"), 3 * kTitanForgeRefund);
-            CHECK_EQ(kept->itemCount(Rarity::Universal, "petal_basic"), 1);
-        }
-    }
-    removeDataDir(dir);
-}
-
-TEST(the_titan_will_not_forge_a_universal_the_forger_already_holds) {
-    const std::string dir = titanWorld("titan-held");
-    Harness h("titan-held", [](const std::string& path) {
-        // One worn, and plenty of apex to forge another.
-        seedAccount(path, "smith");
-        seedStack(path, "smith", "petal_rose", Rarity::Apex, 12);
-        seedWorn(path, "smith", 0, "rose", Rarity::Universal);
-        seedStack(path, "smith", "petal_basic", Rarity::Apex, 5);
-        seedStack(path, "smith", "petal_basic", Rarity::Universal, 1);
-        // Somebody else's, which a refused forge must not touch.
-        seedAccount(path, "rival");
+        seedStack(path, "rival", "petal_rose", Rarity::Unique, 3);
+        seedWorn(path, "rival", 0, "rose", Rarity::Unique);
         seedStack(path, "rival", "petal_rose", Rarity::Universal, 1);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t rose = content().petalIndex("rose");
-    const std::uint16_t basic = content().petalIndex("basic");
-
-    NetClient client;
-    CHECK(joinAs(h, client, "smith"));
-    h.step(3, {&client});
-    standAtTitan(h, {&client}, "smith");
-
-    // Worn or in the bag, it is the one universal of that petal: there is
-    // never a second, the forger's own included.
-    TitanForgeOutcome outcome;
-    client.requestTitanForge(rose);
-    CHECK(awaitForge(h, {&client}, client, outcome));
-    CHECK(!outcome.success);
-    CHECK_EQ(outcome.reason, std::string("You already have the Universal Rose."));
-    client.requestTitanForge(basic);
-    CHECK(awaitForge(h, {&client}, client, outcome));
-    CHECK(!outcome.success);
-    CHECK_EQ(outcome.reason, std::string("You already have the Universal Basic."));
-
-    // Nothing was spent, nothing was made, and nobody lost theirs.
-    h.step(3, {&client});
-    const Profile& profile = client.profile();
-    CHECK_EQ(profile.stackCount(rose, Rarity::Apex), 12u);
-    CHECK_EQ(profile.stackCount(rose, Rarity::Universal), 0u);
-    CHECK(!profile.loadout.empty() && profile.loadout[0].petalIndex == rose &&
-          profile.loadout[0].rarity == Rarity::Universal);
-    CHECK_EQ(profile.stackCount(basic, Rarity::Apex), 5u);
-    CHECK_EQ(profile.stackCount(basic, Rarity::Universal), 1u);
-    const Database& db = h.server.database();
-    const Account* rival = db.findUser("rival");
-    CHECK(rival != nullptr);
-    if (rival != nullptr) {
-        const PlayerRecord* record = db.findProgress(rival->id);
-        CHECK(record != nullptr && record->itemCount(Rarity::Universal, "petal_rose") == 1);
+    NetClient client, rival;
+    CHECK(joinAs(h, client, "smith")); CHECK(joinAs(h, rival, "rival"));
+    const std::vector<NetClient*> both{&client, &rival};
+    h.step(3, both); standAtTitan(h, both, "smith");
+    const auto rose = content().petalIndex("rose");
+    const auto wing = content().petalIndex("wing");
+    const int remaining[] = {1500, 1200, 600, 0};
+    for (unsigned n = 0; n < 4; ++n) {
+        client.requestTitanForge(rose); TitanForgeOutcome out;
+        CHECK(awaitForge(h, both, client, out)); CHECK(out.success);
+        CHECK(awaitProfile(h, client, [&](const Profile& p) {
+            return p.stackCount(rose, Rarity::Super) == static_cast<unsigned>(remaining[n]) &&
+                   p.stackCount(rose, Rarity::Unique) == n + 1 &&
+                   p.titanForgeCount(rose) == std::min(2u, n + 1);
+        }));
+    }
+    client.requestTitanForge(wing); TitanForgeOutcome out;
+    CHECK(awaitForge(h, both, client, out)); CHECK(out.success);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(wing, Rarity::Super) == 0 && p.stackCount(wing, Rarity::Unique) == 1;
+    }));
+    client.requestTitanForge(content().petalIndex("fragment"));
+    CHECK(awaitForge(h, both, client, out)); CHECK(out.success);
+    CHECK_EQ(out.petalIndex, content().petalIndex("mjolnir"));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(content().petalIndex("mjolnir"), Rarity::Unique) == 1;
+    }));
+    CHECK_EQ(rival.profile().stackCount(rose, Rarity::Unique), 3u);
+    CHECK_EQ(rival.profile().stackCount(rose, Rarity::Universal), 1u);
+    CHECK(!rival.profile().loadout[0].empty());
+    const auto* user = h.server.database().findUser("smith"); CHECK(user != nullptr);
+    if (user) {
+        const auto* record = h.server.database().findProgress(user->id); CHECK(record != nullptr);
+        if (record) CHECK_EQ(record->extra["titanForgeCounts"]["rose"].asInt(), 2);
     }
     removeDataDir(dir);
 }
 
-TEST(the_titan_names_whoever_holds_a_petal_at_universal) {
-    CHECK_EQ(titanMemoryText("bob"),
-             std::string("\"Ah, I remember forging that petal for a flower named bob...\""));
-
-    const std::string dir = titanWorld("titan-holder");
-    Harness h("titan-holder", [](const std::string& path) {
+TEST(permanent_titan_forge_refuses_far_dead_invalid_short_and_blood_sacrifice) {
+    const std::string dir = titanWorld("titan-permanent-refuse");
+    Harness h("titan-permanent-refuse", [](const std::string& path) {
         seedAccount(path, "smith");
-        seedStack(path, "smith", "petal_basic", Rarity::Universal, 1);
-        seedStack(path, "smith", "petal_wing", Rarity::Apex, 5);
-        seedAccount(path, "rival");
-        seedWorn(path, "rival", 0, "rose", Rarity::Universal);
-        seedAccount(path, "keeper");
-        seedStack(path, "keeper", "petal_wing", Rarity::Universal, 1);
+        seedStack(path, "smith", "petal_rose", Rarity::Super, 149);
+        seedStack(path, "smith", "petal_blood_sacrifice", Rarity::Super, 600);
+        seedStack(path, "smith", "petal_wing", Rarity::Super, 150);
+        seedStack(path, "smith", "petal_wing", Rarity::Unique, kMaxStackCount);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t basic = content().petalIndex("basic");
-    const std::uint16_t rose = content().petalIndex("rose");
-    const std::uint16_t wing = content().petalIndex("wing");
-    const std::uint16_t stinger = content().petalIndex("stinger");
-
-    NetClient client;
-    CHECK(joinAs(h, client, "smith"));
-    h.step(3, {&client});
-    // Asked from the door, a field away, the titan says nothing at all.
-    client.requestTitanHolder(rose);
-    h.step(10, {&client});
-    CHECK(client.titanHolder(rose) == nullptr);
-
+    NetClient client; CHECK(joinAs(h, client, "smith")); h.step(3, {&client});
+    const auto rose = content().petalIndex("rose"); TitanForgeOutcome out;
+    client.requestTitanForge(rose); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
     standAtTitan(h, {&client}, "smith");
-    const auto ask = [&](std::uint16_t petal) -> std::string {
-        client.forgetTitanHolder(petal);
-        // Past the per-session spacing, so the query is not the one dropped.
-        h.step(4, {&client});
-        client.requestTitanHolder(petal);
-        if (!h.stepUntil({&client}, [&] { return client.titanHolder(petal) != nullptr; }, 30)) {
-            return "<no answer>";
-        }
-        return *client.titanHolder(petal);
-    };
-    // Worn or bagged, somebody else's or your own, and nobody's at all.
-    CHECK_EQ(ask(rose), std::string("rival"));
-    CHECK_EQ(ask(basic), std::string("smith"));
-    CHECK_EQ(ask(stinger), std::string());
-    CHECK_EQ(ask(wing), std::string("keeper"));
-
-    // A forge moves the memory with the petal at once.
-    client.requestTitanForge(wing);
-    TitanForgeOutcome outcome;
-    CHECK(awaitForge(h, {&client}, client, outcome));
-    CHECK(outcome.success);
-    CHECK_EQ(ask(wing), std::string("smith"));
-
-    // Two at once: the second comes too soon and is dropped, and is answered
-    // when asked again once the spacing has passed.
-    client.forgetTitanHolder(rose);
-    client.forgetTitanHolder(basic);
-    h.step(4, {&client});
-    client.requestTitanHolder(rose);
-    client.requestTitanHolder(basic);
-    h.step(2, {&client});
-    CHECK(client.titanHolder(rose) != nullptr);
-    CHECK(client.titanHolder(basic) == nullptr);
-    CHECK_EQ(ask(basic), std::string("smith"));
+    client.requestTitanForge(rose); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
+    client.requestTitanForge(0xFFFE); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
+    client.requestTitanForge(content().petalIndex("blood_sacrifice"));
+    CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
+    const auto wing = content().petalIndex("wing");
+    client.requestTitanForge(wing); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
+    CHECK_EQ(client.profile().stackCount(wing, Rarity::Super), 150u);
+    CHECK_EQ(client.profile().titanForgeCount(wing), 0u);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Super), 149u);
+    CHECK_EQ(client.profile().titanForgeCount(rose), 0u);
+    const auto body = bodyNamed(h.server.world(), "smith");
+    h.server.world().add<Dead>(body);
+    client.requestTitanForge(rose); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
     removeDataDir(dir);
 }
 
-TEST(an_admins_universals_are_outside_the_one_of_each_rule) {
-    const std::string dir = titanWorld("titan-admin");
-    Harness h("titan-admin", [](const std::string& path) {
-        // The admin holds a rose in the bag, wears a basic, and has the apex
-        // to forge a wing.
-        seedAccount(path, "boss", true);
-        seedStack(path, "boss", "petal_rose", Rarity::Universal, 1);
-        seedWorn(path, "boss", 0, "basic", Rarity::Universal);
-        seedStack(path, "boss", "petal_wing", Rarity::Apex, 5);
-        // A player about to forge a rose, and one holding the wing.
-        seedAccount(path, "smith");
-        seedStack(path, "smith", "petal_rose", Rarity::Apex, 5);
-        seedAccount(path, "keeper");
-        seedStack(path, "keeper", "petal_wing", Rarity::Universal, 1);
-    }, dir, 0);
-    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t basic = content().petalIndex("basic");
-    const std::uint16_t rose = content().petalIndex("rose");
-    const std::uint16_t wing = content().petalIndex("wing");
-
-    NetClient smith;
-    NetClient boss;
-    CHECK(joinAs(h, smith, "smith"));
-    CHECK(joinAs(h, boss, "boss"));
-    const std::vector<NetClient*> both{&smith, &boss};
-    h.step(3, both);
-    standAtTitan(h, both, "smith");
-
-    const auto ask = [&](std::uint16_t petal) -> std::string {
-        smith.forgetTitanHolder(petal);
-        h.step(4, both);
-        smith.requestTitanHolder(petal);
-        if (!h.stepUntil(both, [&] { return smith.titanHolder(petal) != nullptr; }, 30)) {
-            return "<no answer>";
-        }
-        return *smith.titanHolder(petal);
-    };
-    // The admin's, bagged or worn, are nobody's as far as the titan knows.
-    CHECK_EQ(ask(rose), std::string());
-    CHECK_EQ(ask(basic), std::string());
-    CHECK_EQ(ask(wing), std::string("keeper"));
-
-    // A player's forge leaves the admin's rose where it is: nothing taken,
-    // nothing refunded, no notice -- and is still announced as ever.
-    TitanForgeOutcome outcome;
-    smith.requestTitanForge(rose);
-    CHECK(awaitForge(h, both, smith, outcome));
-    CHECK(outcome.success);
-    CHECK_EQ(ask(rose), std::string("smith"));
-    CHECK(h.stepUntil(both, [&] { return sawText(smith, "Universal Rose has been forged by"); },
-                      30));
-    CHECK(awaitProfile(h, boss, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Universal) == 1u &&
-               p.stackCount(rose, Rarity::Apex) == 0u;
-    }));
-    CHECK(!sawText(boss, "Another player forged"));
-
-    // The admin's own forge takes nobody's wing, leaves the titan naming
-    // the player who holds it, and is not announced.
-    standAtTitan(h, both, "boss");
-    boss.requestTitanForge(wing);
-    CHECK(awaitForge(h, both, boss, outcome));
-    CHECK(outcome.success);
-    CHECK(awaitProfile(h, boss, [&](const Profile& p) {
-        return p.stackCount(wing, Rarity::Universal) == 1u &&
-               p.stackCount(wing, Rarity::Apex) == 0u;
-    }));
-    h.step(10, both);
-    CHECK(!sawText(smith, "Universal Wing has been forged by"));
-    CHECK(!sawText(boss, "Universal Wing has been forged by"));
-    standAtTitan(h, both, "smith");
-    CHECK_EQ(ask(wing), std::string("keeper"));
-    const Database& db = h.server.database();
-    const Account* keeper = db.findUser("keeper");
-    CHECK(keeper != nullptr);
-    if (keeper != nullptr) {
-        const PlayerRecord* record = db.findProgress(keeper->id);
-        CHECK(record != nullptr);
-        if (record != nullptr) {
-            CHECK_EQ(record->itemCount(Rarity::Universal, "petal_wing"), 1);
-            CHECK_EQ(record->itemCount(Rarity::Apex, "petal_wing"), 0);
-        }
-    }
-    removeDataDir(dir);
+TEST(permanent_titan_forge_ledger_survives_save_reload) {
+    const auto path = tempUnique("titan-ledger", ".json");
+    { Database db; std::string error; CHECK(db.load(path, error));
+      auto& record = db.progress("ledger-account");
+      record.extra["titanForgeCounts"]["rose"] = 2;
+      db.markDirty(); CHECK(db.save()); }
+    { Database db; std::string error; CHECK(db.load(path, error));
+      CHECK_EQ(db.progress("ledger-account").extra["titanForgeCounts"]["rose"].asInt(), 2); }
+    std::remove(path.c_str());
+    CHECK_EQ(titanForgeCost(0), 150); CHECK_EQ(titanForgeCost(1), 300);
+    CHECK_EQ(titanForgeCost(2), 600); CHECK_EQ(titanForgeCost(2000), 600);
 }
 
 TEST(the_titans_ring_orbits_it_as_a_flowers_does_and_kills_mobs_but_spares_flowers) {
@@ -2449,7 +2186,7 @@ TEST(the_titans_ring_orbits_it_as_a_flowers_does_and_kills_mobs_but_spares_flowe
     const double radius = world.get<Body>(titan).radius;
     // It cruises, as the oracle does -- and is held still here, so the ring
     // is measured about a centre that stays put.
-    CHECK(world.get<Npc>(titan).cruises);
+    CHECK_EQ(world.get<Npc>(titan).cruises, content().mob(content().mobIndex("titan")).beeFlight);
     world.get<Npc>(titan).cruises = false;
 
     // Ten petals out, every one the titan's, universal, on the players' side,
@@ -2469,7 +2206,7 @@ TEST(the_titans_ring_orbits_it_as_a_flowers_does_and_kills_mobs_but_spares_flowe
     const Vec2 centre = world.get<Transform>(titan).position;
     const double orbit = radius + kPetalOrbitRestGap;
     for (const Entity petal : ring) {
-        CHECK(world.get<PetalInstance>(petal).rarity == Rarity::Universal);
+        CHECK(world.get<PetalInstance>(petal).rarity == Rarity::Unique);
         CHECK(world.get<Faction>(petal).team == Team::Players);
         CHECK_NEAR(distance(world.get<Transform>(petal).position, centre), orbit, 12.0);
     }

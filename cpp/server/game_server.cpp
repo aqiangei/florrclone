@@ -2176,6 +2176,16 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
         }
     }
 
+    // Persistent, per-petal forge progress; unknown old-save fields round-trip in extra.
+    const auto ledgerAt = w.reserveU16();
+    std::uint16_t ledgerSize = 0;
+    for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
+        const int completed = clamp(record.extra["titanForgeCounts"][content().petal(i).id].asInt(0), 0, 2);
+        if (completed == 0) continue;
+        w.u16(i); w.u8(static_cast<std::uint8_t>(completed)); ++ledgerSize;
+    }
+    w.patchU16(ledgerAt, ledgerSize);
+
     connection.send(w);
     clearProfileDue(session);
 }
@@ -3381,11 +3391,12 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     const std::uint16_t petalIndex = reader.u16();
     if (!reader.ok() || !session.authenticated()) return;
 
+    std::uint16_t outputIndex = petalIndex;
     const auto reply = [&](bool ok, const std::string& reason) {
         ByteWriter w;
         w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanForgeResult));
         w.boolean(ok);
-        w.u16(petalIndex);
+        w.u16(ok ? outputIndex : petalIndex);
         w.str(reason);
         connection.send(w);
     };
@@ -3409,37 +3420,30 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         return;
     }
 
-    // One of each petal at universal, the forger's own included: forging the
-    // one you already hold would only burn five apex for a second copy.
-    PlayerRecord& record = liveRecord(session);
-    if (holdsUniversal(record, petalIndex)) {
-        reply(false, "You already have the Universal " + content().petal(petalIndex).name + ".");
+    const auto& petal = content().petal(petalIndex);
+    if (!titanForgeEligible(petal.id)) {
+        reply(false, "血祭不能用于泰坦锻造。");
         return;
     }
-
-    // Five apex in, one universal out, every time: there is no roll to lose,
-    // and so nothing to hand back.
-    if (!takeFromInventory(record, petalIndex, Rarity::Apex, kTitanForgeCost)) {
-        reply(false, "You need " + std::to_string(kTitanForgeCost) + " Apex " +
-                         content().petal(petalIndex).name + " to forge it.");
+    outputIndex = petal.id == "fragment" ? content().petalIndex("mjolnir") : petalIndex;
+    if (outputIndex >= content().petalCount()) { reply(false, "锻造产物不存在。"); return; }
+    PlayerRecord& record = liveRecord(session);
+    const int completed = clamp(record.extra["titanForgeCounts"][petal.id].asInt(0), 0, 2);
+    const int cost = titanForgeCost(completed);
+    // Refuse before spending when the output cannot fit. Never remove anybody else's items.
+    if (record.itemCount(kTitanOutputRarity, inventoryKey(outputIndex)) >= kMaxStackCount) {
+        reply(false, "目标花瓣堆叠已满。");
+        return;
+    }
+    if (!takeFromInventory(record, petalIndex, kTitanInputRarity, cost)) {
+        reply(false, "需要 " + std::to_string(cost) + " 个同种超级花瓣。");
         resyncProfile(session, connection);
         return;
     }
-    giveToInventory(record, petalIndex, Rarity::Universal, 1);
+    giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
+    record.extra["titanForgeCounts"][petal.id] = std::min(2, completed + 1);
     database_.markDirty();
-    const bool tracked = tracksUniversals(session.userId);
-    std::printf("[TITAN] %s forged a universal %s%s\n", session.username.c_str(),
-                content().petal(petalIndex).id.c_str(), tracked ? "" : " (admin, untracked)");
-
-    // The forger's account is now the one place a universal of it may be,
-    // and the titan remembers it there. An admin's is outside the rule: the
-    // player who holds the real one keeps it, the titan still names them,
-    // and nobody is told "The Universal" changed hands.
-    if (tracked) {
-        takeUniversals(petalIndex, session.userId);
-        universalHolders_[petalIndex] = HolderMemo{session.username, clockMillis_};
-        announceRareCraft(session, petalIndex, Rarity::Universal);
-    }
+    announceRareCraft(session, outputIndex, kTitanOutputRarity, 1, cost);
 
     reply(true, "");
     sendProfile(session, connection);

@@ -1117,6 +1117,7 @@ private:
     /// the petals are the server's now -- so this is drawn while the forge is
     /// out, and a refusal puts it back.
     std::uint16_t offeredPetal_ = kNoPetal;
+    int offeredCost_ = 150;
     /// What came back: one universal of it.
     std::uint16_t resultPetal_ = kNoPetal;
     /// A result that arrived before the ring had finished closing.

@@ -38,6 +38,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include "shared/game/rarity.h"
 
 namespace flix {
 
@@ -53,9 +54,7 @@ enum class NpcService : std::uint8_t {
     /// One petal for one coin (kTraderCoinPetal) of the same tier, once a day.
     /// Any petal whose petals.json entry does not say `"tradable": false`.
     Trader,
-    /// The universal forge: kTitanForgeCost apex petals of one kind for one
-    /// universal of it. A universal forged here lasts until another player
-    /// forges the same petal; see kTitanForgeRefund.
+    /// Permanent Super -> next-tier forge; per-petal prices from titanForgeCost().
     Titan,
     /// Recipes: what a recipe takes for what it makes, every petal at the
     /// assembler's own tier. Each assembler offers ONE of its mob's
@@ -126,6 +125,16 @@ inline std::string traderCooldownText(double remainingMillis) {
 /// What one forge at a titan takes: this many APEX petals of one kind, for
 /// one universal of that kind. Never a roll -- the five always become one.
 inline constexpr int kTitanForgeCost = 5;
+
+/// 30 independent loot rolls: each petal has its own permanent progression.
+inline constexpr int titanForgeCost(unsigned completed) {
+    return completed == 0 ? 150 : completed == 1 ? 300 : 600;
+}
+inline constexpr Rarity kTitanInputRarity = Rarity::Super;
+inline constexpr Rarity kTitanOutputRarity = Rarity::Unique; // next rung, displayed Eternal
+inline bool titanForgeEligible(const std::string& id) {
+    return id != "blood_sacrifice" && id != "sacrifice";
+}
 
 /// What a universal's holder gets back when another player forges the same
 /// petal: the apex petals it was forged from, less the one the forge keeps.

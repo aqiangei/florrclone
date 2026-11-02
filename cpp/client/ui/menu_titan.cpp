@@ -1,26 +1,4 @@
-// The titan's forge.
-//
-// What the craft key opens while the flower stands at the titan NPC (see
-// shared/game/npc.h): kTitanForgeCost apex petals of one kind in, one
-// universal of it out, every time. A universal forged here lasts until another
-// player forges the same petal, and then its holder gets the apex petals back
-// less the one the forge keeps -- which is what the card's three lines say.
-//
-// It is florr's forge window (menus.h, and its draw 0x1007fc530), in
-// charcoal: one slot holding the five apex petals, the Forge button, three
-// lines on what a universal costs its last holder, and under them a picker
-// six cells wide -- a petal-by-tier table would be pointless, because only
-// apex goes in: every petal the account holds at apex, greyed until there
-// are five of it.
-//
-// The slot moves the way florr's forge moves it, which is the oracle's and
-// the trader's motion (SlotMotion): the five grow in, the forge spins them
-// about the slot's centre, and the universal pops in with florr's burst of
-// 125 grey grains. florr spins for as long as its server takes to answer;
-// this one answers at once, so the slot spins for kForgeSpinMs at the least.
-// Nothing is rolled, so nothing is handed back: a refusal is the only way
-// the five return.
-
+// Permanent next-tier forge, priced for 30 independent loot rolls.
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -56,9 +34,9 @@ constexpr double kBodyTop = 53.6;
 constexpr double kFirstLineY = kBodyTop + 250.0 + 11.2;
 constexpr double kLinePitch = 22.4;
 constexpr std::array<const char*, 3> kLines = {
-    "Universal petals will last until another player forges the same petal.",
-    "When that happens, you will receive your Apex petals back,",
-    "but one will be permanently destroyed.",
+    "永久保留，可重复锻造，不会被其他玩家收回。",
+    "同种首次150、第二次300、之后600个超级。",
+    "每种独立计价；产出永恒（原版唯一强度档）。",
 };
 
 /// The forge's spin: toward 10 rad/s while it is out, easing both ways at
@@ -78,29 +56,16 @@ constexpr double kForgeTimeoutSeconds = 8.0;
 constexpr double kRefusalSeconds = 3.0;
 
 /// An apex stack as the staging counts it, held below what an int holds.
-std::uint32_t apexOwned(const Profile& profile, std::uint16_t petalIndex) {
-    return std::min<std::uint32_t>(profile.stackCount(petalIndex, Rarity::Apex),
+std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex) {
+    return std::min<std::uint32_t>(profile.stackCount(petalIndex, kTitanInputRarity),
                                    static_cast<std::uint32_t>(kMaxStackCount));
-}
-
-/// Whether the account already holds this petal at universal, in the bag or
-/// on the bar. One of each petal exists at universal, so the titan forges
-/// none for an account that has it -- the server's rule, shown here first.
-bool holdsUniversal(const Profile& profile, std::uint16_t petalIndex) {
-    if (profile.stackCount(petalIndex, Rarity::Universal) > 0) return true;
-    for (const Profile::Slot& slot : profile.loadout) {
-        if (!slot.empty() && slot.petalIndex == petalIndex && slot.rarity == Rarity::Universal) {
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace
 
 Vec2 TitanPanel::size(const Profile& profile) {
     const std::size_t rows =
-        std::max<std::size_t>(1, SlotTierGrid::rows(profile, Rarity::Apex, kColumns));
+        std::max<std::size_t>(1, SlotTierGrid::rows(profile, kTitanInputRarity, kColumns));
     return {slotCardColumnsWidth(kColumns),
             std::min(kMaxHeight,
                      kGridTop + kGridPadding * 2.0 + static_cast<double>(rows) * kGridPitch)};
@@ -171,12 +136,12 @@ bool TitanPanel::render(MenuContext& ctx) {
     // server's, and a profile landing a frame ahead of the result would empty
     // the ring under its own animation.
     if (phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
-        (apexOwned(profile, stagedPetal_) < static_cast<std::uint32_t>(kTitanForgeCost) ||
-         holdsUniversal(profile, stagedPetal_))) {
+        (forgeInputOwned(profile, stagedPetal_) < static_cast<std::uint32_t>(titanForgeCost(profile.titanForgeCount(stagedPetal_))) ||
+         !titanForgeEligible(content().petal(stagedPetal_).id))) {
         stagedPetal_ = kNoPetal;
     }
 
-    const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin, "Forge", "Forge", mouse);
+    const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin, "泰坦锻造", "Forge", mouse);
     const Rect panel = card.panel;
 
     // --- the slot ----------------------------------------------------------
@@ -185,15 +150,15 @@ bool TitanPanel::render(MenuContext& ctx) {
     const std::uint16_t shown = phase_ == Phase::Forging ? offeredPetal_ : stagedPetal_;
     ItemTile shownTile;
     shownTile.petalIndex = shown;
-    shownTile.rarity = Rarity::Apex;
-    shownTile.badge = "x" + std::to_string(kTitanForgeCost);
+    shownTile.rarity = kTitanInputRarity;
+    shownTile.badge = "x" + std::to_string(phase_ == Phase::Forging ? offeredCost_ : titanForgeCost(profile.titanForgeCount(shown)));
     shownTile.timeSeconds = now;
     // Lit under the cursor only while the slot is at rest.
     shownTile.hovered =
         motion_.spin() < 0.05 && phase_ == Phase::Idle && card.slotRect.contains(mouse);
     ItemTile forgedTile;
     forgedTile.petalIndex = resultPetal_;
-    forgedTile.rarity = Rarity::Universal;
+    forgedTile.rarity = kTitanOutputRarity;
     forgedTile.timeSeconds = now;
     motion_.drawSlotScene(canvas, ctx.sprites, card, kTitanSkin, (now - phaseStarted_) * 1000.0,
                           dtMs, !forged && knownPetal(shown) ? &shownTile : nullptr, shown,
@@ -205,8 +170,8 @@ bool TitanPanel::render(MenuContext& ctx) {
     // florr's forge wears its top tier's grey.
     const Rect button = card.button;
     const bool canForge = phase_ == Phase::Idle && knownPetal(stagedPetal_);
-    drawSlotButton(canvas, button, "Forge",
-                   canForge ? std::optional<std::uint32_t>(rarityColor(Rarity::Universal))
+    drawSlotButton(canvas, button, "锻造",
+                   canForge ? std::optional<std::uint32_t>(rarityColor(kTitanOutputRarity))
                             : std::nullopt,
                    button.contains(mouse),
                    button.contains(mouse) && ctx.window.mouseDown(MouseButton::Left));
@@ -225,39 +190,25 @@ bool TitanPanel::render(MenuContext& ctx) {
         drawSlotLine(canvas, line, refusal_, kSlotCardRefusalInk);
     }
 
-    // The titan remembers who it forged the picked petal for, and says so
-    // halfway between the slot and the lines. Asked of the server until it
-    // answers: only it knows every account.
-    if (knownPetal(askedPetal_)) {
-        const std::string* holder = ctx.net.titanHolder(askedPetal_);
-        if (holder == nullptr && (askedAt_ < 0.0 || now - askedAt_ >= kHolderRetrySeconds)) {
-            ctx.net.requestTitanHolder(askedPetal_);
-            askedAt_ = now;
-        }
-        if (holder != nullptr && !holder->empty()) {
-            const double slotBottom = card.slotRect.bottom();
-            const double linesTop = panel.y + kFirstLineY - kLinePitch * 0.5;
-            SlotCardLayout line = card;
-            line.lineY = (slotBottom + linesTop) * 0.5;
-            drawSlotLine(canvas, line, titanMemoryText(*holder));
-        }
+    if (knownPetal(stagedPetal_)) {
+        SlotCardLayout line = card;
+        line.lineY = (card.slotRect.bottom() + panel.y + kFirstLineY - kLinePitch * 0.5) * 0.5;
+        drawSlotLine(canvas, line, "本次消耗：" + std::to_string(titanForgeCost(profile.titanForgeCount(stagedPetal_))) + " 个同种超级，成功率100%");
     }
 
     // --- the grid ----------------------------------------------------------
-    // Every apex stack, on grey until it holds five -- the staged five are in
-    // the ring, not in their stack -- and on grey for good while the account
-    // holds that petal at universal.
+    // Same-kind Super stacks; each cell uses its own persistent forge price.
     const std::optional<SlotTierGrid::Pick> hovered = grid_.render(
-        ctx, card, kTitanSkin, Rarity::Apex, kColumns, kGridTop,
+        ctx, card, kTitanSkin, kTitanInputRarity, kColumns, kGridTop,
         [&](std::uint16_t petalIndex, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;
             if (petalIndex == stagedPetal_) {
-                const std::uint32_t staged = static_cast<std::uint32_t>(kTitanForgeCost);
+                const std::uint32_t staged = static_cast<std::uint32_t>(titanForgeCost(profile.titanForgeCount(stagedPetal_)));
                 cell.count = owned > staged ? owned - staged : 0;
             }
-            cell.greyed = cell.count < static_cast<std::uint32_t>(kTitanForgeCost) ||
-                          holdsUniversal(profile, petalIndex);
+            cell.greyed = cell.count < static_cast<std::uint32_t>(titanForgeCost(profile.titanForgeCount(petalIndex))) ||
+                          !titanForgeEligible(content().petal(petalIndex).id);
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             return cell;
@@ -290,6 +241,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             phase_ = Phase::Forging;
             phaseStarted_ = now;
             offeredPetal_ = stagedPetal_;
+            offeredCost_ = titanForgeCost(profile.titanForgeCount(stagedPetal_));
             resultPending_ = false;
             refusal_.clear();
             ctx.net.requestTitanForge(stagedPetal_);

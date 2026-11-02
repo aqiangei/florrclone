@@ -2061,7 +2061,7 @@
     "noEggDrop": true
   },
   "titan": {
-    "name": "Titan",
+    "name": "泰坦",
     "damage": 20,
     "health": 1000,
     "size": 0.58,
@@ -2078,7 +2078,7 @@
       "super": 0,
       "unique": 0
     },
-    "description": "Five Apex petals go in. One Universal comes out",
+    "description": "超级花瓣锻造永恒：同种首次150、第二次300、之后600，永久保留，可重复兑换",
     "color": "#535353",
     "image": "$titan",
     "ai_type": "passive",
@@ -2098,7 +2098,7 @@
         "bone",
         "pearl"
       ],
-      "petalRarity": "universal"
+      "petalRarity": "unique"
     },
     "noEggDrop": true
   },
