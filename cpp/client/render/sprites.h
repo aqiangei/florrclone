@@ -1,0 +1,230 @@
+#pragma once
+// Compiled artwork: mobs, petals, and the tiles a map is painted with.
+//
+// Almost every sprite in the game is an inline SVG document inside mobs.json /
+// petals.json. Those are parsed ONCE at startup into retained SvgDocuments and
+// drawn straight to the canvas thereafter -- there is no bitmap bake. Baking
+// mobs to bitmaps was tried in the original and cost more than it saved: a
+// rarity-scaled mob needs a bitmap per size, the cache thrashes as soon as a
+// crowd is on screen, and the vector path is fast enough.
+//
+// The exceptions are the mobs whose `image` names a PAINTER rather than
+// declaring a document -- `$rock`, `$cactus` -- because their picture is a
+// function of their radius and a document can only be magnified. This cache
+// resolves that marker once at build time and dispatches to mob_art.h, so
+// every call site keeps one way to draw a mob whichever kind it is.
+//
+// The map tiles are the same idea one step out, but their palette is the
+// MAP's, not this file's: a Tiled tileset names one artwork per tile, the
+// build stages `maps/tiles/` flat into the data directory, and this cache
+// loads one by bare file name the first time a map asks for it. Nothing here
+// ever builds a file name, and nothing here knows what a tile MEANS -- which
+// edge or corner picture belongs in a cell was decided by the author's
+// terrain brush and is in the map file already.
+
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "canvas.h"
+#include "client/render/mob_art.h"
+#include "shared/core/types.h"
+#include "shared/game/rarity.h"
+#include "svg.h"
+
+namespace flix {
+
+class ContentRegistry;
+
+class SpriteCache {
+public:
+    /// Compiles every mob and petal image in `content`, and remembers
+    /// `dataDir` as where tile artwork is staged. Returns false only if
+    /// content itself is unusable; an individual sprite that fails to parse is
+    /// recorded as a warning and drawn as a coloured disc instead, so one bad
+    /// document never takes the game down.
+    bool build(const ContentRegistry& content, const std::string& dataDir = "data");
+
+    /// Draws mob `index` centred at (x, y), fitted to `diameter` pixels, with
+    /// `rotation` radians applied about its centre. `mirrored` flips the art
+    /// across its own vertical axis AFTER the rotation, which is what the
+    /// browser build's `reversed` mobs do -- turning them by pi instead
+    /// rotates asymmetric artwork rather than reflecting it.
+    ///
+    /// `worldRadius` is the body's radius in WORLD units, and only the mobs
+    /// drawn by code read it: a rock's facets and a cactus's spines are cut
+    /// from how big the mob IS, never from how big it happens to be on this
+    /// screen, so zooming out gives you a smaller rock rather than a smoother
+    /// one. Zero means "the same as the drawn radius", which is what a call
+    /// site with no world behind it -- a bestiary tile, a contact sheet -- has
+    /// to say.
+    ///
+    /// `gaze` is where a painted eye looks, in the art's frame -- see
+    /// MobArtAttributes::gaze. Only a painter with an eye reads it.
+    ///
+    /// `motion` is the creature's own clock and stride (the world renderer's
+    /// mobMotion). Null -- a bestiary tile -- is a mob standing still whose
+    /// clock is `timeSeconds`.
+    ///
+    /// `rarity` is the mob's tier. Only a mob drawn as a petal (`$petal:<id>`)
+    /// reads it, to wear that petal's repaint for the tier as the petal does.
+    void drawMob(Canvas&, std::uint16_t index, Rarity rarity, double x, double y,
+                 double diameter, double rotation, double timeSeconds, bool mirrored = false,
+                 double worldRadius = 0.0, Vec2 gaze = {1.0, 0.0},
+                 const MobMotion* motion = nullptr) const;
+
+    /// Draws mob `index` as a picture inside the square of side `box` centred
+    /// on (x, y) -- a bestiary tile's job. Unturned and standing still on
+    /// `timeSeconds`, its body `diameter` across, unless the WHOLE picture --
+    /// legs, wings, a sting -- would then spill out of the box, in which case
+    /// just small enough to fit. Centred on what it paints rather than on its
+    /// body, so an ant's mandibles or a leech's trailing segment do not push
+    /// it off one side.
+    ///
+    /// How far the picture reaches is measured, not authored: the art is
+    /// rasterised once per mob, over its idle animation, the first time it is
+    /// asked for, so new artwork never needs a number entered for it.
+    /// `worldRadius` is as for drawMob. The measurement is in multiples of
+    /// the drawn radius, which a painter's detail does not move, so it is
+    /// taken once whatever radius later calls pass.
+    void drawMobPicture(Canvas&, std::uint16_t index, Rarity rarity, double x, double y,
+                        double box, double diameter, double timeSeconds,
+                        double worldRadius = 0.0) const;
+
+    /// Which painter draws mob `index`, or MobArt::None for a document. The
+    /// world renderer asks so it can feed a painted eye the gaze it eases.
+    MobArt mobArt(std::uint16_t index) const;
+
+    /// Draws petal `index` as its `rarity` looks: the same artwork at every
+    /// tier unless petals.json repaints it from one up (`rarityFills`). A call
+    /// site with no tier behind it -- the title screen's drift, a flower's
+    /// cutter -- passes Common.
+    void drawPetal(Canvas&, std::uint16_t index, Rarity rarity, double x, double y,
+                   double diameter, double rotation, double timeSeconds) const;
+
+    /// True when the sprite compiled; false when the fallback disc is used.
+    bool mobDrawable(std::uint16_t index) const;
+    bool petalDrawable(std::uint16_t index) const;
+
+    /// True when this petal's artwork moves on its own clock, in which case a
+    /// caller must not bake it into a bitmap -- the bake would freeze it.
+    bool petalAnimated(std::uint16_t index) const;
+
+    /// Where the petal document's own (0, 0) lands relative to the centre of
+    /// the box drawPetal fits it into, as a fraction of that box's side and
+    /// before any rotation. A document ported from gardn keeps gardn's origin,
+    /// which is the point gardn places a petal BY; drawPetal centres the
+    /// viewBox instead, and the two differ wherever the viewBox is lopsided --
+    /// the stinger's is, by 1.75 of its 15.5 units. Zero for a symmetric box,
+    /// and for art that is not a document. Assumes the default xMidYMid meet.
+    Vec2 petalOrigin(std::uint16_t index) const;
+
+    /// How much of the box drawPetal fits petal `index` into its artwork
+    /// actually paints, along the longer side: 1 for a document whose
+    /// viewBox hugs its picture, under 1 for a padded one -- splitter's disc
+    /// covers 0.88 of its box -- and over 1 for art that strokes outside it.
+    ///
+    /// Measured, not authored, as drawMobPicture's reach is: the common tier's
+    /// art is rasterised once, over the same clock moments, the first time it
+    /// is asked for. 1 for art that cannot be measured.
+    double petalCoverage(std::uint16_t index) const;
+
+    /// The artwork of one map tile, by the BARE file name its tileset names
+    /// (`grass_c_0.svg`). Read out of the data directory the first time it is
+    /// asked for and kept thereafter, so a frame never touches the disk twice
+    /// for the same tile.
+    ///
+    /// Null when the file is not there or will not parse -- one warning per
+    /// name, and the cell simply draws nothing. A map is free to name art that
+    /// has not been drawn yet, and that must cost that cell its picture, never
+    /// the frame.
+    const SvgDocument* tileArt(const std::string& file) const;
+
+    const std::vector<std::string>& warnings() const { return warnings_; }
+
+private:
+    struct Sprite {
+        std::shared_ptr<SvgDocument> document;
+        /// The same document in a summon's colours (kPetBodyColor), drawn in
+        /// its place for a pet. Only a palette marker can say which of a
+        /// document's colours is the body, so this is null for every other
+        /// document, and a pet wearing one looks like the wild mob.
+        std::shared_ptr<SvgDocument> petDocument;
+        /// Every palette of a marker that names more than one, the first being
+        /// `document` itself; empty otherwise. A mob in the world wears
+        /// palettes[netId % size] -- flooooio's sponge is one of three colours
+        /// by `id % 3` -- and everywhere else wears `document`.
+        std::vector<std::shared_ptr<SvgDocument>> palettes;
+        /// Set when the mob's `image` names a painter instead of declaring a
+        /// document; `document` is then null and never consulted.
+        MobArt art = MobArt::None;
+        /// Set when the mob's `image` is `$petal:<id>`: it is drawn as that
+        /// petal is, at the mob's tier, and nothing else here is consulted.
+        std::optional<std::uint16_t> petal;
+        /// The mob's or petal's own `color`, which is both what a painter
+        /// bodies its artwork in and what a sprite that would not compile is
+        /// drawn as. One field because it is one fact about the entry.
+        std::uint32_t color = 0xFFFFFFu;
+        bool usable = false;
+        /// The artwork declares nothing to draw, so neither does this: several
+        /// petals and mobs ship a literally empty <svg/>, and the browser's
+        /// rasterised canvas for one of those is blank. Distinct from `usable`
+        /// because a document we merely failed to build still gets the
+        /// coloured stand-in.
+        bool blank = false;
+    };
+
+    void draw(Canvas&, const Sprite&, double x, double y, double diameter,
+              double rotation, double timeSeconds, bool mirrored, double worldRadius,
+              Vec2 gaze = {1.0, 0.0}, const MobMotion* motion = nullptr) const;
+
+    /// Parses one optional document, recording a warning instead of failing.
+    std::shared_ptr<SvgDocument> compileArt(const std::string& source, const std::string& label);
+
+    /// A petal's artwork repainted from tier `from` up; see drawPetal.
+    struct PetalRepaint {
+        Rarity from = Rarity::Common;
+        Sprite sprite;
+    };
+
+    /// Petal `index` as its `rarity` looks: the highest repaint at or below
+    /// the tier, or the base artwork.
+    const Sprite& petalSprite(std::uint16_t index, Rarity rarity) const;
+    /// Mob `index` as its `rarity` looks: its own artwork, or the petal's it
+    /// is drawn as.
+    const Sprite& mobSprite(std::uint16_t index, Rarity rarity) const;
+
+    /// Where a mob's still picture paints, in multiples of its drawn radius
+    /// about the point drawMob centres it on (+X the way it faces). The
+    /// default is the body's own circle, which is also what art that paints
+    /// nothing keeps.
+    struct PictureBounds {
+        bool measured = false;
+        double minX = -1.0, minY = -1.0, maxX = 1.0, maxY = 1.0;
+    };
+    const PictureBounds& pictureBounds(std::uint16_t index, double worldRadius) const;
+
+    std::vector<Sprite> mobs_;
+    /// Per mob, filled on first use by pictureBounds(). Mutable for the
+    /// reason tileArt_ is: it reports what the artwork already paints.
+    mutable std::vector<PictureBounds> mobPictureBounds_;
+    std::vector<Sprite> petals_;
+    /// Per petal, filled on first use by petalCoverage(); 0 is "not yet".
+    mutable std::vector<double> petalCoverage_;
+    /// Per petal, ascending by `from`. Empty for almost every petal.
+    std::vector<std::vector<PetalRepaint>> petalRepaints_;
+    /// Where tile artwork is staged, from build().
+    std::string dataDir_ = "data";
+    /// Tile artwork by file name, filled on demand. A name that failed is kept
+    /// with a null document, which is what makes the warning fire exactly
+    /// once. Mutable because tileArt() is a const read of a lazily filled
+    /// cache -- it reports what the data directory holds, it does not change
+    /// what the cache means.
+    mutable std::unordered_map<std::string, std::shared_ptr<SvgDocument>> tileArt_;
+    mutable std::vector<std::string> warnings_;
+};
+
+} // namespace flix

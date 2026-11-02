@@ -1,0 +1,739 @@
+{
+  "tileDefs": {
+    "1": "desert_c_0.svg",
+    "2": "desert_c_1.svg",
+    "3": "desert_c_2.svg",
+    "4": "desert_c_3.svg",
+    "5": "desert_c_4.svg",
+    "6": "grass_c_0.svg",
+    "7": "grass_c_1.svg",
+    "8": "grass_c_2.svg",
+    "9": "grass_c_3.svg",
+    "10": "ocean_c_0.svg",
+    "11": "ocean_c_1.svg",
+    "12": "ocean_c_2.svg",
+    "13": "ocean_c_3.svg",
+    "18": "castle_l_0.svg",
+    "19": "castle_tl_0.svg",
+    "20": "castle_c_0.svg",
+    "21": "castle_tri_0.svg",
+    "22": "dirt_l_0.svg",
+    "23": "dirt_tl_0.svg",
+    "24": "dirt_tri_0.svg",
+    "25": "dirt_c_0.svg",
+    "26": "fire_anthole.svg",
+    "28": "dirt2_c_0.svg",
+    "29": "dirt2_c_1.svg",
+    "33": "water_l_0.svg",
+    "34": "water_tl_0.svg",
+    "35": "water_tri_0.svg",
+    "36": "water_c_0.svg",
+    "46": "desert_r_0.svg",
+    "47": "desert_l_0.svg",
+    "48": "desert_b_0.svg",
+    "49": "sewer_entrance.svg",
+    "50": "cobblestone_c_0.svg",
+    "54": "sewage_c_0.svg",
+    "55": "grate_c_0.svg",
+    "56": "grate_l_0.svg",
+    "57": "grate_tr_0.svg",
+    "58": "grate_tli_0.svg",
+    "59": "sewer_entrance2.svg",
+    "60": "anthole.svg",
+    "61": "hel_c_0.svg",
+    "62": "hel_c_1.svg",
+    "63": "hel_c_2.svg",
+    "64": "hel_c_3.svg",
+    "65": "hel_c_4.svg",
+    "66": "grass2_c_0.svg",
+    "67": "grass2_c_1.svg",
+    "68": "grass2_c_2.svg",
+    "69": "grass2_c_3.svg",
+    "70": "desert_t_0.svg",
+    "71": "termite_mound.svg",
+    "72": "hut_c_0.svg",
+    "73": "hut_b_0.svg",
+    "74": "hut_bl_0.svg",
+    "76": "hut_br_0.svg",
+    "77": "hut_bri_0.svg",
+    "78": "hut_l_0.svg",
+    "79": "hut_r_0.svg",
+    "80": "hut_t_0.svg",
+    "81": "hut_tl_0.svg",
+    "82": "hut_tli_0.svg",
+    "83": "hut_tr_0.svg",
+    "84": "hut_tri_0.svg",
+    "85": "wood_c_0.svg",
+    "86": "grass2_b_0.svg",
+    "87": "grass2_t_0.svg",
+    "88": "worm_c_0.svg",
+    "89": "worm_c_1.svg",
+    "90": "organic_wall_c_0.svg",
+    "91": "organic_wall_l_0.svg",
+    "92": "organic_wall_tl_0.svg",
+    "93": "organic_wall_tli_0.svg",
+    "94": "factory_entrance.svg",
+    "95": "factory_floor_c_0.svg",
+    "96": "factory_floor_c_1.svg",
+    "97": "factory_floor_c_2.svg",
+    "98": "factory_floor_c_3.svg",
+    "99": "factory_wall_c_0.svg",
+    "100": "factory_wall_l_0.svg",
+    "101": "factory_wall_tl_0.svg",
+    "102": "factory_wall_tli.svg",
+    "103": "factory_exit.svg",
+    "104": "bush_c_0.svg",
+    "105": "bush_t_0.svg",
+    "106": "bush_tl_0.svg",
+    "107": "bush_tri_0.svg",
+    "108": "coral_c_0.svg",
+    "109": "coral_t_0.svg",
+    "110": "coral_tl_0.svg",
+    "111": "coral_tri_0.svg",
+    "112": "scliff_c_0.svg",
+    "113": "scliff_l_0.svg",
+    "114": "scliff_tl_0.svg",
+    "115": "scliff_tli_0.svg",
+    "116": "pyramid.svg",
+    "125": "cellar_door.svg",
+    "126": "foliage_bri_0.svg",
+    "127": "foliage_t_0.svg",
+    "128": "foliage_tl_0.svg",
+    "129": "vent_bri_0.svg",
+    "130": "vent_l_0.svg",
+    "131": "vent_tl_0.svg",
+    "132": "seaweed_bri_0.svg",
+    "133": "seaweed_t_0.svg",
+    "134": "seaweed_tl_0.svg",
+    "138": "root_bri_0.svg",
+    "139": "root_t_0.svg",
+    "140": "root_tl_0.svg",
+    "141": "tumbleweed_bri_0.svg",
+    "142": "tumbleweed_t_0.svg",
+    "143": "tumbleweed_tl_0.svg"
+  },
+  "mapping": {
+    "1": {
+      "file": "desert_c_0.svg",
+      "cppId": 0
+    },
+    "2": {
+      "file": "desert_c_1.svg",
+      "cppId": 1
+    },
+    "3": {
+      "file": "desert_c_2.svg",
+      "cppId": 2
+    },
+    "4": {
+      "file": "desert_c_3.svg",
+      "cppId": 3
+    },
+    "5": {
+      "file": "desert_c_4.svg",
+      "cppId": 4
+    },
+    "6": {
+      "file": "grass_c_0.svg",
+      "cppId": 5
+    },
+    "7": {
+      "file": "grass_c_1.svg",
+      "cppId": 6
+    },
+    "8": {
+      "file": "grass_c_2.svg",
+      "cppId": 7
+    },
+    "9": {
+      "file": "grass_c_3.svg",
+      "cppId": 8
+    },
+    "10": {
+      "file": "ocean_c_0.svg",
+      "cppId": 9
+    },
+    "11": {
+      "file": "ocean_c_1.svg",
+      "cppId": 10
+    },
+    "12": {
+      "file": "ocean_c_2.svg",
+      "cppId": 11
+    },
+    "13": {
+      "file": "ocean_c_3.svg",
+      "cppId": 12
+    },
+    "18": {
+      "file": "castle_l_0.svg",
+      "cppId": 17
+    },
+    "19": {
+      "file": "castle_tl_0.svg",
+      "cppId": 18
+    },
+    "20": {
+      "file": "castle_c_0.svg",
+      "cppId": 19
+    },
+    "21": {
+      "file": "castle_tri_0.svg",
+      "cppId": 20
+    },
+    "22": {
+      "file": "dirt_l_0.svg",
+      "cppId": 21
+    },
+    "23": {
+      "file": "dirt_tl_0.svg",
+      "cppId": 22
+    },
+    "24": {
+      "file": "dirt_tri_0.svg",
+      "cppId": 23
+    },
+    "25": {
+      "file": "dirt_c_0.svg",
+      "cppId": 24
+    },
+    "26": {
+      "file": "fire_anthole.svg",
+      "cppId": 25
+    },
+    "28": {
+      "file": "dirt2_c_0.svg",
+      "cppId": 27
+    },
+    "29": {
+      "file": "dirt2_c_1.svg",
+      "cppId": 28
+    },
+    "33": {
+      "file": "water_l_0.svg",
+      "cppId": 32
+    },
+    "34": {
+      "file": "water_tl_0.svg",
+      "cppId": 33
+    },
+    "35": {
+      "file": "water_tri_0.svg",
+      "cppId": 34
+    },
+    "36": {
+      "file": "water_c_0.svg",
+      "cppId": 35
+    },
+    "46": {
+      "file": "desert_r_0.svg",
+      "cppId": 45
+    },
+    "47": {
+      "file": "desert_l_0.svg",
+      "cppId": 46
+    },
+    "48": {
+      "file": "desert_b_0.svg",
+      "cppId": 47
+    },
+    "49": {
+      "file": "sewer_entrance.svg",
+      "cppId": 48
+    },
+    "50": {
+      "file": "cobblestone_c_0.svg",
+      "cppId": 49
+    },
+    "54": {
+      "file": "sewage_c_0.svg",
+      "cppId": 53
+    },
+    "55": {
+      "file": "grate_c_0.svg",
+      "cppId": 54
+    },
+    "56": {
+      "file": "grate_l_0.svg",
+      "cppId": 55
+    },
+    "57": {
+      "file": "grate_tr_0.svg",
+      "cppId": 56
+    },
+    "58": {
+      "file": "grate_tli_0.svg",
+      "cppId": 57
+    },
+    "59": {
+      "file": "sewer_entrance2.svg",
+      "cppId": 58
+    },
+    "60": {
+      "file": "anthole.svg",
+      "cppId": 59
+    },
+    "61": {
+      "file": "hel_c_0.svg",
+      "cppId": 60
+    },
+    "62": {
+      "file": "hel_c_1.svg",
+      "cppId": 61
+    },
+    "63": {
+      "file": "hel_c_2.svg",
+      "cppId": 62
+    },
+    "64": {
+      "file": "hel_c_3.svg",
+      "cppId": 63
+    },
+    "65": {
+      "file": "hel_c_4.svg",
+      "cppId": 64
+    },
+    "66": {
+      "file": "grass2_c_0.svg",
+      "cppId": 65
+    },
+    "67": {
+      "file": "grass2_c_1.svg",
+      "cppId": 66
+    },
+    "68": {
+      "file": "grass2_c_2.svg",
+      "cppId": 67
+    },
+    "69": {
+      "file": "grass2_c_3.svg",
+      "cppId": 68
+    },
+    "70": {
+      "file": "desert_t_0.svg",
+      "cppId": 69
+    },
+    "71": {
+      "file": "termite_mound.svg",
+      "cppId": 70
+    },
+    "72": {
+      "file": "hut_c_0.svg",
+      "cppId": 71
+    },
+    "73": {
+      "file": "hut_b_0.svg",
+      "cppId": 72
+    },
+    "74": {
+      "file": "hut_bl_0.svg",
+      "cppId": 73
+    },
+    "76": {
+      "file": "hut_br_0.svg",
+      "cppId": 75
+    },
+    "77": {
+      "file": "hut_bri_0.svg",
+      "cppId": 76
+    },
+    "78": {
+      "file": "hut_l_0.svg",
+      "cppId": 77
+    },
+    "79": {
+      "file": "hut_r_0.svg",
+      "cppId": 78
+    },
+    "80": {
+      "file": "hut_t_0.svg",
+      "cppId": 79
+    },
+    "81": {
+      "file": "hut_tl_0.svg",
+      "cppId": 80
+    },
+    "82": {
+      "file": "hut_tli_0.svg",
+      "cppId": 81
+    },
+    "83": {
+      "file": "hut_tr_0.svg",
+      "cppId": 82
+    },
+    "84": {
+      "file": "hut_tri_0.svg",
+      "cppId": 83
+    },
+    "85": {
+      "file": "wood_c_0.svg",
+      "cppId": 84
+    },
+    "86": {
+      "file": "grass2_b_0.svg",
+      "cppId": 85
+    },
+    "87": {
+      "file": "grass2_t_0.svg",
+      "cppId": 86
+    },
+    "88": {
+      "file": "worm_c_0.svg",
+      "cppId": null
+    },
+    "89": {
+      "file": "worm_c_1.svg",
+      "cppId": null
+    },
+    "90": {
+      "file": "organic_wall_c_0.svg",
+      "cppId": null
+    },
+    "91": {
+      "file": "organic_wall_l_0.svg",
+      "cppId": null
+    },
+    "92": {
+      "file": "organic_wall_tl_0.svg",
+      "cppId": null
+    },
+    "93": {
+      "file": "organic_wall_tli_0.svg",
+      "cppId": null
+    },
+    "94": {
+      "file": "factory_entrance.svg",
+      "cppId": null
+    },
+    "95": {
+      "file": "factory_floor_c_0.svg",
+      "cppId": null
+    },
+    "96": {
+      "file": "factory_floor_c_1.svg",
+      "cppId": null
+    },
+    "97": {
+      "file": "factory_floor_c_2.svg",
+      "cppId": null
+    },
+    "98": {
+      "file": "factory_floor_c_3.svg",
+      "cppId": null
+    },
+    "99": {
+      "file": "factory_wall_c_0.svg",
+      "cppId": null
+    },
+    "100": {
+      "file": "factory_wall_l_0.svg",
+      "cppId": null
+    },
+    "101": {
+      "file": "factory_wall_tl_0.svg",
+      "cppId": null
+    },
+    "102": {
+      "file": "factory_wall_tli.svg",
+      "cppId": null
+    },
+    "103": {
+      "file": "factory_exit.svg",
+      "cppId": null
+    },
+    "104": {
+      "file": "bush_c_0.svg",
+      "cppId": null
+    },
+    "105": {
+      "file": "bush_t_0.svg",
+      "cppId": null
+    },
+    "106": {
+      "file": "bush_tl_0.svg",
+      "cppId": null
+    },
+    "107": {
+      "file": "bush_tri_0.svg",
+      "cppId": null
+    },
+    "108": {
+      "file": "coral_c_0.svg",
+      "cppId": null
+    },
+    "109": {
+      "file": "coral_t_0.svg",
+      "cppId": null
+    },
+    "110": {
+      "file": "coral_tl_0.svg",
+      "cppId": null
+    },
+    "111": {
+      "file": "coral_tri_0.svg",
+      "cppId": null
+    },
+    "112": {
+      "file": "scliff_c_0.svg",
+      "cppId": null
+    },
+    "113": {
+      "file": "scliff_l_0.svg",
+      "cppId": null
+    },
+    "114": {
+      "file": "scliff_tl_0.svg",
+      "cppId": null
+    },
+    "115": {
+      "file": "scliff_tli_0.svg",
+      "cppId": null
+    },
+    "116": {
+      "file": "pyramid.svg",
+      "cppId": 91
+    },
+    "125": {
+      "file": "cellar_door.svg",
+      "cppId": null
+    },
+    "126": {
+      "file": "foliage_bri_0.svg",
+      "cppId": null
+    },
+    "127": {
+      "file": "foliage_t_0.svg",
+      "cppId": null
+    },
+    "128": {
+      "file": "foliage_tl_0.svg",
+      "cppId": null
+    },
+    "129": {
+      "file": "vent_bri_0.svg",
+      "cppId": null
+    },
+    "130": {
+      "file": "vent_l_0.svg",
+      "cppId": null
+    },
+    "131": {
+      "file": "vent_tl_0.svg",
+      "cppId": null
+    },
+    "132": {
+      "file": "seaweed_bri_0.svg",
+      "cppId": null
+    },
+    "133": {
+      "file": "seaweed_t_0.svg",
+      "cppId": null
+    },
+    "134": {
+      "file": "seaweed_tl_0.svg",
+      "cppId": null
+    },
+    "138": {
+      "file": "root_bri_0.svg",
+      "cppId": null
+    },
+    "139": {
+      "file": "root_t_0.svg",
+      "cppId": null
+    },
+    "140": {
+      "file": "root_tl_0.svg",
+      "cppId": null
+    },
+    "141": {
+      "file": "tumbleweed_bri_0.svg",
+      "cppId": null
+    },
+    "142": {
+      "file": "tumbleweed_t_0.svg",
+      "cppId": null
+    },
+    "143": {
+      "file": "tumbleweed_tl_0.svg",
+      "cppId": null
+    }
+  },
+  "missing": [
+    {
+      "id": "88",
+      "file": "worm_c_0.svg"
+    },
+    {
+      "id": "89",
+      "file": "worm_c_1.svg"
+    },
+    {
+      "id": "90",
+      "file": "organic_wall_c_0.svg"
+    },
+    {
+      "id": "91",
+      "file": "organic_wall_l_0.svg"
+    },
+    {
+      "id": "92",
+      "file": "organic_wall_tl_0.svg"
+    },
+    {
+      "id": "93",
+      "file": "organic_wall_tli_0.svg"
+    },
+    {
+      "id": "94",
+      "file": "factory_entrance.svg"
+    },
+    {
+      "id": "95",
+      "file": "factory_floor_c_0.svg"
+    },
+    {
+      "id": "96",
+      "file": "factory_floor_c_1.svg"
+    },
+    {
+      "id": "97",
+      "file": "factory_floor_c_2.svg"
+    },
+    {
+      "id": "98",
+      "file": "factory_floor_c_3.svg"
+    },
+    {
+      "id": "99",
+      "file": "factory_wall_c_0.svg"
+    },
+    {
+      "id": "100",
+      "file": "factory_wall_l_0.svg"
+    },
+    {
+      "id": "101",
+      "file": "factory_wall_tl_0.svg"
+    },
+    {
+      "id": "102",
+      "file": "factory_wall_tli.svg"
+    },
+    {
+      "id": "103",
+      "file": "factory_exit.svg"
+    },
+    {
+      "id": "104",
+      "file": "bush_c_0.svg"
+    },
+    {
+      "id": "105",
+      "file": "bush_t_0.svg"
+    },
+    {
+      "id": "106",
+      "file": "bush_tl_0.svg"
+    },
+    {
+      "id": "107",
+      "file": "bush_tri_0.svg"
+    },
+    {
+      "id": "108",
+      "file": "coral_c_0.svg"
+    },
+    {
+      "id": "109",
+      "file": "coral_t_0.svg"
+    },
+    {
+      "id": "110",
+      "file": "coral_tl_0.svg"
+    },
+    {
+      "id": "111",
+      "file": "coral_tri_0.svg"
+    },
+    {
+      "id": "112",
+      "file": "scliff_c_0.svg"
+    },
+    {
+      "id": "113",
+      "file": "scliff_l_0.svg"
+    },
+    {
+      "id": "114",
+      "file": "scliff_tl_0.svg"
+    },
+    {
+      "id": "115",
+      "file": "scliff_tli_0.svg"
+    },
+    {
+      "id": "125",
+      "file": "cellar_door.svg"
+    },
+    {
+      "id": "126",
+      "file": "foliage_bri_0.svg"
+    },
+    {
+      "id": "127",
+      "file": "foliage_t_0.svg"
+    },
+    {
+      "id": "128",
+      "file": "foliage_tl_0.svg"
+    },
+    {
+      "id": "129",
+      "file": "vent_bri_0.svg"
+    },
+    {
+      "id": "130",
+      "file": "vent_l_0.svg"
+    },
+    {
+      "id": "131",
+      "file": "vent_tl_0.svg"
+    },
+    {
+      "id": "132",
+      "file": "seaweed_bri_0.svg"
+    },
+    {
+      "id": "133",
+      "file": "seaweed_t_0.svg"
+    },
+    {
+      "id": "134",
+      "file": "seaweed_tl_0.svg"
+    },
+    {
+      "id": "138",
+      "file": "root_bri_0.svg"
+    },
+    {
+      "id": "139",
+      "file": "root_t_0.svg"
+    },
+    {
+      "id": "140",
+      "file": "root_tl_0.svg"
+    },
+    {
+      "id": "141",
+      "file": "tumbleweed_bri_0.svg"
+    },
+    {
+      "id": "142",
+      "file": "tumbleweed_t_0.svg"
+    },
+    {
+      "id": "143",
+      "file": "tumbleweed_tl_0.svg"
+    }
+  ]
+}

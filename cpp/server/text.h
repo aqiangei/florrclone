@@ -1,0 +1,62 @@
+#pragma once
+// The string operations every name comparison -- and every line repeated into
+// chat -- on the server needs.
+//
+// Shared rather than duplicated per translation unit because the rule they
+// encode is a rule, not a convenience: names are compared case-insensitively
+// and typed with stray whitespace, and a second copy of either is a second
+// place for that to stop being true.
+//
+// lowerCase and trimmed themselves live in shared/core/text.h, which the
+// client and the content loaders read too; this header brings them in, so
+// every server file that compares a name has them from one include. What is
+// below is the server's alone.
+
+#include <algorithm>
+#include <string>
+#include <vector>
+
+#include "shared/core/text.h"
+
+namespace flix {
+
+/// Splits on RUNS of whitespace, dropping empties.
+///
+/// Runs rather than single spaces: the browser build split `set_bot_count  20`
+/// on `' '` and got an empty second field, so a double space silently printed
+/// the usage line instead of setting anything. Typing two spaces is not an
+/// error worth a diagnostic.
+inline std::vector<std::string> splitWords(const std::string& s) {
+    std::vector<std::string> words;
+    std::size_t at = 0;
+    while (at < s.size()) {
+        const std::size_t start = s.find_first_not_of(" \t\r\n", at);
+        if (start == std::string::npos) break;
+        const std::size_t end = s.find_first_of(" \t\r\n", start);
+        words.push_back(s.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) break;
+        at = end;
+    }
+    return words;
+}
+
+/// Chat content is markup, so a '<' in a line would open a tag and take the
+/// rest of the line with it -- which is exactly what happens in the browser,
+/// where `Usage: teleport <playerId/username> <x> <y>` renders as "Usage:
+/// teleport" and nothing else. Anything a player typed that the server repeats
+/// into chat -- a guild's name or description, the admin console's own output
+/// -- goes through this so the same words reach the screen instead of being
+/// swallowed.
+inline std::string escapedMarkup(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (char c : text) {
+        if (c == '&') out += "&amp;";
+        else if (c == '<') out += "&lt;";
+        else if (c == '>') out += "&gt;";
+        else out += c;
+    }
+    return out;
+}
+
+} // namespace flix

@@ -1,0 +1,59 @@
+node_modules
+# dist/ is committed on purpose: the in-game `update` command installs from the
+# GitHub branch zipball, and a fresh clone should run without a build step.
+# It holds only what scripts/build-web.js stages. The live database must never
+# be committed, though, nor the temporary file every save is written to first:
+dist/inventory.json
+dist/inventory.json.tmp
+# ...and the same pair at the repo root, which is where a server started from
+# here without --db writes them: its default is a bare `inventory.json` in the
+# working directory. Password hashes and the salt behind the per-address
+# account hashes, either way.
+/inventory.json
+/inventory.json.tmp
+# The database editor's key, which the server keeps beside the database.
+dist/admin_db_key.txt
+/admin_db_key.txt
+# The single-file offline build (npm run build:offline). A build product no
+# deployment reads, and five megabytes a commit if it were tracked.
+dist/offline.html
+dist/offline-asmjs.html
+# Boot tools that are only ever the builder's own: embedded in the offline
+# pages above and nowhere else (cpp/CMakeLists.txt, FLIX_LOCAL_BOOT_TOOLS).
+cpp/client/web/boot-local/
+# Database snapshots, kept one level above the database's directory.
+db_backups/
+.DS_Store
+**/.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+# The native client's session token and settings, written to its working directory.
+.florr-session
+.florr-session-settings
+mob_draw_commands.json
+
+cpp/build/
+cpp/build-web/
+cpp/build-web-skia/
+cpp/build-rel/
+cpp/build-admin/
+skia-wasm/
+
+# TLS material the wasm server looks for in its working directory: cert.crt and
+# cert.key, a real certificate installed by hand, then dev-cert.crt and
+# dev-cert.key, the localhost pair `npm run dev:cert` writes. Never commit a key.
+cert.crt
+cert.key
+dev-cert.crt
+dev-cert.key
+
+# Python bytecode, from running the LED matrix app's render locally.
+__pycache__/
+
+# Local run logs
+server-*.log
+*.out.log
+*.err.log

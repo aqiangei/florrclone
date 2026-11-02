@@ -1,0 +1,2164 @@
+#include "shared/game/config.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <optional>
+#include <sstream>
+
+#include "shared/core/file.h"
+#include "shared/core/json.h"
+#include "shared/core/text.h"
+#include "shared/net/protocol.h"
+
+namespace flix {
+namespace {
+
+// ---------------------------------------------------------------------------
+// Sanitisation limits
+// ---------------------------------------------------------------------------
+//
+// The shipped JSON is hand-maintained. Non-finite values must not reach the
+// simulation, but finite values retain TypeScript semantics even when they are
+// unusual (zero-sized placeholder mobs, negative glitch damage, and sparkle's
+// deliberately enormous damage are all observable game content).
+
+/// Still far below the point where rarity multiplication threatens a double,
+/// while admitting sparkle's authored 9,999,999,999 exactly.
+constexpr double kMaxBaseStat = 1e12;
+
+/// A petal whose slot takes longer than this to come back is a dead slot, not
+/// a slow one. `yggdrasil` ships 2048000 (34 minutes).
+constexpr double kMaxCooldownMillis = 60000.0;
+
+constexpr double kMinSize = 0.01;
+constexpr double kMaxSize = 1000.0;
+
+/// Any farther than this and the value is not a draw offset -- it is someone
+/// pushing a sprite off the world to hide it.
+constexpr double kMaxVisualOffset = 500.0;
+/// A mob's offset is in drawn radii, not units: ten of them puts the art
+/// clean off its own body, which is already past anything that is alignment.
+constexpr double kMaxMobVisualOffset = 10.0;
+
+constexpr double kMaxSpeedUnits = 1e4;
+constexpr double kMaxDurationMillis = 600000.0;
+
+/// A spawner ticking faster than this is a spawn loop, not a nest.
+constexpr double kMinSpawnIntervalMillis = 50.0;
+
+/// Poison the JSON writes per millisecond; a full second's worth is the cap.
+constexpr double kMaxPoisonPerMillis = 1000.0;
+
+/// A weaving shot crosses its own axis twice per cycle, and the server steps
+/// 30 times a second. Fifteen cycles a second is the Nyquist point, where the
+/// weave aliases into a straight line with jitter on it; a third of that still
+/// leaves six samples a cycle, which draws as a curve.
+constexpr double kMaxWaveFrequency = 5.0;
+
+/// Amplitude is in multiples of the shot's own radius. A hundred of them is
+/// already a shot travelling sideways faster than it travels forward.
+constexpr double kMaxWaveAmplitude = 100.0;
+
+/// A bad file could otherwise turn into a million strings. The warnings are a
+/// report for a human, and a human stops reading long before this.
+constexpr std::size_t kMaxWarnings = 512;
+
+/// A mob's `speed` is in flower top speeds: 1 moves as fast as a player can,
+/// 0.5 at half that. (The TypeScript unit was 60 u/s, a fifth of this, and
+/// mobs.json was rescaled by 1/5 when it changed.)
+constexpr double kMobSpeedUnitsPerSecond = kPlayerMaxSpeed;
+
+/// Config `size` to a petal's own hit radius, in world units.
+///
+/// The same number the client draws a petal at (ui::kPetalArtSize is 20 units
+/// of DIAMETER per size unit), because a petal hits exactly what it looks like
+/// it hits -- which is how gardn states a petal too: one `radius` field, used
+/// for the body and for the artwork alike.
+///
+/// It was 20 here, twice the drawn radius, and a basic petal damaged mobs a
+/// full body-width past its own edge. Mobs and flowers are unaffected: they
+/// keep kMobBaseRadius / kPlayerBaseRadius, and only the petal was ever drawn
+/// at a different scale from the thing it collides with.
+constexpr double kPetalRadiusPerSize = 10.0;
+
+// ---------------------------------------------------------------------------
+// Small helpers
+// ---------------------------------------------------------------------------
+
+/// Short-form number for a warning line. std::to_string would render -1e100
+/// as a hundred and one digits.
+std::string num(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%g", v);
+    return buf;
+}
+
+const char* typeName(const Json& v) {
+    switch (v.type()) {
+        case Json::Type::Null:   return "null";
+        case Json::Type::Bool:   return "a boolean";
+        case Json::Type::Number: return "a number";
+        case Json::Type::String: return "a string";
+        case Json::Type::Array:  return "an array";
+        case Json::Type::Object: return "an object";
+    }
+    return "unknown";
+}
+
+std::string joinPath(const std::string& dir, const char* file) {
+    if (dir.empty()) return file;
+    return dir.back() == '/' ? dir + file : dir + "/" + file;
+}
+
+/// Reading context: which entry is being parsed, and where its complaints go.
+struct Ctx {
+    std::vector<std::string>& warnings;
+    std::vector<std::string>& errors;
+    std::string subject;
+
+    void warn(const std::string& text) {
+        if (warnings.size() >= kMaxWarnings) return;
+        warnings.push_back(subject + ": " + text);
+    }
+
+    /// A defect the entry cannot be loaded around, as opposed to one it can be
+    /// loaded despite. Nothing here throws or returns early: the parse runs to
+    /// the end so that a file with ten missing prices reports ten of them
+    /// rather than the first, and loadFiles() refuses the whole load
+    /// afterwards.
+    void fail(const std::string& text) {
+        if (errors.size() >= kMaxWarnings) return;
+        errors.push_back(subject + ": " + text);
+    }
+
+    /// A number that MUST be there: absent, wrong-typed or out of range is a
+    /// failed load rather than a default quietly standing in for it.
+    double required(const Json& obj, const char* key, double lo, double hi) {
+        if (!obj.contains(key)) {
+            fail(std::string("has no ") + key);
+            return lo;
+        }
+        const Json& node = obj[key];
+        if (!node.isNumber()) {
+            fail(std::string(key) + " is " + typeName(node) + ", not a number");
+            return lo;
+        }
+        const double v = node.asDouble();
+        if (!std::isfinite(v) || v < lo || v > hi) {
+            fail(std::string(key) + " is " + num(v) + ", outside [" + num(lo) + ", " + num(hi) +
+                 "]");
+            return lo;
+        }
+        return v;
+    }
+
+    /// A number forced into [lo, hi].
+    ///
+    /// An absent key is a default and says nothing. A key that is present but
+    /// is not a finite number in range is a defect in the data, and is
+    /// reported with the value that caused it.
+    double range(const Json& obj, const char* key, double fallback, double lo, double hi) {
+        if (!obj.contains(key)) return fallback;
+        const Json& node = obj[key];
+        if (!node.isNumber()) {
+            warn(std::string(key) + " is " + typeName(node) + "; using " + num(fallback));
+            return fallback;
+        }
+        const double v = node.asDouble();
+        if (!std::isfinite(v)) {
+            warn(std::string(key) + " is not a finite number; using " + num(fallback));
+            return fallback;
+        }
+        if (v < lo) {
+            warn(std::string(key) + " is " + num(v) + ", below the sane minimum " + num(lo) +
+                 "; using " + num(lo));
+            return lo;
+        }
+        if (v > hi) {
+            warn(std::string(key) + " is " + num(v) + ", above the sane maximum " + num(hi) +
+                 "; using " + num(hi));
+            return hi;
+        }
+        return v;
+    }
+
+    int integer(const Json& obj, const char* key, int fallback, int lo, int hi) {
+        const double v = range(obj, key, static_cast<double>(fallback),
+                               static_cast<double>(lo), static_cast<double>(hi));
+        return static_cast<int>(std::lround(v));
+    }
+
+    bool boolean(const Json& obj, const char* key, bool fallback = false) {
+        if (!obj.contains(key)) return fallback;
+        const Json& node = obj[key];
+        if (!node.isBool()) {
+            warn(std::string(key) + " is " + typeName(node) + ", not true or false; ignored");
+            return fallback;
+        }
+        return node.asBool();
+    }
+
+    std::string text(const Json& obj, const char* key, const std::string& fallback = {}) {
+        if (!obj.contains(key)) return fallback;
+        const Json& node = obj[key];
+        if (!node.isString()) {
+            warn(std::string(key) + " is " + typeName(node) + ", not a string; ignored");
+            return fallback;
+        }
+        return node.asString();
+    }
+
+    /// A speed field. A negative speed is a direction, and direction is the
+    /// AI's business -- `moth` ships -0.48 to mean "runs away", which the flee
+    /// behaviour already expresses. Keep the magnitude.
+    double speed(const Json& obj, const char* key) {
+        double v = range(obj, key, 0.0, -kMaxSpeedUnits, kMaxSpeedUnits);
+        if (v < 0.0) {
+            warn(std::string(key) + " is " + num(v) +
+                 "; a speed is a magnitude, so using " + num(-v));
+            v = -v;
+        }
+        return v;
+    }
+
+    Rarity rarity(const Json& obj, const char* key, Rarity fallback = Rarity::Common) {
+        const std::string name = text(obj, key);
+        if (name.empty()) return fallback;
+        Rarity parsed = fallback;
+        if (tryParseRarity(name, parsed)) return parsed;
+        warn(std::string(key) + " names an unknown rarity '" + name + "'; using " +
+             rarityName(fallback));
+        return fallback;
+    }
+
+    /// Resolves a content id to its index, complaining when it names nothing.
+    std::uint16_t link(const std::unordered_map<std::string, std::uint16_t>& table,
+                       const std::string& id, const char* what) {
+        if (id.empty()) return kInvalidIndex;
+        auto it = table.find(id);
+        if (it == table.end()) {
+            warn(std::string(what) + " '" + id + "' is not defined; the reference is dropped");
+            return kInvalidIndex;
+        }
+        return it->second;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Colours
+// ---------------------------------------------------------------------------
+
+/// Parses `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(...)` and `rgba(...)` into
+/// 0xRRGGBBAA. `bubble` is genuinely `rgba(255, 255, 255, 0)` and means it, so
+/// alpha is carried rather than assumed opaque.
+bool parseColor(const std::string& in, Rgba& out) {
+    std::string s;
+    s.reserve(in.size());
+    for (const char c : in) {
+        if (c != ' ' && c != '\t') s.push_back(c);
+    }
+    if (s.size() >= 2 && s[0] == '#') {
+        const std::string body = s.substr(1);
+        int d[8];
+        if (body.size() != 3 && body.size() != 6 && body.size() != 8) return false;
+        for (std::size_t i = 0; i < body.size(); ++i) {
+            d[i] = hexDigit(body[i]);
+            if (d[i] < 0) return false;
+        }
+        if (body.size() == 3) {
+            const auto expand = [&](int i) { return static_cast<std::uint32_t>(d[i] * 17); };
+            out = (expand(0) << 24) | (expand(1) << 16) | (expand(2) << 8) | 0xFFu;
+        } else {
+            const std::uint32_t r = static_cast<std::uint32_t>(d[0] * 16 + d[1]);
+            const std::uint32_t g = static_cast<std::uint32_t>(d[2] * 16 + d[3]);
+            const std::uint32_t b = static_cast<std::uint32_t>(d[4] * 16 + d[5]);
+            const std::uint32_t a = body.size() == 8
+                ? static_cast<std::uint32_t>(d[6] * 16 + d[7]) : 0xFFu;
+            out = (r << 24) | (g << 16) | (b << 8) | a;
+        }
+        return true;
+    }
+
+    const bool hasAlpha = s.rfind("rgba(", 0) == 0;
+    if (!hasAlpha && s.rfind("rgb(", 0) != 0) return false;
+    const std::size_t open = s.find('(');
+    const std::size_t close = s.find(')', open);
+    if (close == std::string::npos) return false;
+    double parts[4] = {0, 0, 0, 1};
+    int count = 0;
+    std::stringstream fields(s.substr(open + 1, close - open - 1));
+    std::string field;
+    while (std::getline(fields, field, ',') && count < 4) {
+        char* end = nullptr;
+        const double v = std::strtod(field.c_str(), &end);
+        if (end == field.c_str() || !std::isfinite(v)) return false;
+        parts[count++] = v;
+    }
+    if (count < 3 || (hasAlpha && count < 4)) return false;
+    const auto byte = [](double v, double scale) {
+        return static_cast<std::uint32_t>(clamp(v * scale, 0.0, 255.0) + 0.5);
+    };
+    out = (byte(parts[0], 1.0) << 24) | (byte(parts[1], 1.0) << 16) |
+          (byte(parts[2], 1.0) << 8) | byte(parts[3], 255.0);
+    return true;
+}
+
+Rgba readColor(Ctx& ctx, const Json& obj, const char* key, std::string& raw) {
+    raw = ctx.text(obj, key);
+    if (raw.empty()) return kOpaqueWhite;
+    Rgba packed = kOpaqueWhite;
+    if (!parseColor(raw, packed)) {
+        ctx.warn(std::string(key) + " '" + raw + "' is not a colour; using white");
+        return kOpaqueWhite;
+    }
+    return packed;
+}
+
+// ---------------------------------------------------------------------------
+// Enum parsing
+// ---------------------------------------------------------------------------
+
+AiKind parseAi(Ctx& ctx, const std::string& text) {
+    if (text == "passive") return AiKind::Passive;
+    if (text == "neutral") return AiKind::Neutral;
+    if (text == "hostile") return AiKind::Hostile;
+    if (text == "sandstorm") return AiKind::Sandstorm;
+    if (text == "stationary") return AiKind::Stationary;
+    ctx.warn("ai_type '" + text + "' is not a behaviour this build knows; treating it as neutral");
+    return AiKind::Neutral;
+}
+
+std::uint16_t parseEquipFlags(const std::string& text) {
+    if (text == "Cutter") return EquipCutter;
+    if (text == "ThirdEye") return EquipThirdEye;
+    if (text == "Observer") return EquipObserver;
+    if (text == "Antennae") return EquipAntennae;
+    if (text == "Test1") return EquipTest1;
+    if (text == "Crown") return EquipCrown;
+    if (text == "Disc") return EquipDisc;
+    if (text == "Bandage") return EquipBandage;
+    // No flag is a perfectly good outcome for an ordinary petal.
+    return EquipNone;
+}
+
+// ---------------------------------------------------------------------------
+// Nested specs
+// ---------------------------------------------------------------------------
+
+ProjectileSpec parseProjectile(Ctx& ctx, const Json& owner,
+                               const std::unordered_map<std::string, std::uint16_t>* petalIds,
+                               const std::unordered_map<std::string, std::uint16_t>* mobIds = nullptr) {
+    ProjectileSpec spec;
+    if (!owner.contains("projectile")) return spec;
+    const Json& node = owner["projectile"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("projectile is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.present = true;
+    spec.count = ctx.integer(node, "count", 1, 1, 64);
+    spec.distance = ctx.range(node, "distance", 0.0, 0.0, kWorldSize);
+    spec.speed = ctx.range(node, "speed", 0.0, 0.0, kMaxSpeedUnits);
+    spec.seekRange = ctx.range(node, "seekRange", 0.0, 0.0, kWorldSize);
+    // An omitted cone is a quarter turn, not "home on anything": the reference
+    // defaults it at the firing site and a seeking shot only ever corrects
+    // toward something already roughly ahead of it.
+    spec.seekCone = ctx.range(node, "seekCone", kPi * 0.25, 0.0, kPi);
+
+    // The step between adjacent shots, in RADIANS, used exactly as written.
+    // `flower` ships 72, which looks like degrees and is not: the reference
+    // feeds the raw number to cos/sin, so its five shots wrap to roughly
+    // {+0.51, -2.89, 0, +2.89, -0.51} rad off the bearing. Reading it as
+    // degrees produces a tidy five-way star that hits different mobs.
+    spec.spreadAngle = ctx.range(node, "spreadAngle", 0.2, -1e4, 1e4);
+
+    // Sequential shots off one cooldown; see ProjectileSpec. The interval is
+    // only read when there is a burst to space out, and an omitted one is the
+    // default rather than zero: a burst fired on consecutive ticks is a single
+    // fat shot as far as the player can see.
+    spec.burstCount = ctx.integer(node, "burstCount", 1, 1, 16);
+    spec.burstIntervalMillis =
+        spec.burstCount > 1
+            ? ctx.range(node, "burstInterval", kDefaultBurstIntervalMillis, 1.0, 10000.0)
+            : 0.0;
+
+    if (petalIds != nullptr) {
+        spec.ammoPetalId = ctx.text(node, "petalType");
+        spec.ammoPetalIndex = ctx.link(*petalIds, spec.ammoPetalId, "projectile petalType");
+    }
+    // A cap is only read beside a summon that resolved, so a mob named wrong
+    // leaves a plain shot rather than one that summons nothing up to a cap.
+    if (mobIds != nullptr) {
+        spec.summonMobId = ctx.text(node, "summonMobType");
+        spec.summonMobIndex = ctx.link(*mobIds, spec.summonMobId, "projectile summonMobType");
+        spec.summonMax = spec.summonMobIndex != kInvalidIndex
+                             ? ctx.integer(node, "summonMax", 1, 1, 64)
+                             : 0;
+    }
+    return spec;
+}
+
+PetalRingSpec parsePetalRing(Ctx& ctx, const Json& owner,
+                             const std::unordered_map<std::string, std::uint16_t>& petalIds) {
+    PetalRingSpec spec;
+    if (!owner.contains("petal_ring")) return spec;
+    const Json& node = owner["petal_ring"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("petal_ring is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.petalId = ctx.text(node, "petalType");
+    spec.petalIndex = ctx.link(petalIds, spec.petalId, "petal_ring petalType");
+    spec.count = ctx.integer(node, "count", 0, 0, 64);
+    spec.orbitScale = ctx.range(node, "orbit", kMobPetalRingOrbitScale, 0.0, 16.0);
+    spec.petalScale = ctx.range(node, "petalScale", kMobPetalRingPetalScale, 0.0, 16.0);
+    spec.hitScale = ctx.range(node, "hitScale", kMobPetalRingHitScale, 0.0, 16.0);
+    // Both default to what the ring already did, so a ring that says neither
+    // draws exactly as it did before either was a knob.
+    spec.spins = ctx.boolean(node, "spin", true);
+    spec.followRotation = ctx.boolean(node, "follow", false);
+    spec.flowerFace = ctx.boolean(node, "face");
+    spec.shootOnHit = ctx.boolean(node, "shootOnHit");
+    spec.shotSpeed = ctx.range(node, "shotSpeed", 0.0, 0.0, kMaxSpeedUnits);
+    spec.shotDistance = ctx.range(node, "shotDistance", 0.0, 0.0, kWorldSize);
+    spec.present = spec.petalIndex != kInvalidIndex && spec.count > 0;
+    // A ring that is ammunition has to hold still. Everything the server does
+    // with one -- placing a seat to collide from, knowing which seat a shed
+    // seed left -- needs the petals to be where it says they are, and a
+    // spinning ring's phase is the viewer's own clock. Refused here, once, so
+    // no pass downstream has to carry the combination.
+    if (spec.shootOnHit && spec.spins) {
+        ctx.warn("petal_ring is shootOnHit but spins; a ring that is ammunition must "
+                 "declare \"spin\": false. Treating it as decoration");
+        spec.shootOnHit = false;
+    }
+    return spec;
+}
+
+PeriodicSpawnSpec parsePeriodicSpawn(Ctx& ctx, const Json& owner,
+                                     const std::unordered_map<std::string, std::uint16_t>& mobIds) {
+    PeriodicSpawnSpec spec;
+    if (!owner.contains("periodic_spawn")) return spec;
+    const Json& node = owner["periodic_spawn"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("periodic_spawn is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.mobId = ctx.text(node, "mobType");
+    spec.mobIndex = ctx.link(mobIds, spec.mobId, "periodic_spawn mobType");
+    spec.intervalMillis = ctx.range(node, "intervalMs", kMinSpawnIntervalMillis,
+                                    kMinSpawnIntervalMillis, kMaxDurationMillis);
+    spec.lifetimeMillis = ctx.range(node, "lifetimeMs", 0.0, 0.0, kMaxDurationMillis);
+    spec.maxAlive = ctx.integer(node, "maxAlive", 0, 0, 1000);
+    spec.rarityOffset = ctx.integer(node, "spawnRarityOffset", 0,
+                                    -(kLadderRarityCount - 1), kLadderRarityCount - 1);
+    spec.present = spec.mobIndex != kInvalidIndex && spec.maxAlive > 0;
+    return spec;
+}
+
+DeathSpawnSpec parseDeathSpawn(Ctx& ctx, const Json& owner,
+                              const std::unordered_map<std::string, std::uint16_t>& mobIds) {
+    DeathSpawnSpec spec;
+    if (!owner.contains("death_spawn")) return spec;
+    const Json& node = owner["death_spawn"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("death_spawn is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.mobId = ctx.text(node, "mobType");
+    spec.mobIndex = ctx.link(mobIds, spec.mobId, "death_spawn mobType");
+    spec.chance = ctx.range(node, "chance", 1.0, 0.0, 1.0);
+    spec.count = ctx.integer(node, "count", 1, 0, 100);
+    spec.present = spec.mobIndex != kInvalidIndex && spec.count > 0 && spec.chance > 0.0;
+    return spec;
+}
+
+/// A trigger gap this many of the nest's own radii wide reaches past the
+/// screen of anyone standing next to a big hole.
+constexpr double kMaxAmbushTriggerRadiusScale = 20.0;
+
+AmbushSpec parseAmbush(Ctx& ctx, const Json& owner,
+                       const std::unordered_map<std::string, std::uint16_t>& mobIds) {
+    AmbushSpec spec;
+    if (!owner.contains("ambush")) return spec;
+    const Json& node = owner["ambush"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("ambush is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.mobId = ctx.text(node, "mobType");
+    spec.mobIndex = ctx.link(mobIds, spec.mobId, "ambush mobType");
+    spec.count = ctx.integer(node, "count", 0, 0, 1000);
+    spec.triggerRadiusScale = ctx.range(node, "triggerRadiusScale", 0.0, 0.0,
+                                        kMaxAmbushTriggerRadiusScale);
+    spec.present = spec.mobIndex != kInvalidIndex && spec.count > 0;
+    return spec;
+}
+
+DungeonSpec parseDungeon(Ctx& ctx, const Json& owner,
+                         const std::unordered_map<std::string, std::uint16_t>& mobIds) {
+    DungeonSpec spec;
+    if (!owner.contains("dungeon")) return spec;
+    const Json& node = owner["dungeon"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("dungeon is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.mapId = ctx.text(node, "map");
+    if (spec.mapId.empty()) {
+        ctx.warn("dungeon names no map; ignored");
+        return spec;
+    }
+    const Json& brood = node["brood"];
+    if (!brood.isArray()) {
+        ctx.warn(std::string("dungeon brood is ") + typeName(brood) + ", not a list; ignored");
+        return spec;
+    }
+    for (const Json& row : brood.items()) {
+        if (!row.isObject()) {
+            ctx.warn(std::string("a dungeon brood row is ") + typeName(row) + ", not an object; ignored");
+            continue;
+        }
+        DungeonSpec::Entry entry;
+        entry.mobId = ctx.text(row, "mobType");
+        entry.mobIndex = ctx.link(mobIds, entry.mobId, "dungeon brood mobType");
+        entry.count = ctx.integer(row, "count", 1, 0, 200);
+        entry.door = ctx.text(row, "door");
+        if (entry.mobIndex != kInvalidIndex && entry.count > 0) spec.brood.push_back(entry);
+    }
+    spec.present = !spec.brood.empty();
+    return spec;
+}
+
+LightningSpec parseLightning(Ctx& ctx, const Json& owner) {
+    LightningSpec spec;
+    if (!owner.contains("lightning")) return spec;
+    const Json& node = owner["lightning"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("lightning is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.radius = ctx.range(node, "radius", 0.0, 0.0, kWorldSize);
+    spec.damage = ctx.range(node, "damage", 0.0, 0.0, kMaxBaseStat);
+    spec.onContact = ctx.boolean(node, "onContact");
+    // An omitted `range` is the strike's own reach -- a mob that states only
+    // how far its shock carries strikes at exactly the flowers the shock would
+    // reach, which is the whole of what a jellyfish wants and one number to
+    // author instead of two that have to be kept in step -- UNLESS the mob
+    // already named a trigger. A firefly writes `onContact` and nothing else
+    // and means exactly that: it shocks what touches it and never reaches out.
+    spec.strikeRange = ctx.range(node, "range", spec.onContact ? 0.0 : spec.radius,
+                                 0.0, kWorldSize);
+    spec.cooldownMillis = ctx.range(node, "cooldownMs", 0.0, 0.0, kMaxDurationMillis);
+    // A strike with no reach is not a strike. Both triggers measure from the
+    // bolt outwards, so a zero radius would land on nobody however it fired.
+    spec.present = spec.radius > 0.0 && (spec.onContact || spec.strikeRange > 0.0);
+    return spec;
+}
+
+/// A web as large as this many of its layer's own body radii is not a web any
+/// more, it is the whole screen.
+constexpr double kMaxWebRadiusScale = 20.0;
+
+WebSpec parseWeb(Ctx& ctx, const Json& owner) {
+    WebSpec spec;
+    if (!owner.contains("web")) return spec;
+    const Json& node = owner["web"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("web is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.intervalMillis = ctx.range(node, "intervalMs", 1000.0, kMinSpawnIntervalMillis,
+                                    kMaxDurationMillis);
+    spec.lifetimeMillis = ctx.range(node, "lifetimeMs", 10000.0, 0.0, kMaxDurationMillis);
+    spec.radiusScale = ctx.range(node, "radiusScale", 0.0, 0.0, kMaxWebRadiusScale);
+    spec.slowFactor = ctx.range(node, "slowFactor", 0.5, 0.0, 1.0);
+    spec.minRarity = ctx.rarity(node, "minRarity");
+    // A web nobody can stand in, that never lasts, or that slows nothing is
+    // not a web; refused here so the AI never lays one.
+    spec.present = spec.radiusScale > 0.0 && spec.lifetimeMillis > 0.0 && spec.slowFactor < 1.0;
+    return spec;
+}
+
+DropProjectileSpec parseDropProjectile(Ctx& ctx, const Json& owner,
+                                       const std::unordered_map<std::string, std::uint16_t>& petalIds) {
+    DropProjectileSpec spec;
+    if (!owner.contains("dropProjectile")) return spec;
+    const Json& node = owner["dropProjectile"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("dropProjectile is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.petalId = ctx.text(node, "petalType");
+    spec.petalIndex = ctx.link(petalIds, spec.petalId, "dropProjectile petalType");
+    // Defaults are the bumble bee's pollen: one a second, each lying three.
+    spec.intervalMillis = ctx.range(node, "intervalMs", 1000.0, kMinSpawnIntervalMillis,
+                                    kMaxDurationMillis);
+    spec.lifetimeMillis = ctx.range(node, "lifetimeMs", 3000.0, 0.0, kMaxDurationMillis);
+    // Nothing to drop, or a drop that is gone the tick it lands, is refused
+    // here so the AI never lays one.
+    spec.present = spec.petalIndex != kInvalidIndex && spec.lifetimeMillis > 0.0;
+    return spec;
+}
+
+RecoverSpec parseRecover(Ctx& ctx, const Json& owner) {
+    RecoverSpec spec;
+    if (!owner.contains("recover")) return spec;
+    const Json& node = owner["recover"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("recover is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    // Defaults are the starfish's: under 40%, whole again ten seconds later.
+    spec.belowFraction = ctx.range(node, "below", 0.4, 0.0, 1.0);
+    spec.durationMillis = ctx.range(node, "durationMs", 10000.0, 0.0, kMaxDurationMillis);
+    // A line nothing falls under, or a heal that lands all at once, is refused
+    // here so the AI never starts one.
+    spec.present = spec.belowFraction > 0.0 && spec.durationMillis > 0.0;
+    return spec;
+}
+
+JumpSpec parseJump(Ctx& ctx, const Json& owner) {
+    JumpSpec spec;
+    if (!owner.contains("jump")) return spec;
+    const Json& node = owner["jump"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("jump is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    // Defaults are the shell's: 50 units a jump, a second on the ground
+    // between them.
+    spec.distance = ctx.range(node, "distance", 50.0, 0.0, kWorldSize);
+    spec.pauseMillis = ctx.range(node, "pauseMs", 1000.0, 0.0, kMaxDurationMillis);
+    // A jump that goes nowhere would leave the mob sitting still for good,
+    // target or not.
+    spec.present = spec.distance > 0.0;
+    return spec;
+}
+
+RadiationSpec parseRadiation(Ctx& ctx, const Json& owner) {
+    RadiationSpec spec;
+    if (!owner.contains("radiation")) return spec;
+    const Json& node = owner["radiation"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("radiation is ") + typeName(node) + ", not an object; ignored");
+        return spec;
+    }
+    spec.radius = ctx.range(node, "radius", 0.0, 0.0, kWorldSize);
+    spec.intervalMillis = ctx.range(node, "intervalMs", kMinSpawnIntervalMillis,
+                                    kMinSpawnIntervalMillis, kMaxDurationMillis);
+    spec.poisonDurationMillis = ctx.range(node, "poisonDurationMs", 0.0, 0.0, kMaxDurationMillis);
+    spec.selfPoisonScale = ctx.range(node, "selfPoisonScale", 0.0, 0.0, 100.0);
+    spec.present = spec.radius > 0.0;
+    return spec;
+}
+
+PetalModifiers parseModifiers(Ctx& ctx, const Json& owner) {
+    PetalModifiers mods;
+    if (!owner.contains("playerModifiers")) return mods;
+    const Json& node = owner["playerModifiers"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("playerModifiers is ") + typeName(node) + ", not an object; ignored");
+        return mods;
+    }
+    // Multipliers may be negative on purpose: yin_yang's -1 rotationSpeed
+    // reverses the ring rather than slowing it.
+    mods.maxHealth     = ctx.range(node, "maxHealth", 1.0, -100.0, 100.0);
+    mods.speed         = ctx.range(node, "speed", 1.0, -100.0, 100.0);
+    mods.rotationSpeed = ctx.range(node, "rotationSpeed", 1.0, -100.0, 100.0);
+    mods.playerRadius  = ctx.range(node, "playerRadius", 1.0, -100.0, 100.0);
+    mods.damage        = ctx.range(node, "damage", 1.0, -100.0, 100.0);
+    // Not signed like the others: a negative notice range means nothing.
+    // Below 1 it hides the flower (poo), above 1 it draws mobs in (bulb); mob
+    // AI widens its broadphase query by the largest one worn.
+    mods.aggroRange    = ctx.range(node, "aggroRange", 1.0, 0.0, 10.0);
+
+    mods.attackRange           = ctx.range(node, "attackRange", 0.0, 0.0, kWorldSize);
+    mods.luck                  = ctx.range(node, "luck", 0.0, -100.0, 100.0);
+    mods.magnetism             = ctx.range(node, "magnetism", 0.0, 0.0, kWorldSize);
+    mods.aggroRadius           = ctx.range(node, "aggroRadius", 0.0, -kWorldSize, kWorldSize);
+    mods.petalAttractionRadius = ctx.range(node, "petalAttractionRadius", 0.0, 0.0, kWorldSize);
+    mods.poisonArmor           = ctx.range(node, "poisonArmor", 0.0, 0.0, kMaxBaseStat);
+    mods.evasion               = ctx.range(node, "evasion", 0.0, 0.0, 1.0);
+    mods.damageReflection      = ctx.range(node, "damageReflection", 0.0, 0.0, 1.0);
+
+    for (const std::string& key : node.keys()) {
+        static const char* kKnown[] = {
+            "maxHealth", "speed", "attackRange", "rotationSpeed", "playerRadius", "damage",
+            "aggroRange", "luck", "magnetism", "aggroRadius", "petalAttractionRadius",
+            "poisonArmor", "evasion", "damageReflection",
+        };
+        bool known = false;
+        for (const char* k : kKnown) known = known || key == k;
+        if (!known) ctx.warn("playerModifiers has an unknown key '" + key + "'; ignored");
+    }
+    return mods;
+}
+
+// ---------------------------------------------------------------------------
+// Entries
+// ---------------------------------------------------------------------------
+
+/// Reads one mob's `groups` and files it into the registry's group table.
+///
+/// The groups are the union of the names the mobs use, in first-mention order,
+/// which is why this both reads and WRITES: there is no separate list of legal
+/// group names to check against, and inventing one would mean a new group had
+/// to be declared in two places.
+///
+/// Two spellings, because they answer different questions:
+///
+///   "groups": ["garden", "jungle"]          -- in both, at `spawn_weight`
+///   "groups": {"garden": 1, "jungle": 0.4}  -- weighted per group
+///
+/// A weight of zero is meaningful and kept: a centipede's body segments belong
+/// to the garden -- tools and the editor should say so -- but are only ever
+/// spawned by the head, never rolled.
+void parseMobGroups(Ctx& ctx, MobConfig& m, std::uint16_t mobIndex, const Json& src,
+                    std::vector<MobGroup>& groups,
+                    std::unordered_map<std::string, std::uint16_t>& groupIds) {
+    if (!src.contains("groups")) return;
+    const Json& node = src["groups"];
+
+    const auto add = [&](const std::string& name, double weight) {
+        if (name.empty()) {
+            ctx.warn("has a group with no name; ignored");
+            return;
+        }
+        if (!std::isfinite(weight) || weight < 0.0) {
+            ctx.warn("group '" + name + "' has a weight of " + num(weight) + "; using 1");
+            weight = 1.0;
+        }
+        std::uint16_t index = 0;
+        const auto found = groupIds.find(name);
+        if (found != groupIds.end()) {
+            index = found->second;
+        } else {
+            if (groups.size() >= kInvalidIndex) {
+                ctx.warn("group '" + name + "' does not fit in the group table; ignored");
+                return;
+            }
+            index = static_cast<std::uint16_t>(groups.size());
+            groups.push_back(MobGroup{name, {}});
+            groupIds.emplace(name, index);
+        }
+        for (const MobGroupMember& existing : m.groups) {
+            if (existing.group == index) {
+                ctx.warn("is listed in group '" + name + "' twice; the first wins");
+                return;
+            }
+        }
+        const MobGroupMember member{index, mobIndex, weight};
+        m.groups.push_back(member);
+        groups[index].members.push_back(member);
+    };
+
+    if (node.isArray()) {
+        for (const Json& entry : node.items()) add(entry.asString(), m.spawnWeight);
+        return;
+    }
+    if (node.isObject()) {
+        for (const std::string& name : node.keys()) add(name, node[name].asDouble(m.spawnWeight));
+        return;
+    }
+    ctx.warn(std::string("groups is ") + typeName(node) + ", not a list or an object; the mob will not spawn");
+}
+
+/// The mandatory `xp` table: what killing this mob is worth, per tier.
+///
+/// Every tier from common to unique must be there and must be a finite,
+/// non-negative number. It used to live in its own file (cpp/data/mob_xp.json)
+/// where a mob could simply be missing, and eleven of them were -- silently
+/// worth one XP at every tier including unique, which reads as a balance
+/// decision and never was one. Requiring it here means a new mob cannot be
+/// added without saying what it is worth.
+///
+/// Apex is the ONE derived tier: the tables stop at unique, and apex is a 3x
+/// step above unique everywhere else in the game, so deriving it keeps an apex
+/// kill from paying the same as a common one without asking every entry to
+/// write the multiplication out.
+std::array<double, kLadderRarityCount> parseXp(Ctx& ctx, const Json& src) {
+    constexpr std::size_t kUnique = static_cast<std::size_t>(Rarity::Unique);
+    constexpr std::size_t kApex = static_cast<std::size_t>(Rarity::Apex);
+    std::array<double, kLadderRarityCount> xp{};
+    xp.fill(1.0);
+    xp[kApex] = 3.0;
+
+    if (!src.contains("xp")) {
+        ctx.fail("has no xp table");
+        return xp;
+    }
+    const Json& row = src["xp"];
+    if (!row.isObject()) {
+        ctx.fail(std::string("xp is ") + typeName(row) + ", not an object");
+        return xp;
+    }
+    for (std::size_t i = 0; i <= kUnique; ++i) {
+        const char* tier = kRarityNames[i];
+        if (!row.contains(tier)) {
+            ctx.fail(std::string("xp has no ") + tier + " tier");
+            continue;
+        }
+        const Json& value = row[tier];
+        if (!value.isNumber()) {
+            ctx.fail(std::string("xp for ") + tier + " is " + typeName(value) + ", not a number");
+            continue;
+        }
+        const double v = value.asDouble();
+        if (!std::isfinite(v) || v < 0.0) {
+            ctx.fail(std::string("xp for ") + tier + " is " + num(v) + "; must be finite and >= 0");
+            continue;
+        }
+        xp[i] = v;
+    }
+    if (row.contains("apex")) {
+        ctx.warn("xp names an apex tier; apex is derived as 3x unique and the value is ignored");
+    }
+    xp[kApex] = xp[kUnique] * 3.0;
+    return xp;
+}
+
+/// `"replace_chance": {"common": 0.00001, "super": 0.0001}` -- see
+/// MobConfig::replaceChance. Resolved to one figure per rung: each tier takes
+/// the entry at or below it that is nearest. A tier that is not a ladder rung,
+/// or a figure that is not a chance, is dropped with a warning; a mob that
+/// spawned a hundred times too often is not a typo to load around quietly.
+std::array<double, kLadderRarityCount> parseReplaceChance(Ctx& ctx, const Json& src) {
+    std::array<double, kLadderRarityCount> chance{};
+    if (!src.contains("replace_chance")) return chance;
+    const Json& node = src["replace_chance"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("replace_chance is ") + typeName(node) + "; ignored");
+        return chance;
+    }
+    std::array<std::optional<double>, kLadderRarityCount> stated{};
+    for (const std::string& key : node.keys()) {
+        Rarity tier = Rarity::Common;
+        if (!tryParseRarity(key, tier) || rarityIndex(tier) >= kLadderRarityCount) {
+            ctx.warn("replace_chance names '" + key + "', which is no mob's tier; ignored");
+            continue;
+        }
+        const Json& value = node[key];
+        const double v = value.isNumber() ? value.asDouble() : -1.0;
+        if (!std::isfinite(v) || v < 0.0 || v > 1.0) {
+            ctx.warn("replace_chance." + key + " is not a chance between 0 and 1; ignored");
+            continue;
+        }
+        stated[static_cast<std::size_t>(rarityIndex(tier))] = v;
+    }
+    double carried = 0.0;
+    for (std::size_t i = 0; i < chance.size(); ++i) {
+        if (stated[i]) carried = *stated[i];
+        chance[i] = carried;
+    }
+    return chance;
+}
+
+/// The `npc` block: `{ "service": "oracle" }` for the oracle, `{ "service":
+/// "trader" }` for the trader, `{ "team": "hostile" }` for the target dummy,
+/// and `{ "service": "assembler", "recipes": [...] }` for an assembler.
+/// Both keys are optional -- an empty block
+/// is a friendly NPC that offers nothing -- and a value this build does not
+/// know is reported and read as its default, never as a reason to drop the
+/// NPC: a map that places one would otherwise stand nothing there in silence.
+NpcSpec parseNpcSpec(Ctx& ctx, const Json& owner,
+                     const std::unordered_map<std::string, std::uint16_t>& petalIds) {
+    NpcSpec spec;
+    if (!owner.contains("npc")) return spec;
+    const Json& node = owner["npc"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("npc is ") + typeName(node) + ", not an object; the mob is not an NPC");
+        return spec;
+    }
+    spec.present = true;
+    const std::string service = ctx.text(node, "service");
+    spec.service = parseNpcService(service);
+    if (!service.empty() && spec.service == NpcService::None) {
+        ctx.warn("npc service '" + service + "' is not one this build offers; it offers nothing");
+    }
+    const std::string team = ctx.text(node, "team", "players");
+    if (team == "players") spec.team = Team::Players;
+    else if (team == "hostile") spec.team = Team::Hostiles;
+    else if (team == "neutral") spec.team = Team::Neutral;
+    else {
+        ctx.warn("npc team '" + team + "' is not players, hostile or neutral; it stands with the "
+                 "players");
+    }
+    // The ring: a list of petal ids, one loadout slot each, worn at one tier.
+    // A name that is not a petal is dropped with a line rather than leaving an
+    // empty seat in the ring, and the active row is all a ring has.
+    if (node.contains("petals")) {
+        const Json& petals = node["petals"];
+        if (!petals.isArray()) {
+            ctx.warn(std::string("npc petals is ") + typeName(petals) +
+                     ", not an array; it wears none");
+        } else {
+            for (std::size_t i = 0; i < petals.size(); ++i) {
+                const std::string id = petals[i].isString() ? petals[i].stringRef() : std::string();
+                const std::uint16_t index = ctx.link(petalIds, id, "npc petals entry");
+                if (index == kInvalidIndex) continue;
+                if (spec.petals.size() >= static_cast<std::size_t>(kLoadoutActiveSlots)) {
+                    ctx.warn("npc petals lists more than " + std::to_string(kLoadoutActiveSlots) +
+                             "; the rest are not worn");
+                    break;
+                }
+                spec.petals.push_back(index);
+            }
+        }
+    }
+    spec.petalRarity = ctx.rarity(node, "petalRarity", Rarity::Universal);
+    // An assembler's recipes: `{ "from": [...], "to": ... }` each, a stack
+    // being a petal id (one of it) or `{ "petal": id, "count": n }`, and `to`
+    // one stack or a list of them. A recipe naming a petal that does not
+    // exist is dropped whole, with a line -- half a recipe would make
+    // something out of less than it says.
+    if (node.contains("recipes")) {
+        const Json& recipes = node["recipes"];
+        if (!recipes.isArray()) {
+            ctx.warn(std::string("npc recipes is ") + typeName(recipes) +
+                     ", not an array; it offers none");
+        } else {
+            for (std::size_t i = 0; i < recipes.size(); ++i) {
+                const Json& entry = recipes[i];
+                const std::string where = "npc recipe " + std::to_string(i);
+                if (!entry.isObject() || !entry["from"].isArray() || !entry.contains("to")) {
+                    ctx.warn(where + " is not { \"from\": [...], \"to\": ... }; dropped");
+                    continue;
+                }
+                if (spec.recipes.size() >= kAssemblerMaxRecipes) {
+                    ctx.warn("npc recipes lists more than " + std::to_string(kAssemblerMaxRecipes) +
+                             "; the rest are dropped");
+                    break;
+                }
+                bool whole = true;
+                const auto stack = [&](const Json& value, const std::string& what) {
+                    AssemblyRecipe::Stack out;
+                    std::string id;
+                    if (value.isString()) {
+                        id = value.stringRef();
+                    } else if (value.isObject()) {
+                        id = ctx.text(value, "petal");
+                        const Json& count = value["count"];
+                        if (value.contains("count") &&
+                            (!count.isNumber() || count.asDouble() < 1.0 ||
+                             count.asDouble() > kAssemblerMaxStack ||
+                             count.asDouble() != std::floor(count.asDouble()))) {
+                            ctx.warn(where + " " + what + " count is not a whole number from 1 to " +
+                                     std::to_string(kAssemblerMaxStack));
+                            whole = false;
+                        } else if (value.contains("count")) {
+                            out.count = static_cast<std::int64_t>(count.asDouble());
+                        }
+                    }
+                    out.petal = ctx.link(petalIds, id, (where + " " + what).c_str());
+                    if (out.petal == kInvalidIndex) whole = false;
+                    return out;
+                };
+                AssemblyRecipe recipe;
+                const Json& from = entry["from"];
+                for (std::size_t k = 0; k < from.size(); ++k) {
+                    recipe.inputs.push_back(stack(from[k], "input"));
+                }
+                const Json& to = entry["to"];
+                if (to.isArray()) {
+                    for (std::size_t k = 0; k < to.size(); ++k) {
+                        recipe.outputs.push_back(stack(to[k], "output"));
+                    }
+                } else {
+                    recipe.outputs.push_back(stack(to, "output"));
+                }
+                if (recipe.inputs.empty() || recipe.inputs.size() > kAssemblerMaxInputs) {
+                    ctx.warn(where + " takes " + std::to_string(recipe.inputs.size()) +
+                             " petals; a recipe takes 1 to " +
+                             std::to_string(kAssemblerMaxInputs) + "; dropped");
+                    continue;
+                }
+                if (recipe.outputs.empty() || recipe.outputs.size() > kAssemblerMaxOutputs) {
+                    ctx.warn(where + " makes " + std::to_string(recipe.outputs.size()) +
+                             " petals; a recipe makes 1 to " +
+                             std::to_string(kAssemblerMaxOutputs) + "; dropped");
+                    continue;
+                }
+                if (!whole) {
+                    ctx.warn(where + " names a petal that does not exist; dropped");
+                    continue;
+                }
+                spec.recipes.push_back(std::move(recipe));
+            }
+        }
+    }
+    if (!spec.recipes.empty() && spec.service != NpcService::Assembler) {
+        ctx.warn("npc recipes are only an assembler's; this NPC offers none of them");
+        spec.recipes.clear();
+    }
+    spec.still = ctx.boolean(node, "still");
+    return spec;
+}
+
+MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
+                   const std::unordered_map<std::string, std::uint16_t>& mobIds,
+                   const std::unordered_map<std::string, std::uint16_t>& petalIds,
+                   std::vector<MobGroup>& groups,
+                   std::unordered_map<std::string, std::uint16_t>& groupIds) {
+    MobConfig m;
+    m.id = id;
+    m.name = ctx.text(src, "name", id);
+    m.description = ctx.text(src, "description");
+    m.image = ctx.text(src, "image");
+    m.colorRgba = readColor(ctx, src, "color", m.color);
+
+    m.damage = ctx.range(src, "damage", 0.0, 0.0, kMaxBaseStat);
+    m.health = ctx.range(src, "health", 1.0, 0.0, kMaxBaseStat);
+    // Negative is allowed and means a mob that takes MORE from every hit --
+    // the same axis armour already runs on once a bur has stripped it, so
+    // there is no reason content cannot author a mob that starts there.
+    m.armor = ctx.range(src, "armor", 1.0, -kMaxBaseStat, kMaxBaseStat);
+    m.evasion = ctx.range(src, "evasion", 0.0, 0.0, 1.0);
+    m.size = ctx.range(src, "size", 1.0, 0.0, kMaxSize);
+    m.speed = ctx.speed(src, "speed");
+    m.cooldownMillis = ctx.range(src, "cooldown", 0.0, 0.0, kMaxDurationMillis);
+    m.range = ctx.range(src, "range", 0.0, 0.0, kWorldSize);
+    m.visualScale = ctx.range(src, "visual_scale", 1.0, 0.0, kMaxSize);
+    m.visualOffsetX = ctx.range(src, "visualOffsetX", 0.0, -kMaxMobVisualOffset,
+                                kMaxMobVisualOffset);
+    m.visualOffsetY = ctx.range(src, "visualOffsetY", 0.0, -kMaxMobVisualOffset,
+                                kMaxMobVisualOffset);
+
+    m.ai = parseAi(ctx, ctx.text(src, "ai_type", "neutral"));
+
+    // Before the groups: the array spelling of `groups` takes this as its
+    // weight, so it has to be read first.
+    m.spawnWeight = ctx.range(src, "spawn_weight", 1.0, 0.0, 1000.0);
+    m.minRarity = ctx.rarity(src, "min_rarity");
+    m.replaceChance = parseReplaceChance(ctx, src);
+    if (src.contains("section")) {
+        ctx.warn("still declares `section`, which the 3x3 grid used to index; "
+                 "spawning is by named `groups` now and the field is ignored");
+    }
+    {
+        const auto found = mobIds.find(id);
+        parseMobGroups(ctx, m, found == mobIds.end() ? std::uint16_t{0} : found->second, src,
+                       groups, groupIds);
+    }
+
+    m.npc = parseNpcSpec(ctx, src, petalIds);
+    m.hideRotation = ctx.boolean(src, "hideRotation");
+    m.noEggDrop = ctx.boolean(src, "noEggDrop");
+    m.reversed = ctx.boolean(src, "reversed");
+    m.noMobCollision = ctx.boolean(src, "no_mob_collision");
+    m.hole = ctx.boolean(src, "hole");
+    m.intangible = ctx.boolean(src, "intangible");
+    m.colony = ctx.boolean(src, "colony");
+    // Untouchable means by other mobs too, whether or not the entry says so
+    // twice.
+    if (m.intangible) m.noMobCollision = true;
+    m.stingerShooter = ctx.boolean(src, "stinger");
+    {
+        const std::string bee = ctx.text(src, "bee_ai");
+        if (bee == "idle" || bee == "always") {
+            m.beeFlight = true;
+            m.beeChaseWeave = bee == "always";
+        } else if (!bee.empty()) {
+            ctx.warn("bee_ai '" + bee + "' is neither \"idle\" nor \"always\"; the mob hops");
+        }
+    }
+    m.cruiseSpeed = ctx.speed(src, "cruiseSpeed");
+    m.chaseSpeed = ctx.speed(src, "chase_speed");
+    m.crabStrafe = ctx.boolean(src, "crab_ai");
+    m.centipedeCrawl = ctx.boolean(src, "centipede_ai");
+    m.diggerAi = ctx.boolean(src, "digger_ai");
+    m.hornetStrafe = ctx.boolean(src, "hornet_ai");
+    m.gardnMotion = ctx.boolean(src, "gardn_ai");
+
+    // Rules the reference states by NAME rather than in the JSON. They are
+    // resolved once here so no spawner, no combat path, no summon and no
+    // despawn sweep has to repeat a string compare per tick.
+    m.neverAmbient = id == "target_dummy";
+    m.glitchInfecting = id == "glitch" || id == "glitch_flower";
+    if (id == "digger") {
+        m.petHealthScale = 0.5;
+        m.petDamageScale = 0.5;
+    }
+    if (id == "centipede" || id == "desert_centipede" || id == "evil_centipede" ||
+        id == "leech") {
+        m.segmentBodyIndex = ctx.link(mobIds, id + "_body", "body segment");
+        m.segmentCount = m.segmentBodyIndex != kInvalidIndex ? kCentipedeSegmentCount : 0;
+    }
+    // A leech is one animal wearing ten bodies: the segments share a health
+    // pool, so hitting the tail hurts the head and the whole chain dies
+    // together. A centipede is the opposite and keeps a pool per bead.
+    m.sharedSegmentHealth = id == "leech" || id == "leech_body";
+    // gardn's centipedes are bodies like any other; see MobConfig::gardnChain.
+    // The beads carry it too: they are what collides and what gets pushed.
+    for (const char* centipede : {"centipede", "desert_centipede", "evil_centipede"}) {
+        if (id == centipede || id == std::string(centipede) + "_body") m.gardnChain = true;
+    }
+
+    if (src.contains("random_size")) {
+        const Json& jitter = src["random_size"];
+        if (!jitter.isArray() || jitter.size() != 2 ||
+            !jitter[std::size_t(0)].isNumber() || !jitter[std::size_t(1)].isNumber()) {
+            ctx.warn("random_size is not a [min, max] pair; the mob spawns at its base size");
+        } else {
+            double lo = jitter[std::size_t(0)].asDouble();
+            double hi = jitter[std::size_t(1)].asDouble();
+            if (!std::isfinite(lo) || !std::isfinite(hi) || lo <= 0.0 || hi <= 0.0) {
+                ctx.warn("random_size [" + num(lo) + ", " + num(hi) + "] is not a usable range; ignored");
+            } else {
+                if (lo > hi) std::swap(lo, hi);
+                m.randomSizeMin = clamp(lo, kMinSize, kMaxSize);
+                m.randomSizeMax = clamp(hi, kMinSize, kMaxSize);
+            }
+        }
+    }
+
+    const auto readMobList = [&](const Json& list, std::vector<std::uint16_t>& out) {
+        for (const Json& entry : list.items()) {
+            if (!entry.isString()) {
+                ctx.warn(std::string("a spawn list holds ") + typeName(entry) + " where a mob id belongs; ignored");
+                continue;
+            }
+            const std::uint16_t index = ctx.link(mobIds, entry.asString(), "spawned mob");
+            if (index != kInvalidIndex) out.push_back(index);
+        }
+    };
+
+    if (src.contains("initial_spawns")) {
+        const Json& list = src["initial_spawns"];
+        if (!list.isArray()) ctx.warn(std::string("initial_spawns is ") + typeName(list) + ", not a list; ignored");
+        else readMobList(list, m.initialSpawns);
+    }
+    if (src.contains("spawn_waves")) {
+        const Json& waves = src["spawn_waves"];
+        if (!waves.isArray()) {
+            ctx.warn(std::string("spawn_waves is ") + typeName(waves) + ", not a list; ignored");
+        } else {
+            for (const Json& wave : waves.items()) {
+                if (!wave.isArray()) {
+                    ctx.warn(std::string("a spawn wave is ") + typeName(wave) + ", not a list; ignored");
+                    continue;
+                }
+                std::vector<std::uint16_t> members;
+                readMobList(wave, members);
+                m.spawnWaves.push_back(std::move(members));
+            }
+        }
+    }
+
+    m.projectile = parseProjectile(ctx, src, &petalIds);
+    m.petalRing = parsePetalRing(ctx, src, petalIds);
+    m.periodicSpawn = parsePeriodicSpawn(ctx, src, mobIds);
+    m.deathSpawn = parseDeathSpawn(ctx, src, mobIds);
+    m.remainsMillis = ctx.range(src, "remains_ms", 0.0, 0.0, kMaxDurationMillis);
+    m.undeadMillis = ctx.range(src, "undead_ms", 0.0, 0.0, kMaxDurationMillis);
+    m.undeadCommonMillis =
+        ctx.range(src, "undead_common_ms", m.undeadMillis / 8.0, 0.0, kMaxDurationMillis);
+    if (src.contains("undead_common_ms") && !(m.undeadMillis > 0.0)) {
+        ctx.warn("undead_common_ms without undead_ms; the mob does not rise");
+    }
+    m.ambush = parseAmbush(ctx, src, mobIds);
+    m.dungeon = parseDungeon(ctx, src, mobIds);
+    m.lightning = parseLightning(ctx, src);
+    m.web = parseWeb(ctx, src);
+    m.dropProjectile = parseDropProjectile(ctx, src, petalIds);
+    m.recover = parseRecover(ctx, src);
+    m.jump = parseJump(ctx, src);
+
+    // The JSON states poison as damage per millisecond; the simulation thinks
+    // in seconds, and converting once here keeps that unit out of every
+    // affliction site.
+    m.poisonPerSecond = ctx.range(src, "poison", 0.0, 0.0, kMaxPoisonPerMillis) * 1000.0;
+    m.poisonDurationMillis = ctx.range(src, "poisonDuration", 0.0, 0.0, kMaxDurationMillis);
+
+    m.emissive = ctx.boolean(src, "emissive");
+    m.lightColorRgba = readColor(ctx, src, "light_color", m.lightColor);
+    m.lightRadius = ctx.range(src, "light_radius", 0.0, 0.0, kWorldSize);
+
+    m.xp = parseXp(ctx, src);
+    return m;
+}
+
+/// `"rarityFills": {"super": "#8AFF69"}` -- see PetalConfig::rarityFills. An
+/// entry naming no tier or no colour is dropped with a warning rather than
+/// guessed at: repainting a petal the wrong colour is worse than not at all.
+std::vector<PetalConfig::RarityFill> parseRarityFills(Ctx& ctx, const Json& src) {
+    std::vector<PetalConfig::RarityFill> fills;
+    if (!src.contains("rarityFills")) return fills;
+    const Json& node = src["rarityFills"];
+    if (!node.isObject()) {
+        ctx.warn(std::string("rarityFills is ") + typeName(node) + "; ignored");
+        return fills;
+    }
+    for (const std::string& key : node.keys()) {
+        Rarity tier = Rarity::Common;
+        if (!tryParseRarity(key, tier)) {
+            ctx.warn("rarityFills names an unknown rarity '" + key + "'; ignored");
+            continue;
+        }
+        PetalConfig::RarityFill fill;
+        fill.from = tier;
+        fill.fill = node[key].asString();
+        if (!parseColor(fill.fill, fill.fillRgba)) {
+            ctx.warn("rarityFills." + key + " '" + fill.fill + "' is not a colour; ignored");
+            continue;
+        }
+        fills.push_back(std::move(fill));
+    }
+    std::sort(fills.begin(), fills.end(),
+              [](const auto& a, const auto& b) { return a.from < b.from; });
+    return fills;
+}
+
+PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
+                       const std::unordered_map<std::string, std::uint16_t>& mobIds) {
+    PetalConfig p;
+    p.id = id;
+    p.name = ctx.text(src, "name", id);
+    p.description = ctx.text(src, "description");
+    p.image = ctx.text(src, "image");
+    p.colorRgba = readColor(ctx, src, "color", p.color);
+    p.rarityFills = parseRarityFills(ctx, src);
+
+    // What one costs in the shop at the COMMON tier; shopPrice() runs the
+    // rarity ladder up from here. Mandatory, for the reason the mob XP table
+    // is: the price used to live in a hand-kept table in shop.h that named
+    // thirty of the eighty-four petals, and the other fifty-four all cost the
+    // same ten stars -- not because anyone priced them at ten, but because
+    // that was what a missing entry cost. A petal nobody has priced should
+    // stop the load, not quietly become cheap.
+    p.price = ctx.required(src, "price", 0.0, kMaxBaseStat);
+
+    p.damage = ctx.range(src, "damage", 0.0, -kMaxBaseStat, kMaxBaseStat);
+
+    // A missing or null health is not a petal with no hit points -- ten
+    // entries use it to mean "this thing has no health pool at all" (pure
+    // modifiers, projectile emitters). Zeroing it would break them on the
+    // first tick, so the absence becomes a flag instead of a number.
+    const bool hasHealthPool = src.contains("health") && src["health"].isNumber();
+    if (src.contains("health") && !src["health"].isNumber()) {
+        ctx.warn(std::string("health is ") + typeName(src["health"]) +
+                 "; treating the petal as unbreakable");
+    }
+    p.breakable = hasHealthPool;
+    p.health = hasHealthPool ? ctx.range(src, "health", 1.0, 0.0, kMaxBaseStat) : 0.0;
+
+    p.size = ctx.range(src, "size", 1.0, kMinSize, kMaxSize);
+    // Same key and same bounds as a mob's: a petal's artwork can be grown or
+    // shrunk without moving the body the server damages from.
+    p.visualScale = ctx.range(src, "visual_scale", 1.0, 0.0, kMaxSize);
+    p.cooldownMillis = ctx.range(src, "cooldown", kDefaultPetalReloadMillis, 0.0, kMaxCooldownMillis);
+    p.count = ctx.integer(src, "count", 1, 0, 64);
+    p.isAdminPetal = ctx.boolean(src, "isAdminPetal");
+    p.minRarity = ctx.rarity(src, "minRarity");
+    p.tradable = ctx.boolean(src, "tradable", true);
+
+    p.modifiers = parseModifiers(ctx, src);
+
+    p.knockback = ctx.range(src, "knockback", p.knockback, -kMaxBaseStat, kMaxBaseStat);
+    p.projectile = parseProjectile(ctx, src, nullptr, &mobIds);
+    p.range = ctx.range(src, "range", 0.0, 0.0, kWorldSize);
+    p.bodyDamage = ctx.range(src, "bodyDamage", 0.0, 0.0, kMaxBaseStat);
+    p.armorReduction = ctx.range(src, "armorReduction", 0.0, 0.0, kMaxBaseStat);
+    p.armorPerStack = ctx.range(src, "armorPerStack", 0.0, 0.0, kMaxBaseStat);
+    p.petalArmor = ctx.range(src, "petalArmor", 0.0, 0.0, kMaxBaseStat);
+    p.clawCritDamage = ctx.range(src, "clawCritDamage", 0.0, 0.0, kMaxBaseStat);
+    // A FRACTION, not a percentage: 0.35 heals a third of the hit. Above one
+    // is legal -- gardn's mythic fang heals three times what it deals -- and
+    // the bound only keeps a typo from reading as a full heal on every graze.
+    p.lifesteal = ctx.range(src, "lifesteal", 0.0, 0.0, 100.0);
+    p.equipFlags = parseEquipFlags(ctx.text(src, "equipFlags"));
+    // The lightning cutter carries a second bit so the client can tell the two
+    // blades apart and paint the cyan one. It is derived from the id rather
+    // than written in petals.json because that file was shared verbatim with
+    // the TypeScript build, whose loader THREW on an equipFlags name its own
+    // EquipmentFlags enum did not have; the rule has stayed in code since.
+    if (p.id == "lightning_cutter") p.equipFlags |= EquipLightningCutter;
+
+    p.poisonPerSecond = ctx.range(src, "poison", 0.0, 0.0, kMaxPoisonPerMillis) * 1000.0;
+    p.poisonDurationMillis = ctx.range(src, "poisonDuration", 0.0, 0.0, kMaxDurationMillis);
+    p.noHealDurationMillis = ctx.range(src, "noHealDuration", 0.0, 0.0, kMaxDurationMillis);
+
+    p.speed = ctx.range(src, "speed", 0.0, -kMaxSpeedUnits, kMaxSpeedUnits);
+    p.noPhysics = ctx.boolean(src, "noPhysics");
+    p.defendOnly = ctx.boolean(src, "defendOnly");
+    p.ignoresMobs = ctx.boolean(src, "ignoresMobs");
+    p.clumped = ctx.boolean(src, "clumped");
+    p.clumpFacesInward = ctx.boolean(src, "clumpFacesInward");
+    p.clumpSpacing = ctx.range(src, "clumpSpacing", 1.0, 0.0, kMaxSize);
+    p.clumpOutsideRing = ctx.boolean(src, "clumpOutsideRing");
+    p.independentHealth = ctx.boolean(src, "independentHealth");
+    p.wallCollide = ctx.boolean(src, "wallCollide");
+    p.emissive = ctx.boolean(src, "emissive");
+
+    p.burstHeal = ctx.range(src, "burstHeal", 0.0, 0.0, kMaxBaseStat);
+    p.burstHealChargeMillis = ctx.range(src, "burstHealChargeMs", 0.0, 0.0, kMaxDurationMillis);
+    p.passiveHeal = ctx.range(src, "passiveHeal", 0.0, 0.0, kMaxBaseStat);
+    p.passiveHealDefendOnly = ctx.boolean(src, "passiveHealDefendOnly");
+    p.burstShield = ctx.range(src, "burstShield", 0.0, 0.0, kMaxBaseStat);
+
+    p.baseMaxMana = ctx.range(src, "baseMaxMana", 0.0, 0.0, kMaxBaseStat);
+    p.burstMana = ctx.range(src, "burstMana", 0.0, 0.0, kMaxBaseStat);
+    p.burstManaChargeMillis = ctx.range(src, "burstManaChargeMs", 0.0, 0.0, kMaxDurationMillis);
+    p.passiveMana = ctx.range(src, "passiveMana", 0.0, 0.0, kMaxBaseStat);
+    p.requiredMana = ctx.range(src, "requiredMana", 0.0, 0.0, kMaxBaseStat);
+    p.lightningDamage = ctx.boolean(src, "lightningDamage");
+
+    if (src.contains("fixedDirection")) {
+        p.hasFixedDirection = true;
+        p.fixedDirection = wrapAngle(ctx.range(src, "fixedDirection", 0.0, -1e4, 1e4));
+    }
+
+    p.visualOffsetX = ctx.range(src, "visualOffsetX", 0.0, -kMaxVisualOffset, kMaxVisualOffset);
+    if (src.contains("visualOffsetY")) {
+        const Json& node = src["visualOffsetY"];
+        const double raw = node.isNumber() ? node.asDouble() : 0.0;
+        if (!node.isNumber()) {
+            ctx.warn(std::string("visualOffsetY is ") + typeName(node) + "; ignored");
+        } else if (!std::isfinite(raw) || std::fabs(raw) > kMaxVisualOffset) {
+            // -1e100 is not an offset, it is a way of shoving a sprite off the
+            // world to hide it. Say what it meant; propagating the number
+            // would turn every transform it touches into an infinity.
+            ctx.warn("visualOffsetY " + num(raw) +
+                     " is not a drawable offset; hiding the petal instead");
+            p.hidden = true;
+        } else {
+            p.visualOffsetY = raw;
+        }
+    }
+
+    p.damageIntervalMillis = ctx.range(src, "damageCooldown", kPetalHitIntervalMillis,
+                                       0.0, kMaxDurationMillis);
+    p.cameraZoom = ctx.range(src, "cameraZoom", 1.0, 0.1, 10.0);
+    p.lightRadius = ctx.range(src, "lightRadius", 0.0, 0.0, kWorldSize);
+    p.lightColorRgba = readColor(ctx, src, "lightColor", p.lightColor);
+
+    p.petMobId = ctx.text(src, "petMobType");
+    p.petMobIndex = ctx.link(mobIds, p.petMobId, "petMobType");
+    p.petMobRarity = ctx.rarity(src, "petMobRarity");
+    p.petCount = ctx.integer(src, "petCount", 1, 1, 64);
+    p.petLifetimeMillis = ctx.range(src, "petLifetimeMs", 0.0, 0.0, kMaxDurationMillis);
+    p.petManaCost = ctx.range(src, "petManaCost", 0.0, 0.0, kMaxBaseStat);
+
+    p.slowFactor = ctx.range(src, "slowFactor", 1.0, 0.0, 1.0);
+    p.slowDurationMillis = ctx.range(src, "slowDuration", 0.0, 0.0, kMaxDurationMillis);
+
+    p.spongeDamageDurationMillis = ctx.range(src, "spongeDamageDuration", 0.0, 0.0, kMaxDurationMillis);
+    // A weave needs BOTH numbers to mean anything: an amplitude at no frequency
+    // is a shot held permanently off-axis, and a frequency at no amplitude is
+    // a straight line with a phase nobody reads. Either one missing leaves the
+    // petal flying straight rather than half-curving.
+    p.waveAmplitude = ctx.range(src, "waveAmplitude", 0.0, 0.0, kMaxWaveAmplitude);
+    p.waveFrequency = ctx.range(src, "waveFrequency", 0.0, 0.0, kMaxWaveFrequency);
+    if (p.waveAmplitude <= 0.0 || p.waveFrequency <= 0.0) {
+        p.waveAmplitude = 0.0;
+        p.waveFrequency = 0.0;
+    }
+    p.attractionForce = ctx.range(src, "attractionForce", 0.0, -kMaxBaseStat, kMaxBaseStat);
+    p.webRadius = ctx.range(src, "webRadius", 0.0, 0.0, kWorldSize);
+    p.radiation = parseRadiation(ctx, src);
+    return p;
+}
+
+/// The object keys whose value is an object, twice over.
+///
+/// `sorted` is what indices are assigned from, so that a server and a client
+/// reading the same file necessarily agree on what entry 17 is. `source` is
+/// the file's own key order, which is what the browser iterates when it lays
+/// out a catalogue -- `Object.keys(PETAL_CONFIG)` is insertion order, and a
+/// shop sorted alphabetically is a different shop.
+struct KeySet {
+    std::vector<std::string> sorted;
+    std::vector<std::string> source;
+};
+
+KeySet usableKeys(const Json& doc, const char* what, Ctx& ctx) {
+    KeySet keys;
+    keys.source.reserve(doc.keys().size());
+    for (const std::string& key : doc.keys()) {
+        if (doc[key].isObject()) {
+            keys.source.push_back(key);
+        } else {
+            ctx.subject = std::string(what) + " '" + key + "'";
+            ctx.warn(std::string("is ") + typeName(doc[key]) + ", not an object; skipped");
+        }
+    }
+    keys.sorted = keys.source;
+    std::sort(keys.sorted.begin(), keys.sorted.end());
+    return keys;
+}
+
+bool endsWith(const std::string& text, const char* suffix) {
+    const std::size_t n = std::strlen(suffix);
+    return text.size() >= n && text.compare(text.size() - n, n, suffix) == 0;
+}
+
+/// The browser's darkenColor(hex, 0.7) (src/petals.ts:757-775): each channel
+/// floored to 70%, re-emitted as `#rrggbb`. Only ever fed a mob's own colour,
+/// which every entry in mobs.json writes as six hex digits; anything else
+/// keeps its own value rather than becoming the string "NaN" as the reference
+/// would.
+std::string darkenHex(const std::string& hex) {
+    if (hex.size() != 7 || hex[0] != '#') return hex;
+    char out[8] = "#000000";
+    for (int i = 0; i < 3; ++i) {
+        const int hi = hexDigit(hex[1 + i * 2]);
+        const int lo = hexDigit(hex[2 + i * 2]);
+        if (hi < 0 || lo < 0) return hex;
+        const int channel = static_cast<int>((hi * 16 + lo) * 0.7);
+        static const char kDigits[] = "0123456789abcdef";
+        out[1 + i * 2] = kDigits[(channel >> 4) & 0xF];
+        out[2 + i * 2] = kDigits[channel & 0xF];
+    }
+    return std::string(out);
+}
+
+/// Stars per point of the mob's common-tier XP, and the floor under that.
+///
+/// Ten and ten, so the ordinary mob -- common XP of 1 -- still hatches from a
+/// ten-star egg, which is what every egg cost when eggs fell through to the
+/// shop's default price. A mob worth more than that costs more; a mob worth
+/// nothing at all still does not hand out free pets.
+inline constexpr double kEggStarsPerXp = 10.0;
+inline constexpr double kMinEggPrice = 10.0;
+
+/// One synthesised `<mob>_egg`, exactly as src/petals.ts:784-820 builds it.
+///
+/// The eggs are not in petals.json and never have been: the TypeScript build
+/// generated one per non-pet mob at import time, and every surface that lists
+/// petals -- the shop, the gallery, the drop tables, the crafting grid --
+/// treats them as ordinary entries. Generating them here rather than editing
+/// the JSON is what kept that build and this one reading one file.
+PetalConfig eggPetal(const std::string& mobId, const MobConfig& mob,
+                     const std::unordered_map<std::string, std::uint16_t>& mobIds) {
+    PetalConfig p;
+    p.id = mobId + "_egg";
+    p.name = mob.name + " Egg";
+    p.description = "A petal that spawns a " + lowerCase(mob.name) + " pet";
+    p.color = "#000000";
+    p.colorRgba = 0x000000FFu;
+    p.image = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" "
+              "viewBox=\"0 0 32 32\" fill=\"none\">\n<circle r=\"13\" cx=\"16\" cy=\"16\" fill=\"" +
+              mob.color + "\" stroke=\"" + darkenHex(mob.color) + "\" stroke-width=\"4\"/>\n</svg>";
+    p.damage = 10.0;
+    p.health = 10.0;
+    p.size = 1.0;
+    p.cooldownMillis = 5000.0;
+    p.count = 1;
+    // The one price nobody can write down, because the petal itself is not
+    // written down -- so it is derived from what the mob is WORTH. The mob's
+    // COMMON tier is the one to read: a base price is a common-tier price and
+    // the shop's ladder scales it from there, so an egg tracks its mob up the
+    // ladder instead of being flat at ten stars the way every egg used to be.
+    const double worth = mob.xp[static_cast<std::size_t>(Rarity::Common)];
+    p.price = std::max(kMinEggPrice, kEggStarsPerXp * worth);
+    // A pet variant is preferred where the mob has one -- the sun does -- and
+    // otherwise the egg hatches the mob itself.
+    const std::string petId = mobId + "_pet";
+    p.petMobId = mobIds.count(petId) != 0 ? petId : mobId;
+    const auto it = mobIds.find(p.petMobId);
+    p.petMobIndex = it == mobIds.end() ? kInvalidIndex : it->second;
+    p.petMobRarity = Rarity::Common;
+    return p;
+}
+
+/// Multiplicative modifier scaled for a tier.
+///
+/// The bonus is the distance from 1.0, so a +10% at common is +40% at unique.
+/// A multiplier at or below zero is a sign flip or an off switch and is left
+/// alone -- yin_yang reverses the ring with -1, and scaling that would spin
+/// the ring at -4x by unique.
+double scaledMultiplier(double value, double scale) {
+    if (value <= 0.0) return value;
+    return 1.0 + (value - 1.0) * scale;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// ContentRegistry
+// ---------------------------------------------------------------------------
+
+bool ContentRegistry::load(const std::string& dataDir, std::string& errorOut) {
+    if (!loadFiles(joinPath(dataDir, "mobs.json"), joinPath(dataDir, "petals.json"), errorOut)) {
+        return false;
+    }
+    // mob_drops.json is not parsed here -- the server's loot system and the
+    // client's gallery each read it for themselves -- but BOTH sides read it,
+    // so its bytes belong in the hash: a client holding an older drop table
+    // would otherwise shake hands and quote drop chances the server no longer
+    // rolls. Folded after petals.json and before the maps, always in that
+    // order; a directory without the file folds nothing, which still differs
+    // from one that has it.
+    std::string dropsText;
+    if (readFile(joinPath(dataDir, "mob_drops.json"), dropsText)) {
+        hash_ = net::contentHash(dropsText, hash_);
+    }
+    foldMapsIntoHash(dataDir);
+    return true;
+}
+
+void ContentRegistry::foldMapsIntoHash(const std::string& dataDir) {
+    // The manifest's own bytes first -- its ORDER is the realm order -- then
+    // every map it names, in that order. Both sides stage the same files
+    // flat beside the manifest (CMake copies them by basename), so the same
+    // bytes are hashed on the client and the server. A map the manifest
+    // names but the directory lacks folds an empty string: still a
+    // difference from a directory that has it, which is the point.
+    std::string manifestText;
+    if (!readFile(joinPath(dataDir, "maps.json"), manifestText)) return;
+    hash_ = net::contentHash(manifestText, hash_);
+    Json manifest;
+    std::string parseError;
+    if (!Json::parse(manifestText, manifest, parseError) || !manifest.contains("maps")) return;
+    for (const Json& entry : manifest["maps"].items()) {
+        const std::string file = entry.isObject() ? entry["file"].asString() : entry.asString();
+        if (file.empty()) continue;
+        std::string mapText;
+        readFile(joinPath(dataDir, file.c_str()), mapText);
+        hash_ = net::contentHash(mapText, hash_);
+        // AND THE TILESETS THE MAP NAMES. A .tmj references its palette
+        // externally, and everything a body actually collides with -- every
+        // collision shape the Tile Collision Editor writes, and the `water` tag
+        // that says which of them are water -- lives in that file rather than
+        // in the map. Hashing the map alone let a server and a client hold
+        // DIFFERENT GEOMETRY and shake hands, which is precisely what the
+        // client's own collision leans on this hash to rule out: editing a
+        // wall's shape in Tiled touches the .tsj and nothing else.
+        //
+        // By BASENAME beside the manifest, because that is how both sides stage
+        // them (cpp/CMakeLists.txt reads the same references out of the maps).
+        // A tileset named by two maps is folded once per naming, on both sides
+        // alike, so the order is still a function of the manifest.
+        Json map;
+        std::string mapError;
+        if (!Json::parse(mapText, map, mapError)) continue;
+        for (const Json& tileset : map["tilesets"].items()) {
+            const std::string source = tileset["source"].asString();
+            if (source.empty()) continue;   // an embedded palette is in the map's own bytes
+            std::string tilesetText;
+            readFile(joinPath(dataDir, fileNameOf(source).c_str()), tilesetText);
+            hash_ = net::contentHash(tilesetText, hash_);
+        }
+    }
+}
+
+namespace {
+/// What petal `c` fields at `r`. Defined beside petalStats(), which reads it
+/// out of the table loadFiles() fills with it.
+PetalStats buildPetalStats(const PetalConfig& c, Rarity r);
+} // namespace
+
+bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& petalsPath,
+                                std::string& errorOut) {
+    // Everything is built into locals and only committed at the end: a failed
+    // reload has to leave a running server with the content it already had.
+    std::string mobsText, petalsText;
+    if (!readFile(mobsPath, mobsText)) {
+        errorOut = "cannot read " + mobsPath;
+        return false;
+    }
+    if (!readFile(petalsPath, petalsText)) {
+        errorOut = "cannot read " + petalsPath;
+        return false;
+    }
+
+    Json mobsDoc, petalsDoc;
+    std::string parseError;
+    if (!Json::parse(mobsText, mobsDoc, parseError)) {
+        errorOut = mobsPath + ": " + parseError;
+        return false;
+    }
+    if (!Json::parse(petalsText, petalsDoc, parseError)) {
+        errorOut = petalsPath + ": " + parseError;
+        return false;
+    }
+    if (!mobsDoc.isObject()) { errorOut = mobsPath + ": top level is not an object"; return false; }
+    if (!petalsDoc.isObject()) { errorOut = petalsPath + ": top level is not an object"; return false; }
+
+    std::vector<std::string> warnings;
+    std::vector<std::string> errors;
+    Ctx ctx{warnings, errors, {}};
+
+    // Read through const references: Json's non-const operator[] INSERTS, and
+    // a missing key would otherwise grow the document while it is scanned.
+    const Json& mobsRoot = mobsDoc;
+    const Json& petalsRoot = petalsDoc;
+
+    const KeySet mobKeys = usableKeys(mobsRoot, "mob", ctx);
+    const KeySet petalKeys = usableKeys(petalsRoot, "petal", ctx);
+    if (mobKeys.sorted.empty()) { errorOut = mobsPath + ": no mob definitions"; return false; }
+    if (petalKeys.sorted.empty()) { errorOut = petalsPath + ": no petal definitions"; return false; }
+
+    // florrclone only ships hand-written hatch petals (Ant Egg, Beetle Egg,
+    // Square, Stick…). The reference synthesised a `<mob>_egg` for every mob;
+    // that flooded the inventory with C++/Assembler/… eggs florrclone never
+    // has, so this build does not generate them.
+    std::vector<std::string> eggMobIds;
+
+    // One index space over the file's petals and the generated eggs together,
+    // still assigned in sorted order so that both ends of the wire agree.
+    std::vector<std::string> petalIdList = petalKeys.sorted;
+    petalIdList.reserve(petalIdList.size() + eggMobIds.size());
+    for (const std::string& mobId : eggMobIds) petalIdList.push_back(mobId + "_egg");
+    std::sort(petalIdList.begin(), petalIdList.end());
+
+    if (mobKeys.sorted.size() > kInvalidIndex || petalIdList.size() > kInvalidIndex) {
+        errorOut = "content has more entries than an index can name";
+        return false;
+    }
+
+    // Ids are mapped before anything is parsed so that cross-references
+    // (a nest's escorts, a petal's pet, a mob's ammunition) resolve in one
+    // pass instead of needing a fixup afterwards.
+    std::unordered_map<std::string, std::uint16_t> mobIds, petalIds;
+    for (std::size_t i = 0; i < mobKeys.sorted.size(); ++i) {
+        mobIds[mobKeys.sorted[i]] = static_cast<std::uint16_t>(i);
+    }
+    for (std::size_t i = 0; i < petalIdList.size(); ++i) {
+        petalIds[petalIdList[i]] = static_cast<std::uint16_t>(i);
+    }
+
+    std::vector<MobConfig> mobs;
+    std::vector<PetalConfig> petals;
+    std::vector<MobGroup> mobGroups;
+    std::unordered_map<std::string, std::uint16_t> mobGroupIds;
+    mobs.reserve(mobKeys.sorted.size());
+    petals.reserve(petalIdList.size());
+
+    // Mobs are walked in SORTED key order, so the group table's order -- first
+    // mention wins -- is a function of the file's contents rather than of its
+    // key order. Two builds of the same data therefore number the groups
+    // identically, which matters because a group index is what a spawn band's
+    // resolved distribution holds.
+    for (const std::string& key : mobKeys.sorted) {
+        ctx.subject = "mob '" + key + "'";
+        mobs.push_back(parseMob(ctx, key, mobsRoot[key], mobIds, petalIds, mobGroups, mobGroupIds));
+    }
+    // Only after the loop: a head sorts before its `_body`, so the body's
+    // config does not exist yet when the head's link is resolved.
+    for (const MobConfig& head : mobs) {
+        if (head.segmentBodyIndex < mobs.size()) mobs[head.segmentBodyIndex].chainBody = true;
+    }
+    for (const std::string& key : petalIdList) {
+        if (std::binary_search(petalKeys.sorted.begin(), petalKeys.sorted.end(), key)) {
+            ctx.subject = "petal '" + key + "'";
+            petals.push_back(parsePetal(ctx, key, petalsRoot[key], mobIds));
+            continue;
+        }
+        // Generated: the id is `<mob>_egg` and the mob is one this build has,
+        // because that is the only way the id got onto the list.
+        const std::string mobId = key.substr(0, key.size() - 4);
+        petals.push_back(eggPetal(mobId, mobs[mobIds[mobId]], mobIds));
+    }
+
+    // Catalogue order: the file's own keys first, then the eggs in mob-file
+    // order, because that is where the browser appends them to
+    // BASE_PETAL_CONFIGS and therefore where Object.keys() reports them.
+    std::vector<std::uint16_t> petalOrder;
+    petalOrder.reserve(petalIdList.size());
+    for (const std::string& key : petalKeys.source) petalOrder.push_back(petalIds[key]);
+    for (const std::string& mobId : eggMobIds) petalOrder.push_back(petalIds[mobId + "_egg"]);
+
+    // A mandatory field nobody supplied is not something to load around: the
+    // whole load is refused and the registry keeps what it already had. A
+    // handful of the complaints go into the message and the rest are counted,
+    // because a file saved without prices produces one of these per petal and
+    // the point is to name the problem, not to print it eighty-four times.
+    if (!errors.empty()) {
+        constexpr std::size_t kMaxReported = 5;
+        const std::size_t shown = std::min(errors.size(), kMaxReported);
+        errorOut.clear();
+        for (std::size_t i = 0; i < shown; ++i) {
+            if (i != 0) errorOut += "; ";
+            errorOut += errors[i];
+        }
+        if (errors.size() > shown) {
+            errorOut += " (and " + std::to_string(errors.size() - shown) + " more)";
+        }
+        return false;
+    }
+
+    std::uint32_t hash = net::contentHash(mobsText);
+    hash = net::contentHash(petalsText, hash);
+
+    mobs_ = std::move(mobs);
+    petals_ = std::move(petals);
+    mobGroups_ = std::move(mobGroups);
+    mobGroupIds_ = std::move(mobGroupIds);
+    mobIds_ = std::move(mobIds);
+    petalIds_ = std::move(petalIds);
+    petalOrder_ = std::move(petalOrder);
+
+    standIns_.clear();
+    for (std::size_t i = 0; i < mobs_.size(); ++i) {
+        if (mobs_[i].replacesMobs()) standIns_.push_back(static_cast<std::uint16_t>(i));
+    }
+
+    // The magic conversion table, built once here rather than looked up per
+    // drop: a mob dying is a hot path and this is a straight index.
+    magicForm_.assign(petals_.size(), kInvalidIndex);
+    magicSource_.assign(petals_.size(), kInvalidIndex);
+    {
+        const std::string prefix = "magic_";
+        for (std::size_t i = 0; i < petals_.size(); ++i) {
+            const std::string& id = petals_[i].id;
+            if (id.compare(0, prefix.size(), prefix) != 0) continue;
+            // See ContentRegistry::magicFormOf for why the orb is the one
+            // pairing that is spelled out instead of derived.
+            const std::string base = id == "magic_orb" ? "rose" : id.substr(prefix.size());
+            const auto found = petalIds_.find(base);
+            if (found == petalIds_.end()) continue;
+            magicForm_[found->second] = static_cast<std::uint16_t>(i);
+            magicSource_[i] = found->second;
+        }
+    }
+    // Likewise every petal's stats at every tier: see petalStats().
+    petalStats_.resize(petals_.size());
+    for (std::size_t i = 0; i < petals_.size(); ++i) {
+        for (int t = 0; t < kRarityCount; ++t) {
+            petalStats_[i][static_cast<std::size_t>(t)] =
+                buildPetalStats(petals_[i], static_cast<Rarity>(t));
+        }
+    }
+    warnings_ = std::move(warnings);
+    hash_ = hash;
+    errorOut.clear();
+    return true;
+}
+
+std::uint16_t ContentRegistry::mobGroupIndex(const std::string& id) const {
+    const auto found = mobGroupIds_.find(id);
+    return found == mobGroupIds_.end() ? kInvalidIndex : found->second;
+}
+
+const MobGroup& ContentRegistry::mobGroup(std::uint16_t index) const {
+    static const MobGroup kMissing{"<unknown>", {}};
+    if (index >= mobGroups_.size()) return kMissing;
+    return mobGroups_[index];
+}
+
+const MobConfig& ContentRegistry::mob(std::uint16_t index) const {
+    static const MobConfig kMissing = [] {
+        MobConfig m;
+        m.id = "<unknown>";
+        m.name = "Unknown";
+        return m;
+    }();
+    return index < mobs_.size() ? mobs_[index] : kMissing;
+}
+
+const PetalConfig& ContentRegistry::petal(std::uint16_t index) const {
+    static const PetalConfig kMissing = [] {
+        PetalConfig p;
+        p.id = "<unknown>";
+        p.name = "Unknown";
+        p.breakable = false;
+        return p;
+    }();
+    return index < petals_.size() ? petals_[index] : kMissing;
+}
+
+std::uint16_t ContentRegistry::mobIndex(const std::string& id) const {
+    auto it = mobIds_.find(id);
+    return it == mobIds_.end() ? kInvalidIndex : it->second;
+}
+
+std::uint16_t ContentRegistry::petalIndex(const std::string& id) const {
+    auto it = petalIds_.find(id);
+    return it == petalIds_.end() ? kInvalidIndex : it->second;
+}
+
+MobStats ContentRegistry::mobStats(std::uint16_t index, Rarity r) const {
+    const MobConfig& c = mob(index);
+    // No mob is universal; one asked for anyway is an apex.
+    const int tier = ladderIndex(clampRarity(rarityIndex(r)));
+    const std::size_t t = static_cast<std::size_t>(tier);
+
+    MobStats s;
+    // `size` already carries the rarity step, so mass -- gardn's, off the
+    // radius -- gets the rarity growth for free and a mythic shrugs off more
+    // than a bee does, without becoming a wall.
+    const double scaledSize = c.size * kMobSizeScale[t];
+    s.health = c.health * kMobHealthScale[t];
+    s.damage = c.damage * kMobDamageScale[t];
+    s.armor = c.armor * kMobArmorScale[t];
+    s.evasion = c.evasion;
+    s.radius = scaledSize * kMobBaseRadius;
+    s.mass = bodyMassForRadius(s.radius) * (c.speed == 0.0 ? kAnchoredMassScale : 1.0);
+    s.speed = c.speed * kMobSpeedUnitsPerSecond;
+    // gardn chases at its own factor of PLAYER_ACCELERATION, apart from the
+    // speed the mob drifts at -- every neutral at 0.975, a scorpion at 1.2 --
+    // so the pursuit speed is its own field (`chase_speed`). Folded into
+    // `speed`, an unprovoked bee would cruise at nearly a flower's pace.
+    s.chaseSpeed = c.chaseSpeed > 0.0 ? c.chaseSpeed * kMobSpeedUnitsPerSecond : s.speed;
+    s.cruiseSpeed = c.cruiseSpeed * kMobSpeedUnitsPerSecond;
+    s.xp = c.xp[t];
+    // `range` is what a COMMON mob notices, and every tier notices further on
+    // the same body-size ladder its body grows on -- the ladder a shooter's
+    // reach already rides (kProjectileReachReferenceScale), so a shooter that
+    // can reach what it aggroes at common can at every tier. It replaces the
+    // reference's RARITY_OVERRIDES table, which ramped a hand-picked list of
+    // ids and left every other mob seeing exactly as far at apex as at common.
+    s.aggroRange = c.range * kMobSizeScale[t] / kMobSizeScale[0];
+    s.attackCooldownMillis = c.cooldownMillis;
+    // Poison is damage, so it rides the damage ladder; otherwise an apex
+    // centipede's bite would tick for exactly what a common one's does.
+    s.poisonPerSecond = c.poisonPerSecond * kMobDamageScale[t];
+    s.poisonDurationMillis = c.poisonDurationMillis;
+    s.visualScale = c.visualScale;
+    s.spawnWeight = c.spawnWeight;
+    s.ai = c.ai;
+    if (c.id == "bee" && tier >= rarityIndex(Rarity::Rare)) s.ai = AiKind::Neutral;
+    // Apex included, for the same reason the ranges above run to the end of
+    // the ladder: a ladybug that is neutral from rare up has no reason to turn
+    // hostile again at the one tier the reference's override table never
+    // reached.
+    if (c.id == "ladybug" && tier >= rarityIndex(Rarity::Rare)) s.ai = AiKind::Neutral;
+    // The desert centipede needs no rung here: gardn's is neutral at every
+    // tier (tick_centipede_neutral), and its mobs.json says so.
+    if ((c.id == "centipede" || c.id == "centipede_body") &&
+        tier >= rarityIndex(Rarity::Epic)) {
+        s.ai = AiKind::Neutral;
+    }
+    s.gardnMotion = c.gardnMotion ||
+                    ((s.ai == AiKind::Neutral || s.ai == AiKind::Hostile) && c.speed != 0.0 &&
+                     c.segmentCount == 0 && !c.chainBody && !c.jump.present);
+    // min_rarity is enforced in exactly one place: below its tier the mob is
+    // not ambient, and every spawner already filters on that.
+    s.ambient = tier >= rarityIndex(c.minRarity) && !c.groups.empty() && !c.neverAmbient;
+    return s;
+}
+
+namespace {
+
+PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
+    // Universal reads everything below at apex, `tier`, except health and
+    // damage, which take `strength` -- apex's times sqrt(2).
+    const Rarity graded = clampRarity(rarityIndex(r));
+    const Rarity tier = ladderRarity(graded);
+    const double strength = petalStrengthScale(graded == Rarity::Admin ? Rarity::Universal : graded);
+    const double stat = petalStatScale(tier);
+    const double heal = petalHealScale(tier);
+    const double modifier = petalModifierScale(tier);
+    const double mana = petalManaScale(tier);
+
+    PetalStats s;
+    s.damage = c.damage * strength;
+    s.health = c.health * strength;
+    // The plain 3x ladder, deliberately NOT kMobArmorScale: mob armour flattens
+    // above ultra and a bur that flattened with it would be dead weight at the
+    // three tiers where a raid actually needs one.
+    s.armorReduction = c.armorReduction * stat;
+    // Root's stack, on the same plain ladder and for the mirror of that
+    // reason: what a stack absorbs has to keep pace with what a mob of the
+    // same tier hits for, and mob damage is the 3x ladder all the way up.
+    s.armorPerStack = c.armorPerStack * stat;
+    // Bone's own armour climbs the ladder a MOB's armour climbs, flattening
+    // above ultra with it: it is the same kind of number doing the same job
+    // -- a flat amount off each hit the wearer takes -- so a bone and a mob
+    // of one tier are as hard to scratch as each other.
+    s.petalArmor = c.petalArmor * kMobArmorScale[static_cast<std::size_t>(rarityIndex(tier))];
+    // A claw's bonus is damage, so it is on the damage ladder beside `damage`.
+    s.critDamage = c.clawCritDamage * strength;
+    // A fraction of the damage dealt, and that damage already climbs.
+    s.lifesteal = c.lifesteal;
+    s.reloadMillis = c.cooldownMillis;
+    if (c.id == "yggdrasil") {
+        // TypeScript overrides every row: it is always a 1/1 petal and its
+        // cooldown halves at each rarity from 512 seconds.
+        s.damage = 1.0;
+        s.health = 1.0;
+        s.reloadMillis = 512000.0 / std::pow(2.0, rarityIndex(tier));
+    } else if (c.id == "lightning") {
+        s.health = 10.0;
+    } else if (c.id == "bubble" || c.id == "magic_bubble") {
+        // The magic bubble is a bubble with a mana price, and it pays the same
+        // shortening reload: two petals that pop the same way must not read as
+        // two different rules to the player wearing both.
+        s.reloadMillis *= std::pow(0.85, rarityIndex(tier));
+        s.reloadMillis = std::max(50.0, s.reloadMillis);
+    }
+    // The petal damage ladder, not the gentler passive-modifier curve: what a
+    // cutter grants IS damage, so it keeps pace with petal damage and with the
+    // mobs a tier of it is meant to fight. Authored at 10, it is worth exactly
+    // a basic petal's hit at every tier -- one petal's damage, moved onto the
+    // flower's body.
+    s.bodyDamage = c.bodyDamage * strength;
+    s.poisonPerSecond = c.poisonPerSecond * strength;
+    s.poisonDurationMillis = c.poisonDurationMillis;
+    // Flat, on purpose: gardn's dandelion locks healing for ten seconds at
+    // every tier. See PetalConfig::noHealDurationMillis.
+    s.noHealDurationMillis = c.noHealDurationMillis;
+    s.heal = c.burstHeal * heal;
+    s.healChargeMillis = c.burstHealChargeMillis;
+    s.passiveHealPerSecond = c.passiveHeal * heal;
+    // One ladder for the whole resource, doubling per tier -- see
+    // petalManaScale. The cost of a spawn is on it too, a few lines down, which
+    // is what keeps an all-one-tier magic kit reloading at the rate it
+    // reloaded at the tier below.
+    s.maxMana = c.baseMaxMana * mana;
+    s.mana = c.burstMana * mana;
+    s.manaChargeMillis = c.burstManaChargeMillis;
+    s.passiveManaPerSecond = c.passiveMana * mana;
+    s.requiredMana = c.requiredMana * mana;
+    s.petManaCost = c.petManaCost * mana;
+    // TypeScript keeps ordinary petal knockback flat across rarities. Jelly is
+    // the one intentional exception: its per-rarity values are literal
+    // overrides in petals.ts, not another copy of the damage multiplier.
+    s.knockback = c.knockback;
+    if (c.id == "jelly") {
+        static constexpr std::array<double, kLadderRarityCount> kJellyKnockback = {
+            15.0, 50.0, 100.0, 250.0, 500.0,
+            1800.0, 10000.0, 25000.0, 50000.0, 100000.0,
+        };
+        s.knockback = kJellyKnockback[static_cast<std::size_t>(rarityIndex(tier))];
+    }
+    // Rubber: florr's Flower Knockback, +0.3 at common and +0.3 more a tier.
+    if (petalSoaksLightning(c)) s.flowerKnockback = 0.3 * (rarityIndex(tier) + 1);
+    // Amulet: florr's Overheal Conversion, 5% at common and 5% more a tier.
+    if (petalConvertsOverheal(c)) s.overhealShield = 0.05 * (rarityIndex(tier) + 1);
+    // Basil: florr's Heal Bonus, 20% at common and 5% more a tier -- 45% at
+    // mythic and 50% at ultra, the two tiers florr makes it at.
+    if (petalBoostsHealing(c)) s.healBonus = 0.2 + 0.05 * rarityIndex(tier);
+    // Golden leaf: florr's Reload -2.5% at common and 2.5% more a tier.
+    if (petalCutsReload(c)) s.reloadCut = 0.025 * (rarityIndex(tier) + 1);
+    // Disc: florr's Collision Damage Resistance, 1 - 0.91^(tier+1) -- one more
+    // 0.91 of the hit kept back a tier, so no tier ever reaches immunity.
+    if (petalResistsCollisions(c)) s.collisionResist = 1.0 - std::pow(0.91, rarityIndex(tier) + 1);
+    // Bandage: florr's tooltip, read off its builder -- Undead 1500 ms x
+    // 1.4^tier, Unrevivable 30 s, Body Damage -75%. florr makes it only at
+    // mythic and ultra; here every tier is on the same curve.
+    if (petalDelaysDeath(c)) {
+        s.undeadMillis = 1500.0 * std::pow(1.4, rarityIndex(tier));
+        s.unrevivableMillis = 30000.0;
+        s.undeadBodyDamageCut = 0.75;
+    }
+    s.shield = c.burstShield * heal;
+    // A slow's rarity is spent on landing it at all (stallPower), not on
+    // making it deeper, so the factor and its duration are flat.
+    s.slowFactor = c.slowFactor;
+    s.slowDurationMillis = c.slowDurationMillis;
+    if (c.id == "pincer" || c.id == "honey") {
+        s.slowDurationMillis = c.slowDurationMillis * (1.0 + rarityIndex(tier) * 0.375);
+    }
+    s.webRadius = c.webRadius * (1.0 + (rarityIndex(tier) / 8.0) * 1.2);
+    s.spongeDamageDurationMillis =
+        c.spongeDamageDurationMillis * (1.0 + rarityIndex(tier) * 0.5);
+    s.attractionForce = c.attractionForce;
+    s.radius = c.size * kPetalRadiusPerSize;
+    // The loose petals -- wax, the moon -- are the ones whose bodies grow with
+    // their tier, by a flat 30 a step rather than off `size`: 30 at common,
+    // 300 at apex.
+    if (petalIsLooseBody(c)) s.radius = kLoosePetalRadiusPerTier * (rarityIndex(tier) + 1);
+    s.size = c.size;
+    s.visualScale = c.visualScale;
+    s.damageIntervalMillis = c.damageIntervalMillis;
+    // `count` is flat for almost every petal, and the two exceptions are
+    // literal per-rarity overrides in the reference's RARITY_OVERRIDES table
+    // (src/petals.ts:307-334 and :699-726) rather than another scaling rule.
+    // They ride here rather than in petals.json because that file was shared
+    // verbatim with the TypeScript build, which read its overrides from
+    // TypeScript; they have stayed in code since.
+    s.count = c.count;
+    if (c.id == "light" || c.id == "pollen" || c.id == "stinger") {
+        static constexpr std::array<int, kLadderRarityCount> kLightCount = {
+            1, 2, 2, 3, 3, 5, 5, 5, 5, 5,
+        };
+        static constexpr std::array<int, kLadderRarityCount> kPollenCount = {
+            1, 2, 2, 2, 3, 3, 5, 5, 5, 7,
+        };
+        static constexpr std::array<int, kLadderRarityCount> kStingerCount = {
+            1, 1, 1, 1, 1, 3, 5, 5, 5, 7,
+        };
+        const auto t = static_cast<std::size_t>(rarityIndex(tier));
+        s.count = c.id == "light" ? kLightCount[t] : c.id == "pollen" ? kPollenCount[t] : kStingerCount[t];
+    }
+    // A stinger clump SPLITS its slot's damage rather than multiplying it: the
+    // slot as a whole stays on the plain 3x ladder, shared evenly among however
+    // many stingers the tier fields. So legendary -> mythic, one stinger to
+    // three, holds each at 8100, and mythic -> ultra, three to five, takes each
+    // from 8100 to 14580.
+    if (c.id == "stinger" && s.count > 1) s.damage /= s.count;
+    s.breakable = c.breakable;
+    // Geometric, not the passive-modifier curve the rest of this block takes:
+    // see petalZoomScale.
+    s.cameraZoom = scaledMultiplier(c.cameraZoom, petalZoomScale(tier));
+
+    s.modifiers = c.modifiers;
+    s.modifiers.maxHealth = scaledMultiplier(c.modifiers.maxHealth, modifier);
+    // Relic: florr's Flower Health, +10% a tier on a flat step (+20% at
+    // uncommon, florr's lowest, to +70% at ultra) rather than the passive
+    // curve above.
+    if (petalSharesFlowerDamage(c)) s.modifiers.maxHealth = 1.0 + 0.1 * (rarityIndex(tier) + 1);
+    s.modifiers.speed = scaledMultiplier(c.modifiers.speed, modifier);
+    s.modifiers.rotationSpeed = scaledMultiplier(c.modifiers.rotationSpeed, modifier);
+    s.modifiers.playerRadius = scaledMultiplier(c.modifiers.playerRadius, modifier);
+    s.modifiers.damage = scaledMultiplier(c.modifiers.damage, modifier);
+    s.modifiers.aggroRange = petalAggroRangeScale(c.modifiers.aggroRange, tier);
+    s.modifiers.attackRange = petalAttackRange(c.modifiers.attackRange, tier, c.minRarity);
+    s.modifiers.luck = c.modifiers.luck * modifier;
+    s.modifiers.magnetism = c.modifiers.magnetism * modifier;
+    s.modifiers.aggroRadius = c.modifiers.aggroRadius * modifier;
+    s.modifiers.petalAttractionRadius = c.modifiers.petalAttractionRadius * modifier;
+    s.modifiers.poisonArmor = c.modifiers.poisonArmor * modifier;
+    s.modifiers.evasion = petalEvasionScale(c.modifiers.evasion, tier);
+
+    const std::size_t ti = static_cast<std::size_t>(rarityIndex(tier));
+    if (c.id == "clover") {
+        static constexpr std::array<double, kLadderRarityCount> values = {
+            0.08, 0.12, 0.17, 0.24, 0.35, 0.5, 0.72, 1.04, 1.5, 2.0,
+        };
+        s.modifiers.luck = values[ti];
+    } else if (c.id == "faster") {
+        static constexpr std::array<double, kLadderRarityCount> values = {
+            1.1, 1.2, 1.3, 1.4, 1.6, 1.8, 2.1, 2.7, 3.5, 4.5,
+        };
+        s.modifiers.rotationSpeed = values[ti];
+    } else if (c.id == "powder") {
+        static constexpr std::array<double, kLadderRarityCount> values = {
+            1.1, 1.1, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8,
+        };
+        s.modifiers.speed = values[ti];
+    } else if (c.id == "soil") {
+        static constexpr std::array<double, kLadderRarityCount> health = {
+            1.1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9,
+        };
+        static constexpr std::array<double, kLadderRarityCount> speed = {
+            0.95, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.6,
+        };
+        static constexpr std::array<double, kLadderRarityCount> radius = {
+            1.05, 1.05, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8,
+        };
+        s.modifiers.maxHealth = health[ti];
+        s.modifiers.speed = speed[ti];
+        s.modifiers.playerRadius = radius[ti];
+    } else if (c.id == "air") {
+        static constexpr std::array<double, kLadderRarityCount> values = {
+            1.1, 1.2, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0,
+        };
+        s.modifiers.playerRadius = values[ti];
+    } else if (c.id == "lotus") {
+        s.modifiers.poisonArmor = 5.0 * stat;
+    } else if (c.id == "lentil") {
+        static constexpr std::array<double, kLadderRarityCount> radius = {
+            20, 29, 38, 47, 56, 64, 73, 82, 91, 100,
+        };
+        static constexpr std::array<double, kLadderRarityCount> force = {
+            2000, 2889, 3778, 4667, 5556, 6444, 7333, 8222, 9111, 10000,
+        };
+        s.modifiers.petalAttractionRadius = radius[ti];
+        s.attractionForce = force[ti];
+    }
+    if (c.id == "antennae" && rarityIndex(tier) >= rarityIndex(Rarity::Rare)) {
+        s.cameraZoom = 1.0 / antennaeVisionRangeScale(tier);
+    }
+    // Admin starts with universal combat strength and apex utility, then
+    // boosts the useful effects. Apply AFTER all named-petal overrides so
+    // special petals receive the same treatment as ordinary ones.
+    if (graded == Rarity::Admin) {
+        constexpr double boost = 10.0;
+        s.damage *= 25.0;
+        s.health *= 25.0;
+        s.bodyDamage *= 25.0;
+        s.critDamage *= 25.0;
+        s.poisonPerSecond *= 25.0;
+        s.armorReduction *= boost;
+        s.armorPerStack *= boost;
+        s.petalArmor *= boost;
+        s.heal *= boost;
+        s.passiveHealPerSecond *= boost;
+        s.maxMana *= boost;
+        s.mana *= boost;
+        s.passiveManaPerSecond *= boost;
+        s.shield *= boost;
+        s.knockback *= boost;
+        s.webRadius *= boost;
+        s.attractionForce *= boost;
+        s.healBonus *= boost;
+        s.overhealShield *= boost;
+        s.undeadMillis *= boost;
+        s.reloadCut = std::min(0.5, s.reloadCut * boost);
+        s.collisionResist = std::min(0.95, s.collisionResist * boost);
+        s.lifesteal = std::min(1.0, s.lifesteal * boost);
+        s.reloadMillis *= 0.5;
+        s.healChargeMillis *= 0.5;
+        s.manaChargeMillis *= 0.5;
+        s.requiredMana /= boost;
+        s.petManaCost /= boost;
+        s.cameraZoom = std::max(0.05, s.cameraZoom / (s.cameraZoom < 1.0 ? boost : 1.0));
+        auto& m = s.modifiers;
+        m.maxHealth = 1.0 + (m.maxHealth - 1.0) * boost;
+        m.damage = 1.0 + (m.damage - 1.0) * boost;
+        if (m.speed > 1.0) m.speed = std::min(10.0, 1.0 + (m.speed - 1.0) * boost);
+        if (m.playerRadius > 1.0) m.playerRadius = std::min(10.0, 1.0 + (m.playerRadius - 1.0) * boost);
+        m.rotationSpeed = 1.0 + (m.rotationSpeed - 1.0) * boost;
+        m.attackRange *= boost;
+        m.luck *= boost;
+        m.magnetism *= boost;
+        m.aggroRadius *= boost;
+        m.petalAttractionRadius *= boost;
+        m.poisonArmor *= boost;
+        m.evasion = std::min(0.95, m.evasion * boost);
+        m.damageReflection *= boost;
+        if (c.id == "lentil") m.petalAttractionRadius = kWorldSize * 0.2;
+    }
+    return s;
+}
+
+} // namespace
+
+const PetalStats& ContentRegistry::petalStats(std::uint16_t index, Rarity r) const {
+    // Every tier past the ends reads as the end it is past, which is what
+    // buildPetalStats() does with one too.
+    const auto tier = static_cast<std::size_t>(rarityIndex(clampRarity(rarityIndex(r))));
+    if (index < petalStats_.size()) return petalStats_[index][tier];
+    // An unknown index is the placeholder petal(), as everywhere else.
+    static const std::array<PetalStats, kRarityCount> kMissing = [this] {
+        std::array<PetalStats, kRarityCount> stats;
+        for (int t = 0; t < kRarityCount; ++t) {
+            stats[static_cast<std::size_t>(t)] =
+                buildPetalStats(petal(kInvalidIndex), static_cast<Rarity>(t));
+        }
+        return stats;
+    }();
+    return kMissing[tier];
+}
+
+// ---------------------------------------------------------------------------
+// Process-wide content
+// ---------------------------------------------------------------------------
+
+namespace {
+ContentRegistry& registry() {
+    static ContentRegistry instance;
+    return instance;
+}
+} // namespace
+
+double petalCameraZoom(const ContentRegistry& registry, std::uint16_t petalIndex, Rarity rarity) {
+    if (petalIndex >= registry.petalCount()) return 1.0;
+    constexpr double kFloor = 0.3;
+    const double asked = registry.petalStats(petalIndex, rarity).cameraZoom;
+    // No positive-only guard: a tier that takes the figure through zero lands
+    // on the floor, not back on 1.
+    return registry.petal(petalIndex).id == "antennae" ? asked : std::max(kFloor, asked);
+}
+
+const ContentRegistry& content() { return registry(); }
+
+bool loadContent(const std::string& dataDir, std::string& errorOut) {
+    return registry().load(dataDir, errorOut);
+}
+
+double mobUndeadMillis(const MobConfig& config, Rarity rarity) {
+    if (!(config.undeadMillis > 0.0)) return 0.0;
+    const double tier = static_cast<double>(static_cast<int>(rarity));
+    const double superTier = static_cast<double>(static_cast<int>(Rarity::Super));
+    const double rise = config.undeadMillis - config.undeadCommonMillis;
+    return std::max(0.0, config.undeadCommonMillis + rise * tier / superTier);
+}
+
+} // namespace flix

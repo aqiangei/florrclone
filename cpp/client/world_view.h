@@ -1,0 +1,467 @@
+#pragma once
+// The client's mirror of the server's world.
+//
+// Deliberately NOT an ECS. The client does not simulate these entities -- it
+// stores what the last snapshot said and interpolates between snapshots for
+// rendering. A flat record per entity is the honest shape for that, and it
+// keeps the draw loop free of component lookups.
+
+#include <array>
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "client/interpolation.h"
+#include "shared/core/types.h"
+#include "shared/game/constants.h"
+#include "shared/game/rarity.h"
+#include "shared/net/bytebuffer.h"
+#include "shared/game/realm.h"
+#include "shared/net/protocol.h"
+
+namespace flix {
+
+class ContentRegistry;
+
+/// What a health bar shows, eased the way rysteria_gardn eases it
+/// (Client/Simulation.cc). The green and the white glide to the wire's values
+/// at 0.2 of the gap per 60 Hz frame. The red under them -- health lost a
+/// moment ago -- snaps up with the green, holds for a quarter second after the
+/// last hit, and then drains at a third of the green's rate. ui::healthBar
+/// draws it.
+struct HealthBarEase {
+    double health = 1;
+    double shield = 0;
+    double lag = 1;
+
+    /// Takes the values as they stand, with nothing to ease from: a fresh
+    /// spawn, or the viewer's own flower joining or respawning.
+    void snap(double targetHealth, double targetShield);
+    /// One frame toward the wire's `targetHealth` and `targetShield`.
+    /// `nowMillis` is the render clock, which the quarter-second hold after a
+    /// hit is timed on.
+    void step(double targetHealth, double targetShield, double nowMillis, double dtSeconds);
+
+private:
+    /// The wire's health last frame. A drop in it is a hit -- rysteria's
+    /// `damaged` flag, which this wire does not carry.
+    double seenHealth_ = 1;
+    double hitAtMillis_ = -1e300;
+    bool primed_ = false;
+};
+
+/// What a mob's plate shows, eased the way florr eases it (the plate painter
+/// at 0x10078cb60 in ~/florr_images/client). Unlike HealthBarEase it starts
+/// at nothing: florr builds a mob's plate the first time the client meets the
+/// mob, at zero opacity over an empty bar, so a mob coming into view fades its
+/// plate in while the green fills up to its health.
+///
+/// Every value moves as florr's `x += (target - x)(1 - e^(-k dt))` does: the
+/// green, the white and the opacity at k = 0.01339/ms -- 0.2 of the gap per
+/// 60 Hz frame -- and the red at 0.00632/ms, 0.1. The red waits until the
+/// green has come within a thousandth of the health, so after a hit it holds
+/// while the green slides down and only then drains after it.
+struct MobPlateEase {
+    double health = 0;   ///< the green
+    double lag = 0;      ///< the red under it
+    double shield = 0;   ///< the white over it
+    double opacity = 0;  ///< the whole plate's, text included
+
+    /// Settles every value where step() is heading, for scenes assembled
+    /// without a stream (seedForTest), which should show the plate as it
+    /// looks once it has faded in.
+    void snap(double targetHealth, double targetShield, bool visible);
+    /// One frame toward the wire's values. `visible` is florr's rule for
+    /// whether the plate shows at all; see WorldView::plateShows.
+    void step(double targetHealth, double targetShield, bool visible, double dtSeconds);
+};
+
+/// How fast a flower charging a teleporter pad turns: the reference's
+/// `elapsed * 0.008` radians, elapsed in milliseconds.
+inline constexpr double kPadSpinRadiansPerSecond = 8.0;
+
+/// One entity as the client knows it.
+struct RemoteEntity {
+    std::uint32_t netId = 0;
+    net::EntityKind kind = net::EntityKind::Mob;
+    std::uint16_t typeIndex = 0;
+    Rarity rarity = Rarity::Common;
+    std::uint8_t spawnFlags = 0;
+    std::string name;
+
+    /// The last authoritative position and facing off the wire. Never drawn
+    /// directly -- `position` chases this one, and writing the wire value
+    /// straight into `position` is what makes an entity stutter at the tick
+    /// rate.
+    Vec2 targetPosition;
+    double targetAngle = 0;
+
+    /// What the renderer reads: the DRAWN position and facing.
+    Vec2 position;
+    double angle = 0;
+
+    /// Mob-only position history, stamped on the shared server timeline (see
+    /// WorldView::clockOffsetMillis_), one sample per snapshot whether or not
+    /// the snapshot mentioned it. Flowers deliberately have none: they
+    /// all ease at one rate so the viewer's flower and everyone else's move
+    /// alike, and a buffer on one side of that breaks it.
+    struct Sample {
+        double timeMillis = 0;
+        Vec2 position;
+    };
+    std::vector<Sample> samples;
+
+    /// Cut to the target on the next interpolate() instead of easing to it.
+    /// Set for a fresh spawn, where there is no previous position to come
+    /// from, and after a respawn or teleport.
+    bool needsSnap = true;
+
+    double healthFraction = 1;
+    /// What the health bar draws: `healthFraction` and `shieldFraction`,
+    /// eased, and the red trail behind them. Stepped by interpolate().
+    HealthBarEase healthBar;
+    /// Mob and NPC only: what the plate under the body draws, eased as florr
+    /// eases it. Stepped by interpolate().
+    MobPlateEase plate;
+    double radius = 10;
+    std::uint8_t state = 0;
+
+    /// The three flag families used only by the player sprite. They arrive for
+    /// player records in a snapshot and remain zero for all other entity kinds.
+    std::uint8_t faceFlags = FaceNone;
+    std::uint16_t equipFlags = EquipNone;
+    std::uint32_t renderFlags = PlayerRenderNone;
+
+    /// Player-only: what the plate under the flower reads. `bestRarity` is the
+    /// highest rarity anywhere in that flower's loadout, which is what tints
+    /// the level label.
+    std::uint16_t level = 1;
+    Rarity bestRarity = Rarity::Common;
+    /// Player-only: the arena leaderboard's number, zero outside the ring.
+    std::uint32_t arenaScore = 0;
+
+    /// Player-only: the live shield as a fraction of this flower's MAX health,
+    /// zero when none is up. It is what the WHITE pill on the health bar is
+    /// long -- the green under it is the health itself. Measured against max
+    /// rather than current health because that is the scale the bar is drawn
+    /// in; see the wire note on FieldPlayerVisuals.
+    double shieldFraction = 0;
+
+    /// Player-only: the catalog id of the user-created skin this flower wears,
+    /// empty for none. Resolved against NetClient's catalog at draw time
+    /// rather than carrying the shapes: the wearer's record is then a short
+    /// string, and a republished skin changes on this screen at once.
+    std::string equippedSkinId;
+
+    /// The guild whose tag hangs under this flower's health bar. Nothing sets
+    /// it yet: the snapshot carries no guild tag -- GuildUpdate describes only
+    /// the viewer's own guild, see menu_guild.cpp -- so the tag draws for
+    /// nobody, which is what the reference draws for a player in no guild. The
+    /// plate reads the field rather than the transport so the wire lands in
+    /// one place when it exists.
+    std::string guildName;
+
+    /// Petal-only: the flower this petal orbits, and the petal's DRAWN offset
+    /// from it.
+    ///
+    /// The server places petals on a ring around the owner's tick position
+    /// while the owner is drawn at its eased one, so a petal's absolute
+    /// position is not directly drawable. What is smoothed is this OFFSET --
+    /// the petal's place in the flower's own frame -- and the petal is then
+    /// drawn at the owner's drawn position plus it. The ring is therefore
+    /// rigidly centred on the flower by construction, whatever the flower is
+    /// doing, and only the ring's own rotation is being interpolated.
+    ///
+    /// Easing the absolute position instead leaves the ring centred only to
+    /// the extent that the petal's ease lag happens to equal the flower's, and
+    /// they differ by the orbital velocity. Subtracting the owner's raw
+    /// position from it -- the obvious repair -- is worse still: that value
+    /// stair-steps at the snapshot rate, so the correction is a sawtooth and
+    /// every petal visibly shakes at the beat between snapshot and frame rate.
+    ///
+    /// While the owner has a moon out the ring is laid out around the MOON,
+    /// and the offset is smoothed in the moon's frame instead -- see
+    /// `frameNetId`.
+    /// An NPC's recipe: which of its mob's `npc.recipes` an assembler makes,
+    /// from its spawn record. 0 for every other entity.
+    std::uint8_t npcRecipe = 0;
+    std::uint32_t ownerNetId = 0;
+    Vec2 ownerOffset;
+    /// The entity `ownerOffset` is measured from: the owner, or the moon its
+    /// ring orbits. When it changes the offset is rebased onto the new frame
+    /// from where the petal is drawn, so the petal flies across rather than
+    /// jumping. Zero until the first frame has placed it.
+    std::uint32_t frameNetId = 0;
+
+
+    /// Smoothed eye-pupil offset in the flower's radius=25 local space.
+    double eyeX = 0;
+    double eyeY = 0;
+    /// How far a flower charging a teleporter pad (net::StatePadCharging) has
+    /// turned, in radians; zero off a pad. Advanced by WorldView::interpolate
+    /// and drawn as the BODY turning: its plate and its petals stay put, as
+    /// the reference's did.
+    double padSpin = 0;
+
+    bool isSelf() const { return (spawnFlags & net::SpawnIsSelf) != 0; }
+    /// A Petal record that is a seat on a MOB's ring rather than one of a
+    /// flower's own: drawn turned outward and sized from `radius`.
+    bool isRingPetal() const { return (spawnFlags & net::SpawnRingPetal) != 0; }
+    /// A Petal record that is a loose body on the ground (wax): smoothed in
+    /// the world rather than in its owner's frame, sized from `radius`, and
+    /// drawn on the ground layer.
+    bool isLoosePetal() const { return (spawnFlags & net::SpawnLoosePetal) != 0; }
+    bool dead() const { return (state & net::StateDead) != 0; }
+};
+
+/// A transient effect the server reported.
+struct ViewEvent {
+    net::EventKind kind = net::EventKind::Damage;
+    std::uint32_t netId = 0;
+    std::uint32_t otherNetId = 0;
+    double amount = 0;
+    Vec2 position;
+    double radius = 0;
+    std::uint8_t flag = 0;
+    /// Lightning only: where each bolt ends. Empty for every other kind.
+    std::vector<Vec2> points;
+};
+
+/// Every slot untouched, which is what a bar with no snapshot behind it yet
+/// has to draw as: a zeroed array would open the game on ten dead-looking
+/// tiles.
+inline std::array<double, kLoadoutActiveSlots> fullSlotHealth() {
+    std::array<double, kLoadoutActiveSlots> full{};
+    full.fill(1.0);
+    return full;
+}
+
+/// No slot printing a number, which is what a bar with no snapshot behind it
+/// yet must draw as. A zeroed array would open the game on ten tiles each
+/// claiming a gauge that reads empty.
+inline std::array<int, kLoadoutActiveSlots> noSlotCounters() {
+    std::array<int, kLoadoutActiveSlots> none{};
+    none.fill(-1);
+    return none;
+}
+
+/// The authoritative state of the player's own flower, straight from the
+/// snapshot. Never drawn directly: selfDrawnPosition() eases toward
+/// `position`.
+struct SelfState {
+    std::uint32_t netId = 0;
+    Vec2 position;
+    double health = 0;
+    double maxHealth = 0;
+    /// The magic petals' pool. `maxMana` is 0 on a bar wearing nothing that
+    /// grants one -- which is most bars -- and that is what the HUD reads to
+    /// decide whether there is a mana bar to draw at all.
+    double mana = 0;
+    double maxMana = 0;
+    double totalXp = 0;
+    int level = 1;
+    /// See PlayerProgress::stars: a balance the server keeps to 2^53, so the
+    /// HUD must not be the thing that rounds it.
+    double stars = 0;
+
+    /// How much of each orbiting slot's reload is still to run, in
+    /// milliseconds; 0 for a slot that is ready or empty. The loadout bar
+    /// sweeps its wedge with it.
+    ///
+    /// The snapshot rewrites this outright, and `interpolate` counts it down
+    /// between snapshots -- twenty of those a second is a visibly stepped
+    /// sweep on its own, and the wedge turns through five whole turns.
+    std::array<double, kLoadoutActiveSlots> slotReloadRemainingMillis{};
+
+    /// How much of each orbiting slot's petal is still standing, 1.0 for
+    /// untouched. The bar drains its tile by it. Unlike the reload it does not
+    /// run on the frame clock: a petal loses health in the discrete steps
+    /// something hits it in, and there is nothing between them to animate.
+    std::array<double, kLoadoutActiveSlots> slotHealthFraction = fullSlotHealth();
+
+    /// The number the bar prints inside each slot's top border -- a sponge's
+    /// outstanding damage -- and -1 for a petal that has no number, which is
+    /// nearly all of them. Zero is a value a sponge really holds, so it is NOT
+    /// the absent case: the bar prints a standing 0 and prints nothing at -1.
+    /// Whole numbers, drawn as given: the server decides what the figure
+    /// means, the bar only prints it.
+    std::array<int, kLoadoutActiveSlots> slotCounter = noSlotCounters();
+};
+
+class WorldView {
+public:
+    /// Consumes a Snapshot payload. The message id must already be read.
+    /// Returns false when the frame was truncated, in which case nothing is
+    /// applied -- a half-read snapshot is worse than a skipped one.
+    bool applySnapshot(ByteReader& reader);
+
+    /// Advances every drawn position and facing by one frame. Call once per
+    /// rendered frame, not once per snapshot: this is what decouples a 144 Hz
+    /// display from a 20 Hz snapshot stream.
+    ///
+    /// `nowMillis` is the client render clock, which is also the clock mob
+    /// playback runs behind. `dtSeconds` is the step the eases take -- the
+    /// App passes easeStepSeconds(), the smoothed frame period, not the raw
+    /// measured delta; see client/ease.h.
+    void interpolate(double nowMillis, double dtSeconds);
+
+    /// Cuts every entity onto its authoritative position on the next
+    /// interpolate(). For joining and respawning, where there is no continuity
+    /// to preserve. Ordinary teleports need no call: an ease over
+    /// kTeleportSnapDistance cuts on its own.
+    void snapAll();
+
+    /// Where the viewer's own flower is being DRAWN this frame.
+    ///
+    /// The camera pins to this, the cursor control law measures from it, and
+    /// the petal ring is anchored to it. Before the first spawn record it is
+    /// the raw authoritative position, which is the only thing there is.
+    Vec2 selfDrawnPosition() const;
+
+    /// The HUD's health bar for the viewer's own flower: SelfState's exact
+    /// health over its max, and the shield off its body, eased as every
+    /// other bar is.
+    const HealthBarEase& selfHealthBar() const { return selfHealthBar_; }
+
+    void clear();
+
+    /// Drop the corpse pose on the viewer's flower right away. `Revived`
+    /// arrives before the snapshot that clears `StateDead` / `FaceDeadEyes`,
+    /// and without this the body keeps drawing as a fallen corpse until that
+    /// snapshot lands (Continue) or the next visuals delta (yggdrasil).
+    void clearSelfDeathVisuals();
+
+    /// Inserts an entity outright, for tests and for tools that assemble a
+    /// scene with no socket behind it. Nothing on the wire path uses it.
+    /// The health bar starts settled on the record's own health and shield,
+    /// as a spawn's does, and so does a mob's plate, which a spawn's does not.
+    void seedForTest(const RemoteEntity& entity) {
+        RemoteEntity& seeded = entities_[entity.netId] = entity;
+        seeded.healthBar.snap(entity.healthFraction, entity.shieldFraction);
+        seeded.plate.snap(entity.healthFraction, entity.shieldFraction, plateShows(seeded));
+    }
+
+    /// Names the viewer's own flower, which a snapshot otherwise does from
+    /// the SpawnIsSelf flag on its spawn record. For tests and tools that
+    /// assemble a scene with no socket behind it, where the difference
+    /// between the viewer and everyone else is the thing under test.
+    void setSelfNetIdForTest(std::uint32_t netId) { self_.netId = netId; }
+
+    /// Moves an existing entity's authoritative position, leaving the
+    /// interpolation state alone -- what a snapshot does, without needing one.
+    /// seedForTest() cannot serve: it replaces the record, ease state included.
+    void setTargetForTest(std::uint32_t netId, Vec2 position) {
+        const auto it = entities_.find(netId);
+        if (it != entities_.end()) it->second.targetPosition = position;
+    }
+
+    const std::unordered_map<std::uint32_t, RemoteEntity>& entities() const { return entities_; }
+    const SelfState& self() const { return self_; }
+
+    /// The petal configs, for the one thing smoothing has to know about a
+    /// petal: whether its owner's ring orbits it (the moon), and whether it is
+    /// worn on the flower rather than carried on that ring. Left null -- a
+    /// test, a tool -- every ring is smoothed around its flower.
+    void setContent(const ContentRegistry* content) { content_ = content; }
+
+    /// Which coordinate space this client's body is in (realm.h). Everything
+    /// in `entities()` is in the same one -- the server streams a viewer its
+    /// own realm and nothing else -- so this is also what decides whether the
+    /// ground under them is the tile map, the maze or the arena floor.
+    Realm realm() const { return realm_; }
+    void setRealm(Realm realm) { realm_ = realm; }
+    /// The last snapshot tick applied: what the replay guard in
+    /// applySnapshot() compares the next one against.
+    std::uint32_t tick() const { return tick_; }
+
+    /// Events from the most recent snapshot. Drained by the effects layer.
+    std::vector<ViewEvent>& events() { return events_; }
+    /// The petals and shots those same snapshots erased, as they were last
+    /// drawn. A Killed event names one only after it is gone, and its death
+    /// animation replays this record. Drained with events().
+    std::vector<RemoteEntity>& removedPetals() { return removedPetals_; }
+
+    /// Client-only overrides for the local flower's flag families.
+    ///
+    /// `/forcelocalplayerflags` is a rendering probe: it makes THIS client draw
+    /// its own flower with a chosen face, equipment or skin so the sprite can
+    /// be checked without a server that would grant any of it. Reapplied after
+    /// every snapshot, because the server keeps sending the real values and
+    /// would otherwise take the override back a fifth of a second later.
+    struct LocalFlagOverride {
+        bool overridesFace = false;
+        bool overridesEquip = false;
+        bool overridesRender = false;
+        std::uint8_t faceFlags = FaceNone;
+        std::uint16_t equipFlags = EquipNone;
+        std::uint32_t renderFlags = PlayerRenderNone;
+    };
+    LocalFlagOverride localFlags;
+
+    /// The time constant every flower, petal, drop and projectile closes its
+    /// gap with, and mob facing turns with. Driven by the settings panel's
+    /// Interpolation slider; see easeTimeConstant().
+    double easeTimeConstantSeconds = easeTimeConstant(kDefaultInterpolationAmount);
+
+    /// How far behind the render clock buffered mobs are played back THIS
+    /// frame. interpolate() slews it toward the delay the recent stream asks
+    /// for (delayTargetMillis_, which noteLateness() derives), so anything
+    /// written here holds only until the stream disagrees with it.
+    double interpolationDelayMillis = kMobRenderDelayMillis;
+
+private:
+    /// Records how much later than usual a snapshot landed and re-derives the
+    /// playback delay from it: the longest gap the cadence produces, plus the
+    /// worst lateness lately, plus a margin.
+    ///
+    /// Lateness is measured against the clock offset's running average, so it
+    /// is jitter, not latency -- a steady 200 ms ping costs nothing here, a
+    /// connection that alternates 20 and 120 ms costs 100.
+    void noteLateness(double latenessMillis);
+    /// Maps a server timestamp onto the local render clock.
+    ///
+    /// Mob samples MUST be stamped with the server's own tick time and not
+    /// with their arrival time. Arrival stamping compresses the timeline under
+    /// bursty TCP -- four snapshots 33 ms apart on the server can land 0, 0, 0
+    /// and 100 ms apart here -- and playback then stutters through them. The
+    /// offset is a slow EWMA because the two clocks drift; a large divergence
+    /// (a reconnect, a suspended laptop) re-anchors outright rather than
+    /// crawling back over a minute.
+    double toRenderClock(double serverMillis, double localMillis);
+
+    /// florr's rule for whether a mob's plate shows: never once its health is
+    /// gone, and otherwise always -- except on a chain's body bead, which
+    /// carries no name and shows its bar only while it is hurt or shielded.
+    /// That is the registry's label flag (+0xa4), clear in florr for exactly
+    /// the centipede and leech bodies. Without content every mob is labelled.
+    bool plateShows(const RemoteEntity&) const;
+
+    std::unordered_map<std::uint32_t, RemoteEntity> entities_;
+    const ContentRegistry* content_ = nullptr;
+    /// Owner net id -> the net id of the moon its ring orbits, rebuilt every
+    /// frame by interpolate(). A member so a frame does not allocate it.
+    std::unordered_map<std::uint32_t, std::uint32_t> ringAnchors_;
+    std::vector<ViewEvent> events_;
+    std::vector<RemoteEntity> removedPetals_;
+    SelfState self_;
+    Realm realm_ = Realm::Overworld;
+    std::uint32_t tick_ = 0;
+    /// Drawn position of the viewer's flower. Held here rather than looked up
+    /// on the self entity because the self entity does not exist until its
+    /// spawn record arrives, and the camera needs an answer before then.
+    Vec2 selfDrawnPosition_;
+    bool selfSnapPending_ = true;
+    HealthBarEase selfHealthBar_;
+    /// Set by clearSelfDeathVisuals(); strips StateDead / FaceDeadEyes on the
+    /// viewer's flower until a living state lands, so a late snapshot cannot
+    /// paint the corpse pose again after Revived.
+    bool suppressSelfCorpse_ = false;
+    double clockOffsetMillis_ = 0;
+    bool clockAnchored_ = false;
+    /// The worst recent lateness, decaying by kLatenessMemory per snapshot.
+    double latenessPeakMillis_ = 0;
+    double delayTargetMillis_ = kMobRenderDelayMillis;
+};
+
+} // namespace flix

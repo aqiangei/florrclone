@@ -1,0 +1,785 @@
+#include "client/world_view.h"
+
+#include <algorithm>
+#include <cmath>
+
+#include "client/ease.h"
+#include "client/render/mob_art.h"
+#include "shared/game/config.h"
+#include "shared/game/player_flags.h"
+
+namespace flix {
+
+namespace {
+
+/// rysteria's health_ratio.step(Ui::lerp_amount): 0.2 of the gap per 60 Hz
+/// frame, for the green and the white alike.
+const double kHealthBarEaseSeconds = easeTimeConstant(0.2);
+/// rysteria's lerp(healthbar_lag, health_ratio, amt / 3).
+const double kHealthLagEaseSeconds = easeTimeConstant(0.2 / 3.0);
+/// How long the red trail holds after a hit before it starts to drain.
+constexpr double kHealthLagHoldMillis = 250.0;
+/// The most erased petals kept for a death cue between drains.
+constexpr std::size_t kMaxRemovedPetals = 1024;
+
+/// florr's plate eases: k = 0.013389/ms for the green, the white and the
+/// fade, k = 0.006322/ms for the red -- 0.2 and 0.1 of the gap per 60 Hz
+/// frame.
+const double kPlateEaseSeconds = easeTimeConstant(0.2);
+const double kPlateLagEaseSeconds = easeTimeConstant(0.1);
+/// How close above the health the green has to be before the red moves.
+constexpr double kPlateLagWait = 0.001;
+/// A chain bead's bar shows while a shield over this is up, at full health.
+constexpr double kPlateShieldShows = 0.001;
+
+} // namespace
+
+void MobPlateEase::snap(double targetHealth, double targetShield, bool visible) {
+    health = lag = targetHealth;
+    shield = targetShield;
+    opacity = visible ? 1.0 : 0.0;
+}
+
+void MobPlateEase::step(double targetHealth, double targetShield, bool visible,
+                        double dtSeconds) {
+    easeToward(opacity, visible ? 1.0 : 0.0, kPlateEaseSeconds, dtSeconds);
+    easeToward(health, targetHealth, kPlateEaseSeconds, dtSeconds);
+    easeToward(shield, targetShield, kPlateEaseSeconds, dtSeconds);
+    if (health - targetHealth < kPlateLagWait) {
+        easeToward(lag, targetHealth, kPlateLagEaseSeconds, dtSeconds);
+    }
+}
+
+bool WorldView::plateShows(const RemoteEntity& e) const {
+    if (e.healthFraction <= 0.0) return false;
+    const bool labelled = content_ == nullptr || e.kind != net::EntityKind::Mob ||
+                          !content_->mob(e.typeIndex).chainBody;
+    return labelled || e.healthFraction < 1.0 || e.shieldFraction > kPlateShieldShows;
+}
+
+void HealthBarEase::snap(double targetHealth, double targetShield) {
+    health = lag = seenHealth_ = targetHealth;
+    shield = targetShield;
+    hitAtMillis_ = -1e300;
+    primed_ = true;
+}
+
+void HealthBarEase::step(double targetHealth, double targetShield, double nowMillis,
+                         double dtSeconds) {
+    if (!primed_) {
+        snap(targetHealth, targetShield);
+        return;
+    }
+    if (targetHealth < seenHealth_) hitAtMillis_ = nowMillis;
+    seenHealth_ = targetHealth;
+    easeToward(health, targetHealth, kHealthBarEaseSeconds, dtSeconds);
+    easeToward(shield, targetShield, kHealthBarEaseSeconds, dtSeconds);
+    // Measured against the EASED green, as rysteria's is: the red is what the
+    // green has slid back from, never a gap the green has yet to cross.
+    if (lag < health) {
+        lag = health;
+    } else if (nowMillis - hitAtMillis_ > kHealthLagHoldMillis) {
+        easeToward(lag, health, kHealthLagEaseSeconds, dtSeconds);
+    }
+}
+
+void WorldView::clear() {
+    entities_.clear();
+    events_.clear();
+    removedPetals_.clear();
+    self_ = SelfState{};
+    realm_ = Realm::Overworld;
+    tick_ = 0;
+    selfDrawnPosition_ = {};
+    selfSnapPending_ = true;
+    selfHealthBar_ = HealthBarEase{};
+    suppressSelfCorpse_ = false;
+    clockAnchored_ = false;
+    clockOffsetMillis_ = 0;
+    latenessPeakMillis_ = 0;
+    delayTargetMillis_ = kMobRenderDelayMillis;
+    interpolationDelayMillis = kMobRenderDelayMillis;
+}
+
+void WorldView::snapAll() {
+    for (auto& entry : entities_) {
+        entry.second.needsSnap = true;
+        entry.second.samples.clear();
+    }
+    selfSnapPending_ = true;
+}
+
+void WorldView::clearSelfDeathVisuals() {
+    suppressSelfCorpse_ = true;
+    if (self_.netId == 0) return;
+    const auto it = entities_.find(self_.netId);
+    if (it == entities_.end()) return;
+    it->second.state = static_cast<std::uint8_t>(it->second.state & ~net::StateDead);
+    it->second.faceFlags =
+        static_cast<std::uint8_t>(it->second.faceFlags & ~static_cast<std::uint8_t>(FaceDeadEyes));
+}
+
+Vec2 WorldView::selfDrawnPosition() const {
+    // Until the first snapshot has placed this flower there is nothing to ease
+    // from, and the authoritative position is the honest answer.
+    return selfSnapPending_ ? self_.position : selfDrawnPosition_;
+}
+
+double WorldView::toRenderClock(double serverMillis, double localMillis) {
+    const double observed = serverMillis - localMillis;
+    if (!clockAnchored_ || std::fabs(observed - clockOffsetMillis_) > 2000.0) {
+        clockOffsetMillis_ = observed;
+        clockAnchored_ = true;
+    } else {
+        // Measured before the offset moves, so this packet is judged against
+        // the timeline as it stood when it should have arrived.
+        noteLateness(clockOffsetMillis_ - observed);
+        // Slow, because this is correcting drift between two crystals, not
+        // tracking the network. A fast gain would let one late packet drag the
+        // whole playback timeline and undo the de-jitter it exists for.
+        clockOffsetMillis_ += (observed - clockOffsetMillis_) * 0.02;
+    }
+    return serverMillis - clockOffsetMillis_;
+}
+
+void WorldView::noteLateness(double latenessMillis) {
+    latenessPeakMillis_ = std::max(latenessMillis, latenessPeakMillis_ * kLatenessMemory);
+    delayTargetMillis_ = clamp(kSnapshotGapMillis + latenessPeakMillis_ + kPlaybackMarginMillis,
+                               kMobRenderDelayMillis, kMaxMobRenderDelayMillis);
+}
+
+namespace {
+
+/// The entities played back from a sample history rather than eased. An NPC
+/// plays back like the mob it is built from: a cruising oracle moves exactly
+/// as a bee does, and wants the same smoothing.
+bool isBuffered(net::EntityKind kind) {
+    return kind == net::EntityKind::Mob || kind == net::EntityKind::Npc;
+}
+
+void pushSample(RemoteEntity& e, double timeMillis) {
+    if (e.samples.size() >= static_cast<std::size_t>(kMobSampleCapacity)) {
+        e.samples.erase(e.samples.begin());
+    }
+    e.samples.push_back({timeMillis, e.targetPosition});
+}
+
+} // namespace
+
+bool WorldView::applySnapshot(ByteReader& reader) {
+    const std::uint32_t tick = reader.u32();
+    const double serverTime = reader.f64();
+    const Vec2 selfPosition = reader.position();
+
+    // The figures the server says changed (net::SelfFields); an absent group
+    // keeps what the last snapshot that carried it said.
+    const std::uint8_t selfMask = reader.u8();
+    double health = self_.health, maxHealth = self_.maxHealth;
+    double mana = self_.mana, maxMana = self_.maxMana;
+    double totalXp = self_.totalXp, stars = self_.stars;
+    int level = self_.level;
+    if (selfMask & net::SelfHealth) {
+        health = reader.f32();
+        maxHealth = reader.f32();
+    }
+    if (selfMask & net::SelfMana) {
+        mana = reader.f32();
+        maxMana = reader.f32();
+    }
+    if (selfMask & net::SelfProgress) {
+        totalXp = reader.f64();
+        level = reader.u16();
+        stars = reader.f64();
+    }
+
+    // The viewer's own reloading and damaged slots, in wire order with the rest
+    // of the self block. A slot that has reloaded or is back at full health is
+    // simply absent from the list, which is what keeps a missed frame from
+    // stranding the bar's wedge or its drained tile.
+    std::array<double, kLoadoutActiveSlots> slotReload{};
+    std::array<double, kLoadoutActiveSlots> slotHealth = fullSlotHealth();
+    std::array<int, kLoadoutActiveSlots> slotCounter = noSlotCounters();
+    const std::uint8_t reportCount = reader.u8();
+    for (std::uint8_t i = 0; i < reportCount && i < net::kMaxReportedSlots; ++i) {
+        const std::uint8_t slot = reader.u8();
+        const double remaining = reader.u16();
+        const double health = reader.unitByte();
+        const std::uint16_t counter = reader.u16();
+        if (slot >= kLoadoutActiveSlots) continue;
+        slotReload[slot] = remaining;
+        slotHealth[slot] = health;
+        // The sentinel is the petal saying it has no number at all; every
+        // other value, zero included, is one the bar prints.
+        slotCounter[slot] = counter == net::kNoSlotCounter ? -1 : static_cast<int>(counter);
+    }
+
+    // Snapshots are ordered by TCP, but a reconnect can replay an older tick.
+    // Applying it would rewind every entity by a frame.
+    if (tick_ != 0 && tick <= tick_) return true;
+
+    const std::uint16_t spawnCount = reader.u16();
+    const std::uint16_t updateCount = reader.u16();
+
+    // Decode into scratch first so a truncated frame leaves the view untouched
+    // rather than half-applied.
+    struct Spawn {
+        std::uint32_t netId;
+        net::EntityKind kind;
+        std::uint16_t typeIndex;
+        Rarity rarity;
+        std::uint8_t flags;
+        Vec2 position;
+        double angle;
+        double radius;
+        double healthFraction;
+        std::uint8_t state;
+        std::uint8_t faceFlags;
+        std::uint16_t equipFlags;
+        std::uint32_t renderFlags;
+        std::uint16_t level;
+        Rarity bestRarity;
+        std::uint32_t arenaScore;
+        double shieldFraction;
+        std::string equippedSkinId;
+        std::uint32_t ownerNetId;
+        std::uint8_t npcRecipe;
+        std::string name;
+    };
+    std::vector<Spawn> spawns;
+    spawns.reserve(spawnCount);
+    // Ids are gaps from the previous record's in the same list; see the
+    // Snapshots layout in protocol.h.
+    std::uint32_t previousId = 0;
+    for (std::uint16_t i = 0; i < spawnCount; ++i) {
+        Spawn s{};
+        s.netId = previousId += reader.varU32();
+        s.kind = static_cast<net::EntityKind>(reader.u8());
+        s.typeIndex = reader.u16();
+        s.rarity = clampRarity(reader.u8());
+        s.flags = reader.u8();
+        s.position = reader.position();
+        s.angle = reader.angle();
+        s.radius = reader.f32();
+        s.healthFraction = net::readHealthFraction(reader, (s.flags & net::SpawnHealthWide) != 0);
+        s.state = reader.u8();
+        s.level = 1;
+        s.bestRarity = Rarity::Common;
+        if (s.kind == net::EntityKind::Player) {
+            s.faceFlags = reader.u8();
+            s.equipFlags = reader.u16();
+            s.renderFlags = reader.u32();
+            s.level = reader.u16();
+            s.bestRarity = clampRarity(reader.u8());
+            s.arenaScore = reader.u32();
+            s.shieldFraction = reader.u8() / 255.0;
+            s.equippedSkinId = reader.str();
+        }
+        if (s.kind == net::EntityKind::Petal) s.ownerNetId = reader.u32();
+        if (s.kind == net::EntityKind::Npc) s.npcRecipe = reader.u8();
+        if (s.flags & net::SpawnHasName) s.name = reader.str();
+        spawns.push_back(std::move(s));
+        if (!reader.ok()) return false;
+    }
+
+    struct Update {
+        std::uint32_t netId;
+        std::uint8_t mask;
+        Vec2 position;
+        /// FieldPositionDelta's raw steps, added to the entity's target
+        /// position at commit, after this snapshot's spawns are in.
+        std::int16_t deltaX;
+        std::int16_t deltaY;
+        double angle;
+        double healthFraction;
+        std::uint8_t state;
+        double radius;
+        std::uint8_t faceFlags;
+        std::uint16_t equipFlags;
+        std::uint32_t renderFlags;
+        std::uint16_t level;
+        Rarity bestRarity;
+        std::uint32_t arenaScore;
+        double shieldFraction;
+        std::string equippedSkinId;
+    };
+    std::vector<Update> updates;
+    updates.reserve(updateCount);
+    previousId = 0;
+    for (std::uint16_t i = 0; i < updateCount; ++i) {
+        Update u{};
+        u.netId = previousId += reader.varU32();
+        u.mask = reader.u8();
+        if (u.mask & net::FieldPositionDelta) {
+            u.deltaX = reader.i16();
+            u.deltaY = reader.i16();
+        } else if (u.mask & net::FieldPosition) {
+            u.position = reader.position();
+        }
+        if (u.mask & net::FieldAngle) u.angle = reader.angle();
+        if (u.mask & net::FieldHealth) {
+            u.healthFraction =
+                net::readHealthFraction(reader, (u.mask & net::FieldHealthWide) != 0);
+        }
+        if (u.mask & net::FieldState) u.state = reader.u8();
+        if (u.mask & net::FieldSize) u.radius = reader.f32();
+        if (u.mask & net::FieldPlayerVisuals) {
+            u.faceFlags = reader.u8();
+            u.equipFlags = reader.u16();
+            u.renderFlags = reader.u32();
+            u.level = reader.u16();
+            u.bestRarity = clampRarity(reader.u8());
+            u.arenaScore = reader.u32();
+            u.shieldFraction = reader.u8() / 255.0;
+            u.equippedSkinId = reader.str();
+        }
+        updates.push_back(std::move(u));
+        if (!reader.ok()) return false;
+    }
+
+    const std::uint16_t removalCount = reader.u16();
+    std::vector<std::uint32_t> removals;
+    removals.reserve(removalCount);
+    previousId = 0;
+    for (std::uint16_t i = 0; i < removalCount; ++i) removals.push_back(previousId += reader.varU32());
+    if (!reader.ok()) return false;
+
+    const std::uint16_t eventCount = reader.u16();
+    std::vector<ViewEvent> events;
+    events.reserve(eventCount);
+    for (std::uint16_t i = 0; i < eventCount; ++i) {
+        ViewEvent e;
+        e.kind = static_cast<net::EventKind>(reader.u8());
+        e.netId = reader.u32();
+        e.otherNetId = reader.u32();
+        e.amount = reader.f32();
+        e.position = reader.position();
+        e.radius = reader.f32();
+        e.flag = reader.u8();
+        // Lightning is the only kind carrying a tail; see EventKind. A frame
+        // that ends inside it hands back zeroes and trips the reader's ok()
+        // flag, which the check below turns into a rejected snapshot -- the
+        // tail must be consumed either way, or its bytes would be read as the
+        // next event's header.
+        if (e.kind == net::EventKind::Lightning) {
+            const std::uint8_t targets = reader.u8();
+            e.points.reserve(targets);
+            for (std::uint8_t t = 0; t < targets; ++t) e.points.push_back(reader.position());
+        }
+        events.push_back(std::move(e));
+    }
+    if (!reader.ok()) return false;
+
+    // --- commit ------------------------------------------------------------
+    tick_ = tick;
+    // Mob samples are stamped on the server's own timeline, mapped onto this
+    // client's render clock. See toRenderClock().
+    const double sampleMillis = toRenderClock(serverTime, renderClockMillis());
+
+    self_.position = selfPosition;
+    self_.health = health;
+    self_.maxHealth = maxHealth;
+    self_.mana = mana;
+    self_.maxMana = maxMana;
+    self_.totalXp = totalXp;
+    self_.level = level;
+    self_.stars = stars;
+    self_.slotReloadRemainingMillis = slotReload;
+    self_.slotHealthFraction = slotHealth;
+    self_.slotCounter = slotCounter;
+
+    for (Spawn& s : spawns) {
+        RemoteEntity e;
+        e.netId = s.netId;
+        e.kind = s.kind;
+        e.typeIndex = s.typeIndex;
+        e.rarity = s.rarity;
+        e.spawnFlags = s.flags;
+        e.name = std::move(s.name);
+        // Drawn AT the spawn position, not eased toward it: a fresh entity
+        // must not slide in from wherever a recycled record left the slot.
+        e.targetPosition = e.position = s.position;
+        e.targetAngle = e.angle = s.angle;
+        e.needsSnap = true;
+        if (isBuffered(s.kind)) {
+            e.samples.reserve(kMobSampleCapacity);
+            pushSample(e, sampleMillis);
+        }
+        e.radius = s.radius;
+        e.healthFraction = s.healthFraction;
+        e.state = s.state;
+        e.faceFlags = s.faceFlags;
+        e.equipFlags = s.equipFlags;
+        e.renderFlags = s.renderFlags;
+        e.level = s.level;
+        e.bestRarity = s.bestRarity;
+        e.arenaScore = s.arenaScore;
+        e.shieldFraction = s.shieldFraction;
+        e.healthBar.snap(e.healthFraction, e.shieldFraction);
+        e.equippedSkinId = std::move(s.equippedSkinId);
+        e.ownerNetId = s.ownerNetId;
+        e.npcRecipe = s.npcRecipe;
+        if (s.flags & net::SpawnIsSelf) {
+            // Continue despawns the corpse and spawns a fresh body. Drop the
+            // fallen one immediately so it cannot keep painting next to the
+            // reborn flower for the tick the removal is still in flight.
+            if (self_.netId != 0 && self_.netId != s.netId) {
+                entities_.erase(self_.netId);
+            }
+            self_.netId = s.netId;
+            suppressSelfCorpse_ = false;
+            // A spawn record for your own flower is a join or a respawn.
+            // Either way there is no continuity worth easing across.
+            selfSnapPending_ = true;
+        }
+        if (suppressSelfCorpse_ && s.netId == self_.netId) {
+            e.state = static_cast<std::uint8_t>(e.state & ~net::StateDead);
+            e.faceFlags = static_cast<std::uint8_t>(
+                e.faceFlags & ~static_cast<std::uint8_t>(FaceDeadEyes));
+            if ((s.state & net::StateDead) == 0) suppressSelfCorpse_ = false;
+        }
+        entities_[s.netId] = std::move(e);
+    }
+
+    for (const Update& u : updates) {
+        auto it = entities_.find(u.netId);
+        // An update for an entity we never saw spawn is not an error: the
+        // spawn may have been dropped by a viewport edge case. Ignoring it is
+        // correct -- the next tick's diff will spawn it properly.
+        if (it == entities_.end()) continue;
+        RemoteEntity& e = it->second;
+
+        // An omitted field falls back to the last AUTHORITATIVE value and
+        // never to the rendered one: `position` and `angle` are mutated every
+        // frame by interpolate(), so feeding them back in would have the
+        // client chase its own lagging output and wobble.
+        if (u.mask & net::FieldPositionDelta) {
+            e.targetPosition.x += u.deltaX / net::kPositionDeltaScale;
+            e.targetPosition.y += u.deltaY / net::kPositionDeltaScale;
+        } else if (u.mask & net::FieldPosition) {
+            e.targetPosition = u.position;
+        }
+        if (u.mask & net::FieldAngle) e.targetAngle = u.angle;
+        if (isBuffered(e.kind)) pushSample(e, sampleMillis);
+        if (u.mask & net::FieldHealth) e.healthFraction = u.healthFraction;
+        if (u.mask & net::FieldState) e.state = u.state;
+        if (u.mask & net::FieldSize) e.radius = u.radius;
+        if (u.mask & net::FieldPlayerVisuals) {
+            e.faceFlags = u.faceFlags;
+            e.equipFlags = u.equipFlags;
+            e.renderFlags = u.renderFlags;
+            e.level = u.level;
+            e.bestRarity = u.bestRarity;
+            e.arenaScore = u.arenaScore;
+            e.shieldFraction = u.shieldFraction;
+            e.equippedSkinId = u.equippedSkinId;
+        }
+        // Revived can beat the snapshot that drops StateDead / FaceDeadEyes.
+        // Keep the corpse pose off the viewer's flower until living state
+        // arrives, otherwise a same-tick update paints X-eyes again.
+        if (suppressSelfCorpse_ && u.netId == self_.netId) {
+            const bool stillDead = (e.state & net::StateDead) != 0;
+            e.state = static_cast<std::uint8_t>(e.state & ~net::StateDead);
+            e.faceFlags = static_cast<std::uint8_t>(
+                e.faceFlags & ~static_cast<std::uint8_t>(FaceDeadEyes));
+            if (!stillDead) suppressSelfCorpse_ = false;
+        }
+    }
+
+    for (const std::uint32_t netId : removals) {
+        const auto it = entities_.find(netId);
+        if (it == entities_.end()) continue;
+        // Most of these simply left view and are never asked for. A flower
+        // that teleports drops its whole screen at once, so the pile is
+        // bounded in case nothing drains it.
+        const bool petal = it->second.kind == net::EntityKind::Petal ||
+                           it->second.kind == net::EntityKind::Projectile;
+        if (petal && removedPetals_.size() < kMaxRemovedPetals) {
+            removedPetals_.push_back(std::move(it->second));
+        }
+        entities_.erase(it);
+    }
+
+    // One sample per snapshot for every buffered entity, the ones this
+    // snapshot did not mention included. The server leaves out anything that
+    // has not moved past its tolerance, so a standing mob is simply absent --
+    // and without a sample its timeline stops at the last move it made.
+    // Playback then runs off the end of the history: the mob is extrapolated a
+    // whole step past where it stopped and held there, and when it moves again
+    // the first new sample pairs with one seconds old, so most of that step is
+    // drawn in a single frame. Absent means "where you last had it", which is
+    // exactly what the server's diff believes the client holds.
+    //
+    // The far band (Replicator::farSnapshotStride) is absent three snapshots
+    // in four too, and is held the same way, so it is drawn stepping. That
+    // band starts a quarter screen past the drawn edge, measured from the
+    // body's edge, so a mob crossing into the near box is at full rate long
+    // before any of it is seen.
+    for (auto& entry : entities_) {
+        RemoteEntity& e = entry.second;
+        if (!isBuffered(e.kind)) continue;
+        if (e.samples.empty() || e.samples.back().timeMillis < sampleMillis) {
+            pushSample(e, sampleMillis);
+        }
+    }
+
+    events_.insert(events_.end(), events.begin(), events.end());
+    return true;
+}
+
+namespace {
+
+/// Plays a mob back from its sample history at `renderMillis`.
+///
+/// Returns false when there is not enough history to bracket that instant, in
+/// which case the caller falls back to the plain ease -- freezing on the
+/// newest sample instead would stall every mob for the first playback delay
+/// after it comes into view.
+bool playBack(const std::vector<RemoteEntity::Sample>& samples, double renderMillis,
+              Vec2& out) {
+    if (samples.size() < 2) return false;
+
+    // Walk back from the newest pair to the one bracketing renderMillis.
+    std::size_t b = samples.size() - 1;
+    while (b > 1 && samples[b - 1].timeMillis > renderMillis) --b;
+    const RemoteEntity::Sample& before = samples[b - 1];
+    const RemoteEntity::Sample& after = samples[b];
+    const double span = after.timeMillis - before.timeMillis;
+    if (!(span > 0.0)) {
+        out = after.position;
+        return true;
+    }
+
+    if (after.timeMillis <= renderMillis) {
+        // The stream has not caught up with the render clock. Extrapolate at
+        // most one sample forward, which rides out a single late packet;
+        // beyond that the mob holds, because guessing further sends it
+        // through walls and then snaps it back.
+        const double overshoot = std::min((renderMillis - after.timeMillis) / span, 1.0);
+        out = after.position + (after.position - before.position) * overshoot;
+        return true;
+    }
+
+    // Clamped: renderMillis can predate the oldest pair just after the buffer
+    // seeds, and a negative alpha extrapolates backwards.
+    const double f = std::max(0.0, (renderMillis - before.timeMillis) / span);
+    out = before.position + (after.position - before.position) * f;
+    return true;
+}
+
+/// Eases `position` a fraction `t` of the way to `target`.
+///
+/// `cut` asks for the flower rules: a gap wider than a teleport is a portal, a
+/// respawn or the maze's rotation moving everyone to the new entrance, and
+/// must not be glided across, and a gap under the settle epsilon lands exactly
+/// instead of asymptoting.
+void easePosition(Vec2& position, Vec2 target, double t, bool cut) {
+    const Vec2 gap = target - position;
+    if (cut && (gap.lengthSq() > kTeleportSnapDistance * kTeleportSnapDistance ||
+                (std::fabs(gap.x) < kSettleEpsilon && std::fabs(gap.y) < kSettleEpsilon))) {
+        position = target;
+        return;
+    }
+    position += gap * t;
+}
+
+} // namespace
+
+void WorldView::interpolate(double nowMillis, double dtSeconds) {
+    const double t = easeFraction(easeTimeConstantSeconds, dtSeconds);
+    const double eyeT = easeFraction(kEyeEaseSeconds, dtSeconds);
+
+    // Slewed rather than set: the delay is where on the timeline playback is
+    // reading, so a jump in it is a jump in every mob at once.
+    {
+        const double frameMillis = clamp(dtSeconds, 0.0, 0.1) * 1000.0;
+        const double gap = delayTargetMillis_ - interpolationDelayMillis;
+        const double reach = frameMillis * (gap > 0 ? kDelayGrowRate : kDelayShrinkRate);
+        interpolationDelayMillis += clamp(gap, -reach, reach);
+    }
+    const double renderMillis = nowMillis - interpolationDelayMillis;
+
+    // Reload runs on the frame clock between snapshots. Twenty corrections a
+    // second are enough to keep it honest and nowhere near enough to sweep a
+    // wedge that turns through five revolutions smoothly.
+    for (double& remaining : self_.slotReloadRemainingMillis) {
+        remaining = std::max(0.0, remaining - dtSeconds * 1000.0);
+    }
+
+    // Reapplied per frame rather than once when the command runs: the server
+    // resends the real flags with every snapshot, and an override written once
+    // would last until the next one and no longer.
+    if (localFlags.overridesFace || localFlags.overridesEquip || localFlags.overridesRender) {
+        const auto mine = entities_.find(self_.netId);
+        if (mine != entities_.end()) {
+            if (localFlags.overridesFace) mine->second.faceFlags = localFlags.faceFlags;
+            if (localFlags.overridesEquip) mine->second.equipFlags = localFlags.equipFlags;
+            if (localFlags.overridesRender) mine->second.renderFlags = localFlags.renderFlags;
+        }
+    }
+
+    // --- the viewer's own flower ------------------------------------------
+    //
+    // First, because the camera, the cursor control law and this flower's own
+    // petal ring are all anchored to it. Eased at exactly the same rate as
+    // every other flower. Tracked separately from its entity record because
+    // that record does not exist until its spawn arrives, and the camera needs
+    // an answer before then.
+    //
+    // A join or a respawn has nothing to ease from, the HUD's bar included.
+    const bool selfJoined = selfSnapPending_;
+    if (selfSnapPending_) {
+        selfDrawnPosition_ = self_.position;
+        selfSnapPending_ = false;
+    } else {
+        easePosition(selfDrawnPosition_, self_.position, t, true);
+    }
+
+    // --- everything that is not a petal -----------------------------------
+    for (auto& entry : entities_) {
+        RemoteEntity& e = entry.second;
+        if (e.kind == net::EntityKind::Petal) continue;   // second pass, below
+        const bool isFlower = e.kind == net::EntityKind::Player;
+
+        if (e.needsSnap) {
+            e.position = e.targetPosition;
+            e.angle = e.targetAngle;
+            e.needsSnap = false;
+        } else if (isBuffered(e.kind) && playBack(e.samples, renderMillis, e.position)) {
+            // Position came from the sample history; facing is handled below.
+        } else {
+            easePosition(e.position, e.targetPosition, t, isFlower);
+        }
+
+        // Facing. A flower's comes straight off the wire because it drives the
+        // eyes, and easing it makes the pupils swim behind the cursor. A mob's
+        // is eased instead of played back: passive AI turns up to 180 degrees
+        // in one server step, and replaying that inside a single sample
+        // interval reads as a snap. An NPC's is eased for the same reason: an
+        // idle one glances somewhere new in a single step, and its facing is
+        // what its eye follows.
+        if (e.kind == net::EntityKind::Mob || e.kind == net::EntityKind::Npc) {
+            e.angle = lerpAngle(e.angle, e.targetAngle, t);
+        } else {
+            e.angle = e.targetAngle;
+        }
+
+        e.eyeX += (std::cos(e.angle) * kFlowerEyeTravelX - e.eyeX) * eyeT;
+        e.eyeY += (std::sin(e.angle) * kFlowerEyeTravelY - e.eyeY) * eyeT;
+
+        // A flower charging a pad turns at the reference's 0.008 rad/ms for as
+        // long as it stands there, and starts from upright on the next one.
+        if (isFlower && (e.state & net::StatePadCharging) != 0) {
+            e.padSpin += kPadSpinRadiansPerSecond * dtSeconds;
+        } else {
+            e.padSpin = 0.0;
+        }
+
+        e.healthBar.step(e.healthFraction, e.shieldFraction, nowMillis, dtSeconds);
+        if (e.kind == net::EntityKind::Mob || e.kind == net::EntityKind::Npc) {
+            e.plate.step(e.healthFraction, e.shieldFraction, plateShows(e), dtSeconds);
+        }
+    }
+
+    // The viewer's flower reads the same position the camera and its ring use,
+    // so nothing can disagree with it by even a fraction of a pixel.
+    const auto self = entities_.find(self_.netId);
+    if (self != entities_.end() && self->second.isSelf()) {
+        self->second.position = selfDrawnPosition_;
+    }
+
+    // The HUD's bar reads SelfState's exact figures rather than the body's
+    // quantised fraction; only the shield is the body's, as it is nowhere else.
+    {
+        const double health = self_.maxHealth > 0
+                                  ? clamp(std::max(0.0, self_.health) / self_.maxHealth, 0.0, 1.0)
+                                  : 0.0;
+        const double shield =
+            self != entities_.end() ? clamp(self->second.shieldFraction, 0.0, 1.0) : 0.0;
+        if (selfJoined) {
+            selfHealthBar_.snap(health, shield);
+        } else {
+            selfHealthBar_.step(health, shield, nowMillis, dtSeconds);
+        }
+    }
+
+    // --- petals, after the flowers they hang off --------------------------
+    //
+    // Two passes. The loose ones first: they are smoothed in the world, and a
+    // moon among them is what its owner's ring is anchored to in the second,
+    // so it has to be where it is drawn this frame before the ring reads it.
+    ringAnchors_.clear();
+    for (auto& entry : entities_) {
+        RemoteEntity& e = entry.second;
+        if (e.kind != net::EntityKind::Petal) continue;
+
+        const auto owner = entities_.find(e.ownerNetId);
+        if (owner != entities_.end() && !e.isLoosePetal()) continue;   // second pass
+        if (e.isLoosePetal() && content_ != nullptr && !e.dead() &&
+            petalAnchorsRing(content_->petal(e.typeIndex))) {
+            ringAnchors_[e.ownerNetId] = e.netId;
+        }
+
+        // No owner on screen: nothing to anchor to, so smooth the absolute
+        // position and let the ring fend for itself. Happens for the frame or
+        // two before an owner's spawn record arrives.
+        //
+        // A loose petal takes this branch always. It is on no ring: it stands
+        // where it was put while its flower walks off, and in the flower's
+        // frame that is an offset changing every snapshot, which eased there
+        // would drag the slab after the flower by the lag.
+        if (e.needsSnap) {
+            e.position = e.targetPosition;
+            e.needsSnap = false;
+        } else {
+            easePosition(e.position, e.targetPosition, t, false);
+        }
+        e.angle = e.targetAngle;
+    }
+
+    for (auto& entry : entities_) {
+        RemoteEntity& e = entry.second;
+        if (e.kind != net::EntityKind::Petal || e.isLoosePetal()) continue;
+        const auto owner = entities_.find(e.ownerNetId);
+        if (owner == entities_.end()) continue;   // first pass
+
+        // The frame the ring is laid out in: the owner's moon while one is
+        // out, the owner otherwise -- and the owner always for a petal worn
+        // on the flower, which the server keeps there whatever the ring does.
+        const RemoteEntity* frame = &owner->second;
+        const auto anchor = ringAnchors_.find(e.ownerNetId);
+        if (anchor != ringAnchors_.end()) {
+            const PetalConfig& config = content_->petal(e.typeIndex);
+            const auto moon = entities_.find(anchor->second);
+            if (!config.noPhysics && !config.hasFixedDirection && moon != entities_.end()) {
+                frame = &moon->second;
+            }
+        }
+        // The ring changed hands since last frame. Rebased from where the
+        // petal is DRAWN, so it carries on from there toward its place in the
+        // new frame instead of jumping by the distance between the two.
+        if (e.frameNetId != frame->netId) {
+            if (e.frameNetId != 0 && !e.needsSnap) e.ownerOffset = e.position - frame->position;
+            e.frameNetId = frame->netId;
+        }
+
+        // Smooth where the petal sits IN THE FRAME, then put it back on the
+        // frame's drawn position. See RemoteEntity::ownerOffset.
+        //
+        // The facing is eased at the same rate as the offset. A clump grain
+        // drawn pointing at its clump's centre turns with the ring, and taken
+        // straight off the wire it would hold still for a snapshot and then
+        // jump, while the grain it is painted on glides.
+        const Vec2 targetOffset = e.targetPosition - frame->targetPosition;
+        if (e.needsSnap) {
+            e.ownerOffset = targetOffset;
+            e.angle = e.targetAngle;
+            e.needsSnap = false;
+        } else {
+            e.ownerOffset += (targetOffset - e.ownerOffset) * t;
+            e.angle = lerpAngle(e.angle, e.targetAngle, t);
+        }
+        e.position = frame->position + e.ownerOffset;
+    }
+}
+
+} // namespace flix

@@ -1,0 +1,116 @@
+#pragma once
+// The chat line's markup: the small HTML subset the server actually sends.
+//
+// Shared because the server reads lines the way the client draws them: chat
+// moderation (server/chat_moderation.h) has to judge what a reader will SEE,
+// which is not the raw string -- "fu<b></b>ck" and "f&#117;ck" both draw a
+// word the raw bytes do not contain.
+//
+// Chat content is not plain text on the wire. The server writes lines like
+//
+//     <b style="color: #2bffa4;">A super crab has spawned somewhere!</b>
+//     <span style="color: #4fc3f7;">Public squads:<br/>...</span>
+//
+// and the browser build dropped that straight into an element, so the tags
+// were styling rather than characters. This client draws its transcript with
+// glyph outlines and has no element to drop anything into, so until the tags
+// are parsed they render as literal angle brackets in the middle of every
+// boss announcement. parseMarkup() is what turns them back into styling.
+//
+// What is honoured, and what is not:
+//
+//  * b, strong, i, em, u, blink, span, font, color -- styling, everywhere.
+//    <br> is a hard break. These are the only tags the server emits.
+//  * <code> and <pre> are what a player types to quote something: both are
+//    drawn on a dark plate, and <pre> is a block of its own that keeps its
+//    spaces and line breaks rather than collapsing them.
+//  * <a> is page furniture: a link needs somewhere to navigate, which a native
+//    window does not have. It is honoured only in the emscripten build
+//    (kWebMarkup), and dropped -- with its content, as an unknown tag is --
+//    everywhere else.
+//  * <img src="https://..."> becomes a span of its own carrying the URL, in
+//    every build; what to show for it is the transcript's call, since only
+//    the browser build can fetch a picture (client/ui/remote_image.h). A src
+//    that is not https on a listed image host (shared/game/chat_images.h)
+//    drops the tag.
+//  * script and iframe are dropped with their content in EVERY build. The
+//    browser client used to offer a "click to run" button for one and a "click
+//    to show embed" button for the other; nothing here reinstates that, and
+//    nothing here executes or embeds anything a chat line asks it to.
+//  * Any other tag is dropped with its content, which is what the browser's
+//    sanitiser did with a tag outside its allowlist.
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace flix {
+
+/// Whether this build may honour the tags that only mean something inside a
+/// real page. Only the emscripten build can, and it defines FLIX_WEB_BUILD.
+#if defined(FLIX_WEB_BUILD)
+inline constexpr bool kWebMarkup = true;
+#else
+inline constexpr bool kWebMarkup = false;
+#endif
+
+/// One run of chat text that shares a single style, or a hard line break.
+struct MarkupSpan {
+    /// The run's characters, character references already decoded (see
+    /// shared/game/html_entities.h) -- "&nbsp;" as U+00A0, which a drawer
+    /// turns back into a space once it has laid the row out. Empty when
+    /// `lineBreak`.
+    std::string text;
+    /// A <br>: end the row here rather than drawing anything.
+    bool lineBreak = false;
+
+    bool bold = false;
+    bool italic = false;
+    bool underline = false;
+    bool blink = false;
+
+    /// Whether `color` was set by the markup. A run without one inherits
+    /// whatever colour the caller was already drawing in.
+    bool hasColor = false;
+    std::uint32_t color = 0;    ///< 0xRRGGBB
+
+    /// The destination of the enclosing <a href>, http(s) only. Always empty
+    /// unless links are honoured (MarkupOptions::links), because only a page
+    /// can follow it.
+    ///
+    /// Parsed and carried, not yet navigable: the transcript marks a link by
+    /// underlining it, but nothing opens one. Making it clickable means
+    /// hit-testing the chat column, which overlaps the play area, and no
+    /// server this client talks to sends <a> at all -- so the click is left
+    /// for whoever needs it rather than put in the way of attacking.
+    std::string href;
+
+    /// Inside a <code> or <pre>: which one, numbered from 1 in the order they
+    /// open, so the runs of one element can share one plate. 0 outside both.
+    int code = 0;
+    /// Inside a <pre>: the text's spaces are the author's, and a '\n' in it
+    /// has already been turned into a `lineBreak` span.
+    bool preformatted = false;
+
+    /// An <img>: its http(s) src, on a span of its own with no text.
+    std::string image;
+};
+
+/// How to read a line. The defaults are this build's own reading.
+struct MarkupOptions {
+    /// Whether <a> is honoured as styling. False drops it with its content,
+    /// which is what a build with no page to open a link in does. The server
+    /// is built one way and serves clients of both, so it asks for each.
+    bool links = kWebMarkup;
+};
+
+/// Splits `source` into styled runs. Never throws and never fails: markup it
+/// cannot make sense of degrades to text, exactly as a browser's parser does.
+std::vector<MarkupSpan> parseMarkup(const std::string& source, const MarkupOptions& options = {});
+
+/// The same content with every tag resolved away and every entity decoded,
+/// for the surfaces that draw one flat string. <br> becomes '\n', and an
+/// <img> the word "[image]".
+std::string markupPlainText(const std::string& source);
+
+} // namespace flix

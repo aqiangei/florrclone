@@ -1,0 +1,369 @@
+#include "test.h"
+
+#include "client/ui/menus.h"
+#include "test_data.h"
+
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <string>
+
+using namespace flix;
+
+// The client's rebindable controls: where a binding is kept, and whether it
+// survives the settings file.
+//
+// The keys themselves are pressed in App and MenuSystem, which need a real
+// window and are not reachable from here. What IS reachable is the half that
+// used to be missing: a binding the panel writes has to be readable by the
+// action that consumes it, and has to still be there on the next run.
+
+namespace {
+
+std::string tempPath(const char* name) {
+    return testsupport::tempDir("flix_settings_tests") + "/" + name;
+}
+
+ControlAction action(int i) { return static_cast<ControlAction>(i); }
+
+} // namespace
+
+TEST(every_control_starts_on_the_default_its_row_advertises) {
+    const ClientSettings settings;
+    for (int i = 0; i < kControlCount; ++i) {
+        CHECK(settings.controlKey(action(i)) == controlMeta(action(i)).defaultKey);
+    }
+    // The four menu-backed rows read the menu's own key, so the panel and the
+    // hotkey MenuSystem opens the panel from can never disagree.
+    CHECK(settings.controlKey(ControlAction::Inventory) ==
+          settings.hotkeys[static_cast<std::size_t>(MenuId::Inventory)]);
+}
+
+TEST(binding_a_menu_row_moves_the_menu_key_and_takes_it_off_the_other_menu) {
+    ClientSettings settings;
+    settings.bindControl(ControlAction::Crafting, Key::Z);   // the inventory's key
+    CHECK(settings.controlKey(ControlAction::Crafting) == Key::Z);
+    CHECK(settings.hotkeys[static_cast<std::size_t>(MenuId::Crafting)] == Key::Z);
+    CHECK(settings.controlKey(ControlAction::Inventory) == Key::Unknown);
+}
+
+TEST(binding_a_plain_row_leaves_every_menu_key_alone) {
+    ClientSettings settings;
+    settings.bindControl(ControlAction::ToggleHitboxes, Key::Z);
+    CHECK(settings.controlKey(ControlAction::ToggleHitboxes) == Key::Z);
+    CHECK(settings.controlKey(ControlAction::Inventory) == Key::Z);
+}
+
+TEST(a_rebound_control_survives_the_settings_file) {
+    const std::string path = tempPath("controls.txt");
+    std::remove(path.c_str());
+
+    ClientSettings written;
+    written.bindControl(ControlAction::MoveUp, Key::I);
+    written.bindControl(ControlAction::ExtendPetals, Key::F);
+    written.bindControl(ControlAction::ZoomIn, Key::Period);
+    written.bindControl(ControlAction::Skills, Key::Y);
+    // A row can be left bound to nothing, and must not come back as a default.
+    written.bindControl(ControlAction::ToggleMouseControls, Key::Unknown);
+    written.useMouseControls = false;
+    CHECK(written.save(path));
+
+    ClientSettings read;
+    CHECK(read.load(path));
+    CHECK(read.controlKey(ControlAction::MoveUp) == Key::I);
+    CHECK(read.controlKey(ControlAction::ExtendPetals) == Key::F);
+    CHECK(read.controlKey(ControlAction::ZoomIn) == Key::Period);
+    CHECK(read.controlKey(ControlAction::Skills) == Key::Y);
+    CHECK(read.controlKey(ControlAction::ToggleMouseControls) == Key::Unknown);
+    CHECK(!read.useMouseControls);
+    // Untouched rows are still their defaults, not whatever the file's last
+    // line happened to leave behind.
+    CHECK(read.controlKey(ControlAction::MoveDown) == Key::S);
+    CHECK(read.controlKey(ControlAction::Chat) == Key::Enter);
+
+    std::remove(path.c_str());
+}
+
+TEST(the_wheel_cannot_scroll_out_past_the_default_view) {
+    // kMinZoom is the floor the wheel, the zoom keys and the settings file all
+    // land on. It is 100%: a file written by a build that let the wheel reach
+    // 0.6 -- or by the TypeScript client, which reached 0.5 -- comes back at
+    // the default view. Seeing more of the world than that is the loadout's to
+    // grant, not the wheel's; see loadoutCameraZoom.
+    CHECK_NEAR(kMinZoom, 1.0, 1e-12);
+    const std::string path = tempPath("zoom.txt");
+    std::remove(path.c_str());
+
+    ClientSettings written;
+    written.zoom = 0.5;
+    CHECK(written.save(path));
+    ClientSettings read;
+    CHECK(read.load(path));
+    CHECK_NEAR(read.zoom, kMinZoom, 1e-12);
+
+    // Zooming IN is still the player's: the ceiling is untouched.
+    written.zoom = kMaxZoom;
+    CHECK(written.save(path));
+    CHECK(read.load(path));
+    CHECK_NEAR(read.zoom, kMaxZoom, 1e-12);
+    CHECK(kMaxZoom > kMinZoom);
+
+    std::remove(path.c_str());
+}
+
+TEST(mouse_controls_are_on_until_something_turns_them_off) {
+    const ClientSettings settings;
+    CHECK(settings.useMouseControls);
+}
+
+TEST(movement_helper_is_on_and_invert_flags_are_off_by_default) {
+    const ClientSettings settings;
+    CHECK(settings.movementHelper);
+    CHECK(!settings.invertAttack);
+    CHECK(!settings.invertDefend);
+}
+
+TEST(movement_helper_and_invert_flags_survive_the_settings_file) {
+    const std::string path = tempPath("assist.txt");
+    std::remove(path.c_str());
+
+    ClientSettings written;
+    written.movementHelper = false;
+    written.invertAttack = true;
+    written.invertDefend = true;
+    CHECK(written.save(path));
+
+    ClientSettings read;
+    CHECK(read.load(path));
+    CHECK(!read.movementHelper);
+    CHECK(read.invertAttack);
+    CHECK(read.invertDefend);
+
+    std::remove(path.c_str());
+}
+
+TEST(a_menu_key_no_row_can_rebind_is_not_pinned_by_an_old_settings_file) {
+    // Settings, the gallery and the two storefronts have no row in the
+    // controls panel, so their keys are constants of the build rather than
+    // preferences. An old file that still carries the binding a previous
+    // build shipped -- Settings on O, before Escape took it -- must not hold
+    // this build to it.
+    const std::string path = tempPath("stale_menu_keys.txt");
+    std::remove(path.c_str());
+    {
+        std::FILE* f = std::fopen(path.c_str(), "w");
+        CHECK(f != nullptr);
+        std::fprintf(f, "key.%d %d\n", static_cast<int>(MenuId::Settings),
+                     static_cast<int>(Key::O));
+        std::fprintf(f, "key.%d %d\n", static_cast<int>(MenuId::Gallery),
+                     static_cast<int>(Key::G));
+        // The inventory's, on the other hand, is a real preference.
+        std::fprintf(f, "key.%d %d\n", static_cast<int>(MenuId::Inventory),
+                     static_cast<int>(Key::Y));
+        std::fclose(f);
+    }
+
+    ClientSettings read;
+    CHECK(read.load(path));
+    const ClientSettings fresh;
+    CHECK(read.hotkeys[static_cast<std::size_t>(MenuId::Settings)] ==
+          fresh.hotkeys[static_cast<std::size_t>(MenuId::Settings)]);
+    CHECK(read.hotkeys[static_cast<std::size_t>(MenuId::Gallery)] ==
+          fresh.hotkeys[static_cast<std::size_t>(MenuId::Gallery)]);
+    CHECK(read.controlKey(ControlAction::Inventory) == Key::Y);
+
+    // And saving does not write them back out for the next run to read.
+    CHECK(read.save(path));
+    ClientSettings again;
+    CHECK(again.load(path));
+    CHECK(again.hotkeys[static_cast<std::size_t>(MenuId::Settings)] == Key::Escape);
+    CHECK(again.controlKey(ControlAction::Inventory) == Key::Y);
+
+    std::remove(path.c_str());
+}
+
+TEST(the_touch_control_choice_survives_the_settings_file_and_an_unmade_one_does_not) {
+    const std::string path = tempPath("touch.cfg");
+
+    // Nothing chosen: nothing written, so the next run still asks the device.
+    ClientSettings fresh;
+    CHECK(fresh.save(path));
+    ClientSettings reloaded;
+    CHECK(reloaded.load(path));
+    CHECK(!reloaded.requestMobileChosen);
+    CHECK(reloaded.touchControlsWanted(true));
+    CHECK(!reloaded.touchControlsWanted(false));
+
+    // A player who turned them OFF is the case a written value has to survive:
+    // resolving from the device again would hand a phone the stick back every
+    // single run.
+    ClientSettings chosen;
+    chosen.requestMobile = false;
+    chosen.requestMobileChosen = true;
+    CHECK(chosen.save(path));
+    ClientSettings after;
+    CHECK(after.load(path));
+    CHECK(after.requestMobileChosen);
+    CHECK(!after.touchControlsWanted(true));
+
+    std::remove(path.c_str());
+}
+
+TEST(the_hide_other_petals_and_pets_switches_survive_the_settings_file) {
+    const std::string path = tempPath("hide_others.cfg");
+
+    // Off until the player turns them on: a fresh client draws everybody's.
+    ClientSettings fresh;
+    CHECK(!fresh.render.hideOtherPetals);
+    CHECK(!fresh.render.hideOtherPets);
+
+    // Each on its own, so a file that swapped the two keys would fail here.
+    ClientSettings petals;
+    petals.render.hideOtherPetals = true;
+    CHECK(petals.save(path));
+    ClientSettings petalsBack;
+    CHECK(petalsBack.load(path));
+    CHECK(petalsBack.render.hideOtherPetals);
+    CHECK(!petalsBack.render.hideOtherPets);
+
+    ClientSettings pets;
+    pets.render.hideOtherPets = true;
+    CHECK(pets.save(path));
+    ClientSettings petsBack;
+    CHECK(petsBack.load(path));
+    CHECK(!petsBack.render.hideOtherPetals);
+    CHECK(petsBack.render.hideOtherPets);
+
+    std::remove(path.c_str());
+}
+
+TEST(the_show_admins_on_leaderboard_switch_survives_the_settings_file) {
+    const std::string path = tempPath("admins_on_board.cfg");
+
+    // Off until the player turns it on, as the TypeScript client's
+    // localStorage flag was.
+    ClientSettings fresh;
+    CHECK(!fresh.showAdminsOnLeaderboard);
+
+    ClientSettings on;
+    on.showAdminsOnLeaderboard = true;
+    CHECK(on.save(path));
+    ClientSettings back;
+    CHECK(back.load(path));
+    CHECK(back.showAdminsOnLeaderboard);
+
+    std::remove(path.c_str());
+}
+
+TEST(the_chat_channel_filters_survive_the_settings_file) {
+    const std::string path = tempPath("chat_channels.cfg");
+
+    // Every channel shown until the player unticks one -- all six tabs.
+    ClientSettings fresh;
+    CHECK_EQ(static_cast<int>(fresh.chatChannels), static_cast<int>(kChatChannelsAll));
+
+    // Global, Guild, Whisper and Admin unticked.
+    ClientSettings some;
+    some.chatChannels = 0x05;
+    CHECK(some.save(path));
+    ClientSettings back;
+    CHECK(back.load(path));
+    CHECK_EQ(static_cast<int>(back.chatChannels), 0x05);
+
+    // Every tab off is a choice too, and must not read back as "unset".
+    ClientSettings none;
+    none.chatChannels = 0;
+    CHECK(none.save(path));
+    ClientSettings backNone;
+    CHECK(backNone.load(path));
+    CHECK_EQ(static_cast<int>(backNone.chatChannels), 0);
+
+    std::remove(path.c_str());
+}
+
+TEST(a_settings_file_from_before_the_admin_tab_shows_it) {
+    // `chatChannels` is the old key, and it held two formats. Every client up
+    // to da5936d7 wrote its five tabs there, five bits; da5936d7 to d47055a7,
+    // one day's builds, wrote six, the Admin tab in bit 5. Below 32 the two
+    // cannot be told apart, and the value is read as the five-bit kind: the
+    // Admin tab, which such a file has no bit for, comes up shown -- as every
+    // tab does until the player unticks it -- or nobody upgrading from the
+    // five-tab client would see an announcement land in the transcript.
+    const std::string path = tempPath("chat_channels_legacy.cfg");
+    {
+        std::ofstream file(path, std::ios::trunc);
+        file << "chatChannels 31\n";
+    }
+    ClientSettings all;
+    CHECK(all.load(path));
+    CHECK_EQ(static_cast<int>(all.chatChannels), static_cast<int>(kChatChannelsAll));
+
+    // What the player chose for the five is kept as it was.
+    {
+        std::ofstream file(path, std::ios::trunc);
+        file << "chatChannels 5\n";
+    }
+    ClientSettings some;
+    CHECK(some.load(path));
+    CHECK_EQ(static_cast<int>(some.chatChannels), 0x05 | static_cast<int>(kChatAdminChannel));
+
+    std::remove(path.c_str());
+}
+
+TEST(a_six_bit_chat_channels_file_keeps_its_five_and_shows_admin_once) {
+    // The files the one-day six-bit builds (da5936d7 to d47055a7) wrote under
+    // the old key, read by the rule above. Bit 5 SET can only be one of
+    // theirs, and is kept exactly; every other choice they made is kept too.
+    // Bit 5 CLEAR -- the Admin tab hidden in that build, deliberately -- is
+    // the accepted cost: it reads as a five-tab file and the tab comes back,
+    // once, because a five-tab file is the far likelier writer of that value
+    // (the six-bit builds re-saved every upgrader's five-tab file that way)
+    // and showing a tab hides nothing. The next save writes `chatTabs`, and an
+    // untick after that stays put (an_unticked_admin_tab_stays_unticked).
+    const std::string path = tempPath("chat_channels_six_bits.cfg");
+    const auto loaded = [&](const char* line) {
+        {
+            std::ofstream file(path, std::ios::trunc);
+            file << line << "\n";
+        }
+        ClientSettings settings;
+        CHECK(settings.load(path));
+        return static_cast<int>(settings.chatChannels);
+    };
+    CHECK_EQ(loaded("chatChannels 63"), 0x3F);   // all six shown: as written
+    CHECK_EQ(loaded("chatChannels 61"), 0x3D);   // Global hidden, Admin shown: as written
+    CHECK_EQ(loaded("chatChannels 37"), 0x25);   // bit 5 set with two of the five
+    CHECK_EQ(loaded("chatChannels 31"), 0x3F);   // Admin hidden in that build: shown again
+    CHECK_EQ(loaded("chatChannels 0"), 0x20);    // everything hidden: all but Admin stays so
+    std::remove(path.c_str());
+}
+
+TEST(an_unticked_admin_tab_stays_unticked) {
+    // Written under the new key, so the migration above runs once: a file
+    // saved since says what the player chose for all six tabs, Admin included.
+    const std::string path = tempPath("chat_tabs.cfg");
+    ClientSettings off;
+    off.chatChannels = kChatChannelsBeforeAdmin;
+    CHECK(off.save(path));
+    {
+        std::ifstream file(path);
+        const std::string text((std::istreambuf_iterator<char>(file)),
+                               std::istreambuf_iterator<char>());
+        CHECK(text.find("chatTabs 31") != std::string::npos);
+        CHECK(text.find("chatChannels") == std::string::npos);
+    }
+    ClientSettings back;
+    CHECK(back.load(path));
+    CHECK_EQ(static_cast<int>(back.chatChannels), static_cast<int>(kChatChannelsBeforeAdmin));
+
+    // And the new line outranks an old one, wherever in the file the two are.
+    {
+        std::ofstream file(path, std::ios::trunc);
+        file << "chatTabs 31\nchatChannels 31\n";
+    }
+    ClientSettings both;
+    CHECK(both.load(path));
+    CHECK_EQ(static_cast<int>(both.chatChannels), static_cast<int>(kChatChannelsBeforeAdmin));
+
+    std::remove(path.c_str());
+}

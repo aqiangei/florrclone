@@ -1,0 +1,2003 @@
+#pragma once
+// The game's menus: inventory, crafting, talents, bestiary, shop, skins,
+// leaderboard and settings.
+//
+// One menu is open at a time. That is a deliberate rule rather than a
+// limitation: every panel is anchored to the same place, they overlap, and a
+// stack of them would leave the player dragging petals into a panel they
+// cannot see. Opening one closes whatever was open, exactly as pressing its
+// key again closes it.
+//
+// The panels are immediate-mode. Each one lays itself out, hit-tests, acts and
+// draws in a single pass, so there is no retained widget tree to leave stale
+// and no second copy of the layout for the input pass to drift away from. What
+// they DO keep between frames is genuinely stateful: a scroll offset, what is
+// being dragged, how far an animation has run.
+
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include <memory>
+
+#include "canvas.h"
+#include "svg.h"
+#include "window.h"
+
+#include "client/net_client.h"
+#include "client/render/sprites.h"
+#include "client/interpolation.h"
+#include "client/render/world_renderer.h"
+#include "client/ui/menu_widgets.h"
+#include "client/ui/touch_scroll.h"
+#include "client/ui/item_tile.h"
+#include "client/ui/i18n.h"
+#include "shared/core/types.h"
+#include "shared/game/skills.h"
+
+namespace flix {
+
+/// Opens an external HTTP(S) URL with the host platform. The web build uses
+/// window.open directly, keeping Emscripten's SDL shim out of the browser
+/// artifact; the desktop build delegates to SDL.
+bool openExternalLink(const std::string& url);
+
+/// The NPC a flower is standing at, as the client measures it (App::nearbyNpc):
+/// what it offers, and which mob at which tier it is -- an assembler's recipes
+/// are its mob's, and its tier is the tier it works at.
+struct NearbyNpc {
+    NpcService service = NpcService::None;
+    std::uint16_t mobIndex = 0xFFFF;
+    Rarity rarity = Rarity::Common;
+    /// An assembler's one recipe, an index into its mob's `npc.recipes`.
+    std::uint8_t recipe = 0;
+};
+
+/// Which panel is on screen.
+///
+/// Appended to, never reordered: `ClientSettings::hotkeys` is indexed by this
+/// and persists as `key.<index>`, so an insertion in the middle silently
+/// rebinds every menu a player has customised.
+enum class MenuId : std::uint8_t {
+    None = 0,
+    Inventory,
+    Crafting,
+    Talents,
+    Gallery,
+    Shop,
+    Skins,
+    Leaderboard,
+    Settings,
+    Changelog,
+    Notifications,
+    Guild,
+    Debug,
+    /// The admin database editor. Opened by `/admin db` and nothing else: it
+    /// is on no strip button and its key is unbound and not rebindable.
+    AdminDb,
+    /// The admin dashboard: the flowers in the world, a player's bag, flower
+    /// control, spawning, giving and announcements. Opened from the strip's
+    /// admin button, which only an admin is shown, or `/admin gui`. Its key is
+    /// unbound and not rebindable.
+    AdminDashboard,
+    /// The asset browser. Opened from the debug panel and gated on the same
+    /// switch; on no strip button, and its key is unbound and not rebindable.
+    Assets,
+    /// The account: its name -- which a guest may pick, once -- its password,
+    /// signing in to another account, and Log Out. On the top row; its key is
+    /// unbound and not rebindable.
+    Account,
+    Count,
+};
+
+inline constexpr int kMenuCount = static_cast<int>(MenuId::Count);
+
+/// A rebindable action, in the order the settings panel lists its rows -- the
+/// browser's DEFAULT_CONTROLS order.
+///
+/// Appended to, never reordered: a binding persists as `ctl.<index>`, so an
+/// insertion in the middle silently rebinds every action after it.
+enum class ControlAction : std::uint8_t {
+    MoveUp = 0,
+    MoveDown,
+    MoveLeft,
+    MoveRight,
+    Inventory,
+    Crafting,
+    Skills,
+    ToggleMouseControls,
+    ToggleHitboxes,
+    ToggleDebugMenu,
+    ZoomIn,
+    ZoomOut,
+    Chat,
+    ExtendPetals,
+    RetractPetals,
+    /// Appended, not slotted in beside the loadout: the settings file stores
+    /// a binding by this enum's number, so a row inserted mid-list would hand
+    /// every later row's saved key to its neighbour.
+    SwapLoadoutRows,
+    Count,
+};
+
+inline constexpr int kControlCount = static_cast<int>(ControlAction::Count);
+
+/// What the settings panel shows for one action, and where its binding lives.
+/// `menu` is the panel a row really opens; MenuId::None means there is no menu
+/// behind it and the key is kept in ClientSettings::controls.
+struct ControlMeta {
+    const char* label;
+    Key defaultKey;
+    MenuId menu;
+};
+
+/// The label, default key and menu of an action. Indexed by ControlAction; an
+/// action out of range reports an unbound, unlabelled row rather than reading
+/// off the end.
+const ControlMeta& controlMeta(ControlAction action);
+
+/// keyDown/keyPressed for a BOUND key, which is not quite the same question.
+/// The browser spells both shifts, both controls and both alts as one key and
+/// binds that; a client that names physical keys has to answer for either half
+/// of the pair, or a binding made on one side of the keyboard is dead on the
+/// other. An unbound action (Key::Unknown) is never down and never pressed.
+bool boundKeyDown(const Window& window, Key key);
+bool boundKeyPressed(const Window& window, Key key);
+
+/// The loadout the bar draws: ten primary slots, ten secondary slots under
+/// them, and a trash slot at the end of the second row.
+///
+/// Layout, not capacity: `kLoadoutSlots` is what an account holds and the wire
+/// carries, and `kLoadoutActiveSlots` is how many of those are in orbit. A slot
+/// past what the account actually holds still draws as an empty one.
+inline constexpr int kLoadoutBarPrimary = 10;
+inline constexpr int kLoadoutBarSecondary = 10;
+inline constexpr int kLoadoutBarSlots = kLoadoutBarPrimary + kLoadoutBarSecondary;
+/// Hit-test index of the trash, one past the last real slot.
+inline constexpr int kLoadoutTrashSlot = kLoadoutBarSlots;
+
+/// The link the Discord button opens.
+inline constexpr const char* kDiscordInvite = "https://discord.gg/mDQRVWeEq5";
+
+/// AshFlor QQ group (same as ashflor title-screen badge).
+inline constexpr const char* kAshflorQqGroupId = "227990150";
+inline constexpr const char* kAshflorQqInvite = "https://qm.qq.com/q/E0OG9CLIg";
+
+/// Slots in the icon strip: across the top-left corner, three down the
+/// bottom-left one. Not every one is shown at once -- see drawIconStrip -- and
+/// three of the top row open no panel (Discord / QQ are links and exit leaves
+/// the game), so this is not `kMenuCount`.
+inline constexpr int kStripSlotCount = 17;
+
+/// The range ClientSettings::zoom is held to, and how far one press of a zoom
+/// key moves it. The step is the browser's own ZOOM_STEP; the range is this
+/// client's. The floor is 100%: the wheel and the keys only ever zoom IN.
+/// Seeing MORE of the world than the default view is what antennae and
+/// observer are for (see loadoutCameraZoom), and a wheel that could scroll
+/// out past them -- this client's once reached 0.6, the browser's 0.5 --
+/// made the two petals pointless.
+inline constexpr double kMinZoom = 1.0;
+inline constexpr double kMaxZoom = 1.6;
+inline constexpr double kZoomKeyStep = 0.1;
+
+/// The camera multiplier the worn loadout asks for: the smallest cameraZoom
+/// over the ACTIVE slots, or 1 when none sets one. Antennae and observer are
+/// the petals that do. Not summed and not stacked -- two of them show the
+/// better one, exactly as the browser's getEquippedZoomMultiplier did -- and
+/// floored at the browser's 0.3 so no tier can invert the camera. Storage
+/// grants nothing, the same rule the server applies to the equipment bits.
+double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry);
+
+/// How far the loadout bar reaches up from the bottom edge of an in-game
+/// viewport. What anything else anchored to the bottom hangs above -- the bar
+/// is centred and already nearly touches the edge, so there is no room under
+/// it. Derived from the same constants the bar is laid out from, so it has to
+/// be asked about the same shape the bar is drawn in: pass
+/// ClientSettings::classicLoadoutBar.
+/// `viewWidth` is the viewport's width in design units, which the bar may have
+/// had to shrink to fit; 0 asks for the unclamped height.
+double inGameLoadoutBarHeight(bool classic = false, double viewWidth = 0.0);
+
+/// Where the title screen's block of control hints starts, as an offset down
+/// from the centre of the window. Under whatever the loadout bar paints
+/// lowest inside its own box: the secondary row with the classic metrics, the
+/// key caps beneath that row with the modern ones. Takes the same flag
+/// inGameLoadoutBarHeight does, and for the same reason.
+double titleHintsOffsetY(bool classic = false);
+
+/// The highest the title screen's loadout bar paints, as an offset down from
+/// the centre of the window: the primary row's top edge with the modern
+/// metrics, the key caps above that row with the classic ones. What the XP
+/// gauge over the bar has to clear.
+double titleLoadoutTopY(bool classic = false);
+
+/// ClientSettings::chatChannels' bits, for the chat box's six tabs in strip
+/// order (app_chat.cpp's ChatTab counts them). Named here because the
+/// settings file has to know two of them: the Admin tab came sixth, after files
+/// were already being written with five -- and for one day (da5936d7 to
+/// d47055a7) six were written under the same old key, which
+/// ClientSettings::load reads as five on purpose (see there).
+inline constexpr std::uint8_t kChatChannelsAll = 0x3F;
+/// The five tabs a file from before the Admin tab can name.
+inline constexpr std::uint8_t kChatChannelsBeforeAdmin = 0x1F;
+inline constexpr std::uint8_t kChatAdminChannel = 1u << 5;
+
+/// Everything the settings menu owns. Kept in one struct so it can be written
+/// to disk and read back as a unit, and so nothing else has to know which of
+/// these the renderer reads and which the input layer does.
+struct ClientSettings {
+    WorldRenderer::Options render;
+    /// Player-chosen camera zoom, multiplied into whatever the loadout asks
+    /// for. Persisted, because it is a comfort setting, not a game state.
+    double zoom = 1.0;
+    /// How much of the gap between a drawn position and the authoritative one
+    /// is closed per frame at 60 fps -- the smoothness/latency trade for every
+    /// flower, petal, drop and mob facing. The TypeScript client kept the same
+    /// number in `localStorage.interpolationAmount`. See client/interpolation.h.
+    double interpolation = kDefaultInterpolationAmount;
+    /// The fraction of the display's native resolution the frame is
+    /// rasterised at, 0.25 to 1. The TypeScript client kept the same number in
+    /// `localStorage.renderScale`; here it reaches Window::setRenderScale,
+    /// which is the whole of its effect -- nothing moves or resizes, the
+    /// picture just gets softer and the rasteriser gets cheaper. It earns its
+    /// place on a HiDPI display, where 1 means filling four times the pixels
+    /// a non-Retina panel would ask for.
+    double renderScale = 1.0;
+    /// Browser only: draws into a low-latency (`desynchronized`) canvas, which
+    /// can cut a frame of input lag but can also show a frame half drawn.
+    /// Off by default because of that flicker. Reaches
+    /// Window::setDesynchronized the way renderScale reaches setRenderScale.
+    bool desynchronizedCanvas = false;
+    bool showChat = true;
+    /// Which of the chat box's channel tabs its transcript shows, one bit per
+    /// tab in strip order: Local, Global, Squad, Guild, Whisper, Admin. All on
+    /// by default. The server's own lines belong to no tab and always show.
+    /// Persisted as `chatTabs`; see load() for the older `chatChannels`.
+    std::uint8_t chatChannels = kChatChannelsAll;
+    /// The frame/ping/position readout in the bottom-right corner. Off by
+    /// default, and the TypeScript client kept the same flag in
+    /// `localStorage.showStats`.
+    bool showStats = false;
+    /// Shows the grey bug button in the top strip, which is the only way into
+    /// the debug panel. Off by default, exactly as `debugMenuEnabled` was.
+    bool showDebugButton = false;
+    /// Asks the leaderboard to rank admin accounts too, which the server
+    /// otherwise leaves off. Off by default; the TypeScript client kept the
+    /// same flag in `localStorage.showAdminsOnLeaderboard`.
+    bool showAdminsOnLeaderboard = false;
+    /// How many changelog releases the player had already seen the last time
+    /// they opened the panel. The TypeScript client kept the same number in
+    /// `localStorage.lastSeenChangelogCount`. The strip's changelog button
+    /// shakes for as long as the changelog holds more releases than this.
+    int changelogSeen = 0;
+    /// Which notifications the player has already read. The TypeScript client
+    /// kept the same set in `localStorage['game_notifications_read']`; here it
+    /// rides in the settings file with everything else. Server ids carry no
+    /// whitespace, which is what lets them share this file's key/value lines.
+    std::vector<std::string> readNotifications;
+    /// The key that opens each menu, indexed by MenuId.
+    std::array<Key, kMenuCount> hotkeys{};
+    /// The key bound to every other action, indexed by ControlAction. The four
+    /// menu-backed actions live in `hotkeys` instead, because that is what
+    /// MenuSystem opens a panel from, and their slots here are never read:
+    /// controlKey/bindControl are what hide which action is kept where.
+    std::array<Key, kControlCount> controls{};
+    /// Whether the flower follows the cursor. Off leaves movement to the four
+    /// movement keys alone; aim follows the pointer either way. The TypeScript
+    /// client kept the same flag in `localStorage.useMouseControls` and
+    /// defaulted it off, where this client defaults it ON: cursor-following is
+    /// the control scheme it has always shipped with, and defaulting to that
+    /// value would take it away from every existing player.
+    bool useMouseControls = true;
+    /// Thin aim ray from the flower toward the cursor (AshFlor 移动辅助).
+    /// On by default.
+    bool movementHelper = true;
+    /// When on, attack/defend is the default stance and holding the key or
+    /// button cancels it (AshFlor invert attack / invert defend).
+    bool invertAttack = false;
+    bool invertDefend = false;
+    /// Draws the loadout bar the way this client used to: three-quarter-size
+    /// slots, the browser port's wide gaps, and the number captions above the
+    /// top row. Off by default -- the bar's own shape now follows the
+    /// reference game's, which is bigger, tighter and captioned underneath.
+    bool classicLoadoutBar = false;
+    /// Whether the on-screen touch controls are up: the stick, and the two
+    /// buttons that stand in for the extend/retract keys. The TypeScript
+    /// client kept the same flag in `localStorage.requestMobile` and resolved
+    /// an unset one from `(pointer: coarse)`, as this one does -- a phone gets
+    /// them without being asked, and a desktop does not. `requestMobileChosen`
+    /// is that "unset": until the player has said either way, the answer is
+    /// the device's.
+    bool requestMobile = false;
+    bool requestMobileChosen = false;
+    /// The spawn point the player last chose to start at -- one of the ids in
+    /// WorldMaps::spawnChoices(), or "pvp"/"maze". Empty is the server's
+    /// default. Remembered because it is a preference, not a game state.
+    std::string spawnChoice;
+    /// Whether the title screen's yellow arrow is up: the next join asks for
+    /// the chosen door's prestige twin (shared/game/prestige.h). Only acted
+    /// on while the profile holds the Prestige talent.
+    bool prestige = false;
+    /// Whether the eleven-step tutorial has been finished or skipped, and how
+    /// far it had got. The TypeScript client kept the same pair in
+    /// localStorage as `tutorial_completed` and `tutorial_step`; they ride here
+    /// so this client has one settings file rather than a second store beside
+    /// it.
+    ///
+    /// Only the first is ever read back. See ui::Tutorial::beginGame for why
+    /// the reference's own resume is dead and this one matches it.
+    bool tutorialCompleted = false;
+    int tutorialStep = 0;
+    /// UI language. Default Chinese; English is opt-in via Settings.
+    ui::Language language = ui::Language::Zh;
+
+    ClientSettings();
+
+    /// The touch controls, resolved for a device that answers `coarse` to the
+    /// pointer query. A player's own choice wins; before they have made one,
+    /// a touchscreen gets the controls and a desktop does not.
+    bool touchControlsWanted(bool coarsePointer) const {
+        return requestMobileChosen ? requestMobile : coarsePointer;
+    }
+
+    /// The key bound to an action, wherever that binding is kept.
+    Key controlKey(ControlAction action) const;
+    /// Binds a key to an action. A key already opening some OTHER menu is
+    /// taken from it rather than the rebind being refused: two menus on one
+    /// key is the only broken state, and telling the player off for it is
+    /// worse than just moving it.
+    void bindControl(ControlAction action, Key key);
+
+    bool load(const std::string& path);
+    bool save(const std::string& path) const;
+};
+
+/// What the player is currently dragging, if anything.
+///
+/// Owned by the menu system rather than by the inventory panel: a drag starts
+/// in one panel and ends on the loadout bar, which is not a panel at all, and
+/// the two must not each keep half of it.
+struct DragState {
+    enum class Source : std::uint8_t { None, Inventory, LoadoutSlot };
+    Source source = Source::None;
+    std::uint16_t petalIndex = kNoPetal;
+    Rarity rarity = Rarity::Common;
+    int slot = -1;              ///< the loadout slot a LoadoutSlot drag left
+    bool active() const { return source != Source::None; }
+    void clear() { *this = DragState{}; }
+};
+
+/// What the debug panel's Profiling tab shows.
+///
+/// The frame cost of this client is very nearly the number of drawing calls it
+/// makes times what the browser charges for each, so the question a slow frame
+/// raises is always "which code is making them". The app fills this in once a
+/// second -- the same rolling window the rest of the counters use, because a
+/// per-frame readout jitters too much to read.
+struct ProfilingStats {
+    /// Whether the app filled this in at all. The native build does not.
+    bool available = false;
+    int opsPerFrame = 0;
+    int batches = 0;
+    /// What the browser spent consuming the op stream, against what the whole
+    /// frame cost. The difference is the client's own arithmetic.
+    double browserAvgMillis = 0;
+    double browserPeakMillis = 0;
+    double frameMillis = 0;
+    /// Ops by the part of the frame that made them.
+    int world = 0, hud = 0, panels = 0, other = 0;
+    int menuBar = 0, menuStrip = 0, menuPanel = 0;
+    /// Bitmaps the art cache holds, and what they occupy.
+    std::size_t bakedEntries = 0;
+    std::size_t bakedBytes = 0;
+    /// Text runs the atlas holds, and how many it baked this frame. A screen
+    /// that keeps baking is one whose text never repeats a key -- a zoom, a
+    /// working set bigger than the atlas -- and is drawing it live.
+    std::size_t textRuns = 0;
+    int textBaked = 0;
+    /// Ops by kind of call, indexed by canvas op code. See canvasOpName().
+    std::array<int, kCanvasOpCodes> byType{};
+};
+
+/// One frame of everything a panel is allowed to touch.
+struct MenuContext {
+    Canvas& canvas;
+    Window& window;
+    NetClient& net;
+    const SpriteCache& sprites;
+    /// Used only by the skins menu, to preview a cosmetic with the very same
+    /// body the world renders.
+    const WorldRenderer& renderer;
+    ClientSettings& settings;
+    DragState& drag;
+    double timeSeconds = 0;
+    double dt = 0;
+    /// The panel's card, already anchored -- and already offset downwards by
+    /// however much of its opening slide is still to run, so everything a
+    /// panel derives from this rides along with it.
+    Rect bounds;
+    /// Set by a panel whose text field has focus, so the chat box and the
+    /// login form do not also consume this frame's keystrokes.
+    bool wantsText = false;
+    /// Set by the settings panel's Log Out button. Ending a session is the
+    /// app's business -- it owns the stored token and the screen -- so the
+    /// panel only says that it was asked for.
+    bool logoutRequested = false;
+    /// Whether this build can make its own player an admin, which is true of
+    /// the offline page and nothing else -- see AppConfig::grantAdmin. The
+    /// settings panel draws its Grant Admin row only when this is set.
+    bool adminGrantOffered = false;
+    /// Set by that row, and read the way the logout request is: the grant
+    /// itself belongs to whoever owns the server, which is never a panel.
+    bool adminGrantRequested = false;
+    /// The debug panel's Profiling tab reads this. Null on a build that does
+    /// not gather it.
+    const ProfilingStats* profiling = nullptr;
+    /// Where the icon strip's settings gear was last laid out, empty before
+    /// the strip has been. The settings panel closes on a click outside its
+    /// card, but not on this one button: see SettingsPanel::render.
+    Rect settingsButton{};
+    /// Set by a panel that hands over to another -- the debug panel's Assets
+    /// button, and the asset browser's way back. Opening a menu is the menu
+    /// system's business, so the panel only names the one it wants.
+    MenuId openMenu = MenuId::None;
+    /// App ALT latch: tooltips show exact figures while on.
+    bool altMode = false;
+
+    Vec2 mouse() const { return {window.mouseX(), window.mouseY()}; }
+    bool over(Rect r) const { return r.contains(mouse()); }
+    bool pressed() const { return window.mousePressed(MouseButton::Left); }
+    bool released() const { return window.mouseReleased(MouseButton::Left); }
+    /// A click that both began and ended inside `r`. Press-and-release is what
+    /// separates a click from the end of a drag that happens to land here.
+    bool clicked(Rect r) const { return released() && over(r); }
+    float wheel() const { return window.wheelDelta(); }
+};
+
+// ---------------------------------------------------------------------------
+// Panels
+// ---------------------------------------------------------------------------
+
+/// The petal inventory: every stack the account owns, grouped by tier.
+class InventoryPanel {
+public:
+    /// Returns false when the panel asked to be closed.
+    bool render(MenuContext&);
+    void reset();
+
+    /// The panel's natural width: five cells and their gaps, plus padding.
+    static double preferredWidth();
+    /// Where the card hangs in a view of this size. Defined in menus.cpp with
+    /// the rest of the panel geometry, so the anchors can be read side by side.
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+
+    ui::Scroller scroll_;
+    /// One slot per item TYPE at its best tier, instead of one per tier.
+    bool stacked_ = false;
+    double stackLerp_ = 0;
+    std::string search_;
+    ui::TextFieldState searchField_;
+};
+
+// ---------------------------------------------------------------------------
+// The slot card
+// ---------------------------------------------------------------------------
+//
+// The craft key opens one of four cards -- the forge's, or the oracle's, the
+// trader's or the titan's while the flower stands at one -- and the four are
+// ONE window: florr's own craft window, read out of its client (the screen
+// render lays it out, ~/florr_images/emulator/menus.py records it as Skia
+// commands). A themed panel at x = 95, its bottom 20 above the view's, that
+// slides up from below the view as it opens; a title row with a close
+// button; a 500-wide body of slot, button, odds and two lines; and under it
+// a grid of everything the account owns, a row a petal and a column a tier.
+// What differs is the theme, the words, how many tier columns the grid has
+// (only the trader's runs on to apex), what a cell says, and what stands in
+// the slot -- the forge turns a ring of five about its centre where the
+// oracle, the trader and the titan hold one petal.
+//
+// These are the pieces they share (menu_slot_card.cpp). Each panel keeps its
+// own staging, its own animation and its own input: that is what makes them
+// four menus rather than one.
+
+/// The single slot's side, and the size the oracle and the trader draw what
+/// is in it.
+inline constexpr double kSlotCardSlot = 70.0;
+/// A refusal under the slot, and the line while an NPC's wait runs.
+inline constexpr std::uint32_t kSlotCardRefusalInk = 0xFF6B6Bu;
+inline constexpr std::uint32_t kSlotCardWaitInk = 0xED706Bu;
+/// Every label on the card is outlined at 60%, a visibly lighter weight than
+/// the solid outline most panels use.
+inline constexpr double kSlotCardLabelStroke = 0.6;
+/// How the window rises: its open progress eases toward 1 at this rate per
+/// millisecond (x += (target - x) * (1 - e^(-rate * dt))), and the window
+/// moves linearly with it from 50 below the view's bottom edge to its seat.
+inline constexpr double kSlotCardOpenRate = 0.021400496636323946;
+inline constexpr double kSlotCardClosedDrop = 50.0;
+
+/// Whether `petalIndex` names a petal this build has: not kNoPetal, and not
+/// past the end of the content table. What every card asks before it draws or
+/// stages a petal that came from its own staging or from the server.
+inline bool knownPetal(std::uint16_t petalIndex) {
+    return petalIndex != kNoPetal && petalIndex < content().petalCount();
+}
+
+/// The window's dark shade: its theme with every channel scaled by 0.81
+/// (0.9 in square-root space), which florr paints the border, the empty slots
+/// and the empty cells in.
+std::uint32_t slotCardShade(std::uint32_t theme);
+/// A card's skin from its theme alone, the way florr derives one.
+ui::PanelSkin slotCardSkin(std::uint32_t theme);
+
+/// florr's window: `fill`, under a 7-wide round-joined stroke of `rim`
+/// centred on the edge -- which is what rounds the corners.
+void drawFlorrPanel(Canvas&, Rect, std::uint32_t fill, std::uint32_t rim);
+/// The stroke alone. florr paints it a second time once the content is down,
+/// so nothing drawn inside the window overruns its edge.
+void drawFlorrRim(Canvas&, Rect, std::uint32_t rim);
+/// A rounded rect whose corners are quadratics through the corner point, not
+/// arcs -- how every florr widget rounds a corner.
+void fillQuadRound(Canvas&, Rect, double radius, std::uint32_t rgb);
+/// florr's bordered button (0x1007ab640). Its rim is `rect` grown by
+/// border/2 and rounded radius + border, in the 0.81 shade of the BASE face;
+/// its face is `rect` shrunk by border/2 and rounded `radius`. Hovered the
+/// face goes c * 0.9 + 25.5 a channel, pressed (held, or forced -- an open
+/// tab) c * 0.9; the rim never changes. `rim` overrides the derived shade.
+void drawFlorrButton(Canvas&, Rect rect, std::uint32_t face, double border, double radius,
+                     bool hovered, bool pressed,
+                     std::optional<std::uint32_t> rim = std::nullopt);
+/// florr's close button in the 25-square `square`: a b4 r4 button of
+/// #BB5555 on #974545 with a #CCCCCC cross.
+void drawFlorrClose(Canvas&, Rect square, bool hovered, bool pressed);
+
+/// Where everything on a slot card is this frame. Derived from the card's rect,
+/// so a card still sliding up carries all of it along.
+struct SlotCardLayout {
+    Rect panel;
+    Rect close;
+    /// The body's centre line, and the window's top-left corner of the body.
+    double centreX = 0;
+    Vec2 body;
+    /// The slot's centre (the ring's, on the forge), and the slot.
+    Vec2 slot;
+    Rect slotRect;
+    /// The action button, sized to its label.
+    Rect button;
+    /// The middle of the odds line under the button, of the line of text, and
+    /// of the smaller second line under it.
+    double chanceY = 0;
+    double lineY = 0;
+    double line2Y = 0;
+    /// Where the grid scrolls, and how far down it its first row stands.
+    Rect listView;
+    double listInsetY = 10.0;
+};
+
+/// The window's width for a grid `columns` cells across (never narrower than
+/// florr's 610), and for one through unique or, `withApex`, apex.
+double slotCardColumnsWidth(std::size_t columns);
+double slotCardWidth(bool withApex);
+/// The window's height for a grid `rows` rows deep: as tall as the grid needs,
+/// up to 700, past which the grid scrolls.
+double slotCardHeight(std::size_t rows);
+/// Where a slot card of this size stands, seated: at x = 95, its bottom 20
+/// above the view's, and never reaching up over the HUD in the top-left.
+Rect slotCardBounds(double width, double height, int viewWidth, int viewHeight);
+
+/// Draws the window, its title and its close button, and lays out the rest;
+/// `button` is the action button's label, which sizes it.
+SlotCardLayout drawSlotCard(Canvas&, Rect panel, const ui::PanelSkin&, const char* title,
+                            const char* button, Vec2 mouse);
+/// The forge's Switch button, beside the close button: an 80 x 25 b4 r4
+/// button in `face` -- the theme of the side it switches TO -- labelled
+/// "Switch". Returns where it answers the cursor (its rim).
+Rect drawSlotSwitch(Canvas&, const SlotCardLayout&, std::uint32_t face, Vec2 mouse, bool held);
+/// A slot's plate: flat in the skin's border colour, so an empty slot reads as
+/// a place to put something rather than as a hole in the card.
+void drawSlotPlate(Canvas&, const SpriteCache&, Rect, const ui::PanelSkin&);
+/// `tile` in a square of `side` centred on `centre`, turned by `rotation`. The
+/// transform is set before the tile opens a path and restored after it closes
+/// the last, so both canvas backends see the same geometry.
+void drawSlotTile(Canvas&, const SpriteCache&, Vec2 centre, double side, double rotation,
+                  const ui::ItemTile&);
+/// The action button: florr's grey button while it cannot be used, and
+/// `tint` -- a rarity's colour -- once it can. Only a usable button answers
+/// the cursor, florr's way: hovered, its face is 10% toward white; pressed,
+/// 10% toward black. The rim is the face's 0.81 shade either way.
+void drawSlotButton(Canvas&, Rect, const char* label, std::optional<std::uint32_t> tint,
+                    bool hovered, bool pressed = false);
+/// The odds under the button.
+void drawSlotChance(Canvas&, const SlotCardLayout&, const std::string& text);
+/// The line of text, in the labels' white or in `ink`; `second` is the
+/// smaller line under it.
+void drawSlotLine(Canvas&, const SlotCardLayout&, const std::string& text,
+                  std::optional<std::uint32_t> ink = std::nullopt, bool second = false);
+/// Why an NPC said no, under the slot, where the player is looking.
+void drawSlotRefusal(Canvas&, const SlotCardLayout&, const std::string& text);
+
+/// What one cell of the grid says, as its panel decides it.
+struct SlotCell {
+    /// How many the cell shows as held: the account's stack, less whatever the
+    /// panel has staged out of it. Zero draws the flat empty square.
+    std::uint32_t count = 0;
+    std::string badge;
+    /// For a label longer than a count, hung past the tile's corner.
+    bool badgeCentred = false;
+    /// On a grey plate, and not clickable.
+    bool greyed = false;
+};
+
+/// The grid under the line: a row for every petal type the account owns --
+/// from the UNDEDUCTED profile, so a stack staged down to nothing keeps its
+/// row and nothing reflows under the cursor mid-click -- and a column for
+/// every tier, whether or not the account holds one, so the grid says what the
+/// card is for on a fresh account too.
+class SlotGrid {
+public:
+    struct Pick {
+        std::uint16_t petalIndex = kNoPetal;
+        Rarity rarity = Rarity::Common;
+    };
+
+    void reset() { scroll_ = {}; }
+    /// How many rows the account's petals make: one a type held at a tier the
+    /// grid has a column for.
+    static std::size_t rows(const Profile&, bool withApex);
+    /// Scrolls, draws, and returns the cell under the cursor when `look` left
+    /// it clickable -- held, and not greyed.
+    std::optional<Pick> render(
+        MenuContext&, const SlotCardLayout&, const ui::PanelSkin&, bool withApex,
+        const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look);
+
+private:
+    ui::Scroller scroll_;
+};
+
+/// The titan's grid: a cell for every petal type the account holds at ONE
+/// tier -- from the undeducted profile, as SlotGrid's rows are -- `columns`
+/// to a row, each row centred where SlotGrid's columns would stand, and
+/// scrolling a row at a time from `top` (measured from the card's top) to the
+/// card's bottom border.
+class SlotTierGrid {
+public:
+    /// The held cell under the cursor. A greyed one is reported too -- the
+    /// titan still names who holds it -- but it is never drawn hovered.
+    struct Pick {
+        std::uint16_t petalIndex = kNoPetal;
+        bool greyed = false;
+    };
+
+    void reset() { scroll_ = {}; }
+    /// How many rows the account's petals at `tier` make, `columns` to a row.
+    static std::size_t rows(const Profile&, Rarity tier, std::size_t columns);
+    /// Scrolls, draws, and returns the held cell under the cursor, if any.
+    std::optional<Pick> render(
+        MenuContext&, const SlotCardLayout&, const ui::PanelSkin&, Rarity tier,
+        std::size_t columns, double top,
+        const std::function<SlotCell(std::uint16_t petalIndex, std::uint32_t owned)>& look);
+
+private:
+    ui::Scroller scroll_;
+};
+
+/// florr's own slot motions, shared by the cards whose bodies use them (read
+/// out of florr's client; see menu_slot_card.cpp for the addresses). Every
+/// ease is x += (target - x) * (1 - e^(-rate * dt)), dt in milliseconds.
+///
+///   - a spin with its phase, a shake and a show, for a slot that rolls;
+///   - a petal growing into a slot: scale, opacity and one backward turn;
+///   - an outcome popping in -- forward turn, scale and opacity -- with a
+///     pulse on top;
+///   - a tile that is replaced vanishing where it stood, turning;
+///   - a burst of square grains under gravity and drag.
+/// How a slot burst's grains are thrown: x velocity in +-500, y velocity
+/// from -500 to `riseTo`, and starting angles from `angleBase` across
+/// `angleSpread` radians. The trader throws them evenly; the oracle's mostly
+/// rise.
+struct SlotBurstShape {
+    double riseTo = 500.0;
+    double angleBase = 2.0;
+    double angleSpread = 3.0;
+};
+
+class SlotMotion {
+public:
+    void clear();
+
+    /// Steps the roll: `spin` eases to `spinTarget` rad/s while `rolling`
+    /// (at `upRate`) and back to rest after (at `downRate`); the shake follows
+    /// `rolling` and the show follows `showing`.
+    void stepRoll(double dtMs, bool rolling, bool showing, double spinTarget, double upRate,
+                  double downRate);
+    double spin() const { return spin_; }
+    double phase() const { return phase_; }
+    double shake() const { return shake_; }
+    double show() const { return show_; }
+    /// Puts the roll back at rest at once.
+    void stopRoll() { spin_ = phase_ = shake_ = show_ = 0.0; }
+
+    /// The slot petal's grow, eased once a frame by `step`, and started over
+    /// whenever what the slot shows changes (`key`). Draws `tile` growing in
+    /// at `centre`, at `side` and `alpha`.
+    void drawGrowing(Canvas&, const SpriteCache&, Vec2 centre, double side, double alpha,
+                     std::uint32_t key, double dtMs, ui::ItemTile tile);
+    /// Starts the outcome's pop and its pulse, on its first frame.
+    void startPop();
+    /// Draws the popped outcome at `centre` and `side`.
+    void drawPopped(Canvas&, const SpriteCache&, Vec2 centre, double side, double dtMs,
+                    ui::ItemTile tile);
+    /// A tile that has just been replaced, to vanish where it stood.
+    void vanish(Vec2 centre, double side, const ui::ItemTile& tile);
+    /// A burst of `count` grains of `rarity`'s colour from `at`, each also
+    /// carrying `carry` (the velocity of whatever threw them).
+    void burst(Vec2 at, Rarity rarity, int count, const SlotBurstShape& shape = {},
+               Vec2 carry = {});
+    /// The same, in `color` rather than a rarity's.
+    void burst(Vec2 at, std::uint32_t color, int count, const SlotBurstShape& shape = {},
+               Vec2 carry = {});
+
+    /// The single-slot scene the oracle and the trader share, florr's: the
+    /// plate, faded as the outcome shows, swung out from the slot's centre
+    /// on a 50-deep sine of the time since the click while the spin turns it;
+    /// the grains; the slot's petal (`shown`, keyed by `shownKey`) growing in
+    /// on the plate; and the outcome (`result`), 90 across at the centre,
+    /// popping in with its burst on its first frame. Whatever stood in the
+    /// slot vanishes where it stood when it is replaced. Hover is the
+    /// caller's, on the tiles it passes.
+    void drawSlotScene(Canvas&, const SpriteCache&, const SlotCardLayout&, const ui::PanelSkin&,
+                       double sinceClickMs, double dtMs, const ui::ItemTile* shown,
+                       std::uint32_t shownKey, const ui::ItemTile* result,
+                       std::uint32_t resultKey, const SlotBurstShape& shape);
+    /// Steps and draws the grains, then the vanishing tiles (call where
+    /// each belongs in the paint order).
+    void drawGrains(Canvas&, double dtMs);
+    void drawVanishing(Canvas&, const SpriteCache&, double dtMs);
+
+private:
+    struct Grain {
+        Vec2 position;
+        Vec2 velocity;
+        double alpha = 1.0;
+        double lifeMs = 1.0;
+        double size = 0.0;
+        double angle = 0.0;
+        std::uint32_t color = 0xFFFFFFu;
+    };
+    struct Vanishing {
+        Vec2 centre;
+        double side = 0.0;
+        double progress = 0.0;
+        ui::ItemTile tile;
+    };
+
+    double spin_ = 0, phase_ = 0, shake_ = 0, show_ = 0;
+    std::uint32_t growKey_ = 0xFFFFFFFFu;
+    double grow_ = 0;
+    double pop_ = 1.0;
+    double pulse_ = 0.0;
+    std::vector<Grain> grains_;
+    std::vector<Vanishing> vanishing_;
+    /// What the slot scene last drew, for it to vanish from when replaced.
+    std::uint32_t sceneKey_ = 0xFFFFFFFFu;
+    Vec2 sceneAt_;
+    double sceneSide_ = 0.0;
+    ui::ItemTile sceneTile_;
+};
+
+/// florr's grains per outcome by tier, before its own multiplier
+/// (u64 table 0x100e19360); the top figure carries on up our longer ladder.
+int slotBurstGrains(Rarity rarity);
+
+/// The forge: five slots in a ring about where the other cards hold their one,
+/// and the grid that feeds them. florr's own craft ring: each petal grows into
+/// its slot spinning; a craft spins the ring up and shakes it in and out while
+/// the server rolls; a success shrinks the ring away and grows the upgrade in
+/// its middle. See menu_crafting.cpp.
+class CraftingPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    /// The window's width and height for this account: the grid's columns
+    /// set the one and its rows the other.
+    static Vec2 size(const Profile&);
+    /// Whether the Switch button was pressed since the last call: the menu
+    /// system turns the window over to Absorb.
+    bool takeSwitch() { return std::exchange(switchPressed_, false); }
+
+private:
+    enum class Phase : std::uint8_t { Idle, Spinning, Result };
+
+    /// Adds up to `addBatches` more batches of this petal (`UINT32_MAX` = fill).
+    void stage(const Profile&, std::uint16_t petalIndex, Rarity rarity, std::uint32_t addBatches);
+    /// Steps the ring's eases by `dtMs`.
+    void animate(double dtMs);
+
+    SlotGrid grid_;
+    /// What is staged. A craft consumes five at a time; `batches` is how many
+    /// fives are queued, which is what the slot badge counts.
+    std::uint16_t stagedPetal_ = kNoPetal;
+    Rarity stagedRarity_ = Rarity::Common;
+    int batches_ = 0;
+
+    /// Grid cell held down: same cadence as Absorb (1 s delay, then 300 ms
+    /// steps that grow by a third + 1 each time), counting in batches.
+    std::uint16_t heldPetal_ = kNoPetal;
+    Rarity heldRarity_ = Rarity::Common;
+    double heldNextMs_ = 0;
+    std::uint32_t heldStep_ = 1;
+
+    /// "Craft All" toggle: when on, a click on a craftable petal stages every
+    /// available batch (Shift-click's behaviour). Survives close/reopen.
+    bool fillAllMode_ = false;
+
+    Phase phase_ = Phase::Idle;
+    double phaseStarted_ = 0;
+    /// The ring's motion, florr's: `spin` turns it (rad/s) and `phase` is
+    /// where that has turned it to; `shake` sets how far it pulses in while a
+    /// craft rolls; `show` is how far the outcome has replaced the ring.
+    double spin_ = 0;
+    double phaseAngle_ = 0;
+    double shake_ = 0;
+    double show_ = 0;
+    /// Each slot's grow, 0 to 1: a petal landing in it grows in, spinning.
+    std::array<double, 5> grow_{};
+    /// Which slots still hold a petal after a failure: a random set of them
+    /// loses one, florr's way, rather than the last few.
+    std::array<bool, 5> survives_{};
+    /// The upgrade's pop and pulse, the grains and the tiles vanishing.
+    SlotMotion fx_;
+    /// Whether the outcome showing now was revealed on an earlier frame --
+    /// the reveal frame is the one whose emptied slots throw grains.
+    bool revealed_ = false;
+    /// What each slot and the middle last showed (petal << 8 | tier, or
+    /// all ones for nothing), and the tile itself: whatever leaves a slot --
+    /// spent, lost, unstaged or replaced -- vanishes where it stood, florr's
+    /// way, whatever took it away.
+    std::array<std::uint32_t, 5> slotKey_{0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
+                                          0xFFFFFFFFu};
+    std::array<ui::ItemTile, 5> slotTile_{};
+    std::uint32_t resultKey_ = 0xFFFFFFFFu;
+    ui::ItemTile resultTile_;
+    /// What the ring is animating. The whole staging area goes to the server
+    /// on the click, so `staged*` is empty for the whole spin and the ring
+    /// needs its own copy of what was sent -- which is also what the result
+    /// is compared against.
+    std::uint16_t spinPetal_ = kNoPetal;
+    Rarity spinRarity_ = Rarity::Common;
+    /// How long this roll lasts before its outcome shows, in ms: florr's
+    /// rule, set from the tier on the click (rollBaseMillis_) and cut short
+    /// on a failure when the outcome arrives (rollMillis_).
+    double rollBaseMillis_ = 0;
+    double rollMillis_ = 0;
+    /// A result that landed before the roll had run its length, held until
+    /// it has. The server answers a craft in well under a frame on a local
+    /// socket, so applying an outcome the moment it arrives would skip the
+    /// roll entirely.
+    bool resultPending_ = false;
+    bool lastSuccess_ = false;
+    std::uint16_t resultPetal_ = kNoPetal;
+    Rarity resultRarity_ = Rarity::Common;
+    /// How many upgrades the pool produced, for the result's badge.
+    int resultCount_ = 0;
+    /// How many of the five survived a failure, for the slots to keep drawing.
+    int survivors_ = 0;
+    bool switchPressed_ = false;
+};
+
+/// The forge's other side: Absorb, florr's old client's absorb window, which
+/// the Switch button turns the craft window over to.
+///
+/// Petals picked off the grid gather in the slot -- one alone sits in it, two
+/// or more stand on a ring about it while the slot gives way to a disc -- and
+/// the Absorb button destroys them for XP (shared/game/absorb.h prices it).
+/// Under the slot an XP bar shows the account's level, and what the staged
+/// petals would add to it; a level gained fills the bar, flashes it and
+/// throws a row of sparks off it. Every motion is florr's own, read out of
+/// that client (see menu_absorb.cpp).
+class AbsorbPanel {
+public:
+    bool render(MenuContext&);
+    /// Empties the slot. The bar keeps what it has shown: like florr's, it
+    /// carries on from where it was the last time the window was open.
+    void reset();
+    /// The window's width and height for this account.
+    static Vec2 size(const Profile&);
+    /// Whether the Switch button was pressed since the last call: the menu
+    /// system turns the window back over to Craft.
+    bool takeSwitch() { return std::exchange(switchPressed_, false); }
+
+private:
+    /// What is in the slot, in the order it was picked: the first stands at
+    /// the ring's three o'clock and the rest go round from there.
+    struct Staged {
+        std::uint16_t petalIndex = kNoPetal;
+        Rarity rarity = Rarity::Common;
+        std::uint32_t count = 0;
+    };
+    /// A stack as the slot draws it, which outlives its Staged entry by the
+    /// length of its way out.
+    struct RingTile {
+        std::uint32_t key = 0;
+        ui::ItemTile tile;
+        /// Where it stands about the slot's centre, eased toward its place.
+        Vec2 at;
+        /// Its grow, 0 to 1, from the moment it landed.
+        double grow = 0;
+        /// Where it was last drawn, and how big, for a click and for its exit.
+        Vec2 centre;
+        double side = 0;
+    };
+
+    std::uint32_t staged(std::uint16_t petalIndex, Rarity) const;
+    /// Puts `count` more of this stack in the slot, as many as are left of it.
+    void stage(const Profile&, std::uint16_t petalIndex, Rarity, std::uint32_t count);
+    /// Steps the XP bar toward the account's level and XP; a level filled
+    /// throws its sparks from the bar's left cap at `barLeft`.
+    void stepBar(const std::string& account, double totalXp, double dtMs, Vec2 barLeft);
+
+    SlotGrid grid_;
+    std::vector<Staged> staged_;
+    std::vector<RingTile> ring_;
+    /// The grains a stack bursts into when it is absorbed, and the tiles on
+    /// their way out when one is taken back.
+    SlotMotion fx_;
+    /// The sparks a level-up throws off the bar.
+    SlotMotion sparks_;
+    /// 0 with one stack or none (the slot's square), 1 with two or more (the
+    /// disc the ring stands on).
+    double disc_ = 0;
+    /// Waiting on the server: the ring holds still where it is and every
+    /// tile in it shudders, on this clock -- 0 to 1 a second.
+    bool waiting_ = false;
+    double waitStarted_ = 0;
+    double shudder_ = 0;
+
+    /// The XP bar: the level it shows, how full it is drawn, and whether it
+    /// is flashing away a level just filled. `preview` is how far the staged
+    /// petals would take it, eased in and out as they come and go.
+    bool barKnown_ = false;
+    std::string barAccount_;
+    int barLevel_ = 1;
+    double barFill_ = 0;
+    bool barFlash_ = false;
+    bool previewShown_ = false;
+    double preview_ = 0;
+
+    /// A grid cell held down repeats, florr's way: a second's wait, then
+    /// every 300 ms a step that grows by a third and one each time.
+    std::uint16_t heldPetal_ = kNoPetal;
+    Rarity heldRarity_ = Rarity::Common;
+    double heldNextMs_ = 0;
+    std::uint32_t heldStep_ = 1;
+
+    /// Why the server said no, under the slot until it expires.
+    std::string refusal_;
+    double refusalUntil_ = 0;
+    bool switchPressed_ = false;
+};
+
+/// The oracle: what the craft card becomes while the flower stands at an
+/// oracle NPC.
+///
+/// One slot where the forge has five, every cell labelled "owned/price"
+/// where the forge counts a stack, and an upgrade that is certain. The slot
+/// moves the way florr's oracle window moves it: the staged petal grows in,
+/// the craft spins it about the slot's centre, and the upgrade pops in with
+/// a burst. One upgrade per craft and one craft per half hour: while the
+/// account waits, the line counts the minutes down in red and nothing can be
+/// staged. See menu_oracle.cpp.
+class OraclePanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    /// The window's width and height for this account: the grid's columns
+    /// set the one and its rows the other.
+    static Vec2 size(const Profile&);
+
+private:
+    enum class Phase : std::uint8_t { Idle, Pulsing, Result };
+
+    /// Puts one upgrade's price of this petal in the slot, replacing whatever
+    /// was there: the oracle sells one upgrade per craft.
+    void stage(const Profile&, std::uint16_t petalIndex, Rarity rarity);
+
+    SlotGrid grid_;
+    SlotMotion motion_;
+    std::uint16_t stagedPetal_ = kNoPetal;
+    Rarity stagedRarity_ = Rarity::Common;
+    /// 1 while something is staged, 0 when the slot is empty: the oracle sells
+    /// one upgrade per craft, at oracleCraftCost().
+    int crafts_ = 0;
+
+    Phase phase_ = Phase::Idle;
+    double phaseStarted_ = 0;
+    /// What went to the oracle on the click. The staging area is emptied at
+    /// once -- the petals are the server's now -- so the pulse draws this, and
+    /// a refusal puts it back.
+    std::uint16_t offeredPetal_ = kNoPetal;
+    Rarity offeredRarity_ = Rarity::Common;
+    int offeredCrafts_ = 0;
+    /// A result that arrived before the spin had run its least length.
+    bool resultPending_ = false;
+    std::uint16_t resultPetal_ = kNoPetal;
+    Rarity resultRarity_ = Rarity::Common;
+    int resultCount_ = 0;
+    /// Why the oracle said no, shown under the slot until it expires.
+    std::string refusal_;
+    double refusalUntil_ = 0;
+};
+
+/// The trader: what the craft card becomes while the flower stands at a
+/// trader NPC.
+///
+/// One petal in the slot, a Trade button, and a grid of every stack the
+/// account owns at every tier, apex included: any petal petals.json does not
+/// mark untradable goes for one coin of its own tier. The slot moves the way
+/// florr's trade window moves it -- the petal grows in, a trade spins it about
+/// the slot's centre, and the coin pops in with a burst. One trade a day:
+/// while the account waits, the line counts the hours down in red and every
+/// stack sits on grey. See menu_trade.cpp.
+class TradePanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    /// The window's width and height for this account: the grid's columns
+    /// set the one and its rows the other.
+    static Vec2 size(const Profile&);
+
+private:
+    /// Trading: the petal has gone to the server and the slot is spinning it
+    /// until the answer comes back.
+    enum class Phase : std::uint8_t { Idle, Trading, Result };
+
+    SlotGrid grid_;
+    SlotMotion motion_;
+    /// The petal in the slot: one of it, which is what one trade takes.
+    std::uint16_t stagedPetal_ = kNoPetal;
+    Rarity stagedRarity_ = Rarity::Common;
+
+    Phase phase_ = Phase::Idle;
+    double phaseStarted_ = 0;
+    /// What went to the trader on the click. The slot is emptied at once --
+    /// the petal is the server's now -- so this is drawn while the trade is
+    /// out, and a refusal puts it back.
+    std::uint16_t offeredPetal_ = kNoPetal;
+    Rarity offeredRarity_ = Rarity::Common;
+    /// What came back, the coin at the offer's tier, held until the spin has
+    /// run its least length.
+    bool resultPending_ = false;
+    std::uint16_t resultPetal_ = kNoPetal;
+    Rarity resultRarity_ = Rarity::Common;
+    /// Why the trader said no, shown under the slot until it expires.
+    std::string refusal_;
+    double refusalUntil_ = 0;
+};
+
+/// The titan: what the craft card becomes while the flower stands at the
+/// titan NPC -- the universal forge.
+///
+/// florr's forge window: one slot holding the five apex petals a forge
+/// takes, a Forge button, three lines on what a universal costs its last
+/// holder, and a picker of every petal the account holds at apex -- greyed
+/// until there are five to forge. Five apex in, one universal out, never a
+/// roll: the forge spins the slot and the universal pops in with a burst.
+/// See menu_titan.cpp.
+class TitanPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    /// The window's width and height for this account: the grid's columns
+    /// set the one and its rows the other.
+    static Vec2 size(const Profile&);
+
+private:
+    /// Forging: the five have gone to the server and the ring is closing on
+    /// them until the answer comes back.
+    enum class Phase : std::uint8_t { Idle, Forging, Result };
+
+    SlotTierGrid grid_;
+    SlotMotion motion_;
+    /// The petal in the slot: five of it at apex, which is what one forge
+    /// takes, or kNoPetal for an empty slot.
+    std::uint16_t stagedPetal_ = kNoPetal;
+
+    Phase phase_ = Phase::Idle;
+    double phaseStarted_ = 0;
+    /// What went to the titan on the click. The ring is emptied at once --
+    /// the petals are the server's now -- so this is drawn while the forge is
+    /// out, and a refusal puts it back.
+    std::uint16_t offeredPetal_ = kNoPetal;
+    /// What came back: one universal of it.
+    std::uint16_t resultPetal_ = kNoPetal;
+    /// A result that arrived before the ring had finished closing.
+    bool resultPending_ = false;
+    /// Why the titan said no, shown in place of the card's lines until it
+    /// expires.
+    std::string refusal_;
+    double refusalUntil_ = 0;
+    /// The petal last picked out of the grid, staged or grey, which the
+    /// titan is asked about -- who holds it at universal -- and when it was
+    /// last asked, so a query the server dropped is asked again.
+    std::uint16_t askedPetal_ = kNoPetal;
+    double askedAt_ = -1.0;
+};
+
+/// The assembler: what the craft card becomes while the flower stands at an
+/// assembler NPC.
+///
+/// florr's assemble window, read out of florr's client: its 356-tall card
+/// with no grid, in machine grey. The assembler's recipe's inputs on seats
+/// about the slot's centre, each labelled "held/needed"; an Assemble
+/// button; and under it the count, a field between a triangle that takes one
+/// off and one that adds one. See menu_assembler.cpp.
+class AssemblerPanel {
+public:
+    /// `mobIndex`, `tier` and `recipe` are the assembler the flower is
+    /// standing at: whose recipes, at what tier, and which one it makes.
+    bool render(MenuContext&, std::uint16_t mobIndex, Rarity tier, std::uint8_t recipe);
+    void reset();
+    /// florr's window: as wide as its least, and its body deep, no grid.
+    static Vec2 size();
+
+private:
+    enum class Phase : std::uint8_t { Idle, Assembling, Result };
+
+    SlotMotion motion_;
+    /// The assembler last stood at: a different one drops what was showing.
+    std::uint16_t stationMob_ = 0xFFFF;
+    Rarity stationTier_ = Rarity::Common;
+    std::uint8_t stationRecipe_ = 0;
+
+    /// The count field: what is typed, and the field's caret and focus.
+    std::string count_ = "1";
+    ui::TextFieldState countField_;
+
+    Phase phase_ = Phase::Idle;
+    double phaseStarted_ = 0;
+    /// An answer that came back before the grains had flown, and how many
+    /// it made, for the product's badge.
+    bool resultPending_ = false;
+    int made_ = 0;
+    /// Why the assembler said no, shown in the line's place until it expires.
+    std::string refusal_;
+    double refusalUntil_ = 0;
+    /// What each seat and the middle last showed (petal << 8 | tier, all
+    /// ones for nothing), the tile itself, and each seat's grow: whatever
+    /// leaves a seat vanishes where it stood, and whatever arrives grows in.
+    static_assert(kAssemblerMaxInputs == 5, "one initialiser per seat");
+    std::array<std::uint32_t, kAssemblerMaxInputs> seatKey_{0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
+                                                            0xFFFFFFFFu, 0xFFFFFFFFu};
+    std::array<ui::ItemTile, kAssemblerMaxInputs> seatTile_{};
+    std::array<double, kAssemblerMaxInputs> seatGrow_{};
+    /// How much the seats show: 1 idle, easing to 0 while a product does.
+    double seatShow_ = 1.0;
+    /// The same for each product, and each one's pop.
+    static_assert(kAssemblerMaxOutputs == 5, "one initialiser per product");
+    std::array<std::uint32_t, kAssemblerMaxOutputs> resultKey_{
+        0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
+    std::array<ui::ItemTile, kAssemblerMaxOutputs> resultTile_{};
+    std::array<SlotMotion, kAssemblerMaxOutputs> pops_{};
+};
+
+/// The bestiary: every mob at every tier it can appear at, and what the
+/// account has actually killed.
+class GalleryPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static double preferredHeight();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+    ui::Scroller scroll_;
+};
+
+/// The talent tree.
+/// The talent tree: florr's Talents window (menu_talents.cpp), read out of
+/// its client. A 650-square window at x = 95, its bottom 20 above the view's,
+/// rising from below and fading in on florr's open ease; inside, the tree on
+/// florr's grid, dragged sideways to scroll, and a node is bought by holding
+/// it down.
+class TalentsPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    /// The window's open progress (0 = 50 below the view, 1 = seated), which
+    /// is also its opacity, and whether it is on its way out. Input is dead
+    /// below 0.9 and while closing, florr's rule.
+    void setOpen(double open, bool closing) {
+        open_ = open;
+        closing_ = closing;
+    }
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+    struct Node {
+        SkillId skill = SkillId::Damage;
+        int tier = 0;
+        /// Where it stands on florr's grid: columns across, rows up.
+        Vec2 grid;
+        /// Where it was drawn this frame, in the view.
+        Vec2 at;
+        /// Eased 0..1: grown under the cursor, the tooltip, the "HOLD to
+        /// upgrade" hint.
+        double hover = 0;
+        double tooltip = 0;
+        double hint = 0;
+        /// The size wobble while it is held (and until its purchase lands),
+        /// and the pulse once it has.
+        double wobble = 0;
+        double pulse = 0;
+        /// Bought or refunded by a hold and not yet confirmed by the server.
+        bool requested = false;
+        /// True when `requested` is a refund rather than a purchase.
+        bool refunding = false;
+        double requestedMs = 0;
+    };
+
+    void layout();
+
+    std::vector<Node> nodes_;
+    bool laidOut_ = false;
+    /// The rightmost column, which the scroll stops at.
+    double maxColumn_ = 0;
+    /// The column at the window's centre, and where a drag or the wheel has
+    /// asked it to go; the first eases after the second.
+    double scroll_ = 0;
+    double scrollTarget_ = 0;
+    bool scrollSet_ = false;
+    bool dragging_ = false;
+    double dragLastX_ = 0;
+    /// The node a press landed on, how long it has been held, and whether
+    /// this hold already bought it.
+    int pressedNode_ = -1;
+    int hoveredNode_ = -1;
+    double holdMs_ = 0;
+    bool holdBought_ = false;
+    /// The TP badge's tooltip, and the flower's bulge after a purchase.
+    double badgeTip_ = 0;
+    double flash_ = 0;
+    /// Close and Reset act on release, florr's buttons; Reset wants a second
+    /// click.
+    bool closeHeld_ = false;
+    bool resetHeld_ = false;
+    bool confirmingReset_ = false;
+    double open_ = 1.0;
+    bool closing_ = false;
+    /// The grains a purchase throws.
+    SlotMotion grains_;
+};
+
+/// The star shop: the store's ten offers, the challenges that pay the stars to
+/// buy them with, and the code redeemer. florr's premium shop window (see
+/// menu_shop.cpp), seated under the top icon row and sliding in from the left.
+class ShopPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    /// Fixed: the title row, the tab strip, the header and two rows of offer
+    /// cards come to this, and the other two tabs are laid out inside it.
+    static double preferredHeight();
+    static Rect bounds(int viewWidth, int viewHeight);
+    /// How far the window has slid in (0..1), and whether it is on its way
+    /// out. florr's window takes no input until it is 0.9 of the way in, and
+    /// none at all while it leaves.
+    void setSlide(double open, bool closing) {
+        open_ = open;
+        closing_ = closing;
+    }
+
+private:
+    enum class Tab : std::uint8_t { Offers, Challenges, Bonus };
+    Tab tab_ = Tab::Offers;
+    double open_ = 1.0;
+    bool closing_ = false;
+};
+
+/// Cosmetic flower skins.
+class SkinsPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    /// Taller than the other corner overlays: this is the only one that has to
+    /// show a drawing board, a shape list and that shape's properties at once.
+    static double preferredHeight();
+    static Rect bounds(int viewWidth, int viewHeight);
+};
+
+/// Account rankings, straight from the server.
+class LeaderboardPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+    ui::Scroller scroll_;
+    bool requested_ = false;
+};
+
+/// Display switches, camera zoom and the menu keys.
+class SettingsPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+    /// True while waiting for a key to bind. The app must not treat that
+    /// keystroke as a hotkey.
+    bool capturingKey() const { return rebinding_ >= 0; }
+
+private:
+    ui::Scroller scroll_;
+    int rebinding_ = -1;
+};
+
+/// The account itself: who is signed in, the one-time username a guest may
+/// pick, the password, signing in to a different account, and Log Out. Pinned
+/// under the top icon row like the other corner cards.
+class AccountPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static double preferredHeight();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+    ui::Scroller scroll_;
+};
+
+/// The release notes, newest first. Pinned under the top icon row rather than
+/// beside the bottom column: it is an overlay, not one of the tall lists.
+class ChangelogPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+    ui::Scroller scroll_;
+};
+
+/// How many releases the changelog holds: the length of its table, counted
+/// where the table is (menu_changelog.cpp). See MenuSystem::changelogUnread.
+int changelogReleaseCount();
+
+/// Server notices, invites and rewards.
+class NotificationsPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+    ui::Scroller scroll_;
+};
+
+/// How many of the loaded notifications the player has not read, for the badge
+/// on the strip's notifications button. The browser counts the same thing the
+/// same way -- what it has FETCHED, against localStorage -- so a feed whose
+/// older pages were never asked for contributes nothing to the number.
+///
+/// Lives with the panel because the panel owns the read marks' lookup set, and
+/// two mirrors of one list is one more thing to keep true.
+int notificationsUnread(const NetClient&, const ClientSettings&);
+
+/// How many entries one page of the feed asks for. The browser's page size,
+/// and the number the server compares against to decide whether there is an
+/// older page -- so the panel and the badge's first fetch must both use it.
+inline constexpr int kNotificationPage = 50;
+
+/// The player's guild: its roster, and the join/create form when they have none.
+class GuildPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+    ui::Scroller scroll_;
+};
+
+/// Frame time and memory graphs, client and server. Reachable only while the
+/// settings switch that puts the bug button in the strip is on.
+class DebugPanel {
+public:
+    /// Which half of the panel is showing. Graphs are the history of a few
+    /// whole-system numbers; Profiling is this frame's drawing broken down.
+    enum class Tab { Graphs, Profiling };
+
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+    /// One frame of client samples, and any server packet that has arrived.
+    ///
+    /// Called every frame whether or not the panel is open, which is the
+    /// browser's own arrangement: recordClientFrame runs from the render loop
+    /// and the debugStats handler from the socket, so the graphs already hold
+    /// two minutes of history the moment the panel is opened.
+    void recordFrame(double dtSeconds, NetClient&);
+
+private:
+    /// One sample per second, so a graph holds about two minutes -- the same
+    /// window the browser panel keeps.
+    static constexpr int kHistory = 120;
+
+    std::vector<double> clientFrameMillis_;
+    std::vector<double> clientMemoryMB_;
+    std::vector<double> serverTickAvgMillis_;
+    std::vector<double> serverTickMaxMillis_;
+    std::vector<double> serverHeapMB_;
+    std::vector<double> serverResidentMB_;
+    /// Until the first packet the server graphs say so rather than drawing a
+    /// flat zero, which would read as a server that costs nothing.
+    bool haveServerStats_ = false;
+
+    Tab tab_ = Tab::Graphs;
+    /// Which column the op-type table is ordered by. Count is the useful one
+    /// by default; by name is for finding a particular call.
+    bool sortByName_ = false;
+
+    double sampleAge_ = 0;
+    double sampleTotal_ = 0;
+    int sampleCount_ = 0;
+
+    bool drawGraphsTab(MenuContext&, Rect body);
+    void drawProfilingTab(MenuContext&, Rect body);
+
+    /// One series on one graph.
+    struct Series {
+        const std::vector<double>* values;
+        std::uint32_t colour;
+    };
+    /// One labelled block: caption left, value right, plot below. `lines` are
+    /// drawn on a shared auto-scaled axis with the newest sample against the
+    /// right edge, and the LAST of them tints the value text -- which is what
+    /// lets a two-line graph read without a legend.
+    static void drawGraph(Canvas&, Rect plot, const std::string& label,
+                          const std::string& value, const std::vector<Series>& lines,
+                          const char* unit);
+};
+
+/// The asset browser: the files this client can reach -- the content embedded
+/// in the wasm, what browser storage keeps, the boot tools -- listed, opened
+/// and edited, with a colouring editor for text and a hex view for the rest;
+/// and the Boot tab, which names the script the next page load runs instead of
+/// the game (client/web/boot.h). Reached from the debug panel, so it is gated
+/// on the same switch. Its state lives in menu_assets.cpp, at file scope, as
+/// the database editor's does; reopening it keeps the open file and its edits.
+class AssetsPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static double preferredHeight();
+    static Rect bounds(int viewWidth, int viewHeight);
+
+    /// Where this client's content and settings file are: the browser's
+    /// places are fixed, a native client's are wherever it was pointed. Saving
+    /// the settings file in the editor reloads the settings from it, or the
+    /// client would write its own copy back over the edit on the way out.
+    static void setPaths(const std::string& dataDirectory, const std::string& settingsFile);
+};
+
+/// The admin database editor: accounts and the raw tables, as trees to read
+/// and edit. Only ever opened by the server's answer to `/admin db`, which a
+/// database-flagged admin gets and nobody else does; the server checks every
+/// request again. Its state lives in menu_admin_db.cpp, at file scope, as the
+/// guild panel's form does.
+class AdminDbPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static double preferredHeight();
+    static Rect bounds(int viewWidth, int viewHeight);
+};
+
+/// The admin dashboard: the flowers in the world and one player's bag, flower
+/// control, and the console's spawn, give and announce behind a form. Shown to
+/// anyone the server says is an admin, a temporary grant included; the server
+/// checks every request again, and refuses what a grant does not reach.
+/// Its state lives in menu_admin_dashboard.cpp, at file scope, as the database
+/// editor's does, and opening the panel starts it over.
+class AdminDashboardPanel {
+public:
+    bool render(MenuContext&);
+    void reset();
+    static double preferredWidth();
+    static double preferredHeight();
+    static Rect bounds(int viewWidth, int viewHeight);
+};
+
+// ---------------------------------------------------------------------------
+// The system
+// ---------------------------------------------------------------------------
+
+class MenuSystem {
+public:
+    /// Handles the menu hotkeys, Escape among them. Returns true when the key
+    /// was consumed, so the game does not also act on it.
+    bool handleKeys(Window&);
+
+    /// Mobile R button: a short tap swaps the two loadout rows; holding past
+    /// the long-press threshold arms a sticky L preset bank on the secondary
+    /// row (ashflor / florr hold-X). The bank stays after release so one finger
+    /// can tap a tile to load or hold a tile to save; a later short tap on R
+    /// cancels. Call each playing frame while touch controls are up.
+    void noteMobileLoadoutGestures(bool swapRowsTap, bool presetsHeld);
+
+    /// True while the client is in a game, which is the only time the exit
+    /// button is offered -- and the only time the changelog, Discord, and QQ
+    /// buttons are not.
+    ///
+    /// The screen owns the loadout bar's slide: the browser builds a fresh
+    /// `CanvasLoadoutBar` per screen, so crossing between them replays the
+    /// rise rather than leaving the bar already seated from last time.
+    void setInGame(bool inGame) {
+        if (inGame == inGame_) return;
+        inGame_ = inGame;
+        loadoutSlide_ = 0.0;
+        mobilePresetSticky_ = false;
+        // Its button is gone in game, so a changelog still open from the title
+        // screen would be a card with nothing on screen that opened it.
+        if (inGame_ && open_ == MenuId::Changelog) close();
+    }
+    /// App's ALT latch (exact tooltip numbers); default off until toggled.
+    void setAltMode(bool on) { altMode_ = on; }
+    bool altMode() const { return altMode_; }
+    /// Set when the exit button was clicked. The app reads and clears it --
+    /// leaving a game is the app's business, not a menu's.
+    bool takeExitRequest() {
+        const bool requested = exitRequested_;
+        exitRequested_ = false;
+        return requested;
+    }
+
+    /// Set when Settings' Log Out was clicked, read and cleared by the app the
+    /// same way the exit request is.
+    bool takeLogoutRequest() {
+        const bool requested = logoutRequested_;
+        logoutRequested_ = false;
+        return requested;
+    }
+
+    /// Whether Settings offers its Grant Admin row. Off unless the app says
+    /// otherwise, so a client with no way to grant one draws no button.
+    void setAdminGrantOffered(bool offered) { adminGrantOffered_ = offered; }
+
+    /// Set when that row was clicked, read and cleared like the two above.
+    bool takeAdminGrantRequest() {
+        const bool requested = adminGrantRequested_;
+        adminGrantRequested_ = false;
+        return requested;
+    }
+
+    /// Anything the caller needs painted between the icon strip and the
+    /// loadout bar. In game that gap is the death card's: it goes over the
+    /// strip and the HUD but under the bar, and there is no other seam in this
+    /// call it could be dropped into.
+    using OverlayFn = std::function<void()>;
+
+    /// One frame of every menu: the open card, the loadout bar, the icon strip
+    /// and the dragged petal. The four of them do not have one fixed order --
+    /// see `PanelLayer` for which card is painted where, and note that the bar
+    /// and the strip themselves trade places between the two screens.
+    void render(Canvas&, Window&, NetClient&, const SpriteCache&, const WorldRenderer&,
+                double timeSeconds, double dt, const OverlayFn& overStripUnderBar = {});
+
+    /// The icon strip on its own, for the login screen: the browser paints the
+    /// strip over the auth form, but there is no account yet for a panel to
+    /// read and no loadout for the bar to draw.
+    void renderStripOnly(Canvas&, Window&, double timeSeconds);
+
+    void toggle(MenuId);
+    void close();
+    MenuId open() const { return open_; }
+    bool anyOpen() const { return open_ != MenuId::None; }
+
+    /// True when the cursor is over menu furniture, so the game must not treat
+    /// the click as aiming or the wheel as a zoom.
+    bool capturesMouse(Vec2 mouse) const;
+
+    /// How far in from the left edge something hung under the top icon row
+    /// has to start to clear the bottom column: that column's width as last
+    /// laid out, and its gap. The Release chip is placed by it, and by
+    /// stripBottom(); the HUD is not -- its block sits at the reference's
+    /// fixed coordinates (app_hud.cpp).
+    double reservedLeft() const;
+    /// The first y below the top icon row, strip inset included.
+    double stripBottom() const;
+
+    /// True while the strip's changelog button should shake: while the
+    /// changelog holds more releases than the player had seen the last time
+    /// they opened it. That is the whole of the browser's unread rule
+    /// (`CHANGELOG.length > lastSeenChangelogCount`), and opening the panel is
+    /// what writes the count back -- the same gesture, not a separate
+    /// acknowledgement.
+    bool changelogUnread() const { return changelogReleaseCount() > settings_.changelogSeen; }
+
+    /// The NPC the player's flower is standing at, its service None when it is
+    /// at none. The app measures it every frame; the craft panel reads it to
+    /// decide whether it is the forge, the oracle, the trader, the titan or an
+    /// assembler this frame -- and, at an assembler, which one.
+    void setNearbyNpc(const NearbyNpc& npc) {
+        nearbyNpc_ = npc.service;
+        nearbyMob_ = npc.mobIndex;
+        nearbyTier_ = npc.rarity;
+        nearbyRecipe_ = npc.recipe;
+    }
+    /// The craft menu's card for a `w` x `h` view as it stands this frame: the
+    /// forge's, or the oracle's, the trader's or the titan's while the flower
+    /// is at one.
+    Rect craftPanelBounds(int w, int h) const;
+
+    /// Feeds the debug panel one frame of samples. See DebugPanel::recordFrame
+    /// for why this is not done inside render().
+    void recordDebugSample(double dtSeconds, NetClient& net) {
+        debug_.recordFrame(dtSeconds, net);
+    }
+
+    ClientSettings& settings() { return settings_; }
+    const ClientSettings& settings() const { return settings_; }
+
+    /// The chat box and the login form both take typed text; the menus must
+    /// not also eat it. Panels with a text field set MenuContext::wantsText
+    /// while it is focused, and this reports it.
+    bool wantsText() const { return wantsText_; }
+
+    /// Drawing calls the menu layer made since this was last called, split by
+    /// which of its three unrelated jobs made them. One figure for the lot
+    /// cannot say which to make quieter, and the bar is redrawn every frame
+    /// from artwork that changes only when the loadout does.
+    struct OpCounts {
+        int strip = 0;
+        int bar = 0;
+        int panel = 0;
+    };
+    OpCounts takeOpCounts();
+
+    /// Where the debug panel's Profiling tab reads its figures from. The app
+    /// owns them -- they span the whole frame, not just the menus -- so it
+    /// lends the panel a pointer rather than the menus gathering a copy.
+    void setProfiling(const ProfilingStats* stats) { profiling_ = stats; }
+
+    /// See AssetsPanel::setPaths.
+    void setFilePaths(const std::string& dataDirectory, const std::string& settingsFile) {
+        AssetsPanel::setPaths(dataDirectory, settingsFile);
+    }
+
+private:
+    const ProfilingStats* profiling_ = nullptr;
+    static int canvasOpsMark();
+    int opsStrip_ = 0;
+    int opsBar_ = 0;
+    int opsPanel_ = 0;
+
+    /// One slot of the icon strip. The strip is not a projection of MenuId:
+    /// three of its buttons open no panel at all, and the order on screen is
+    /// the browser's, not the enum's.
+    enum class StripAction : std::uint8_t { OpenMenu, Discord, Qq, Exit };
+    struct StripSlot {
+        MenuId menu;
+        StripAction action;
+        const char* icon;
+        bool topRow;
+        std::uint32_t fill;
+        std::uint32_t border;
+    };
+
+    /// The strip's slots, in the browser build's order. That order is at once
+    /// the layout order, the draw order, the hit-test order and the slide-in
+    /// stagger order, so it is spelled out once rather than derived.
+    static const std::array<StripSlot, kStripSlotCount>& strip();
+
+    /// Where the open card falls in the paint order. It is always clear of the
+    /// bar-and-strip pair, never between them -- the browser has no seam there
+    /// for a card to sit in. The title screen keeps the browser's split:
+    /// renderCanvasUI paints settings and debug under both, and every other
+    /// card lands over them. In game every card is over both, so the loadout
+    /// bar never paints across an open menu.
+    enum class PanelLayer : std::uint8_t { Under, Over };
+    static PanelLayer panelLayer(MenuId, bool inGame);
+
+    static Rect panelBounds(MenuId, int viewWidth, int viewHeight);
+    /// Draws whichever card is on screen -- which is `drawn_`, not `open_`,
+    /// while one is still sliding out.
+    void renderOpenPanel(Canvas&, Window&, NetClient&, const SpriteCache&, const WorldRenderer&,
+                         double timeSeconds, double dt);
+    void drawIconStrip(Canvas&, Window&, double timeSeconds);
+    const SvgDocument* icon(int index);
+    /// The bar's box and slot scale for the screen it is being drawn on. The
+    /// title screen gives it a fixed 900x210 region below centre; in game it
+    /// owns the whole viewport at three-quarter scale. `renderer` is where the
+    /// tiles' hit flashes come from (WorldRenderer::slotHitTint).
+    void drawLoadoutBar(Canvas&, Window&, NetClient&, const SpriteCache&,
+                        const WorldRenderer& renderer, double timeSeconds);
+    /// Pick-up and drop, run AFTER the open panel has had the same click. The
+    /// bar is painted under the panel and so must not answer for a press the
+    /// panel is standing on top of.
+    void updateLoadoutInput(Window&, NetClient&, double timeSeconds);
+    /// The three loadout edits the bar can make. Each one sends the request
+    /// AND records what the answer should be, so the tiles start moving on
+    /// the click rather than on the echo -- see expectedLoadout_.
+    void expectLoadout(const NetClient&, double timeSeconds);
+    void swapLoadoutSlots(NetClient&, double timeSeconds, int a, int b);
+    void swapLoadoutRows(NetClient&, double timeSeconds);
+    void setLoadoutSlot(NetClient&, double timeSeconds, int slot, std::uint16_t petalIndex,
+                        Rarity rarity);
+    void clearLoadoutSlot(NetClient&, double timeSeconds, int slot);
+    /// A CLICK on a loadout slot -- picked up and put straight back down.
+    ///
+    /// The petals that do something when they are used do it here: a splitter
+    /// swaps which of its two flowers the player is steering. This client has
+    /// no U + slot-number chord, and a tile that answers to a click is the
+    /// discoverable version of one. Silent for every other petal, which is
+    /// nearly all of them, and silent for a slot still reloading.
+    void useLoadoutSlot(NetClient&, int slot);
+    /// A click (not a drag) on a loadout slot: click-to-use petals fire; else
+    /// primary ↔ secondary in that column (either row).
+    void clickLoadoutSlot(NetClient&, double timeSeconds, int slot);
+    void drawDragged(Canvas&, Window&, const SpriteCache&, double timeSeconds);
+    void activateStripSlot(int slot);
+    /// While this client is steering another player's flower: a "Release
+    /// <name>" chip under the strip, clear of the bottom column, and its click.
+    /// Painted under the open card, which keeps any click it is standing on.
+    void drawReleaseChip(Canvas&, Window&, NetClient&);
+    /// Top-left Accept/Decline toasts for pending guild / squad invites.
+    void drawInviteToasts(Canvas&, Window&, NetClient&);
+
+    MenuId open_ = MenuId::None;
+    /// The card being painted. It outlives `open_` by the length of the
+    /// slide-out, which is the only reason the two are separate.
+    MenuId drawn_ = MenuId::None;
+    /// 0 = a full viewport height below its anchor, 1 = seated. Only the
+    /// inventory uses it -- in the reference it is a DOM shell with a
+    /// transform transition (see slidesUp).
+    double panelSlide_ = 0;
+    /// The craft key's window rises on florr's own ease instead (see
+    /// kSlotCardOpenRate): 0 = 50 below the view, 1 = seated.
+    double craftOpen_ = 0;
+    /// The shop slides in from the left on the same ease, and so does every
+    /// other card under the top icon row (see slidesFromLeft): 0 = 50 past
+    /// the view's left edge, 1 = seated. One value, since one card is drawn.
+    double sideOpen_ = 0;
+    /// The talent tree rises on it too, and fades in with it.
+    double talentsOpen_ = 0;
+    /// That window's size as the open card last measured it -- it depends on
+    /// the account's petals, which craftPanelBounds() is not handed.
+    Vec2 craftSize_{610.0, 700.0};
+    ClientSettings settings_;
+    DragState drag_;
+    bool wantsText_ = false;
+    bool altMode_ = false;
+
+    bool inGame_ = false;
+    bool exitRequested_ = false;
+    bool logoutRequested_ = false;
+    bool adminGrantOffered_ = false;
+    bool adminGrantRequested_ = false;
+    /// What the badge on the notifications button draws. Recomputed by
+    /// render(), which is the only entry point holding a NetClient -- the
+    /// login screen's strip has no account and so never badges anything.
+    int notificationsUnread_ = 0;
+    /// Whether this session has already asked for its first page. See the note
+    /// in render(): the badge cannot count a feed nobody fetched.
+    bool notificationsPrimed_ = false;
+    /// Whether the strip shows the admin dashboard's button: the server's
+    /// word that this account is an admin, as of the last render(), which is
+    /// the only entry point holding a NetClient. The login screen's strip has
+    /// no account, so renderStripOnly() takes the button down -- the Debug
+    /// button's arrangement, with the server's flag where its setting is.
+    bool adminSlotShown_ = false;
+    /// Whether the Account button is on the strip: only while there is an
+    /// account to show. The login screen paints the strip and no panels.
+    bool accountSlotShown_ = false;
+    /// The Release chip as last painted, for capturesMouse(). Empty while no
+    /// control is running.
+    Rect releaseRect_{};
+    /// Invite toast cards as last painted (guild and/or squad), for hits.
+    std::array<Rect, 2> inviteToastRects_{};
+
+    /// The icon artwork, compiled on first use. One document per glyph, shared
+    /// with nothing; the shop compiles its own two copies of the star.
+    std::vector<std::shared_ptr<SvgDocument>> icons_;
+
+    /// Where the strip's buttons and the loadout slots ended up last frame.
+    /// Recomputed every frame; kept only so capturesMouse() can answer without
+    /// laying the strip out again.
+    std::array<Rect, kStripSlotCount> stripRects_{};
+    /// When each slot's slide-in began, in seconds. Negative means idle.
+    std::array<double, kStripSlotCount> slideStart_{};
+    /// Whether a slot was visible last frame, so a late reveal (the exit and
+    /// debug buttons) can slide in on the false->true edge only.
+    std::array<bool, kStripSlotCount> stripVisible_{};
+    bool stripSeeded_ = false;
+    /// The slot the current press began on. A click only counts when the
+    /// release lands on the same one, and only that slot draws the dark tint.
+    int pressedSlot_ = -1;
+
+    /// 0..1; the bar rises 120px into place on its first frames, and sinks
+    /// back the same way once there is no loadout left to show.
+    double loadoutSlide_ = 0;
+    /// Slot under the cursor last frame: 0..19, kLoadoutTrashSlot, or -1.
+    /// Recomputed by the draw pass, which is the only one that lays the bar
+    /// out, and read by the input pass that runs after it.
+    int loadoutHovered_ = -1;
+    /// Press on an empty loadout slot (no petal to drag); click-swap on release.
+    /// Also a press on a preset tile (K/L bank / mobile R hold) awaiting tap
+    /// or long-press save.
+    int loadoutPressSlot_ = -1;
+    /// When that press started (`timeSeconds`); long-press save uses it.
+    double loadoutPressAt_ = 0;
+    /// True once a long-press on a preset tile already fired save -- a release
+    /// after that must not also load the same slot.
+    bool loadoutPressSaved_ = false;
+    /// Where the pointer was when a petal was lifted off the bar, so a release
+    /// that barely moved can still be told from a drag. See drawLoadoutBar.
+    Vec2 loadoutGrabAt_{};
+    /// Which slots a press would actually lift a petal out of, as of the last
+    /// paint. The bar swallows a click for those and for nothing else -- an
+    /// empty slot, the trash and the gaps all fall through and fire an attack.
+    ///
+    /// Per slot rather than "is the hovered one grabbable": capturesMouse is
+    /// asked about THIS frame's pointer before the bar is painted, and a
+    /// finger's pointer jumps. A flag about where the pointer was at the last
+    /// paint answered for wherever the previous tap had lifted.
+    std::array<bool, kLoadoutBarSlots> loadoutGrabbable_{};
+    /// Which of the ten secondary slots Q/E has selected, or -1. Clears itself
+    /// five seconds after the last press.
+    int selectedSecondary_ = -1;
+    double lastSelectTime_ = 0;
+    /// Recorded by handleKeys and applied by drawLoadoutBar, which is the only
+    /// place that has the network client to act on them.
+    int pendingSwapSlot_ = -1;
+    /// -1 back, +1 forward, 0 none: which way Q/E asked the selection to move.
+    int pendingCycle_ = 0;
+    bool pendingSecondaryDelete_ = false;
+    /// R: swap the two rows.
+    bool pendingRowSwap_ = false;
+    /// A K/L + number chord: the preset it names, or -1, and whether Shift
+    /// was down, which makes it a save rather than a load.
+    int pendingPreset_ = -1;
+    bool pendingPresetSave_ = false;
+    /// In game, K and L are held down to name a preset, so whatever ELSE they
+    /// are bound to -- mouse controls, the leaderboard -- cannot fire on the
+    /// press: it would go off on every K+1 on the way to the number. Armed on
+    /// the press, spent by a number, and a release that finds it still armed
+    /// was a plain tap and gets the key's old action.
+    std::array<bool, kLoadoutPresetBanks> presetTapArmed_{};
+    /// The bank whose key is held this frame, or -1: its presets take the
+    /// second row's place until it is let go. Set by handleKeys / the mobile
+    /// R long-press and cleared by the bar once drawn, so a frame handleKeys
+    /// skips -- chat open, a text field focused -- shows the loadout rather
+    /// than a stale preview.
+    int presetBankShown_ = -1;
+    /// Mobile R long-press keeps the L bank up after the finger lifts, so a
+    /// single thumb can tap/hold a preset tile. Cleared by a short R tap, a
+    /// completed load/save, or leaving the game bar.
+    bool mobilePresetSticky_ = false;
+    /// Bank shown on the bar this frame (copy of presetBank before clear).
+    /// updateLoadoutInput reads it so a tap on a secondary preset tile can
+    /// load that saved loadout -- the hover pass alone cannot, because the
+    /// petal under the tile is not what the player is picking.
+    int loadoutPresetBank_ = -1;
+
+    /// One loadout tile's animated box, in canvas units.
+    ///
+    /// gardn animates the PETAL, not the slot: its UiLoadoutPetal owns an
+    /// x/y/w/h that eases toward wherever its slot happens to be, so a swap
+    /// slides two tiles past each other, a picked-up petal grows and rides the
+    /// cursor, and letting go over nothing floats it home. A tile painted
+    /// straight into its slot rect can do none of that.
+    ///
+    /// `petalIndex`/`rarity` are what this box was showing last frame, which
+    /// is how a swap is recognised: the two slots' contents trade, so each
+    /// takes over the other's box and eases back from there.
+    struct LoadoutTileAnim {
+        double cx = 0;
+        double cy = 0;
+        double w = 0;
+        double h = 0;
+        std::uint16_t petalIndex = kNoPetal;
+        Rarity rarity = Rarity::Common;
+        /// Whether the box is worth easing FROM. A tile that has never been
+        /// drawn appears in its slot rather than flying in from the origin.
+        bool live = false;
+    };
+    std::array<LoadoutTileAnim, kLoadoutBarSlots> loadoutTiles_{};
+    /// The tile a petal dragged out of the INVENTORY rides on. Same object as
+    /// a bar tile and animated the same way -- it grows, rocks, follows the
+    /// cursor and drops into whichever slot it is over -- because a drag that
+    /// changed what it was carrying halfway across the screen is how a player
+    /// loses track of it.
+    LoadoutTileAnim dragTile_{};
+    /// Where the bar's slots landed this frame, so a drag that began in a
+    /// panel can snap into one. Zeroed while the bar is down.
+    std::array<Rect, kLoadoutBarSlots> loadoutRects_{};
+    /// The primary row's slot side and the bar's scale, both in canvas units,
+    /// which is what a tile riding the cursor is sized against.
+    double loadoutSlotSide_ = 0;
+    double loadoutScale_ = 0;
+    /// The scratch surface the in-game bar is painted into before it goes
+    /// onto the frame as one see-through layer, in device pixels. It only
+    /// ever grows; each frame uses the top-left corner its box needs. See
+    /// drawLoadoutBar.
+    std::unique_ptr<Canvas> loadoutLayer_;
+
+    /// What the bar draws while the server catches up.
+    ///
+    /// The loadout is the server's, and a swap is a request: the profile does
+    /// not change until the echo lands, a round trip later. Waiting for it
+    /// reads as a dropped click -- and worse, the dragged tile and the slot it
+    /// was dropped on would both sit in that slot until the echo. So a local
+    /// edit is shown at once and reconciled: empty means "the profile", and it
+    /// is dropped the moment the profile agrees with it or the deadline
+    /// passes, whichever comes first. gardn does the same thing with
+    /// `Game::cached_loadout` and `no_change_ticks`.
+    ///
+    /// Nothing is ever SENT from here. The server stays the only authority,
+    /// and a refused edit corrects itself within the deadline.
+    std::vector<Profile::Slot> expectedLoadout_;
+    double expectedLoadoutUntil_ = 0;
+
+    Rect panelRect_{};
+
+    /// See setNearbyNpc().
+    NpcService nearbyNpc_ = NpcService::None;
+    std::uint16_t nearbyMob_ = 0xFFFF;
+    Rarity nearbyTier_ = Rarity::Common;
+    std::uint8_t nearbyRecipe_ = 0;
+
+    InventoryPanel inventory_;
+    CraftingPanel crafting_;
+    AbsorbPanel absorb_;
+    /// Which side of the forge's window shows: Craft or Absorb. Kept across
+    /// openings, as florr's old client kept it.
+    bool absorbMode_ = false;
+    OraclePanel oracle_;
+    TradePanel trader_;
+    TitanPanel titan_;
+    AssemblerPanel assembler_;
+    TalentsPanel talents_;
+    GalleryPanel gallery_;
+    ShopPanel shop_;
+    SkinsPanel skins_;
+    LeaderboardPanel leaderboard_;
+    SettingsPanel settings_panel_;
+    ChangelogPanel changelog_;
+    AccountPanel account_;
+    NotificationsPanel notifications_;
+    GuildPanel guild_;
+    DebugPanel debug_;
+    AdminDbPanel adminDb_;
+    AdminDashboardPanel adminDashboard_;
+    AssetsPanel assets_;
+};
+
+/// A menu's display name, which main.cpp's `--menu <name>` is matched against.
+const char* menuLabel(MenuId);
+/// Always-English menu name (CLI / --menu slug). UI should use menuTitle().
+const char* menuLabelEn(MenuId);
+/// A key's name as the strip's key caps and the bar's row-swap caption print
+/// it ("Z", "Esc"). "Unbound" for Key::Unknown. The settings list spells its
+/// keys its own way (menu_settings.cpp's keyLabel).
+const char* keyName(Key);
+
+} // namespace flix

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- First, before anything else in the file: the wasm is embedded in the
+         script below as UTF-8 text, and a browser that guessed another
+         encoding for a file opened from disk would decode it into garbage. -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>flowrix (offline)</title>
+    <meta name="description" content="florr.io clone, single-player, in one file">
+    <!-- Nothing external: no stylesheet, no favicon, no web fonts. This page
+         is opened from a file:// URL with no server behind it, and every
+         reference it made would be a request that fails. The faces the
+         client draws with are registered from the bytes inside the wasm. -->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Ubuntu', sans-serif;
+            font-weight: 700;
+            background-color: #000;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+        #loadingScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 100vw;
+            text-align: center;
+            font-size: 48px;
+            transform: translate(-50%, -50%);
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <span id="loadingScreen">Loading...</span>
+    <canvas id="canvas" oncontextmenu="return false;"></canvas>
+    <script>
+(function () {
+  const query = new URLSearchParams(location.search);
+  const status = document.getElementById('loadingScreen');
+  const canvas = document.getElementById('canvas');
+
+  // The server is in this page, so there is no host to name: offline/main.cpp
+  // knows where it is. What the query may still say is the same set of
+  // scripted-run switches the online shell forwards.
+  const args = [];
+  for (const name of ['user', 'password']) {
+    const value = query.get(name);
+    if (value !== null) args.push('--' + name, value);
+  }
+  if (query.get('lobby') !== null) args.push('--lobby');
+  if (query.get('stats') !== null) args.push('--stats');
+  for (const line of query.getAll('chat')) args.push('--chat', line);
+
+  var Module = {
+    canvas,
+    arguments: args,
+    print: (text) => console.log(text),
+    printErr: (text) => console.warn(text),
+    setStatus: (text) => {
+      if (!text) {
+        status.hidden = true;
+        canvas.focus();
+        return;
+      }
+      status.hidden = false;
+      status.textContent = text;
+    },
+    onAbort: (what) => {
+      canvas.style.display = 'none';
+      status.hidden = false;
+      status.innerHTML = '<b style="color: red;">game crashed: ' + what + '</b>';
+    },
+  };
+  window.Module = Module;
+
+  // The game is linked -sMODULARIZE, as on the online page (see there): the
+  // inline glue below defines createFlowrix, and the module is this object,
+  // not the page's global Module.
+  //
+  // Nothing starts until the document has been parsed, as on the online page:
+  // the boot script, when there is one, and then the game. Both in one
+  // handler, so that order is fixed -- a script that wraps console or the
+  // network before the game (console.js, netlog.js) has done so by the time
+  // createFlowrix runs -- and so is everything set up front here, noInitialRun
+  // included, which the game reads the moment it is created.
+  const game = Module;
+  let runBootScript = null;
+  document.addEventListener('DOMContentLoaded', () => {
+    if (runBootScript) runBootScript();
+    createFlowrix(game).catch(() => {});
+  }, { once: true });
+
+  // --- the boot script ------------------------------------------------------
+  // What the online page does (client/web/shell.html), under this page's own
+  // storage prefix: Debug > Assets > Boot can name a script for the next load
+  // to run instead of the game, and `?boot=game` / `?boot=reset` skip it once
+  // or forget it. The difference is that the game is this page, inline below,
+  // so it cannot be kept from loading -- only from starting. With a script to
+  // run, main() waits (noInitialRun) and the script's startGame() calls it.
+  const kBootPrefix = 'flowrix-offline/';
+  const storedBytes = (name) => {
+    try {
+      const saved = localStorage.getItem(kBootPrefix + name);
+      if (saved === null) return null;
+      return Uint8Array.from(atob(saved), (c) => c.charCodeAt(0));
+    } catch (e) {
+      return null;
+    }
+  };
+  const stored = (name) => {
+    const bytes = storedBytes(name);
+    return bytes ? new TextDecoder().decode(bytes) : '';
+  };
+  const forget = () => {
+    try {
+      localStorage.removeItem(kBootPrefix + 'boot-script');
+      localStorage.removeItem(kBootPrefix + 'boot-path');
+    } catch (e) { }
+  };
+  const bootMode = query.get('boot');
+  if (bootMode === 'reset') forget();
+  const bootSource = bootMode === 'game' || bootMode === 'reset' ? '' : stored('boot-script');
+  const bootPath = bootSource ? (stored('boot-path') || 'boot-script.js') : '';
+
+  const gameArguments = args.slice();
+  let runtimeReady = false;
+  let startWanted = false;
+  let gameStarted = false;
+  let mainCalled = false;
+  let runtimeWaiters = [];
+  const startGame = () => {
+    if (gameStarted) return;
+    // Asked for before the runtime is up: it starts the moment it is.
+    if (!runtimeReady) {
+      startWanted = true;
+      return;
+    }
+    gameStarted = true;
+    game.callMain(gameArguments);
+    mainCalled = true;
+  };
+  const flixBoot = {
+    path: bootPath, prefix: kBootPrefix, startGame, clear: forget, game, arguments: gameArguments,
+  };
+  game.flixBoot = flixBoot;
+  if (!bootSource) return;
+
+  game.noInitialRun = true;
+  game.onRuntimeInitialized = () => {
+    runtimeReady = true;
+    for (const waiter of runtimeWaiters) waiter();
+    runtimeWaiters = null;
+    if (startWanted) startGame();
+  };
+  const runtime = () => runtimeReady ? Promise.resolve()
+                                      : new Promise((resolve) => runtimeWaiters.push(resolve));
+
+  // The script's own global Module, with the page's canvas and the game's
+  // print/printErr, as on the online page (see there).
+  window.Module = { flixBoot, canvas: game.canvas, print: game.print, printErr: game.printErr };
+
+  // The page is opened from disk, which has none of the game's files to
+  // fetch; the runtime is inline, so there is nothing to load, and a request
+  // for one waits for it to be up.
+@FLIX_BOOT_FILES_JS@
+  installBootFiles({
+    path: bootPath,
+    stored: storedBytes,
+    runtime,
+    ready: () => runtimeReady,
+    files: () => game.FS,
+    mainCalled: () => mainCalled,
+  });
+
+  // A script that throws on its way in leaves a way out on screen.
+  const bootFailed = (error) => {
+    console.error('[boot] ' + bootPath + ' failed: ' + error);
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;' +
+      'align-items:center;justify-content:center;gap:16px;padding:24px;background:#16191c;' +
+      'color:#fff;font:700 16px Ubuntu,sans-serif;text-align:center';
+    const message = document.createElement('div');
+    message.textContent = 'The boot script ' + bootPath + ' failed: ' + error;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;justify-content:center';
+    const action = (label, run) => {
+      const button = document.createElement('button');
+      button.textContent = label;
+      button.style.cssText = 'font:inherit;padding:8px 16px;border:0;border-radius:4px;' +
+        'background:#4caf50;color:#fff;cursor:pointer';
+      button.onclick = run;
+      row.append(button);
+    };
+    action('Start the game', () => { box.remove(); startGame(); });
+    action('Forget the script and reload', () => { forget(); location.reload(); });
+    box.append(message, row);
+    document.body.append(box);
+  };
+
+  console.info('[boot] running ' + bootPath + ' instead of the game; ' +
+               '?boot=game skips it once, ?boot=reset forgets it');
+  runBootScript = () => {
+    try {
+      // An indirect eval, for global scope: see the online page.
+      window.eval(bootSource + '\n//# sourceURL=' + bootPath.replace(/^\/+/, ''));
+    } catch (error) {
+      bootFailed(error);
+    }
+  };
+})();
+</script>
+    {{{ SCRIPT }}}
+</body>
+</html>

@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>flowrix.pro</title>
+    <meta name="description" content="florr.io clone">
+    <meta name="keywords" content="florr, florr.io, florr clone, flowrix, flowrix pro, flowrix.pro, florrclone cryodome, zorr, zorr.pro, gardn, io games, online game, multiplayer game, browser game, web game">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=2">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Ubuntu', sans-serif;
+            font-weight: 700;
+            background-color: #000;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+        #loadingScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 100vw;
+            text-align: center;
+            font-size: 88px;
+            transform: translate(-50%, -50%);
+            color: #fff;
+        }
+        /* The two lines of the decompression screen, in the browser client's
+           colours -- it showed this same message while it inflated its own
+           bundle. Sized here rather than inheriting the 88px above, which is
+           for the one word the screen otherwise holds. */
+        #loadingScreen .stage {
+            color: #ff0;
+            font-size: 48px;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        #loadingScreen .detail {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 20px;
+        }
+
+    </style>
+</head>
+<body>
+    <span id="loadingScreen">Loading...</span>
+    <canvas id="canvas" oncontextmenu="return false;"></canvas>
+    <script>
+(function () {
+  const query = new URLSearchParams(location.search);
+  const status = document.getElementById('loadingScreen');
+  const canvas = document.getElementById('canvas');
+
+  const host = query.get('host') || location.hostname || '127.0.0.1';
+  // A page URL with no explicit port was served on its scheme's default,
+  // and that is the port the game dials too. Whatever fronts the server --
+  // nginx, Cloudflare's proxy -- answers there and forwards to the server's
+  // own 3000, which is not reachable through it (Cloudflare will not carry
+  // that port at all). The 3000 fallback is for a page with no origin port
+  // to go by, such as one opened from disk.
+  const defaultPort = location.protocol === 'https:' ? '443'
+                    : location.protocol === 'http:' ? '80' : '3000';
+  const port = query.get('port') || location.port || defaultPort;
+
+  const args = ['--data', 'data', '--host', host, '--port', port];
+  // Local loops (page or game host) land on the seeded admin account so a
+  // developer does not have to type credentials or wait on a guest. Query
+  // params still win when present; production hosts never get this default.
+  const localHost = (name) => {
+    const h = (name || '').toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+  };
+  const localDev = localHost(location.hostname) || localHost(host);
+  const user = query.get('user') ?? (localDev ? 'admin' : null);
+  const password = query.get('password') ?? (localDev ? 'admin1234' : null);
+  if (user !== null) args.push('--user', user);
+  if (password !== null) args.push('--password', password);
+  if (query.get('lobby') !== null) args.push('--lobby');
+  if (query.get('stats') !== null) args.push('--stats');
+  // Forces the touch controls up on a desktop browser, which reports a mouse
+  // and would otherwise never show them. For looking at them, not for playing.
+  if (query.get('mobile') !== null) args.push('--mobile');
+  for (const line of query.getAll('chat')) args.push('--chat', line);
+
+  // What the game is created with (createFlowrix, below). It is the page's
+  // global Module too, unless a boot script runs: see the boot section.
+  var Module = {
+    canvas,
+    arguments: args,
+    print: (text) => console.log(text),
+    printErr: (text) => console.warn(text),
+    setStatus: (text) => {
+      if (!text) {
+        status.hidden = true;
+        canvas.focus();
+        return;
+      }
+      status.hidden = false;
+      status.textContent = text;
+    },
+    onAbort: (what) => {
+      status.hidden = false;
+      status.textContent = 'client error: ' + what;
+    },
+  };
+  window.Module = Module;
+})();
+</script>
+    <script>
+(function () {
+  // The game is linked -sMODULARIZE: its glue defines createFlowrix and
+  // nothing else, and the module is the object handed to that -- this one --
+  // rather than whatever the page's global Module happens to be. Which is what
+  // lets a boot script be an emscripten program of its own, with a Module of
+  // its own (see the boot section).
+  const game = window.Module;
+  const status = document.getElementById('loadingScreen');
+  const canvas = document.getElementById('canvas');
+  // Taken now: callMain needs them below, and the glue may not leave
+  // game.arguments readable once it has consumed it.
+  const gameArguments = game.arguments.slice();
+  // The page's own downloads, which never go through the boot script's fetch
+  // (the boot section below).
+  const networkFetch = window.fetch.bind(window);
+
+  // Runs `run` once the document has been parsed. Nothing starts before
+  // then -- not the game, not a boot script: this runs while the parser is
+  // still in the body, and the game reaches for the page's elements as soon
+  // as main() does (the canvas, #loadingScreen, document.body for the ones it
+  // makes), so a start that raced the parser worked or not by timing.
+  const whenParsed = (run) => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run, { once: true });
+    } else {
+      run();
+    }
+  };
+
+  // Set when a boot script runs in place of the game (the boot section below).
+  // The runtime may then load before the game is wanted -- the script read one
+  // of the game's files -- and that load stays off the screen: no loading
+  // text, no decompression message, no error over the script's own page.
+  let booting = false;
+  let gameStarted = false;
+  const quiet = () => booting && !gameStarted;
+  const showStatus = game.setStatus;
+  game.setStatus = (text) => { if (!quiet()) showStatus(text); };
+
+  // What the page downloads is bundle.js -- emscripten's runtime glue -- and
+  // bundle.wasm, the client itself with mobs.json, petals.json,
+  // mob_drops.json, the maps and the font's metrics embedded inside it: about
+  // five megabytes of it. The font itself is not in there: the page gets it
+  // from the Google Fonts stylesheet in the head. `npm run build` stages a
+  // raw-deflate copy of each beside the original, bundle.js.bin and
+  // bundle.wasm.bin, and this prefers them.
+  // Deflate takes the wasm to about a fifth, and on a first visit that
+  // transfer is most of the wait.
+  //
+  // This is the browser client's compression scheme, carried over: the
+  // TypeScript page deflated its bundle.js into bundle.bin at build time and
+  // inflated it here with DecompressionStream, for the same reason and with
+  // no library either side. What is new is that the wasm goes through it too,
+  // since it is now where all the bytes are.
+  //
+  // The uncompressed files still ship, and nothing depends on the compressed
+  // pair being there: a build served straight out of cpp/build-web has none
+  // (compressing is a staging step -- an incremental relink should not spend
+  // a second deflating five megabytes), and DecompressionStream is missing
+  // from browsers older than 2023. Either way this falls through to the plain
+  // file.
+  const canInflate = typeof DecompressionStream === 'function';
+
+  // Revalidate every load, but reuse the bytes when the build has not moved.
+  // The failure worth designing against is a page still running the build
+  // from before the last deploy: the server refuses that handshake and the
+  // client reloads (client/web/reload.h), which is only an answer if the
+  // reload fetches the new build. A 304 on an unchanged file costs nothing,
+  // which is why this is no-cache where the TypeScript page said no-store --
+  // re-downloading a megabyte of unchanged wasm on every load would give back
+  // more than the compression saves. The 304 needs a validator to revalidate
+  // against, and the server sends two with every file (an ETag from the
+  // file's size and modification time, and Last-Modified; see sendFile in
+  // shared/net/web_channel.cpp): without them a no-cache fetch has nothing to
+  // ask about, and every load was a full download.
+  const fetchOptions = { cache: 'no-cache' };
+
+  // Said while the inflating is going on, which on a first visit over a real
+  // connection is the whole of the wait. The browser client put up this same
+  // message for the same reason. It goes in the page's one status surface, so
+  // nothing has to take it down: the glue's first setStatus ("Running...",
+  // then "") replaces the markup with text and then hides the element.
+  const announceInflating = () => {
+    if (quiet()) return;
+    const stage = document.createElement('div');
+    stage.className = 'stage';
+    stage.textContent = 'Decompressing bundle...';
+    const detail = document.createElement('div');
+    detail.className = 'detail';
+    detail.textContent = 'Please wait while we decompress the bundle...';
+    status.hidden = false;
+    status.textContent = '';
+    status.append(stage, detail);
+  };
+
+  // The named artifact as a Response, inflated from its .bin when there is
+  // one. Streamed rather than buffered, so what reads this Response sees the
+  // bytes as they arrive -- the same thing the browser would hand
+  // compileStreaming if it had fetched an uncompressed .wasm itself.
+  const load = async (name, contentType) => {
+    if (canInflate) {
+      const packed = await networkFetch(name + '.bin', fetchOptions).catch(() => null);
+      if (packed && packed.ok) {
+        announceInflating();
+        const inflating = new DecompressionStream('deflate-raw');
+        return new Response(packed.body.pipeThrough(inflating),
+                            { headers: { 'Content-Type': contentType } });
+      }
+    }
+    const plain = await networkFetch(name, fetchOptions);
+    if (!plain.ok) throw new Error(name + ': HTTP ' + plain.status);
+    return plain;
+  };
+
+  let loadError = '';
+  let runtimeFailed = null;
+  const fail = (what) => {
+    console.error('[loader] ' + what);
+    if (!loadError) loadError = what;
+    if (runtimeFailed) runtimeFailed(new Error(what));
+    if (quiet()) return;
+    status.hidden = false;
+    status.textContent = 'client error: ' + what;
+  };
+
+  // Everything from here to the boot section below is the game's own load. It
+  // is a function rather than straight-line code because a boot script may run
+  // in its place (see below), and that script decides when -- and whether --
+  // the runtime loads and the game starts. Called once; later calls return
+  // the same promise, which settles when the runtime is up (and, without a
+  // boot script, main() has been called).
+  let runtime = null;
+  let runtimeReady = false;
+  const loadRuntime = () => {
+    if (runtime) return runtime;
+    runtime = new Promise((resolve, reject) => {
+      game.onRuntimeInitialized = () => {
+        runtimeReady = true;
+        resolve();
+      };
+      runtimeFailed = reject;
+    });
+    // Nobody may be waiting on it, when the game was going to start anyway;
+    // fail() has already said why.
+    runtime.catch(() => {});
+
+    // Started now, before the glue: compiling the module is the long pole, and
+    // this way it runs against the download instead of after it.
+    // compileStreaming over a Response the page built itself is specified to
+    // work -- the MIME type above is what it checks -- and the retry is for an
+    // engine that disagrees. A module that simply does not compile fails the
+    // retry too, with the same message.
+    const compiled = load('bundle.wasm', 'application/wasm')
+      .then((response) => WebAssembly.compileStreaming(response))
+      .catch(async (error) => {
+        console.warn('[loader] streaming compile failed (' + error +
+                     '); buffering');
+        const response = await load('bundle.wasm', 'application/wasm');
+        return WebAssembly.compile(await response.arrayBuffer());
+      });
+
+    // The glue asks for the module through this hook rather than going looking
+    // for bundle.wasm, which is what keeps it off the uncompressed copy.
+    // Returning an empty object is emscripten's "not yet": the instance arrives
+    // through the callback whenever the compile above finishes.
+    game.instantiateWasm = (imports, ready) => {
+      compiled.then((module) => WebAssembly.instantiate(module, imports))
+              .then(ready)
+              .catch((error) => fail('bundle.wasm: ' + error));
+      return {};
+    };
+
+    // The glue itself, injected rather than left to the <script src> tag emcc
+    // emits (parked in the comment at the end of this file), because the copy
+    // worth loading is the compressed one. An injected script runs in global
+    // scope exactly as that tag's would, and synchronously: createFlowrix is
+    // defined the moment appendChild returns.
+    load('bundle.js', 'text/javascript')
+      .then((response) => response.text())
+      .then((source) => {
+        const script = document.createElement('script');
+        script.textContent = source;
+        document.body.appendChild(script);
+        // Settles when the runtime is up; a failure has gone through
+        // onAbort, which said so on screen.
+        createFlowrix(game).catch(() => {});
+      })
+      .catch((error) => fail('bundle.js: ' + error));
+    return runtime;
+  };
+
+  // Without a boot script the glue calls main() itself once the runtime is
+  // up. With one it was told not to (noInitialRun), and this calls it.
+  let mainCalled = false;
+  const startGame = () => {
+    if (gameStarted) return;
+    gameStarted = true;
+    if (loadError) {
+      fail(loadError);
+      return;
+    }
+    // A runtime the script already had loaded put nothing on screen to take
+    // down; one still loading shows its progress from here on.
+    if (!runtimeReady) status.hidden = false;
+    const started = loadRuntime();
+    if (!booting) return;
+    started.then(() => {
+      game.callMain(gameArguments);
+      mainCalled = true;
+      canvas.focus();
+    }, () => {});
+  };
+
+  // --- the boot script ------------------------------------------------------
+  // Debug > Assets > Boot can name a script for the next load to run INSTEAD
+  // of the game: one of the tools embedded in the wasm under /boot, or any .js
+  // file the player had open (client/web/boot.h). The client keeps it beside
+  // its settings in browser storage, base64 like the rest of what that mount
+  // stores, so it is read here before a byte of the game is fetched: a tool
+  // that never starts the game costs nothing, and one that does sets itself up
+  // first and then calls Module.flixBoot.startGame().
+  //
+  // `?boot=game` skips the script for this load and `?boot=reset` forgets it.
+  // Both are read here, needing nothing from the client, so no script -- a
+  // broken one, or one somebody was talked into keeping -- can lock anyone
+  // out of the game.
+  const kBootPrefix = 'flowrix/';
+  // The bytes the mount keeps under `name`, or null when there are none.
+  const storedBytes = (name) => {
+    try {
+      const saved = localStorage.getItem(kBootPrefix + name);
+      if (saved === null) return null;
+      return Uint8Array.from(atob(saved), (c) => c.charCodeAt(0));
+    } catch (e) {
+      return null;
+    }
+  };
+  const stored = (name) => {
+    const bytes = storedBytes(name);
+    return bytes ? new TextDecoder().decode(bytes) : '';
+  };
+  const forget = () => {
+    try {
+      localStorage.removeItem(kBootPrefix + 'boot-script');
+      localStorage.removeItem(kBootPrefix + 'boot-path');
+    } catch (e) { }
+  };
+  const bootMode = new URLSearchParams(location.search).get('boot');
+  if (bootMode === 'reset') forget();
+  const bootSource = bootMode === 'game' || bootMode === 'reset' ? '' : stored('boot-script');
+  const bootPath = bootSource ? (stored('boot-path') || 'boot-script.js') : '';
+  const flixBoot = {
+    // What this load runs instead of the game, by the path it was set from.
+    // Empty when the game starts directly; the client reads it to say so.
+    path: bootPath,
+    // What the client's files in browser storage are kept under.
+    prefix: kBootPrefix,
+    startGame,
+    // Forgets the boot script, so the next load starts the game.
+    clear: forget,
+    // The game's module, for poking at from a script; and the arguments
+    // main() is (or will be) given.
+    game,
+    arguments: gameArguments,
+  };
+  // The client reads this one (client/web/boot.cpp).
+  game.flixBoot = flixBoot;
+  if (!bootSource) {
+    whenParsed(startGame);
+    return;
+  }
+
+  // A script that throws on its way in leaves a way out on screen.
+  const bootFailed = (error) => {
+    console.error('[boot] ' + bootPath + ' failed: ' + error);
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;' +
+      'align-items:center;justify-content:center;gap:16px;padding:24px;background:#16191c;' +
+      'color:#fff;font:700 16px Ubuntu,sans-serif;text-align:center';
+    const message = document.createElement('div');
+    message.textContent = 'The boot script ' + bootPath + ' failed: ' + error;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;justify-content:center';
+    const action = (label, run) => {
+      const button = document.createElement('button');
+      button.textContent = label;
+      button.style.cssText = 'font:inherit;padding:8px 16px;border:0;border-radius:4px;' +
+        'background:#4caf50;color:#fff;cursor:pointer';
+      button.onclick = run;
+      row.append(button);
+    };
+    action('Start the game', () => { box.remove(); startGame(); });
+    action('Forget the script and reload', () => { forget(); location.reload(); });
+    box.append(message, row);
+    document.body.append(box);
+  };
+
+  // The page's global Module, from here on, is the script's and not the
+  // game's: a fresh one. A script that is an emscripten program takes it as
+  // its own -- its glue starts `var Module = typeof Module != 'undefined' ?
+  // Module : {}` -- and would otherwise have picked up the game's arguments,
+  // its noInitialRun, its instantiateWasm and the rest. The game never reads
+  // the global (createFlowrix, above).
+  //
+  // What it does carry is what a page normally hands an emscripten program:
+  // the page's canvas, which SDL, GLFW and the GL context creation all find
+  // through Module.canvas, and the same print/printErr as the game's. The
+  // canvas is the game's one too. That is no trouble for a script that
+  // starts the game or never draws, but one that takes a WebGL context on it
+  // leaves the game no 2D context, so such a script should not also start
+  // the game.
+  window.Module = { flixBoot, canvas: game.canvas, print: game.print, printErr: game.printErr };
+
+@FLIX_BOOT_FILES_JS@
+  installBootFiles({
+    path: bootPath,
+    stored: storedBytes,
+    runtime: loadRuntime,
+    ready: () => runtimeReady,
+    files: () => game.FS,
+    mainCalled: () => mainCalled,
+  });
+  booting = true;
+  game.noInitialRun = true;
+
+  console.info('[boot] running ' + bootPath + ' instead of the game; ' +
+               '?boot=game skips it once, ?boot=reset forgets it');
+  status.hidden = true;
+  whenParsed(() => {
+    try {
+      // window.eval, which is an indirect eval: the script runs in global
+      // scope, as a <script> element's would, but a throw on the way in lands
+      // here instead of nowhere. The sourceURL names it in the developer
+      // tools.
+      window.eval(bootSource + '\n//# sourceURL=' + bootPath.replace(/^\/+/, ''));
+    } catch (error) {
+      bootFailed(error);
+    }
+  });
+})();
+</script>
+    <!-- emcc replaces the token below with a <script> tag for bundle.js, and
+         refuses a shell that does not carry it. The loader above is what
+         loads the glue here, from bundle.js.bin when there is one, so the tag
+         is parked inside this comment: inert in the dev build, which keeps
+         comments, and gone from the release build, which strips them.
+         {{{ SCRIPT }}} -->
+</body>
+</html>

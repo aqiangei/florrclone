@@ -1,0 +1,298 @@
+{
+  "petalsAdded": [
+    {
+      "florName": "Beetle Egg",
+      "key": "beetle_egg"
+    },
+    {
+      "florName": "Mysterious Stick",
+      "key": "mysterious_stick"
+    },
+    {
+      "florName": "Mana Orb",
+      "key": "mana_orb"
+    },
+    {
+      "florName": "Magic Cotton",
+      "key": "magic_cotton"
+    },
+    {
+      "florName": "Magic Eye",
+      "key": "magic_eye"
+    },
+    {
+      "florName": "Fragment",
+      "key": "fragment"
+    },
+    {
+      "florName": "Mecha Missile",
+      "key": "mecha_missile"
+    },
+    {
+      "florName": "Dark Mark",
+      "key": "dark_mark"
+    },
+    {
+      "florName": "Blood Sacrifice",
+      "key": "blood_sacrifice"
+    },
+    {
+      "florName": "Heavy",
+      "key": "heavy"
+    },
+    {
+      "florName": "Bean",
+      "key": "bean"
+    },
+    {
+      "florName": "Dice",
+      "key": "dice"
+    },
+    {
+      "florName": "Laser",
+      "key": "laser"
+    },
+    {
+      "florName": "Talisman of Evasion",
+      "key": "talisman_of_evasion"
+    },
+    {
+      "florName": "Mjolnir",
+      "key": "mjolnir"
+    },
+    {
+      "florName": "Broccoli",
+      "key": "broccoli"
+    },
+    {
+      "florName": "Clay",
+      "key": "clay"
+    },
+    {
+      "florName": "Dust",
+      "key": "dust"
+    },
+    {
+      "florName": "Electric Web",
+      "key": "electric_web"
+    },
+    {
+      "florName": "Mysterious Powder",
+      "key": "mysterious_powder"
+    },
+    {
+      "florName": "Poker Chip",
+      "key": "poker_chip"
+    },
+    {
+      "florName": "Blood Stinger",
+      "key": "blood_stinger"
+    },
+    {
+      "florName": "Ankh",
+      "key": "ankh"
+    },
+    {
+      "florName": "Dead Leaf",
+      "key": "dead_leaf"
+    },
+    {
+      "florName": "Privet Berry",
+      "key": "privet_berry"
+    },
+    {
+      "florName": "Moon Rock",
+      "key": "moon_rock"
+    },
+    {
+      "florName": "Totem",
+      "key": "totem"
+    },
+    {
+      "florName": "Monstera",
+      "key": "monstera"
+    },
+    {
+      "florName": "Cogwheel",
+      "key": "cogwheel"
+    },
+    {
+      "florName": "Shovel",
+      "key": "shovel"
+    },
+    {
+      "florName": "Domino",
+      "key": "domino"
+    },
+    {
+      "florName": "Card",
+      "key": "card"
+    },
+    {
+      "florName": "Mysterious Relic",
+      "key": "mysterious_relic"
+    },
+    {
+      "florName": "Paranormal Goggles",
+      "key": "paranormal_goggles"
+    },
+    {
+      "florName": "Pharaoh's Crown",
+      "key": "pharaoh_s_crown"
+    },
+    {
+      "florName": "Corruption",
+      "key": "corruption"
+    }
+  ],
+  "petalsUpdated": 2,
+  "mobsUpdated": [
+    {
+      "florName": "Square",
+      "id": "square",
+      "damage": 10,
+      "health": 35
+    },
+    {
+      "florName": "Ladybug",
+      "id": "ladybug",
+      "damage": 10,
+      "health": 62.5
+    },
+    {
+      "florName": "Worker Ant",
+      "id": "worker_ant",
+      "damage": 10,
+      "health": 25
+    },
+    {
+      "florName": "Soldier Ant",
+      "id": "soldier_ant",
+      "damage": 10,
+      "health": 50
+    },
+    {
+      "florName": "Rock",
+      "id": "rock",
+      "damage": 10,
+      "health": 100
+    },
+    {
+      "florName": "Mummy Beetle",
+      "id": "mummy_beetle",
+      "damage": 30,
+      "health": 70
+    },
+    {
+      "florName": "Scorpion",
+      "id": "scorpion",
+      "damage": 15,
+      "health": 100
+    },
+    {
+      "florName": "Sandstorm",
+      "id": "sandstorm",
+      "damage": 40,
+      "health": 75
+    },
+    {
+      "florName": "Crab",
+      "id": "crab",
+      "damage": 25,
+      "health": 75
+    },
+    {
+      "florName": "Shell",
+      "id": "shell",
+      "damage": 10,
+      "health": 80
+    },
+    {
+      "florName": "Cactus",
+      "id": "cactus",
+      "damage": 35,
+      "health": 100
+    },
+    {
+      "florName": "Queen Ant",
+      "id": "queen_ant",
+      "damage": 10,
+      "health": 300
+    },
+    {
+      "florName": "Ant Hole",
+      "id": "ant_hole",
+      "damage": 15,
+      "health": 500
+    },
+    {
+      "florName": "Digger",
+      "id": "digger",
+      "damage": 30,
+      "health": 375
+    },
+    {
+      "florName": "Leech",
+      "id": "leech_body",
+      "damage": 10,
+      "health": 100
+    },
+    {
+      "florName": "Baby Termite",
+      "id": "baby_termite",
+      "damage": 10,
+      "health": 25
+    },
+    {
+      "florName": "Worker Termite",
+      "id": "worker_termite",
+      "damage": 10,
+      "health": 60
+    },
+    {
+      "florName": "Soldier Termite",
+      "id": "soldier_termite",
+      "damage": 10,
+      "health": 100
+    },
+    {
+      "florName": "Termite Mound",
+      "id": "termite_mound",
+      "damage": 0,
+      "health": 1
+    },
+    {
+      "florName": "Bush",
+      "id": "bush",
+      "damage": 10,
+      "health": 50
+    },
+    {
+      "florName": "Firefly",
+      "id": "firefly",
+      "damage": 5,
+      "health": 40
+    },
+    {
+      "florName": "Magic Firefly",
+      "id": "magic_firefly",
+      "damage": 5,
+      "health": 40
+    },
+    {
+      "florName": "Pharaoh Beetle",
+      "id": "pharaoh_beetle",
+      "damage": 30,
+      "health": 30
+    },
+    {
+      "florName": "Garbage",
+      "id": "garbage",
+      "damage": 3,
+      "health": 250
+    }
+  ],
+  "dropTouched": 2,
+  "petalCount": 159,
+  "unresolvedStill": []
+}

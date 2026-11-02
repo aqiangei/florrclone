@@ -1,0 +1,1713 @@
+#include "test.h"
+
+#include "client/interpolation.h"
+#include "client/render/world_renderer.h"
+#include "client/world_view.h"
+#include "server/replication.h"
+#include "server/systems/petals.h"
+#include "shared/game/components.h"
+
+#include <cmath>
+#include <string>
+#include <vector>
+
+#include "fixture_content.h"
+
+using namespace flix;
+
+namespace {
+
+/// A world with one player and a way to add mobs, so each test starts from the
+/// same known shape instead of repeating twenty lines of setup.
+struct Fixture {
+    World world;
+    NetIdAllocator ids;
+    Replicator replicator;
+    ClientView view;
+    EventQueue events;
+    Entity viewer = NULL_ENTITY;
+    /// The viewer's squadmates (Replicator::Frame::alwaysVisible), if any.
+    std::vector<Entity> squad;
+
+    Fixture() { viewer = addPlayer("bob", {1000, 1000}); }
+
+    Entity addPlayer(const std::string& name, Vec2 at) {
+        const Entity e = world.create();
+        world.add<PlayerTag>(e);
+        world.add<Transform>(e, Transform{at, 0.0});
+        world.add<Motion>(e);
+        world.add<Body>(e, Body{kPlayerBaseRadius, 1.0});
+        world.add<Health>(e, Health{100, 100, 0, 0});
+        world.add<PlayerInput>(e);
+        world.add<PlayerProgress>(e, PlayerProgress{500, 5, 3});
+        world.add<PlayerLocation>(e);
+        world.add<PlayerAccount>(e, PlayerAccount{"u-" + name, name, 1, false});
+        world.add<NetId>(e, NetId{ids.next()});
+        Replicated rep;
+        rep.kind = net::EntityKind::Player;
+        world.add<Replicated>(e, rep);
+        return e;
+    }
+
+    Entity addMob(Vec2 at, Rarity rarity = Rarity::Rare, double radius = 30) {
+        const Entity e = world.create();
+        world.add<MobTag>(e);
+        world.add<Transform>(e, Transform{at, 0.5});
+        world.add<Body>(e, Body{radius, radius * radius});
+        world.add<Health>(e, Health{50, 100, 0, 0});
+        world.add<NetId>(e, NetId{ids.next()});
+        Replicated rep;
+        rep.kind = net::EntityKind::Mob;
+        rep.typeIndex = 7;
+        rep.rarity = rarity;
+        world.add<Replicated>(e, rep);
+        return e;
+    }
+
+    /// Builds one snapshot and feeds it to `into`, returning the payload size.
+    std::size_t tick(WorldView& into, std::uint32_t tickNumber, double nowMillis) {
+        ByteWriter out;
+        Replicator::Frame frame;
+        frame.tick = tickNumber;
+        frame.nowMillis = nowMillis;
+        frame.events = &events;
+        frame.alwaysVisible = squad.empty() ? nullptr : &squad;
+        replicator.build(world, viewer, view, frame, out);
+
+        ByteReader reader(out.data(), out.size());
+        const std::uint8_t id = reader.u8();
+        CHECK_EQ(id, static_cast<std::uint8_t>(net::ServerMessage::Snapshot));
+        CHECK(into.applySnapshot(reader));
+        CHECK(reader.ok());
+        return out.size();
+    }
+};
+
+std::uint32_t netIdOf(World& w, Entity e) { return w.get<NetId>(e).value; }
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+
+TEST(snapshot_round_trips_a_spawn) {
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+
+    // The viewer and the mob both arrive.
+    CHECK_EQ(client.entities().size(), std::size_t(2));
+    const auto& e = client.entities().at(netIdOf(f.world, mob));
+    CHECK_EQ(static_cast<int>(e.kind), static_cast<int>(net::EntityKind::Mob));
+    CHECK_EQ(static_cast<int>(e.rarity), static_cast<int>(Rarity::Rare));
+    CHECK_EQ(e.typeIndex, std::uint16_t(7));
+    CHECK_NEAR(e.targetPosition.x, 1100, 0.05);
+    CHECK_NEAR(e.radius, 30.0, 0.05);
+
+    // The viewer's own record is flagged, named, and drives SelfState.
+    const auto& me = client.entities().at(netIdOf(f.world, f.viewer));
+    CHECK(me.isSelf());
+    CHECK_EQ(me.name, std::string("bob"));
+    CHECK_EQ(client.self().netId, netIdOf(f.world, f.viewer));
+    CHECK_NEAR(client.self().health, 100.0, 1e-3);
+    CHECK_EQ(client.self().level, 5);
+    CHECK_EQ(client.self().stars, 3);
+}
+
+TEST(spawn_is_sent_once_and_not_repeated) {
+    Fixture f;
+    f.addMob({1100, 1000});
+    WorldView client;
+    const std::size_t first = f.tick(client, 1, 1000);
+    const std::size_t second = f.tick(client, 2, 1040);
+    // Nothing moved, so the second snapshot carries no spawns and no updates
+    // -- only the fixed header. It must be markedly smaller.
+    CHECK(second < first);
+    CHECK_EQ(client.entities().size(), std::size_t(2));
+}
+
+TEST(only_changed_fields_are_sent) {
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const std::size_t idle = f.tick(client, 2, 1040);
+
+    f.world.get<Transform>(mob).position.x += 25;
+    const std::size_t moved = f.tick(client, 3, 1080);
+    CHECK(moved > idle);
+    CHECK_NEAR(client.entities().at(netIdOf(f.world, mob)).targetPosition.x, 1125, 0.05);
+
+    // A sub-tolerance nudge is not worth bytes and must be suppressed.
+    f.world.get<Transform>(mob).position.x += 0.001;
+    const std::size_t nudged = f.tick(client, 4, 1120);
+    CHECK_EQ(nudged, idle);
+}
+
+TEST(health_and_state_changes_replicate) {
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK_NEAR(client.entities().at(netIdOf(f.world, mob)).healthFraction, 0.5, 0.01);
+
+    Health& health = f.world.get<Health>(mob);
+    health.current = 25;
+    health.flashUntilMillis = 1200;
+    f.tick(client, 2, 1040);
+
+    const auto& e = client.entities().at(netIdOf(f.world, mob));
+    CHECK_NEAR(e.healthFraction, 0.25, 0.01);
+    CHECK((e.state & net::StateHurt) != 0);
+
+    // The flash expires on its own once the deadline passes.
+    f.tick(client, 3, 1300);
+    CHECK((client.entities().at(netIdOf(f.world, mob)).state & net::StateHurt) == 0);
+}
+
+TEST(a_small_bite_out_of_a_huge_pool_still_reaches_the_client) {
+    // The tier ladder multiplies mob health by 2e8 between common and apex, so
+    // a single petal takes a millionth of a top-tier mob's pool. Judged against
+    // any fixed fraction that reads as "unchanged", and the bar sits still
+    // while the damage numbers pile up. Every step the wire can represent has
+    // to be sent.
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    Health& health = f.world.get<Health>(mob);
+    health.max = 4'000'000.0;
+    health.current = health.max;
+
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const std::uint32_t id = netIdOf(f.world, mob);
+    CHECK_NEAR(client.entities().at(id).healthFraction, 1.0, 1e-4);
+
+    // 200 damage: a thousandth of a percent short of what a 1/255 tolerance
+    // demanded before it would spend three bytes.
+    health.current -= 200.0;
+    f.tick(client, 2, 1040);
+    CHECK_NEAR(client.entities().at(id).healthFraction, 0.99995, 2e-5);
+
+    // And it keeps arriving hit after hit rather than accumulating server-side
+    // until some threshold trips.
+    for (int i = 0; i < 5; ++i) {
+        health.current -= 200.0;
+        f.tick(client, static_cast<std::uint32_t>(3 + i), 1080.0 + 40.0 * i);
+    }
+    CHECK_NEAR(client.entities().at(id).healthFraction, health.current / health.max, 2e-5);
+
+    // The far end of the scale: the target dummy's pool is a billion and one
+    // basic petal takes TEN of it -- a hundred-millionth of the bar. Read back
+    // as health rather than as a ratio, because health is what the boss bar
+    // prints and a ratio that small is all mantissa.
+    health.max = 1'000'000'000.0;
+    health.current = health.max;
+    f.tick(client, 20, 2000);
+    CHECK_EQ(client.entities().at(id).healthFraction, 1.0);
+
+    health.current -= 10.0;
+    f.tick(client, 21, 2040);
+    // Within a thousandth of a point, on a pool of a billion. Through a
+    // quantised fraction -- a byte's 1/255, a short's 1/65535, or an f32 of
+    // the fraction itself -- this hit is not a small change, it is no change
+    // at all, and the bar never moves however long you stand there hitting it.
+    CHECK_NEAR(client.entities().at(id).healthFraction * health.max, health.current, 1e-3);
+}
+
+TEST(the_health_field_widens_with_the_pool_and_not_before) {
+    // A pool of 65535 or fewer points is exact to the POINT through a u16, so
+    // the overwhelming majority of what is on screen -- every flower, every
+    // petal, every mob up to legendary -- pays two bytes and loses nothing.
+    // The f32 is reserved for the pools a u16 would start swallowing whole
+    // hits from, and its precision sits where a huge pool needs it: at the top
+    // of the bar, where the first hits land.
+    struct Case {
+        double pool;
+        double damage;
+        bool wide;
+    };
+    // A bee at common, at legendary (324x), and at mythic (3159x) and apex
+    // (2e8), against a matched petal hit at each.
+    const Case cases[] = {
+        {35.0, 1.0, false},
+        {11'340.0, 30.0, false},
+        {110'565.0, 2'430.0, true},
+        {7'000'000'000.0, 196'830.0, true},
+        {1'000'000'000.0, 10.0, true},   // the target dummy, hit by a basic
+    };
+
+    for (const Case& c : cases) {
+        CHECK_EQ(net::healthFieldIsWide(c.pool), c.wide);
+
+        Fixture f;
+        const Entity mob = f.addMob({1100, 1000});
+        Health& health = f.world.get<Health>(mob);
+        health.max = c.pool;
+        health.current = c.pool;
+
+        WorldView client;
+        f.tick(client, 1, 1000);
+        const std::uint32_t id = netIdOf(f.world, mob);
+
+        // One hit has to move the bar, and to move it by what it took.
+        health.current -= c.damage;
+        const std::size_t bytes = f.tick(client, 2, 1040);
+        const double shown = client.entities().at(id).healthFraction * health.max;
+        CHECK_NEAR(shown, health.current, std::max(1e-3, c.damage * 0.01));
+
+        // ...and a snapshot in which nothing was hurt says nothing about it.
+        CHECK(f.tick(client, 3, 1080) < bytes);
+    }
+}
+
+TEST(unchanged_health_is_not_resent) {
+    // The flip side: precision at the wire's own step, not below it. A pool
+    // nothing has touched must not put a health field in every snapshot.
+    Fixture f;
+    f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const std::size_t idle = f.tick(client, 2, 1040);
+    CHECK_EQ(f.tick(client, 3, 1080), idle);
+}
+
+TEST(attack_and_defend_reach_the_client) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+
+    f.world.get<PlayerInput>(f.viewer).current.flags = net::InputAttack;
+    f.tick(client, 2, 1040);
+    CHECK((client.entities().at(client.self().netId).state & net::StateAttacking) != 0);
+
+    f.world.get<PlayerInput>(f.viewer).current.flags = net::InputDefend;
+    f.tick(client, 3, 1080);
+    const std::uint8_t state = client.entities().at(client.self().netId).state;
+    CHECK((state & net::StateDefending) != 0);
+    CHECK((state & net::StateAttacking) == 0);
+}
+
+TEST(player_visual_flags_round_trip_and_update_independently) {
+    Fixture f;
+    f.world.add<PlayerVisuals>(f.viewer, PlayerVisuals{
+        static_cast<std::uint8_t>(FaceDandelioned | FaceSquareEyes | FaceHasCorruption),
+        static_cast<std::uint16_t>(EquipCutter | EquipThirdEye | EquipObserver |
+                                  EquipAntennae | EquipTest1),
+        static_cast<std::uint32_t>(PlayerRenderPumpkin | PlayerRenderRobot),
+        "",     // no custom skin: this case is about the built-in flag bits
+        true,   // glitched
+    });
+    Afflictions poisoned;
+    poisoned.poisonPerSecond = 1;
+    poisoned.poisonUntilMillis = 2000;
+    f.world.add<Afflictions>(f.viewer, poisoned);
+    f.world.add<Dead>(f.viewer);
+    f.world.get<PlayerInput>(f.viewer).current.flags = net::InputDefend;
+
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const RemoteEntity& first = client.entities().at(client.self().netId);
+    // Face flags combine stored effects with live poison, death and action.
+    CHECK((first.faceFlags & FacePoisoned) != 0);
+    CHECK((first.faceFlags & FaceDandelioned) != 0);
+    CHECK((first.faceFlags & FaceDeadEyes) != 0);
+    CHECK((first.faceFlags & FaceSquareEyes) != 0);
+    CHECK((first.faceFlags & FaceDefending) != 0);
+    CHECK((first.faceFlags & FaceHasCorruption) != 0);
+    CHECK_EQ(first.equipFlags, static_cast<std::uint16_t>(EquipCutter | EquipThirdEye |
+                                                          EquipObserver | EquipAntennae |
+                                                          EquipTest1));
+    CHECK_EQ(first.renderFlags, static_cast<std::uint32_t>(PlayerRenderPumpkin |
+                                                            PlayerRenderRobot |
+                                                            PlayerRenderGlitch));
+
+    // Visual updates use their own snapshot field: movement and health can
+    // remain unchanged while the renderer receives a new face/skin state.
+    PlayerVisuals& visuals = f.world.get<PlayerVisuals>(f.viewer);
+    visuals.faceFlags = FaceNone;
+    visuals.equipFlags = EquipNone;
+    visuals.renderFlags = PlayerRenderRobot;
+    visuals.glitched = false;
+    f.world.get<Afflictions>(f.viewer).poisonUntilMillis = 0;
+    f.world.get<PlayerInput>(f.viewer).current.flags = net::InputAttack;
+    f.world.remove<Dead>(f.viewer);
+    f.tick(client, 2, 1040);
+    const RemoteEntity& second = client.entities().at(client.self().netId);
+    CHECK((second.faceFlags & FaceAttacking) != 0);
+    CHECK((second.faceFlags & FaceDefending) == 0);
+    CHECK((second.faceFlags & (FacePoisoned | FaceDeadEyes | FaceDandelioned |
+                               FaceSquareEyes | FaceHasCorruption)) == 0);
+    CHECK_EQ(second.equipFlags, std::uint16_t(EquipNone));
+    CHECK_EQ(second.renderFlags, std::uint32_t(PlayerRenderRobot));
+}
+
+TEST(equipped_custom_skin_id_reaches_the_client) {
+    Fixture f;
+    f.world.add<PlayerVisuals>(f.viewer, PlayerVisuals{});
+    f.world.get<PlayerVisuals>(f.viewer).equippedSkinId = "sk_abc_123";
+
+    // On the SPAWN record: a flower that walks into view already wearing a
+    // skin has to arrive wearing it, or it draws plain until it next changes.
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK_EQ(client.entities().at(client.self().netId).equippedSkinId, std::string("sk_abc_123"));
+
+    // And as a delta, with nothing else about the body moving.
+    f.world.get<PlayerVisuals>(f.viewer).equippedSkinId = "sk_def_456";
+    f.tick(client, 2, 1040);
+    CHECK_EQ(client.entities().at(client.self().netId).equippedSkinId, std::string("sk_def_456"));
+
+    // Taking it off is a change like any other; the empty string must not be
+    // read as "unchanged".
+    f.world.get<PlayerVisuals>(f.viewer).equippedSkinId.clear();
+    f.tick(client, 3, 1080);
+    CHECK(client.entities().at(client.self().netId).equippedSkinId.empty());
+}
+
+TEST(entities_leaving_view_are_removed) {
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK_EQ(client.entities().size(), std::size_t(2));
+
+    // Well beyond the viewport plus margin.
+    f.world.get<Transform>(mob).position = {40000, 40000};
+    f.tick(client, 2, 1040);
+    CHECK_EQ(client.entities().size(), std::size_t(1));
+    CHECK(client.entities().count(netIdOf(f.world, mob)) == 0);
+
+    // Coming back re-spawns it, with its immutable data intact.
+    f.world.get<Transform>(mob).position = {1100, 1000};
+    f.tick(client, 3, 1080);
+    CHECK_EQ(client.entities().size(), std::size_t(2));
+    CHECK_EQ(client.entities().at(netIdOf(f.world, mob)).typeIndex, std::uint16_t(7));
+}
+
+TEST(a_camera_petals_view_is_streamed_edge_to_edge_and_only_a_screen_past_it) {
+    // Unique antennae draws ten default screens of world. Everything on that
+    // screen has to be streamed, and current every snapshot, or mobs vanish
+    // and stutter in plain view. The margin PAST it stays the default
+    // screen's: things move at the same speed however far out the camera is,
+    // and a margin ten screens wide would be the whole map.
+    Fixture f;
+    const Vec2 drawn{kViewportWidth * 10.0, kViewportHeight * 10.0};
+    f.world.get<PlayerLocation>(f.viewer).viewport = drawn;
+    const Vec2 centre = f.world.get<Transform>(f.viewer).position;
+    const Entity corner = f.addMob(centre + drawn * 0.5 - Vec2{50.0, 50.0});
+    const Entity beyond = f.addMob(centre + Vec2{drawn.x * 0.5 + kViewportWidth * 1.5 + 100.0, 0.0});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK(client.entities().count(netIdOf(f.world, corner)) == 1);
+    CHECK(client.entities().count(netIdOf(f.world, beyond)) == 0);
+
+    // Current every snapshot, not one in farSnapshotStride: it is on screen.
+    // (The fixture's snapshot index never moves, so a far-band entity whose
+    // id is not a multiple of the stride would never be described again.)
+    CHECK(netIdOf(f.world, corner) % static_cast<std::uint32_t>(f.replicator.farSnapshotStride) != 0);
+    for (int i = 0; i < 4; ++i) {
+        const Vec2 moved = centre + drawn * 0.5 - Vec2{60.0 + 10.0 * i, 50.0};
+        f.world.get<Transform>(corner).position = moved;
+        f.tick(client, static_cast<std::uint32_t>(2 + i), 1040.0 + 40.0 * i);
+        CHECK_NEAR(client.entities().at(netIdOf(f.world, corner)).targetPosition.x, moved.x, 0.05);
+    }
+}
+
+TEST(a_big_mob_half_on_screen_is_current_every_snapshot) {
+    // The near box is a quarter screen past the drawn edge, 270 units top and
+    // bottom -- less than an ultra's radius. Tested on the centre, an ultra
+    // standing half on screen was in the far band and stepped at a quarter
+    // rate right at the edge of the view. A small mob at the same distance
+    // is wholly off screen and stays in the far band.
+    Fixture f;
+    const Vec2 centre = f.world.get<Transform>(f.viewer).position;
+    const double dy = kViewportHeight * 0.5 + 360.0;   // centre past the near box
+    const Entity big = f.addMob(centre + Vec2{0.0, dy}, Rarity::Ultra, 320.0);
+    const Entity small = f.addMob(centre + Vec2{100.0, dy}, Rarity::Common, 30.0);
+    WorldView client;
+    f.tick(client, 1, 1000);
+
+    // The fixture's snapshot index never moves, so a far-band entity whose id
+    // is not a multiple of the stride is never described again.
+    const auto stride = static_cast<std::uint32_t>(f.replicator.farSnapshotStride);
+    CHECK(netIdOf(f.world, big) % stride != 0);
+    CHECK(netIdOf(f.world, small) % stride != 0);
+    for (int i = 1; i <= 3; ++i) {
+        f.world.get<Transform>(big).position.x = centre.x + 10.0 * i;
+        f.world.get<Transform>(small).position.x = centre.x + 100.0 + 10.0 * i;
+        f.tick(client, static_cast<std::uint32_t>(1 + i), 1000.0 + 50.0 * i);
+        CHECK_NEAR(client.entities().at(netIdOf(f.world, big)).targetPosition.x,
+                   centre.x + 10.0 * i, 0.05);
+        CHECK_NEAR(client.entities().at(netIdOf(f.world, small)).targetPosition.x,
+                   centre.x + 100.0, 0.05);
+    }
+}
+
+TEST(destroyed_entities_are_removed) {
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    const std::uint32_t id = netIdOf(f.world, mob);
+    WorldView client;
+    f.tick(client, 1, 1000);
+
+    f.world.destroy(mob);
+    f.tick(client, 2, 1040);
+    CHECK(client.entities().count(id) == 0);
+}
+
+/// A petal the server destroys is set aside as it was last drawn, beside the
+/// Killed cue that names it, so the renderer can play its death from it. A
+/// mob is not: its death replays the renderer's own shadow of it.
+TEST(a_destroyed_petal_is_set_aside_beside_its_death_cue) {
+    Fixture f;
+    const Entity petal = f.world.create();
+    f.world.add<Transform>(petal, Transform{{1050, 1000}, 0.0});
+    f.world.add<Body>(petal, Body{10, 1});
+    f.world.add<NetId>(petal, NetId{f.ids.next()});
+    Replicated rep;
+    rep.kind = net::EntityKind::Petal;
+    f.world.add<Replicated>(petal, rep);
+    const std::uint32_t petalId = netIdOf(f.world, petal);
+    const Entity mob = f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK(client.removedPetals().empty());
+
+    f.events.killed(petalId, {1050, 1000}, Realm::Overworld);
+    f.world.destroy(petal);
+    f.world.destroy(mob);
+    f.tick(client, 2, 1040);
+    CHECK(client.entities().count(petalId) == 0);
+    CHECK_EQ(client.removedPetals().size(), std::size_t(1));
+    if (!client.removedPetals().empty()) {
+        CHECK_EQ(client.removedPetals().front().netId, petalId);
+        CHECK_EQ(client.removedPetals().front().kind, net::EntityKind::Petal);
+    }
+    bool cued = false;
+    for (const ViewEvent& e : client.events()) {
+        cued = cued || (e.kind == net::EventKind::Killed && e.netId == petalId);
+    }
+    CHECK(cued);
+}
+
+TEST(net_ids_are_never_reused) {
+    Fixture f;
+    const Entity first = f.addMob({1100, 1000});
+    const std::uint32_t firstId = netIdOf(f.world, first);
+    f.world.destroy(first);
+    const Entity second = f.addMob({1100, 1000});
+    // The ECS slot is recycled, but the wire id must not be, or a client that
+    // has not yet processed the removal would update the wrong entity.
+    CHECK(netIdOf(f.world, second) != firstId);
+}
+
+TEST(chained_position_deltas_land_where_the_server_thinks_they_did) {
+    Fixture f;
+    const Entity mob = f.addMob({1100.3, 1000.7});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const std::uint32_t id = netIdOf(f.world, mob);
+
+    // Hundreds of awkward little moves, every one rounded to the delta step.
+    // The client adds each to what it holds and the server advances its
+    // belief by the same rounded step, so the two never part -- exactly, not
+    // to a tolerance -- and neither strays from the truth by more than a
+    // half step.
+    Transform& transform = f.world.get<Transform>(mob);
+    for (std::uint32_t t = 2; t < 400; ++t) {
+        transform.position.x = 1100.3 + 300.0 * std::sin(0.1 * t) + 0.0137 * t;
+        transform.position.y = 1000.7 + 200.0 * std::cos(0.07 * t) - t / 3.0;
+        f.tick(client, t, 1000 + 40.0 * t);
+        const Vec2 held = client.entities().at(id).targetPosition;
+        CHECK(held.x == f.view.tracked.at(id).position.x);
+        CHECK(held.y == f.view.tracked.at(id).position.y);
+        CHECK_NEAR(held.x, transform.position.x, 0.5 / net::kPositionDeltaScale + 1e-9);
+        CHECK_NEAR(held.y, transform.position.y, 0.5 / net::kPositionDeltaScale + 1e-9);
+    }
+}
+
+TEST(a_move_too_long_for_a_delta_goes_out_absolute) {
+    Fixture f;
+    const Entity mob = f.addMob({300, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+
+    // Past the 1024 units an i16 of 1/32 steps reaches, from one side of the
+    // viewer to the other -- inside the near box both times, so it is
+    // described on every snapshot rather than on the far band's stride.
+    f.world.get<Transform>(mob).position = {1700.25, 999.5};
+    f.tick(client, 2, 1040);
+    const Vec2 held = client.entities().at(netIdOf(f.world, mob)).targetPosition;
+    CHECK_NEAR(held.x, 1700.25, 1e-3);
+    CHECK_NEAR(held.y, 999.5, 1e-3);
+
+    // And the next small move chains off the absolute one.
+    f.world.get<Transform>(mob).position.x += 2;
+    f.tick(client, 3, 1080);
+    CHECK_NEAR(client.entities().at(netIdOf(f.world, mob)).targetPosition.x, 1702.25, 1e-3);
+}
+
+TEST(net_ids_in_the_millions_cost_a_gap_not_four_bytes) {
+    Fixture f;
+    // A server up for days: ids far apart and nowhere near zero, created out
+    // of order so the snapshot has to sort them to gap-code them.
+    const std::uint32_t ids[] = {9000003, 4000000, 9000001, 4000002};
+    std::vector<Entity> mobs;
+    for (const std::uint32_t id : ids) {
+        const Entity e = f.addMob({1100, 1000});
+        f.world.get<NetId>(e).value = id;
+        mobs.push_back(e);
+    }
+    WorldView client;
+    f.tick(client, 1, 1000);
+    for (const std::uint32_t id : ids) CHECK(client.entities().count(id) == 1);
+
+    for (std::size_t i = 0; i < mobs.size(); ++i) {
+        f.world.get<Transform>(mobs[i]).position.x += 10.0 * static_cast<double>(i + 1);
+    }
+    f.tick(client, 2, 1040);
+    CHECK_NEAR(client.entities().at(9000003).targetPosition.x, 1110, 0.05);
+    CHECK_NEAR(client.entities().at(4000000).targetPosition.x, 1120, 0.05);
+    CHECK_NEAR(client.entities().at(9000001).targetPosition.x, 1130, 0.05);
+    CHECK_NEAR(client.entities().at(4000002).targetPosition.x, 1140, 0.05);
+
+    f.world.destroy(mobs[0]);
+    f.world.destroy(mobs[3]);
+    f.tick(client, 3, 1080);
+    CHECK(client.entities().count(9000003) == 0);
+    CHECK(client.entities().count(4000002) == 0);
+    CHECK(client.entities().count(4000000) == 1);
+    CHECK(client.entities().count(9000001) == 1);
+}
+
+TEST(the_viewers_own_figures_ride_only_when_they_change) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const std::size_t idle = f.tick(client, 2, 1040);
+    CHECK_NEAR(client.self().health, 100.0, 1e-3);
+    CHECK_EQ(client.self().level, 5);
+    CHECK_EQ(client.self().stars, 3);
+
+    // A hit: the health pair rides, and the rest is held from before. The
+    // other four bytes are the flower's own entity record carrying its bar
+    // (a one-byte id gap, the mask, the u16 fraction).
+    f.world.get<Health>(f.viewer).current = 60;
+    const std::size_t hurt = f.tick(client, 3, 1080);
+    CHECK_EQ(hurt, idle + 8 + 4);
+    CHECK_NEAR(client.self().health, 60.0, 1e-3);
+    CHECK_NEAR(client.self().maxHealth, 100.0, 1e-3);
+    CHECK_EQ(client.self().level, 5);
+    CHECK_EQ(client.self().stars, 3);
+    CHECK_EQ(f.tick(client, 4, 1120), idle);
+
+    f.world.get<PlayerProgress>(f.viewer).stars = 9;
+    f.tick(client, 5, 1160);
+    CHECK_EQ(client.self().stars, 9);
+    CHECK_NEAR(client.self().health, 60.0, 1e-3);
+
+    // A view reset -- a re-join, a realm change -- restates every figure,
+    // which is what a client that has just cleared its own needs.
+    f.view.reset();
+    WorldView fresh;
+    f.tick(fresh, 6, 1200);
+    CHECK_NEAR(fresh.self().health, 60.0, 1e-3);
+    CHECK_NEAR(fresh.self().maxHealth, 100.0, 1e-3);
+    CHECK_EQ(fresh.self().level, 5);
+    CHECK_EQ(fresh.self().stars, 9);
+}
+
+TEST(snapshot_is_capped_and_keeps_the_nearest) {
+    Fixture f;
+    f.replicator.maxEntities = 10;
+    for (int i = 0; i < 60; ++i) {
+        f.addMob({1000 + static_cast<double>(i) * 5.0, 1000});
+    }
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK(client.entities().size() <= std::size_t(10));
+
+    // The nearest mob must have survived the cull; the furthest must not.
+    bool sawNear = false;
+    for (const auto& entry : client.entities()) {
+        if (entry.second.kind != net::EntityKind::Mob) continue;
+        CHECK(entry.second.targetPosition.x < 1000 + 60 * 5.0);
+        if (entry.second.targetPosition.x < 1020) sawNear = true;
+    }
+    CHECK(sawNear);
+}
+
+TEST(events_are_scoped_to_what_the_client_can_see) {
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.events().clear();
+
+    f.events.damage(netIdOf(f.world, mob), 37, {1100, 1000}, Realm::Overworld);
+    f.events.damage(999, 12, {50000, 50000}, Realm::Overworld);   // far away
+    f.tick(client, 2, 1040);
+
+    CHECK_EQ(client.events().size(), std::size_t(1));
+    CHECK_EQ(static_cast<int>(client.events()[0].kind), static_cast<int>(net::EventKind::Damage));
+    CHECK_NEAR(client.events()[0].amount, 37.0, 0.01);
+}
+
+TEST(a_squadmates_hit_reaches_the_viewer_however_far_away_it_lands) {
+    Fixture f;
+    const Entity mate = f.addPlayer("amy", {50000, 50000});
+    const Entity stranger = f.addPlayer("cal", {50000, 51000});
+    f.squad.push_back(mate);
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.events().clear();
+
+    const std::uint32_t mateId = netIdOf(f.world, mate);
+    f.events.damage(mateId, 12, {50000, 50000}, Realm::Overworld, 0, NULL_ENTITY, 0, 0.1, mate);
+    f.events.damage(netIdOf(f.world, stranger), 9, {50000, 51000}, Realm::Overworld, 0,
+                    NULL_ENTITY, 0, 0.1, stranger);
+    // In the maze, a squadmate's hit means nothing on an overworld screen.
+    f.events.damage(mateId, 7, {50000, 50000}, Realm::Maze, 0, NULL_ENTITY, 0, 0.1, mate);
+    // On screen, it is an ordinary hit.
+    f.events.damage(netIdOf(f.world, f.viewer), 5, {1000, 1000}, Realm::Overworld, 0,
+                    NULL_ENTITY, 0, 0.1, f.viewer);
+    f.tick(client, 2, 1040);
+
+    CHECK_EQ(client.events().size(), std::size_t(2));
+    const ViewEvent& far = client.events()[0];
+    CHECK_EQ(far.netId, mateId);
+    CHECK_NEAR(far.radius, 0.1, 1e-6);
+    // Flashed on the party HUD, numbered nowhere.
+    CHECK((far.flag & net::DamageOffView) != 0);
+    CHECK((client.events()[1].flag & net::DamageOffView) == 0);
+}
+
+TEST(a_hit_on_your_own_worn_petal_names_its_slot_and_reaches_you_wherever_it_is) {
+    Fixture f;
+    const Entity stranger = f.addPlayer("cal", {1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.events().clear();
+
+    const auto petalHit = [&](std::uint32_t netId, Vec2 at, Entity wearer, bool fatal) {
+        WireEvent& hit = f.events.damage(netId, 3, at, Realm::Overworld, net::DamageFlashOnly,
+                                         NULL_ENTITY, 0, 0.1);
+        hit.wornBy = wearer;
+        hit.wornSlot = 4;
+        hit.wearerOnly = fatal;
+    };
+    petalHit(501, {1010, 1000}, f.viewer, false);   // ours, on screen
+    petalHit(502, {1110, 1000}, stranger, false);   // theirs, on screen
+    petalHit(503, {60000, 1000}, f.viewer, false);  // ours, left far behind
+    petalHit(504, {1010, 1000}, f.viewer, true);    // ours, broken
+    petalHit(505, {1110, 1000}, stranger, true);    // theirs, broken: not ours to see
+    f.tick(client, 2, 1040);
+
+    CHECK_EQ(client.events().size(), std::size_t(4));
+    if (client.events().size() != 4) return;
+    // Slot 4 is written as 5: 0 is "no tile of yours".
+    CHECK_EQ(client.events()[0].netId, std::uint32_t(501));
+    CHECK_EQ(client.events()[0].otherNetId, std::uint32_t(5));
+    CHECK_EQ(client.events()[1].netId, std::uint32_t(502));
+    CHECK_EQ(client.events()[1].otherNetId, std::uint32_t(0));
+    CHECK_EQ(client.events()[2].netId, std::uint32_t(503));
+    CHECK_EQ(client.events()[2].otherNetId, std::uint32_t(5));
+    CHECK_EQ(client.events()[3].netId, std::uint32_t(504));
+    CHECK_EQ(client.events()[3].otherNetId, std::uint32_t(5));
+}
+
+TEST(a_lightning_strike_carries_its_bolts_and_the_next_event_still_decodes) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.events().clear();
+
+    // A strike, then an ordinary event behind it. The second one is the point:
+    // Lightning is the only kind with a variable tail, and a reader that does
+    // not consume it reads the tail as the next event's header.
+    f.events.lightning({1000, 1000}, 1000.0, Realm::Overworld,
+                       {{1100, 1000}, {900, 1050}, {1000, 1200}});
+    f.events.damage(4242, 9, {1010, 1010}, Realm::Overworld);
+    f.tick(client, 2, 1040);
+
+    CHECK_EQ(client.events().size(), std::size_t(2));
+    const ViewEvent& strike = client.events()[0];
+    CHECK_EQ(static_cast<int>(strike.kind), static_cast<int>(net::EventKind::Lightning));
+    CHECK_NEAR(strike.position.x, 1000.0, 0.05);
+    CHECK_NEAR(strike.radius, 1000.0, 0.05);
+    CHECK_EQ(strike.points.size(), std::size_t(3));
+    CHECK_NEAR(strike.points[0].x, 1100.0, 0.05);
+    CHECK_NEAR(strike.points[2].y, 1200.0, 0.05);
+
+    CHECK_EQ(static_cast<int>(client.events()[1].kind), static_cast<int>(net::EventKind::Damage));
+    CHECK_EQ(client.events()[1].netId, std::uint32_t(4242));
+    CHECK(client.events()[1].points.empty());
+}
+
+TEST(a_strike_reports_no_more_bolts_than_the_wire_cap) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.events().clear();
+
+    std::vector<Vec2> targets;
+    for (std::size_t i = 0; i < net::kMaxLightningTargets + 8; ++i) {
+        targets.push_back({1000.0 + static_cast<double>(i), 1000.0});
+    }
+    f.events.lightning({1000, 1000}, 1000.0, Realm::Overworld, targets);
+    f.tick(client, 2, 1040);
+
+    CHECK_EQ(client.events().size(), std::size_t(1));
+    CHECK_EQ(client.events()[0].points.size(), net::kMaxLightningTargets);
+}
+
+TEST(truncated_snapshot_is_rejected_wholesale) {
+    Fixture f;
+    f.addMob({1100, 1000});
+    ByteWriter out;
+    Replicator::Frame frame;
+    frame.tick = 1;
+    frame.nowMillis = 1000;
+    f.replicator.build(f.world, f.viewer, f.view, frame, out);
+
+    WorldView client;
+    // Chop the payload short: the decoder must apply nothing rather than
+    // leaving the view half-populated.
+    ByteReader reader(out.data(), out.size() - 12);
+    reader.u8();
+    CHECK(!client.applySnapshot(reader));
+    CHECK_EQ(client.entities().size(), std::size_t(0));
+}
+
+TEST(stale_snapshots_are_ignored) {
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 5, 1000);
+
+    f.world.get<Transform>(mob).position.x = 1300;
+    f.tick(client, 6, 1040);
+    CHECK_NEAR(client.entities().at(netIdOf(f.world, mob)).targetPosition.x, 1300, 0.05);
+
+    // Replaying an older tick must not rewind the world.
+    ByteWriter out;
+    Replicator::Frame frame;
+    frame.tick = 3;
+    frame.nowMillis = 900;
+    ClientView fresh;
+    f.replicator.build(f.world, f.viewer, fresh, frame, out);
+    ByteReader reader(out.data(), out.size());
+    reader.u8();
+    client.applySnapshot(reader);
+    CHECK_EQ(client.tick(), std::uint32_t(6));
+}
+
+// ---------------------------------------------------------------------------
+// Interpolation
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A view holding one flower at the origin whose server position is `target`.
+/// Built by hand rather than through the replicator: these tests are about the
+/// ease law, and seeding it directly is what lets them assert exact numbers.
+RemoteEntity easedFlower(Vec2 drawn, Vec2 target) {
+    RemoteEntity e;
+    e.netId = 1;
+    e.kind = net::EntityKind::Player;
+    e.position = drawn;
+    e.targetPosition = target;
+    e.needsSnap = false;
+    return e;
+}
+
+} // namespace
+
+TEST(the_ease_rate_is_frame_rate_independent) {
+    // Two frames of half the step must land where one whole one does, or the
+    // flower's speed would depend on the frame rate.
+    const double tau = easeTimeConstant(kDefaultInterpolationAmount);
+    const double whole = easeFraction(tau, 1.0 / 30.0);
+    const double half = easeFraction(tau, 1.0 / 60.0);
+    CHECK_NEAR(1.0 - (1.0 - half) * (1.0 - half), whole, 1e-12);
+
+    // And the amount is the TypeScript client's definition: the fraction of
+    // the gap closed in one 60 fps frame.
+    CHECK_NEAR(easeFraction(easeTimeConstant(0.3), 1.0 / 60.0), 0.3, 1e-12);
+}
+
+TEST(a_stalled_frame_does_not_become_a_snap) {
+    // A resize or a breakpoint hands back a dt of seconds. Easing the whole
+    // gap on the frame the window resumes is a teleport on screen.
+    const double tau = easeTimeConstant(kDefaultInterpolationAmount);
+    CHECK(easeFraction(tau, 30.0) < 0.999);
+    CHECK_NEAR(easeFraction(tau, 30.0), easeFraction(tau, kMaxEaseStepSeconds), 1e-12);
+}
+
+TEST(the_ease_step_ignores_frame_timing_noise) {
+    // A 60 Hz display measured a few ms either side of each vblank. The step
+    // every ease takes has to come out even, or a constant-rate ease takes
+    // uneven steps across evenly spaced presents.
+    FramePeriod period;
+    const double jitter[] = {0.0187, 0.0146, 0.0171, 0.0159, 0.0192, 0.0141};
+    for (int i = 0; i < 600; ++i) period.advance(jitter[i % 6]);
+    double low = 1.0, high = 0.0;
+    for (int i = 0; i < 60; ++i) {
+        const double step = period.advance(jitter[i % 6]);
+        low = std::min(low, step);
+        high = std::max(high, step);
+    }
+    CHECK_NEAR(low, 1.0 / 60.0, 0.0005);
+    CHECK(high - low < 0.0005);
+}
+
+TEST(the_ease_step_follows_a_new_refresh_rate_but_not_a_hitch) {
+    FramePeriod period;
+    for (int i = 0; i < 200; ++i) period.advance(1.0 / 60.0);
+
+    // One dropped frame is not a new refresh rate.
+    CHECK(period.advance(0.25) < 1.0 / 60.0 * 1.06);
+
+    // A window dragged onto a 144 Hz monitor is, within a second.
+    for (int i = 0; i < 144; ++i) period.advance(1.0 / 144.0);
+    CHECK_NEAR(period.seconds(), 1.0 / 144.0, 0.0002);
+}
+
+TEST(a_flower_eases_toward_the_server_and_never_past_it) {
+    WorldView view;
+    view.seedForTest(easedFlower({0, 0}, {100, 0}));
+    const double tau = view.easeTimeConstantSeconds;
+
+    view.interpolate(1000, 1.0 / 60.0);
+    const double afterOne = view.entities().at(1).position.x;
+    CHECK_NEAR(afterOne, 100.0 * easeFraction(tau, 1.0 / 60.0), 1e-9);
+
+    // Asymptotic, so it approaches without ever overshooting -- an overshoot
+    // is what makes a corrected position visibly spring.
+    for (int i = 0; i < 600; ++i) view.interpolate(1000, 1.0 / 60.0);
+    CHECK(view.entities().at(1).position.x <= 100.0);
+    CHECK_NEAR(view.entities().at(1).position.x, 100.0, 0.01);
+}
+
+TEST(a_flower_cuts_rather_than_glides_across_a_teleport) {
+    WorldView view;
+    view.seedForTest(easedFlower({0, 0}, {0, kTeleportSnapDistance + 1}));
+    view.interpolate(1000, 1.0 / 60.0);
+    // A portal, a respawn or a realm change: easing would drag the flower
+    // across every screen in between.
+    CHECK_NEAR(view.entities().at(1).position.y, kTeleportSnapDistance + 1, 1e-9);
+}
+
+TEST(a_flower_settles_exactly_instead_of_asymptoting) {
+    WorldView view;
+    view.seedForTest(easedFlower({0, 0}, {kSettleEpsilon / 2, 0}));
+    view.interpolate(1000, 1.0 / 60.0);
+    CHECK_NEAR(view.entities().at(1).position.x, kSettleEpsilon / 2, 1e-12);
+}
+
+TEST(a_flowers_facing_comes_straight_off_the_wire) {
+    // It drives the eyes. Easing it makes the pupils swim behind the cursor.
+    WorldView view;
+    RemoteEntity e = easedFlower({0, 0}, {0, 0});
+    e.angle = 0;
+    e.targetAngle = kPi / 2;
+    view.seedForTest(e);
+    view.interpolate(1000, 1.0 / 60.0);
+    CHECK_NEAR(view.entities().at(1).angle, kPi / 2, 1e-12);
+}
+
+TEST(a_mobs_facing_eases_instead_of_snapping) {
+    // Passive AI turns up to 180 degrees in one server step.
+    WorldView view;
+    RemoteEntity e;
+    e.netId = 2;
+    e.kind = net::EntityKind::Mob;
+    e.needsSnap = false;
+    e.angle = 0;
+    e.targetAngle = kPi / 2;
+    view.seedForTest(e);
+    view.interpolate(1000, 1.0 / 60.0);
+    const double after = view.entities().at(2).angle;
+    CHECK(after > 0.0);
+    CHECK(after < kPi / 2);
+}
+
+TEST(mob_playback_runs_behind_the_render_clock) {
+    WorldView view;
+    RemoteEntity e;
+    e.netId = 3;
+    e.kind = net::EntityKind::Mob;
+    e.needsSnap = false;
+    e.targetPosition = {100, 0};
+    // Two samples 50 ms apart, so the midpoint of the pair is at t = 1025.
+    e.samples.push_back({1000, {0, 0}});
+    e.samples.push_back({1050, {100, 0}});
+    view.seedForTest(e);
+
+    // Render at 1025 + the delay: playback lands on the midpoint.
+    view.interpolate(1025 + kMobRenderDelayMillis, 1.0 / 60.0);
+    CHECK_NEAR(view.entities().at(3).position.x, 50.0, 1e-9);
+}
+
+TEST(mob_playback_extrapolates_at_most_one_sample_when_starved) {
+    WorldView view;
+    RemoteEntity e;
+    e.netId = 4;
+    e.kind = net::EntityKind::Mob;
+    e.needsSnap = false;
+    e.samples.push_back({1000, {0, 0}});
+    e.samples.push_back({1050, {100, 0}});
+    view.seedForTest(e);
+
+    // Far past the newest sample: it guesses one span forward and stops, which
+    // rides out a late packet without sending the mob through a wall.
+    view.interpolate(9000 + kMobRenderDelayMillis, 1.0 / 60.0);
+    CHECK_NEAR(view.entities().at(4).position.x, 200.0, 1e-9);
+}
+
+TEST(a_mob_that_stops_is_drawn_where_it_stopped) {
+    // A mob that stops moving drops out of the snapshot: nothing about it
+    // changed. Its history must still advance, or playback runs off the end of
+    // it and extrapolates the last step -- the mob drawn a whole step past
+    // where it stopped, and held there until it moves again.
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.interpolate(1000, 1.0 / 60.0);   // the spawn snap
+
+    std::uint32_t tick = 2;
+    for (int step = 0; step < 3; ++step) {
+        f.world.get<Transform>(mob).position.x += 20.0;
+        f.tick(client, tick, 1000 + 50.0 * tick);
+        ++tick;
+    }
+    for (int silent = 0; silent < 3; ++silent, ++tick) f.tick(client, tick, 1000 + 50.0 * tick);
+
+    // Long after the last snapshot: the whole history has been played.
+    client.interpolate(1e9, 1.0 / 60.0);
+    CHECK_NEAR(client.entities().at(netIdOf(f.world, mob)).position.x, 1160.0, 1e-9);
+}
+
+TEST(a_mob_with_no_history_eases_rather_than_freezing) {
+    // One sample cannot bracket anything. Freezing on it would stall every mob
+    // for the whole playback delay after it comes into view.
+    WorldView view;
+    RemoteEntity e;
+    e.netId = 5;
+    e.kind = net::EntityKind::Mob;
+    e.needsSnap = false;
+    e.targetPosition = {100, 0};
+    e.samples.push_back({1000, {0, 0}});
+    view.seedForTest(e);
+    view.interpolate(1000, 1.0 / 60.0);
+    CHECK(view.entities().at(5).position.x > 0.0);
+}
+
+TEST(a_freshly_spawned_entity_does_not_slide_in) {
+    Fixture f;
+    const Entity mob = f.addMob({1200, 1000});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    client.interpolate(99999, 1.0 / 60.0);
+    // Drawn where it spawned rather than sliding in from wherever a recycled
+    // record left the slot.
+    CHECK_NEAR(client.entities().at(netIdOf(f.world, mob)).position.x, 1200, 0.05);
+}
+
+TEST(the_viewers_flower_eases_and_the_camera_gets_one_answer) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+    // The join snaps: there is no continuity to preserve.
+    client.interpolate(1000, 1.0 / 60.0);
+    const Vec2 spawned = client.selfDrawnPosition();
+    CHECK_NEAR(spawned.x, client.self().position.x, 1e-9);
+
+    f.world.get<Transform>(f.viewer).position.x += 100;
+    f.tick(client, 2, 1040);
+    client.interpolate(1040, 1.0 / 60.0);
+
+    // Eased, not cut: the camera is pinned to this, so anything that jumped
+    // here would jolt the whole world.
+    const Vec2 drawn = client.selfDrawnPosition();
+    CHECK(drawn.x > spawned.x);
+    CHECK(drawn.x < client.self().position.x);
+    // And the self ENTITY reads the same, so the petal ring anchored to it
+    // cannot drift off the body by a fraction of a pixel.
+    CHECK_NEAR(client.entities().at(client.self().netId).position.x, drawn.x, 1e-12);
+}
+
+TEST(snapAll_cuts_every_entity_onto_the_server_position) {
+    WorldView view;
+    view.seedForTest(easedFlower({0, 0}, {100, 0}));
+    view.snapAll();
+    view.interpolate(1000, 1.0 / 60.0);
+    CHECK_NEAR(view.entities().at(1).position.x, 100.0, 1e-12);
+}
+
+TEST(a_rigid_ring_stays_rigid_while_its_flower_walks) {
+    // THE petal-jitter regression. A petal's drawn place in its flower's ring
+    // must depend only on where the server put it relative to that flower --
+    // never on the flower's own interpolation state.
+    //
+    // Snapshots arrive at 20 Hz and frames are drawn faster, so anything
+    // derived from a raw authoritative position is a staircase. The renderer
+    // used to add `owner.position - owner.targetPosition` to every petal to
+    // re-anchor the ring; that is a smooth value minus a staircase, i.e. a
+    // sawtooth, and it shook every petal at the beat between the two rates.
+    //
+    // Here the ring is deliberately RIGID -- the offset never changes -- while
+    // the flower walks in snapshot-sized steps. Any motion in the drawn offset
+    // is manufactured by the client.
+    WorldView view;
+
+    RemoteEntity owner;
+    owner.netId = 1;
+    owner.kind = net::EntityKind::Player;
+    owner.position = owner.targetPosition = {1000, 1000};
+    owner.needsSnap = false;
+    view.seedForTest(owner);
+
+    const Vec2 ring{60, 0};
+    RemoteEntity petal;
+    petal.netId = 2;
+    petal.kind = net::EntityKind::Petal;
+    petal.ownerNetId = 1;
+    petal.position = petal.targetPosition = owner.targetPosition + ring;
+    petal.ownerOffset = ring;
+    petal.needsSnap = false;
+    view.seedForTest(petal);
+
+    // Three frames per snapshot, which is the ratio that produced the visible
+    // shake: the staircase and the frame clock do not divide evenly.
+    Vec2 walked = owner.targetPosition;
+    double worstDrift = 0;
+    for (int snapshot = 0; snapshot < 40; ++snapshot) {
+        walked += {5.0, 0};                       // one 20 Hz step of travel
+        view.setTargetForTest(1, walked);
+        view.setTargetForTest(2, walked + ring);
+        for (int frame = 0; frame < 3; ++frame) {
+            view.interpolate(1000 + snapshot * 50.0 + frame * 16.7, 1.0 / 60.0);
+            const Vec2 drawn = view.entities().at(2).position - view.entities().at(1).position;
+            // Skip the first snapshot: the ease is still settling from the seed.
+            if (snapshot > 0) worstDrift = std::max(worstDrift, distance(drawn, ring));
+        }
+    }
+    CHECK_NEAR(worstDrift, 0.0, 1e-9);
+}
+
+TEST(a_petal_ring_is_smoothed_in_its_flowers_frame_not_in_the_world) {
+    // The ring's own motion still has to be interpolated -- it arrives at the
+    // snapshot rate like everything else -- but in the flower's frame, so
+    // smoothing a rotation cannot also smear the flower's translation into it.
+    WorldView view;
+
+    RemoteEntity owner;
+    owner.netId = 1;
+    owner.kind = net::EntityKind::Player;
+    owner.position = owner.targetPosition = {1000, 1000};
+    owner.needsSnap = false;
+    view.seedForTest(owner);
+
+    RemoteEntity petal;
+    petal.netId = 2;
+    petal.kind = net::EntityKind::Petal;
+    petal.ownerNetId = 1;
+    petal.position = petal.targetPosition = {1060, 1000};
+    petal.ownerOffset = {60, 0};
+    petal.needsSnap = false;
+    view.seedForTest(petal);
+
+    // The ring swings a quarter turn in one step while the flower stands still.
+    view.setTargetForTest(2, {1000, 1060});
+    view.interpolate(1000, 1.0 / 60.0);
+
+    const Vec2 drawn = view.entities().at(2).position - view.entities().at(1).position;
+    // Part of the way round, not all of it and not none of it.
+    CHECK(drawn.y > 0.0);
+    CHECK(drawn.y < 60.0);
+    CHECK(drawn.x < 60.0);
+    CHECK(drawn.x > 0.0);
+}
+
+namespace {
+
+/// A registry holding a moon, a basic and a worn eye, for the smoothing tests
+/// below: WorldView asks the configs whether a ring orbits a petal.
+const ContentRegistry& moonContent() {
+    static const ContentRegistry registry = [] {
+        ContentRegistry r;
+        std::string error;
+        if (!test::loadFixtureContent(r, testsupport::tempDir("flix_moon_view"), R"JSON({
+  "critter": {"name":"Critter","health":10,"damage":1,"size":1,"speed":0.2,"range":300,"cooldown":500,"color":"#FF0000","section":[0],"ai_type":"hostile"}
+})JSON",
+                                      R"JSON({
+  "basic": {"name":"Basic","damage":10,"health":10,"size":1,"cooldown":1000,"count":1,"color":"#FFFFFF"},
+  "moon":  {"name":"Moon","damage":1,"health":1000,"size":2.6,"cooldown":10000,"count":1,"color":"#878787"},
+  "gazer": {"name":"Gazer","damage":0,"health":null,"size":1,"cooldown":1,"count":1,"range":0,"fixedDirection":0,"noPhysics":true,"color":"#000000"}
+})JSON",
+                                      error)) {
+            ::testing::reportFailure(__FILE__, __LINE__, "moon fixture failed: " + error);
+        }
+        return r;
+    }();
+    return registry;
+}
+
+/// A flower at `at`, its moon at `moonAt` and a petal on the moon's ring
+/// `ring` off it, already settled -- seeded into `view`.
+void seedMoonRing(WorldView& view, Vec2 at, Vec2 moonAt, Vec2 ring, const char* petalId = "basic") {
+    view.setContent(&moonContent());
+    RemoteEntity owner;
+    owner.netId = 1;
+    owner.kind = net::EntityKind::Player;
+    owner.position = owner.targetPosition = at;
+    owner.needsSnap = false;
+    view.seedForTest(owner);
+
+    RemoteEntity moon;
+    moon.netId = 3;
+    moon.kind = net::EntityKind::Petal;
+    moon.typeIndex = moonContent().petalIndex("moon");
+    moon.spawnFlags = net::SpawnLoosePetal;
+    moon.ownerNetId = 1;
+    moon.position = moon.targetPosition = moonAt;
+    moon.needsSnap = false;
+    view.seedForTest(moon);
+
+    RemoteEntity petal;
+    petal.netId = 2;
+    petal.kind = net::EntityKind::Petal;
+    petal.typeIndex = moonContent().petalIndex(petalId);
+    petal.ownerNetId = 1;
+    petal.position = petal.targetPosition = moonAt + ring;
+    petal.ownerOffset = ring;
+    petal.needsSnap = false;
+    view.seedForTest(petal);
+}
+
+} // namespace
+
+TEST(a_ring_laid_out_around_a_moon_is_smoothed_in_the_moons_frame) {
+    // The server lays the ring out around the moon, which stands still while
+    // the flower walks away. Smoothed in the FLOWER's frame -- an offset that
+    // changes every snapshot by the flower's own step -- the ring would be
+    // dragged after the flower by the ease and wobble off the moon.
+    WorldView view;
+    const Vec2 ring{65, 0};
+    seedMoonRing(view, {1000, 1000}, {900, 1000}, ring);
+
+    Vec2 walked{1000, 1000};
+    double worstDrift = 0;
+    for (int snapshot = 0; snapshot < 40; ++snapshot) {
+        walked += {5.0, 0};
+        view.setTargetForTest(1, walked);
+        for (int frame = 0; frame < 3; ++frame) {
+            view.interpolate(1000 + snapshot * 50.0 + frame * 16.7, 1.0 / 60.0);
+            const Vec2 drawn = view.entities().at(2).position - view.entities().at(3).position;
+            worstDrift = std::max(worstDrift, distance(drawn, ring));
+        }
+    }
+    CHECK_NEAR(worstDrift, 0.0, 1e-9);
+
+    // And the moon moving -- a bubble threw it -- carries the ring rigidly.
+    Vec2 thrown{900, 1000};
+    for (int snapshot = 0; snapshot < 20; ++snapshot) {
+        thrown += {0, 7.0};
+        view.setTargetForTest(3, thrown);
+        view.setTargetForTest(2, thrown + ring);
+        for (int frame = 0; frame < 3; ++frame) {
+            view.interpolate(4000 + snapshot * 50.0 + frame * 16.7, 1.0 / 60.0);
+            const Vec2 drawn = view.entities().at(2).position - view.entities().at(3).position;
+            worstDrift = std::max(worstDrift, distance(drawn, ring));
+        }
+    }
+    CHECK_NEAR(worstDrift, 0.0, 1e-9);
+}
+
+TEST(a_worn_petal_stays_in_its_flowers_frame_while_the_ring_orbits_a_moon) {
+    WorldView view;
+    seedMoonRing(view, {1000, 1000}, {900, 1000}, {0, 0}, "gazer");
+    // Worn on the flower: the server puts it there, and that is the frame.
+    view.setTargetForTest(2, {1000, 1000});
+    RemoteEntity& eye = const_cast<RemoteEntity&>(view.entities().at(2));
+    eye.position = {1000, 1000};
+    eye.ownerOffset = {0, 0};
+
+    Vec2 walked{1000, 1000};
+    for (int snapshot = 0; snapshot < 20; ++snapshot) {
+        walked += {5.0, 0};
+        view.setTargetForTest(1, walked);
+        view.setTargetForTest(2, walked);
+        view.interpolate(1000 + snapshot * 50.0, 1.0 / 60.0);
+        CHECK_NEAR(distance(view.entities().at(2).position, view.entities().at(1).position), 0.0,
+                   1e-9);
+    }
+}
+
+TEST(a_ring_changing_hands_flies_across_instead_of_jumping) {
+    // The moon breaks and the server hands the ring back to the flower. The
+    // petal's offset is rebased onto the new frame from where it is DRAWN, so
+    // the frame changing moves it nowhere; only the ease toward its new place
+    // does.
+    WorldView view;
+    seedMoonRing(view, {1000, 1000}, {700, 1000}, {65, 0});
+    view.interpolate(1000, 1.0 / 60.0);
+    const Vec2 before = view.entities().at(2).position;
+
+    // The moon gone from the snapshot, the petal's place now on the flower's
+    // ring, 300 units away.
+    RemoteEntity gone = view.entities().at(3);
+    gone.state = net::StateDead;
+    view.seedForTest(gone);
+    view.setTargetForTest(2, {1060, 1000});
+    view.interpolate(1016.7, 1.0 / 60.0);
+    const Vec2 after = view.entities().at(2).position;
+    // Under way toward it, and nowhere near all the way in one frame.
+    CHECK(after.x > before.x);
+    CHECK(after.x - before.x < 0.5 * (1060.0 - before.x));
+}
+
+TEST(a_petal_with_no_owner_on_screen_still_interpolates) {
+    // The frame or two before an owner's spawn record lands. Anchoring is not
+    // possible; drawing the petal at a stale position is worse than easing it.
+    WorldView view;
+    RemoteEntity petal;
+    petal.netId = 7;
+    petal.kind = net::EntityKind::Petal;
+    petal.ownerNetId = 999;            // nothing under this id
+    petal.position = {0, 0};
+    petal.targetPosition = {100, 0};
+    petal.needsSnap = false;
+    view.seedForTest(petal);
+    view.interpolate(1000, 1.0 / 60.0);
+    CHECK(view.entities().at(7).position.x > 0.0);
+    CHECK(view.entities().at(7).position.x < 100.0);
+}
+
+TEST(snapshot_reports_the_viewers_reloading_slots) {
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[0] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    loadout.slots[2] = LoadoutSlot{0, Rarity::Common, 3200.0, true};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+
+    // What is LEFT of the reload, not when it ends: the bar counts down from
+    // it on its own clock between snapshots.
+    CHECK_NEAR(client.self().slotReloadRemainingMillis[2], 1200.0, 1.0);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[0], 0.0);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[1], 0.0);
+
+    // The frame clock carries it forward, so the wedge sweeps at display rate
+    // rather than in twenty steps a second.
+    client.interpolate(2000, 0.2);
+    CHECK_NEAR(client.self().slotReloadRemainingMillis[2], 1000.0, 1.0);
+}
+
+TEST(a_slot_that_finished_reloading_drops_off_the_wire) {
+    // Streamed state, not a one-shot event: the wedge clears because the slot
+    // stops being reported, so a client that missed a frame is not left with a
+    // petal that sweeps forever.
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[2] = LoadoutSlot{0, Rarity::Common, 3200.0, true};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+    CHECK(client.self().slotReloadRemainingMillis[2] > 0.0);
+
+    LoadoutSlot& slot = f.world.get<Loadout>(f.viewer).slots[2];
+    slot.broken = false;
+    slot.reloadReadyAtMillis = 0;
+    f.tick(client, 2, 3300);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[2], 0.0);
+}
+
+TEST(an_untouched_loadout_costs_the_snapshot_one_byte) {
+    // The list leads with a count so the overwhelmingly common case -- nothing
+    // broken and nothing hurt -- is a single zero rather than an entry per slot.
+    Fixture f;
+    WorldView client;
+    const std::size_t bare = f.tick(client, 1, 1000);
+
+    Fixture g;
+    Loadout loadout;
+    loadout.slots[1] = LoadoutSlot{0, Rarity::Common, 2000.0, true};
+    g.world.add<Loadout>(g.viewer, loadout);
+    WorldView other;
+    const std::size_t withOne = g.tick(other, 1, 1000);
+
+    // slot, reload, health, counter.
+    CHECK_EQ(withOne - bare, std::size_t(6));
+}
+
+TEST(a_sponge_reports_the_damage_it_is_still_holding) {
+    // The number the bar prints inside the slot's top border. The petal system
+    // derives it; the snapshot only carries it, rounded UP so a sliver of a
+    // stored hit still reads as 1 rather than vanishing early.
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[1] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    slotState.slots[1].counter = 7.2;
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+
+    CHECK_EQ(client.self().slotCounter[1], 8);
+    // A petal with no number of its own is not reported, and reads as none --
+    // which is -1, not 0: zero is a reading, not an absence.
+    CHECK_EQ(client.self().slotCounter[0], -1);
+}
+
+TEST(an_emptied_sponge_prints_a_standing_zero) {
+    // An idle gauge still reports. The slot stays in the list holding 0 rather
+    // than dropping out of it, because a number that vanished whenever it read
+    // empty is indistinguishable from a petal that never had one.
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[1] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    slotState.slots[1].counter = 12.0;
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+    CHECK_EQ(client.self().slotCounter[1], 12);
+
+    f.world.get<PetalSlotState>(f.viewer).slots[1].counter = 0.0;
+    f.tick(client, 2, 2050);
+    CHECK_EQ(client.self().slotCounter[1], 0);
+
+    // Only the petal disowning the number takes it off the bar.
+    f.world.get<PetalSlotState>(f.viewer).slots[1].counter = -1.0;
+    f.tick(client, 3, 2100);
+    CHECK_EQ(client.self().slotCounter[1], -1);
+}
+
+TEST(a_clump_reports_a_reload_while_any_grain_is_missing) {
+    // Sand, light and dahlia break one grain at a time, so `LoadoutSlot::broken`
+    // -- which only goes up once the LAST one is gone -- is the wrong signal for
+    // the bar. One missing grain is a reload the wedge should be sweeping.
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[3] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    PetalSlotState::Slot& clump = slotState.slots[3];
+    clump.independent = true;
+    clump.populated = true;
+    // Four grains: two out, two still orbiting.
+    clump.instanceReadyAtMillis = {2600.0, 0.0, 2200.0, 0.0};
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+
+    // Sized by the grain that comes back LAST. The soonest would finish the
+    // sweep with a grain still missing and then snap it backwards.
+    CHECK_NEAR(client.self().slotReloadRemainingMillis[3], 600.0, 1.0);
+}
+
+TEST(a_whole_clump_back_on_the_field_clears_the_wedge) {
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[3] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    PetalSlotState::Slot& clump = slotState.slots[3];
+    clump.independent = true;
+    clump.populated = true;
+    clump.instanceReadyAtMillis = {2600.0, 0.0, 2200.0, 0.0};
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+    CHECK(client.self().slotReloadRemainingMillis[3] > 0.0);
+
+    // Respawning a grain zeroes its entry, which is what ends the sweep.
+    for (double& ready : f.world.get<PetalSlotState>(f.viewer).slots[3].instanceReadyAtMillis) {
+        ready = 0.0;
+    }
+    f.tick(client, 2, 2700);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[3], 0.0);
+}
+
+TEST(a_hurt_slot_reaches_the_client_without_being_broken) {
+    // Damage and reload travel in one entry, so a petal that is merely hurt is
+    // reported even though nothing about it is on cooldown.
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[1] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    slotState.slots[1].healthFraction = 0.4;
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+
+    // A byte of ratio, so a step of 1/255 is the most it can be out.
+    CHECK_NEAR(client.self().slotHealthFraction[1], 0.4, 1.0 / 255.0);
+    CHECK_EQ(client.self().slotReloadRemainingMillis[1], 0.0);
+    // Everything else reads as untouched rather than as empty.
+    CHECK_EQ(client.self().slotHealthFraction[0], 1.0);
+}
+
+TEST(a_healed_slot_stops_being_reported_and_reads_full_again) {
+    Fixture f;
+    Loadout loadout;
+    loadout.slots[1] = LoadoutSlot{0, Rarity::Common, 0.0, false};
+    f.world.add<Loadout>(f.viewer, loadout);
+
+    PetalSlotState slotState;
+    slotState.slots[1].healthFraction = 0.4;
+    f.world.add<PetalSlotState>(f.viewer, slotState);
+
+    WorldView client;
+    f.tick(client, 1, 2000);
+    CHECK(client.self().slotHealthFraction[1] < 1.0);
+
+    f.world.get<PetalSlotState>(f.viewer).slots[1].healthFraction = 1.0;
+    f.tick(client, 2, 2050);
+    CHECK_EQ(client.self().slotHealthFraction[1], 1.0);
+}
+
+TEST(a_mobs_ring_seed_is_replicated_as_a_petal_anchored_to_it) {
+    Fixture f;
+    WorldView client;
+    const Entity mob = f.addMob({1020, 1000});
+
+    // A seat, built the way the spawner builds one: its own body, and a Petal
+    // record that names the mob rather than a flower.
+    const Entity seed = f.world.create();
+    f.world.add<MobRingPetal>(seed, MobRingPetal{mob, 0, 0.0});
+    f.world.add<Transform>(seed, Transform{{1060, 1000}, 0.0});
+    f.world.add<Body>(seed, Body{8.0, 1.0});
+    f.world.add<Health>(seed, Health{20, 20, 0, 0});
+    f.world.add<NetId>(seed, NetId{f.ids.next()});
+    Replicated replicated;
+    replicated.kind = net::EntityKind::Petal;
+    replicated.typeIndex = 3;
+    replicated.spawnFlags = net::SpawnRingPetal;
+    f.world.add<Replicated>(seed, replicated);
+
+    f.tick(client, 1, 1000.0);
+    const RemoteEntity& seen = client.entities().at(netIdOf(f.world, seed));
+    CHECK_EQ(static_cast<int>(seen.kind), static_cast<int>(net::EntityKind::Petal));
+    // The flag is what tells the client to turn it outward and to size it from
+    // the radius below rather than from its petal config.
+    CHECK(seen.isRingPetal());
+    CHECK_NEAR(seen.radius, 8.0, 1e-4);
+    // Anchored to the MOB, which is what lets the ring ride the drawn body
+    // rather than a snapshot-old position.
+    CHECK_EQ(seen.ownerNetId, netIdOf(f.world, mob));
+
+    // And a broken seat leaves: the client is told, as it is for any entity,
+    // and the mob it sat on stays.
+    const std::uint32_t seedId = netIdOf(f.world, seed);
+    f.world.destroy(seed);
+    f.tick(client, 2, 1033.0);
+    CHECK(client.entities().count(seedId) == 0);
+    CHECK(client.entities().count(netIdOf(f.world, mob)) == 1);
+}
+
+TEST(a_clump_grain_is_replicated_at_its_own_facing_not_the_clump_bearing) {
+    // Every grain of a clump holds the clump's one ring bearing in its
+    // transform. What the client needs to point a stinger's grains in towards
+    // their centre is the way each grain FACES, so that is what goes out.
+    Fixture f;
+    WorldView client;
+
+    const Entity grain = f.world.create();
+    PetalInstance instance;
+    instance.owner = f.viewer;
+    instance.subIndex = 1;
+    instance.subCount = 3;
+    instance.facingAngle = 0.3 + kTau / 3.0;
+    f.world.add<PetalInstance>(grain, instance);
+    f.world.add<Transform>(grain, Transform{{1060, 1000}, 0.3});
+    f.world.add<Body>(grain, Body{10.0, 1.0});
+    f.world.add<NetId>(grain, NetId{f.ids.next()});
+    Replicated replicated;
+    replicated.kind = net::EntityKind::Petal;
+    f.world.add<Replicated>(grain, replicated);
+
+    f.tick(client, 1, 1000.0);
+    const std::uint32_t id = netIdOf(f.world, grain);
+    CHECK_NEAR(client.entities().at(id).targetAngle, 0.3 + kTau / 3.0, 1e-3);
+
+    // And it is the facing the update pass diffs against: the clump turning
+    // while the transform stands still still reaches the client.
+    f.world.get<PetalInstance>(grain).facingAngle = 0.5 + kTau / 3.0;
+    f.tick(client, 2, 1033.0);
+    CHECK_NEAR(client.entities().at(id).targetAngle, 0.5 + kTau / 3.0, 1e-3);
+}
+
+namespace {
+
+/// Something a flower or a pet owns, replicated the way the petal and pet
+/// systems replicate theirs. Only what ownershipFlags reads is filled in.
+Entity addOwnedPetal(Fixture& f, Entity owner, Vec2 at) {
+    const Entity petal = f.world.create();
+    PetalInstance instance;
+    instance.owner = owner;
+    f.world.add<PetalInstance>(petal, instance);
+    f.world.add<Transform>(petal, Transform{at, 0.0});
+    f.world.add<Body>(petal, Body{10.0, 1.0});
+    f.world.add<NetId>(petal, NetId{f.ids.next()});
+    Replicated replicated;
+    replicated.kind = net::EntityKind::Petal;
+    f.world.add<Replicated>(petal, replicated);
+    return petal;
+}
+
+Entity addPet(Fixture& f, Entity owner, Vec2 at) {
+    const Entity pet = f.addMob(at);
+    f.world.add<Pet>(pet, Pet{owner, 0});
+    f.world.add<Faction>(pet, Faction{Team::Players, false});
+    f.world.get<Replicated>(pet).spawnFlags = net::SpawnIsPet;
+    return pet;
+}
+
+Entity addShot(Fixture& f, Entity shooter, Entity creditTo, Team team, Vec2 at) {
+    const Entity shot = f.world.create();
+    f.world.add<ProjectileTag>(shot);
+    f.world.add<Transform>(shot, Transform{at, 0.0});
+    f.world.add<Body>(shot, Body{5.0, 1.0});
+    f.world.add<Faction>(shot, Faction{team, false});
+    Projectile projectile;
+    projectile.owner = shooter;
+    projectile.creditTo = creditTo;
+    f.world.add<Projectile>(shot, projectile);
+    f.world.add<NetId>(shot, NetId{f.ids.next()});
+    Replicated replicated;
+    replicated.kind = net::EntityKind::Projectile;
+    f.world.add<Replicated>(shot, replicated);
+    return shot;
+}
+
+std::uint8_t flagsOf(const WorldView& client, World& world, Entity e) {
+    return client.entities().at(netIdOf(world, e)).spawnFlags;
+}
+
+bool foreign(const WorldView& client, World& world, Entity e) {
+    return (flagsOf(client, world, e) & net::SpawnForeign) != 0;
+}
+
+bool petFlagged(const WorldView& client, World& world, Entity e) {
+    return (flagsOf(client, world, e) & net::SpawnIsPet) != 0;
+}
+
+} // namespace
+
+TEST(another_players_petals_pets_and_shots_are_marked_as_theirs) {
+    Fixture f;
+    WorldView client;
+    const Entity alice = f.addPlayer("alice", {1100, 1000});
+    f.world.get<PlayerAccount>(alice).connection = 2;
+
+    const Entity herPetal = addOwnedPetal(f, alice, {1120, 1000});
+    const Entity myPetal = addOwnedPetal(f, f.viewer, {1020, 1000});
+    const Entity herPet = addPet(f, alice, {1100, 1060});
+    const Entity myPet = addPet(f, f.viewer, {1000, 1060});
+    const Entity herShot = addShot(f, alice, alice, Team::Players, {1150, 1000});
+    const Entity herPetsShot = addShot(f, herPet, alice, Team::Players, {1150, 1040});
+    const Entity myPetsShot = addShot(f, myPet, f.viewer, Team::Players, {1050, 1040});
+    const Entity wild = f.addMob({900, 1000});
+    const Entity wildShot = addShot(f, wild, wild, Team::Hostiles, {950, 1000});
+    f.tick(client, 1, 1000.0);
+
+    // Hers, each filed under the switch that hides it: a pet's shot goes with
+    // the pets, a flower's with the petals.
+    CHECK(foreign(client, f.world, herPetal));
+    CHECK(!petFlagged(client, f.world, herPetal));
+    CHECK(foreign(client, f.world, herPet));
+    CHECK(petFlagged(client, f.world, herPet));
+    CHECK(foreign(client, f.world, herShot));
+    CHECK(!petFlagged(client, f.world, herShot));
+    CHECK(foreign(client, f.world, herPetsShot));
+    CHECK(petFlagged(client, f.world, herPetsShot));
+
+    // Mine, and nobody's: never flagged, so no switch can hide them.
+    CHECK(!foreign(client, f.world, myPetal));
+    CHECK(!foreign(client, f.world, myPet));
+    CHECK(!foreign(client, f.world, myPetsShot));
+    CHECK(petFlagged(client, f.world, myPetsShot));
+    CHECK(!foreign(client, f.world, alice));
+    CHECK(!foreign(client, f.world, wild));
+    CHECK(!foreign(client, f.world, wildShot));
+
+    // And the renderer reads the flags the way the two switches say.
+    WorldRenderer renderer;
+    const auto hidden = [&](Entity e) {
+        return renderer.hiddenByOptions(client.entities().at(netIdOf(f.world, e)));
+    };
+    CHECK(!hidden(herPetal) && !hidden(herPet));
+
+    renderer.options.hideOtherPetals = true;
+    CHECK(hidden(herPetal));
+    CHECK(hidden(herShot));
+    CHECK(!hidden(herPet));
+    CHECK(!hidden(herPetsShot));
+    CHECK(!hidden(myPetal));
+
+    renderer.options.hideOtherPetals = false;
+    renderer.options.hideOtherPets = true;
+    CHECK(hidden(herPet));
+    CHECK(hidden(herPetsShot));
+    CHECK(!hidden(herPetal));
+    CHECK(!hidden(myPet));
+    CHECK(!hidden(myPetsShot));
+    CHECK(!hidden(alice));
+    CHECK(!hidden(wild));
+}
+
+TEST(a_splitter_halfs_petals_and_pets_are_the_viewers_own) {
+    // The parked half is a second body on the viewer's connection. It is not
+    // `viewer`, and what it owns must still never read as somebody else's.
+    Fixture f;
+    WorldView client;
+    const Entity parked = f.addPlayer("bob", {1100, 1000});
+    CHECK_EQ(f.world.get<PlayerAccount>(parked).connection,
+             f.world.get<PlayerAccount>(f.viewer).connection);
+
+    const Entity petal = addOwnedPetal(f, parked, {1120, 1000});
+    const Entity pet = addPet(f, parked, {1100, 1060});
+    const Entity shot = addShot(f, parked, parked, Team::Players, {1150, 1000});
+    f.tick(client, 1, 1000.0);
+
+    CHECK(!foreign(client, f.world, petal));
+    CHECK(!foreign(client, f.world, pet));
+    CHECK(!foreign(client, f.world, shot));
+}
+
+TEST(a_pets_shot_still_files_with_the_pets_after_the_pet_is_gone) {
+    // A volley outlives the body that fired it. The player it credits is what
+    // makes it somebody else's, and the shooter's handle alone -- dead or not
+    // -- is what makes it a pet's.
+    Fixture f;
+    WorldView client;
+    const Entity alice = f.addPlayer("alice", {1100, 1000});
+    f.world.get<PlayerAccount>(alice).connection = 2;
+    const Entity pet = addPet(f, alice, {1100, 1060});
+    const Entity shot = addShot(f, pet, alice, Team::Players, {1150, 1040});
+    f.world.destroy(pet);
+    f.tick(client, 1, 1000.0);
+
+    CHECK(foreign(client, f.world, shot));
+    CHECK(petFlagged(client, f.world, shot));
+}

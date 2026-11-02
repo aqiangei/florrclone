@@ -1,0 +1,702 @@
+#pragma once
+// The petal ring: spawning it, placing it, breaking it and reloading it.
+//
+// The two components below carry this system's state and both live on the
+// PLAYER, never on a petal. A broken slot has no petal entity left, so state
+// kept there would be destroyed by the very event that has to be remembered --
+// the break -- and the reload timer would go with it.
+//
+// Every number the ring uses comes out of the content registry as PetalStats.
+// Nothing here re-derives a stat from a rarity: that ladder is rarity.h's job,
+// and a second copy of it is how the two drift apart.
+
+#include <array>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <utility>
+#include <vector>
+
+#include "shared/core/types.h"
+#include "shared/core/world.h"
+#include "shared/game/components.h"
+#include "shared/game/config.h"
+#include "shared/game/spatial.h"
+
+namespace flix {
+
+class Terrain;
+class EventQueue;
+struct ShotLanding;
+
+/// How long a root takes to bank one armour stack, and how many it may hold.
+///
+/// gardn's figures (`2 * SIM_RATE` ticks, ten stacks), and they are the whole
+/// shape of the petal: twenty seconds of quiet buys a full bank, which is
+/// spent in as many hits as it holds. Raising the cap or shortening the wait
+/// turns root from something you prepare with into flat damage reduction.
+inline constexpr double kArmorStackIntervalMillis = 2000.0;
+inline constexpr int kMaxArmorStacks = 10;
+
+/// Live state for one loadout slot's petals.
+///
+/// LoadoutSlot is the account-facing half -- what is equipped, whether it is
+/// reloading -- and it is persisted. This is the simulation half, torn down and
+/// rebuilt whenever the slot's petal or rarity changes.
+struct PetalSlotState {
+    struct Slot {
+        /// The slot's shared health pool, used by every slot whose instances
+        /// are NOT independent. Each instance mirrors it so combat can hit
+        /// whichever is nearest, and the fold at the top of the next tick pulls
+        /// the damage they took back into the pool.
+        double poolHealth = 0;
+        double poolMax = 0;
+        /// What was last mirrored onto every instance. Whatever is missing from
+        /// an instance now is exactly the damage it has taken since, which is
+        /// why no per-instance previous-health array is needed.
+        double syncedHealth = 0;
+
+        /// Clumped or `independentHealth`: each instance owns its health and
+        /// breaks alone. The pool is then unused and instanceReadyAtMillis
+        /// drives reloading, one grain at a time.
+        bool independent = false;
+
+        /// False until the slot's instances have been spawned at least once.
+        /// Without it the first tick would read "no petals on the field" as
+        /// "the whole cluster was just destroyed" and break the slot instantly.
+        bool populated = false;
+
+        /// What the pool was built for. A slot whose petal or rarity no longer
+        /// matches is rebuilt, which is also what makes swapping a petal hand
+        /// you a fresh one instead of the previous occupant's health bar.
+        std::uint16_t configIndex = kNoPetal;
+        Rarity rarity = Rarity::Common;
+        /// And the tier whose reload it pays, which differs from `rarity` only
+        /// for a mimic (see equippedPetal). Swapping the petal a mimic copies
+        /// rebuilds the mimic's slot too.
+        Rarity reloadRarity = Rarity::Common;
+        /// And how many instances it was built for. The petal and tier alone
+        /// do not fix that: Duplicator adds copies, and buying or resetting it
+        /// changes the count under a slot whose petal never moved. A rebuild is
+        /// the only safe answer -- the per-grain timers are sized to the count,
+        /// and a shared pool would charge every new copy as one just lost.
+        int count = 0;
+
+        /// How much of the slot is still standing, 1.0 for untouched. Derived
+        /// each tick from whichever of the two health models the slot uses, so
+        /// that the one place that has to tell them apart is the pass that
+        /// already does. The loadout bar drains its tile by it.
+        double healthFraction = 1.0;
+
+        /// The number the loadout bar prints inside this slot's top border,
+        /// or -1 for a petal that has no number to show -- which is nearly all
+        /// of them. Sponge's outstanding damage is the only writer today.
+        ///
+        /// Derived here rather than at the wire, so that a petal which wants a
+        /// number publishes it from the system that owns the mechanic and the
+        /// snapshot stays a dumb copy. It is re-derived every tick, so a slot
+        /// whose petal was swapped for one with nothing to say clears itself.
+        double counter = -1;
+
+        /// When cluster member i comes back, or 0 when it is already out.
+        /// Sized to the petal's count; meaningful only while `independent`.
+        std::vector<double> instanceReadyAtMillis;
+
+        /// Mobs this slot has summoned. Handles are generation-checked, so a
+        /// pet killed in the field simply stops being alive and is re-summoned.
+        std::vector<Entity> pets;
+    };
+    std::array<Slot, kLoadoutSlots> slots{};
+
+    /// Next time the raindrop aura may pulse. The aura is not a petal action:
+    /// it belongs to the FLOWER, is maximised across every equipped raindrop
+    /// and fires whether or not any one of them is due to act.
+    double raindropReadyAtMillis = 0;
+
+    /// Next time a lightning cutter may strike. The reference's limiter is per
+    /// PLAYER rather than per petal, so two cutters share one cadence.
+    double nextLightningMillis = 0;
+
+    /// The flower's position at the END of the previous tick, which is the
+    /// centre the ring orbits.
+    ///
+    /// The reference lays the ring out from the player's last COMMITTED
+    /// position while this tick's integrated one is still parked in a staging
+    /// pair, and says so at length: orbiting the live centre is what stops
+    /// petals trailing a sprinting flower. This system runs after movement, so
+    /// the previous centre has to be remembered rather than read.
+    ///
+    /// With a moon out (RingAnchor) it is the MOON's position instead: the
+    /// ring is laid out around the moon, and trails it by the same one tick.
+    Vec2 ringCentre;
+    /// The flower's own position at the end of the previous tick, whatever
+    /// the ring is laid out around. Worn petals ride it, and a petal flying
+    /// home to deliver a heal or a shield flies to it. The same as ringCentre
+    /// while no moon is out.
+    Vec2 wornCentre;
+    /// What ringCentre was measured from: the moon it was laid out around, or
+    /// NULL_ENTITY for the flower. A change is a ring flying from one centre
+    /// to the other, which placePetals carries over on a glide rather than on
+    /// the ring step.
+    Entity ringAnchor = NULL_ENTITY;
+    /// False until a centre has been recorded, and cleared whenever the flower
+    /// stops being where it was -- a corpse's ring is torn down and the
+    /// respawn must not fly its petals in from where it died.
+    bool ringCentreValid = false;
+
+    /// The Basic a Champion's Crown lends this flower (petalLendsBasic), at
+    /// the crown's own tier.
+    ///
+    /// Not a loadout slot: nothing on the bar holds it, so it owns no
+    /// LoadoutSlot and is never saved. It takes the ring's last place while a
+    /// crown lends to the flower -- its gap held open while it reloads, as a
+    /// broken slot's is -- and is gone the tick none does.
+    struct Lent {
+        /// The crown's wearer lending to this flower THIS tick -- the flower
+        /// itself, when it wears one -- or NULL_ENTITY, and the tier of its
+        /// crown. Written by gatherCrownLenders ahead of
+        /// the ring pass.
+        Entity lender = NULL_ENTITY;
+        Rarity lenderRarity = Rarity::Common;
+        /// A crown reached the flower last tick too. A loan that is new on
+        /// this tick serves the petal's reload before it appears, exactly as
+        /// equipping a petal does.
+        bool active = false;
+        /// The tier the loan was made at. A crown of another tier taking it
+        /// over -- the wearer swapping theirs, or a nearer one -- is a new
+        /// petal, as swapping a slot's tier is, and serves its own reload.
+        Rarity rarity = Rarity::Common;
+        /// The lent petal on the field, or NULL_ENTITY while it reloads.
+        Entity petal = NULL_ENTITY;
+        /// When it comes (back) out; 0 while it is out.
+        double readyAtMillis = 0;
+    };
+    Lent lent;
+
+    /// What this flower's summoning shots have brought in where they landed --
+    /// the spaceship's glitch flowers -- in the order they were last placed,
+    /// oldest first. Each is ALSO filed among its slot's `pets`, which is what
+    /// recalls it with the petal; this list only orders them, so that a
+    /// landing at the cap knows which one to move.
+    std::vector<Entity> shotSummons;
+};
+
+/// PetalInstance::slot on a lent petal: past every loadout slot, so the guards
+/// that keep a petal's slot inside the bar before indexing it step over one.
+inline constexpr std::uint8_t kLentPetalSlot = 0xFF;
+
+/// Whether a Champion's Crown is worn on the bar's active row, mimicked ones
+/// included, and if so the highest tier among them in `tier`.
+bool championCrownTier(const ContentRegistry& registry, const Loadout& loadout, Rarity& tier);
+
+/// The slot whose moon comes out, or -1 for a bar with none on its active row.
+///
+/// The moon does not stack: however many are equipped, one flower has one --
+/// the best copy (bestCopySlot). Every other moon slot holds nothing
+/// (reconcileSlots builds it with a count of zero).
+int liveMoonSlotOf(const ContentRegistry& registry, const Loadout& loadout);
+
+/// When a petal's scripted behaviour fires.
+///
+/// The reference keeps four triggers rather than one because two of its entry
+/// points had different semantics: a spawn ran the petal's script with its
+/// guards applied and could park it until it touched something, while a break
+/// ran the same script in "immediate mode", firing every effect
+/// unconditionally. Starfish therefore heals on break whatever the flower's
+/// health is, and a bomb explodes when it is destroyed as well as when it hits.
+enum class PetalTrigger : std::uint8_t { Spawn, Collision, Interval, Break };
+
+/// Owns a player's ring: which petals exist, where they are, when they break
+/// and when they come back.
+class PetalSystem {
+public:
+    /// One tick. Phase 4: after movement, so the ring orbits where the flower
+    /// ended up; before combat, so a petal hits from its final position.
+    ///
+    /// `events` collects the tick's one-shot visuals. Only the lightning strike
+    /// uses it: everything else this system does is either streamed as entity
+    /// state or resolved by combat, which owns its own events. Left null the
+    /// ring still works and simply reports nothing, which is what a headless
+    /// test wants.
+    void run(World& world, const ContentRegistry& registry, double nowMillis, double dt,
+             CommandBuffer& commands, const Terrain* terrain = nullptr,
+             EventQueue* events = nullptr);
+
+    /// Fold every flower's loadout into its PlayerModifiers, body radius and
+    /// max health, without touching the ring.
+    ///
+    /// Split out of run() because the reference recomputes modifiers in
+    /// Phase.Input (src/ecs/systems/playerModifiers.ts, scheduled ahead of
+    /// playerMovement), while the ring itself is placed after movement. Folded
+    /// inside run() alone, a speed or size petal would not reach movement until
+    /// the tick after it was equipped, and movement would spend that tick
+    /// stepping the flower at its previous speed.
+    void foldModifiers(World& world, const ContentRegistry& registry);
+
+    /// Wire ids for the entities this system spawns -- petals, projectiles,
+    /// pets and ground effects.
+    ///
+    /// A net id has to be unique across the whole server, so the id space
+    /// cannot belong to a system; whoever owns the allocator installs this
+    /// hook. Left unset, everything still simulates and simply is not
+    /// replicated, which is what a headless test wants.
+    std::function<std::uint32_t()> allocateNetId;
+
+    /// Spend one slot outright: take its petals off the ring and start its
+    /// reload, exactly as breaking the last of them would.
+    ///
+    /// Public because the thing that spends the splitter is not a petal action
+    /// at all -- it is a CLICK on the loadout bar, which arrives as a message
+    /// and is resolved by the connection layer. Everything the ring has to be
+    /// told about a spent slot is in here so that the click cannot do it half
+    /// way: a slot marked broken with its instances still on the field reads
+    /// to the next tick's fold as a cluster that was just destroyed, and pays
+    /// a second reload for it.
+    ///
+    /// False for a slot that is empty, out of the active row, or already
+    /// reloading -- which is also the "was this click allowed" answer the
+    /// caller needs, so the check and the act stay one thing.
+    ///
+    /// `recallSummons` false leaves the slot's pets where they are: the
+    /// sacrifice's star reloads an egg it touches without reaching for pets
+    /// standing outside it.
+    bool spendSlot(World& world, const ContentRegistry& registry, Entity player,
+                   std::uint8_t slot, double nowMillis, bool recallSummons = true);
+
+    /// Put the petal that hatched `pet` back on its reload, as a summon
+    /// retired for getting lost does. For whoever ends a pet from outside
+    /// the ring -- the sacrifice's star. No-op on anything that is not a pet
+    /// or whose owner has nothing equipped that hatches it.
+    void reloadHatcher(World& world, const ContentRegistry& registry, Entity pet,
+                       double nowMillis);
+
+    /// Answers this tick's summoning shots (CombatSystem::shotLandings), after
+    /// combat: each one hatches one more of its summon where it landed, filed
+    /// under the slot that fired it, while the flower has fewer than the
+    /// shot's `summonMax` of them out. At the cap it moves the one placed
+    /// longest ago there instead, which makes it the newest.
+    ///
+    /// `terrain` is what a moved summon is put down outside of: a shot flies
+    /// over walls, so the point it landed at can be inside one. Null in a test
+    /// with no map.
+    void landShots(World& world, const ContentRegistry& registry,
+                   const std::vector<ShotLanding>& landings, const Terrain* terrain);
+
+    /// A yggdrasil raised `revived` off the ground.
+    ///
+    /// The world half of a revival is this system's -- the Dead tag comes off,
+    /// the health bar refills and respawn protection is armed -- but the
+    /// SESSION half is not: the corpse's death has already been announced to
+    /// its owner, and only the connection layer can retract that and clear the
+    /// flag that stops a second death being announced. Left unset the flower
+    /// still stands up; its own client simply is not told.
+    std::function<void(Entity revived, Entity reviver)> onPlayerRevived;
+
+private:
+    /// The tick's summed passive bonuses. PlayerModifiers has no field for the
+    /// ring's spin and only the few lines that place the ring want one, so it
+    /// rides along here rather than growing the component.
+    struct Aggregate {
+        PlayerModifiers modifiers;
+        double spinScale = 1.0;
+    };
+
+    void bindTo(World& world);
+
+    /// Files every wild mob once per tick so the attraction lookup below is a
+    /// cell walk rather than a scan of the world per petal per player.
+    void rebuildAttractionGrid(World& world);
+    /// The mob a petal whose place on the ring is `orbit` should circle: the
+    /// one it already is, `holding`, while that mob's edge is within `radius`
+    /// of the place, otherwise the nearest such mob, or NULL_ENTITY for none.
+    Entity attractor(World& world, Vec2 orbit, Realm realm, double radius, Entity holding);
+
+    void clearRing(World& world, Entity player);
+    void reconcileSlots(World& world, const ContentRegistry& registry, Entity player,
+                        double nowMillis);
+    /// Decide this tick's loans (PetalSlotState::Lent::lender), at the
+    /// lending wearer's best crown's tier. A standing crown wearer is lent one
+    /// by its own crown; every other standing flower within kCrownLendRadius
+    /// of one, in its realm, by the NEAREST -- though never by its own
+    /// splitter half, which lends to itself. One loan per flower however many
+    /// crowns reach it, and at most kCrownMaxLoans per person: a full crown
+    /// keeps the flowers it already lends ahead of nearer newcomers, and a
+    /// flower it turns away goes to the next crown in reach that has room.
+    /// Run once, ahead of the ring pass, so that every loan is judged from the
+    /// same positions. Also counts each person's loans out as the tick opens
+    /// (crownLoansOut_), which their crown's slot prints.
+    void gatherCrownLenders(World& world, const ContentRegistry& registry);
+    /// The number a crown's slot on `player`'s bar prints: how many of the
+    /// Basics its wearer -- both splitter halves together -- has lent are out
+    /// on the field. 0 for a flower that is no wearer this tick.
+    int crownLoansOutOf(Entity player) const;
+    /// Carry out one flower's loan: put the lent petal out once its reload has
+    /// run, put it back on that reload when it breaks, and take it off at once,
+    /// unbroken, when the loan ends. After reconcileSlots, which drops a petal
+    /// combat killed from the ring's list; before placement, which gives it its
+    /// place.
+    void serveLentPetal(World& world, const ContentRegistry& registry, Entity player,
+                        double nowMillis);
+    Aggregate recomputeModifiers(World& world, const ContentRegistry& registry, Entity player);
+    /// Bank root's armour: one stack per kArmorStackIntervalMillis, capped at
+    /// kMaxArmorStacks, and nothing at all for a flower wearing no root.
+    ///
+    /// Here rather than in combat because the loadout is what decides whether
+    /// a flower has any, and this system is the one holding the loadout.
+    /// Combat SPENDS what this banks -- see ArmorStackState.
+    void tickArmorStacks(World& world, Entity player, const Aggregate& aggregate, double dt);
+    void applyPassiveHeal(World& world, Entity player, const Aggregate& aggregate,
+                          double nowMillis, double dt);
+    /// Resize the flower's mana pool to what the bar now grants and run this
+    /// tick's regeneration. Called every tick, including on a bar with no
+    /// magic petal on it at all: that is how a pool DISAPPEARS when the orb
+    /// comes off, which is the half a version that only ever grew the pool
+    /// would get wrong.
+    void updateManaPool(World& world, Entity player, const Aggregate& aggregate, double dt);
+    void updateRing(World& world, Entity player, const Aggregate& aggregate, double dt);
+    /// The flower's moon on the field -- the body its ring is laid out around
+    /// -- or NULL_ENTITY while it has none out (none equipped, or broken and
+    /// reloading), in which case the ring orbits the flower as it always has.
+    Entity ringAnchorOf(World& world, Entity player) const;
+    /// Step every one of the player's petals: where its orbit point is, which
+    /// mob (if any) has captured it, and the step or glide that carries it
+    /// there. `aggregate` is wanted for the ring's spin rate, which is the one
+    /// modifier PlayerModifiers does not carry.
+    void placePetals(World& world, const ContentRegistry& registry, Entity player,
+                     const Aggregate& aggregate, double nowMillis, double dt,
+                     const Terrain* terrain);
+    /// Carry one petal from where it is to where it wants to be.
+    ///
+    /// gardn's petal step (kPetalFriction) carries it toward its orbit point,
+    /// or -- homing -- toward the flower: that is what makes the ring trail a
+    /// running flower, overshoot when it extends and settle rather than snap.
+    /// A mob in reach of its orbit point takes it instead (attractor): the
+    /// step then carries it round the mob's edge against the ring's turn, at
+    /// `spinSpeed` -- the ring's own speed at its radius, units a second,
+    /// signed as its spin. Only the scripted flights
+    /// replace it with a glide: a recalled pearl and the ring changing hands,
+    /// each a gap the step would cross in one lunge.
+    ///
+    /// `home` is where a homing petal dives: the flower, even while the ring
+    /// is laid out around a moon.
+    void stepPetalPhysics(World& world, const ContentRegistry& registry, PetalInstance& instance,
+                          Transform& transform, Vec2 home, Vec2 orbit, double attractionRadius,
+                          double spinSpeed, double nowMillis, double dt);
+    void runActions(World& world, const ContentRegistry& registry, Entity player,
+                    double nowMillis, double dt);
+
+    /// The flower's own damage field, which no petal emits.
+    ///
+    /// Raindrop is not an orbiting petal that happens to hurt: the reference
+    /// runs it in the per-PLAYER pipeline, centred on the flower, with damage
+    /// and radius maximised INDEPENDENTLY across every equipped, off-cooldown
+    /// raindrop -- so the widest one sets the reach and the strongest one the
+    /// hit, even when they are two different petals.
+    void applyRaindropAura(World& world, const ContentRegistry& registry, Entity player,
+                           PetalSlotState& state, const Aggregate& aggregate, double nowMillis);
+
+    /// The lightning cutter's strike, driven from the loadout.
+    ///
+    /// A cutter is worn rather than spawned -- it takes no place on the ring
+    /// and has no instance -- so there is nothing for a per-petal timer to hang
+    /// off. Centred on the flower, paced by the player's own limiter.
+    void strikeWornLightning(World& world, const ContentRegistry& registry, Entity player,
+                             double nowMillis);
+
+    /// The battery's discharge: the same strike, armed by the FLOWER's body
+    /// touching a mob and paid for out of the petal's own charges.
+    ///
+    /// Not part of the action pass, for the two reasons the pass could not
+    /// serve it. Its trigger is a collision the flower walks into rather than a
+    /// timer, and a battery declares no timed action to reach that gate with;
+    /// and the thing it collides with is the flower, which a per-petal loop
+    /// keyed on the petal's own position has no business asking about.
+    void strikeBatteries(World& world, const ContentRegistry& registry, Entity player,
+                         double nowMillis);
+
+    /// The capacitor's discharge: the same strike again, armed by the PETAL
+    /// leaving a mob it has been touching and worth the contact time it
+    /// banked. Its own pass rather than a behaviour because the thing that
+    /// fires it is the END of a contact, which the action pass -- asked about
+    /// contacts only on the tick they begin -- never sees.
+    void dischargeCapacitors(World& world, const ContentRegistry& registry, Entity player,
+                             double dt);
+
+    /// `health` <= 0 spawns the petal with no Health component at all, which is
+    /// what an unbreakable petal is: not one with zero hit points, which would
+    /// break on its first tick.
+    Entity spawnPetal(World& world, Entity player, Loadout& loadout, std::uint8_t slot,
+                      std::uint8_t subIndex, std::uint8_t subCount, const PetalConfig& config,
+                      const PetalStats& stats, const EquippedPetal& equipped,
+                      double health, double nowMillis);
+    void destroySlotPetals(World& world, Loadout& loadout, std::uint8_t slot);
+    /// Takes one petal off the field for good -- broken, swapped out, or its
+    /// flower down -- with a Killed cue first, so every client in view plays
+    /// its death animation where it was, as gardn fades every petal its
+    /// server deletes.
+    void removePetal(World& world, Entity petal);
+    void recallPets(World& world, PetalSlotState::Slot& state);
+    void assignNetId(World& world, Entity e);
+
+    /// Fire one volley. Returns whether a shot actually left the petal: a spec
+    /// with no speed or no reach fires nothing, and a petal that fired nothing
+    /// must not be spent for it.
+    bool fireProjectiles(World& world, Entity player, Entity petal, const PetalConfig& config,
+                         const PetalStats& stats, std::uint16_t configIndex, Rarity rarity);
+
+    /// Take a petal that spent itself firing off the ring and put its slot on
+    /// the reload, whichever of the two health models the slot runs on.
+    void spendPetal(World& world, const ContentRegistry& registry, Entity player, Entity petal,
+                    std::uint8_t slotId, std::uint8_t subIndex, const PetalStats& stats,
+                    double nowMillis);
+
+    /// Run one petal's scripted behaviour. `at` is where the effect lands,
+    /// which is the flower for a spawn and the petal itself thereafter.
+    void runBehaviour(World& world, Entity player, Entity petal, const PetalConfig& config,
+                      const PetalStats& stats, Rarity rarity, Vec2 at, PetalTrigger trigger,
+                      double nowMillis);
+    /// Remember a petal that just broke, so its break effect can run once the
+    /// player's own columns are no longer held open by the slot pass.
+    void queueBreakBehaviour(World& world, const ContentRegistry& registry, Entity petal);
+    void drainBehaviourQueues(World& world, const ContentRegistry& registry, Entity player,
+                              double nowMillis);
+
+    /// An instantaneous area hit: everything a strike or an explosion needs
+    /// beyond its own radius and damage.
+    ///
+    /// `lightning` marks the burst with LightningBurst, which changes nothing
+    /// about who it hits or how hard -- only the colour of the number combat
+    /// reports for it.
+    void emitDamageBurst(World& world, Entity player, Vec2 at, double radius, double damage,
+                         bool lightning = false);
+    /// One strike. `damage` is the petal's own stat, already up the rarity
+    /// ladder; `rarity` is the tier it came from, which is what puts the
+    /// fallback on that same ladder for a petal whose `damage` is 0.
+    void strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity);
+    /// The strike's visual half: one event carrying the bolts' endpoints. The
+    /// damage half is a field, and a field has nothing on the wire the client
+    /// could draw a strike from.
+    void reportLightning(World& world, Entity player, Vec2 at, double radius);
+    void explodePetal(World& world, Entity player, Vec2 at, double petalSize, double damage,
+                      double nowMillis);
+    /// The scripted heal, which is a different curve from a burst petal's:
+    /// the reference multiplies the script's literal by sqrt(3) per rarity and
+    /// by a flat 3 on top of the Healing talent.
+    void healFromBehaviour(World& world, Entity player, double amount, Rarity rarity,
+                           double nowMillis);
+    /// True once the petal's body overlaps any live wild mob IN ITS REALM,
+    /// which is what arms a behaviour that parks until it hits something.
+    /// This, compassBearing, collectMobsNear and revivePlayerNear sweep the
+    /// world linearly rather than through the broadphase (touchesGridMob alone
+    /// asks a grid), so the realm test is theirs to make: two maps'
+    /// coordinates overlap numerically.
+    bool touchesMob(World& world, Realm realm, Vec2 at, double radius);
+    /// touchesMob asked of the attraction grid instead of the whole world, for
+    /// a petal that asks every tick rather than until its first contact.
+    bool touchesGridMob(World& world, Realm realm, Vec2 at, double radius);
+    /// Where a compass at `at` points: the nearest magnet its flower wears,
+    /// or else the highest-tier wild mob in its realm (the nearest of those),
+    /// with florr's needle wobble on top. `fallback`, its place on the ring,
+    /// when there is nothing to point at.
+    double compassBearing(World& world, const ContentRegistry& registry, PetalInstance& compass,
+                          Vec2 at, Entity player, Realm realm, double fallback,
+                          double nowMillis);
+    /// Wild mobs in `realm` whose CENTRE is inside `radius`, which is the
+    /// test both the strike and the explosion use.
+    void collectMobsNear(World& world, Realm realm, Vec2 at, double radius,
+                         std::vector<Entity>& out);
+    /// Raise the first corpse in `realm` within reach of a yggdrasil. Returns
+    /// whether one was raised, which is what spends the petal.
+    bool revivePlayerNear(World& world, Entity reviver, Realm realm, Vec2 at, double nowMillis);
+    /// The field laid, or NULL_ENTITY when it would be nothing.
+    Entity emitGroundEffect(World& world, Entity player, Vec2 at, GroundEffectKind kind,
+                            double radius, double damagePerSecond, double slowFactor,
+                            Rarity rarity, double lifetimeSeconds,
+                            double damagePerHit = 0.0, double damageIntervalMillis = 0.0);
+    /// Retire the summons that got lost: way too far from their owner
+    /// (kPetRecallDistance, or another realm) or flagged trapped by the AI
+    /// (MobAi::petRecall). Each is let go and its loss charged to the petal
+    /// that hatched it, which hatches a fresh one after its reload. A
+    /// sandstorm is leashed instead and never retired here.
+    void retireDistantPets(World& world, const ContentRegistry& registry, Entity player,
+                           double nowMillis);
+    /// Take back the timed summons (Pet::expiresAtMillis) whose time is up.
+    /// Their petal owes no reload for it: it has been hatching more all along.
+    void expireTimedPets(World& world, Entity player, double nowMillis);
+    /// A loose petal is NOT retired for being far away: it stays where it was
+    /// left for as long as it lasts. The one exception is a slab stranded in
+    /// another realm from its flower -- after a teleporter, or joining the
+    /// arena or the maze -- which is put down behind the flower again, on its
+    /// side. Left there it would be unreachable for good, and its slot, still
+    /// full, would never lay another.
+    void carryLoosePetalsAcrossRealms(World& world, Entity player);
+    /// Where a loose petal of `radius` is put down: behind the flower's
+    /// heading, clear of its body, and outside the walls.
+    Vec2 loosePetalRestPoint(World& world, Entity player, const Transform& owner,
+                             double radius) const;
+    /// Put the egg in slot `hatchedBy` back on its reload, if it still hatches
+    /// `mobIndex` and is not already reloading. `reloadScale` is the owner's
+    /// Reload talent and golden leaves: the slot state and loadout arrive here as references
+    /// rather than as the player they belong to, so the tree has to come with
+    /// them.
+    void reloadEggForPet(World& world, const ContentRegistry& registry, PetalSlotState& state,
+                         Loadout& loadout, std::uint8_t hatchedBy, std::uint16_t mobIndex,
+                         double reloadScale, double nowMillis);
+
+    /// `rarity` is the EQUIPPED petal's tier, which is what the pet inherits:
+    /// the config's own `petMobRarity` is written in the JSON and read by
+    /// nothing.
+    ///
+    /// The whole ring state rather than the one slot's: a squad is counted and
+    /// replaced per SLOT, so eggs of one type stack -- two sticks keep a pair
+    /// of sandstorms each -- but capped per PLAYER (kMaxPetEntitiesPerPlayer).
+    void maintainPets(World& world, const ContentRegistry& registry, Entity player,
+                      std::uint8_t slot, const PetalConfig& config, Rarity rarity,
+                      PetalSlotState& state);
+    /// One action of a TIMED summoner (PetalConfig::petLifetimeMillis): pays
+    /// `stats.petManaCost` and hatches `petCount` more, however many it already
+    /// has out. Nothing is hatched, and nothing paid, when the pool is short.
+    void summonTimedPets(World& world, const ContentRegistry& registry, Entity player,
+                         std::uint8_t slot, const PetalConfig& config, const PetalStats& stats,
+                         Rarity rarity, PetalSlotState& state, double nowMillis);
+
+    /// The live squad members of one mob type hatched by `slot`. Timed
+    /// summons are not squad members and are not counted.
+    int countPetsOfType(World& world, const PetalSlotState& state, std::uint8_t slot,
+                        std::uint16_t mobIndex);
+    /// Everything the player has summoned, which is what the entity cap counts.
+    int countOwnedPets(World& world, const PetalSlotState& state);
+    /// Take back `slot`'s summons of one mob type, and the bodies of any that
+    /// are chain heads, so a squad replaces its predecessor instead of joining
+    /// it. Timed summons are left out, and so is every other slot's squad.
+    void recallPetsOfType(World& world, PetalSlotState& state, std::uint8_t slot,
+                          std::uint16_t mobIndex);
+    /// Put `count` summons of `mobIndex` on the field around `at`, filed under
+    /// `slot`. Stops short at the per-player entity cap. `strength` multiplies
+    /// their health and damage on top of `rarity`'s: strengthBoost() of the
+    /// petal that hatched them, so a universal egg's squad -- the apex squad
+    /// -- is sqrt(2) times as strong.
+    void summonPets(World& world, const ContentRegistry& registry, Entity player,
+                    std::uint8_t slot, std::uint16_t mobIndex, Rarity rarity, int count, Vec2 at,
+                    PetalSlotState& state, double strength, double expiresAtMillis = 0.0);
+    /// One summoned body, every component a pet carries, at an already
+    /// chosen spot and size -- and, if its config has one, its ammunition
+    /// ring. summonPets lays chains and broods on top.
+    Entity hatchPetBody(World& world, const ContentRegistry& registry, Entity player,
+                        std::uint8_t slot, std::uint16_t mobIndex, Rarity rarity, Vec2 at,
+                        double angle, Realm realm, double radius, double sizeJitter,
+                        double strength, double expiresAtMillis);
+    /// A summoned queen's soldiers (PetBrood): on her config's clock, up to
+    /// its maxAlive, each a timed pet of the same owner and slot.
+    void runPetBroods(World& world, const ContentRegistry& registry, Entity player,
+                      double nowMillis);
+
+    /// The flower petal opening on the mob it touched: it is spent, and either
+    /// the flower is corrupted or a squad of glitch flowers lands on the mob.
+    void crackFlowerPetal(World& world, const ContentRegistry& registry, Entity player,
+                          Entity petal, std::uint8_t slot, Rarity rarity, Vec2 at);
+
+    /// A petal that broke this tick, held until its scripted break effect can
+    /// safely run. The break is discovered while the player's columns are open
+    /// and a scripted effect may add a component to the flower, which moves
+    /// them; the petal entity itself is gone by then, so what it needs is
+    /// copied out rather than looked up again.
+    struct PendingBreak {
+        std::uint16_t configIndex = kNoPetal;
+        Rarity rarity = Rarity::Common;
+        Vec2 at;
+    };
+
+    World* bound_ = nullptr;
+    std::unique_ptr<Query<PlayerTag, Transform, Loadout, PetalRing>> players_;
+    /// NPCs that wear a ring (the titan, from its `npc.petals`). The ring pass
+    /// runs them exactly as it runs a flower: nothing in it needs the owner to
+    /// be a player, only to have a body, a loadout and a ring -- the player's
+    /// own components (talents, input, mana, modifiers) are all read as
+    /// optional, and an NPC simply has none.
+    std::unique_ptr<Query<NpcTag, Transform, Loadout, PetalRing>> ringNpcs_;
+    /// Wild mobs only: a summon is never a target for its owner's strike, its
+    /// explosion or a behaviour waiting on first contact.
+    std::unique_ptr<Query<MobTag, Transform, Body>> mobs_;
+    /// NPCs, for the ones not on the players' side: a target dummy is
+    /// something to swing at, and a petal that reaches for mobs has to reach
+    /// for it too or a dummy under-reports every build that relies on it.
+    std::unique_ptr<Query<NpcTag, Transform, Body, Faction>> npcs_;
+
+    std::vector<Entity> playerList_;
+    std::vector<Entity> ringNpcList_;
+    /// gatherCrownLenders' snapshot of this tick's standing crown wearers,
+    /// each with its best crown's tier and the person it belongs to: an index
+    /// into the two tallies below, shared by a splitter's halves.
+    struct CrownWearer {
+        Entity entity = NULL_ENTITY;
+        Rarity tier = Rarity::Common;
+        int person = 0;
+    };
+    std::vector<CrownWearer> crownWearers_;
+    /// Per person: the lent Basics out on the field as the tick opened, and
+    /// the loans made this tick against kCrownMaxLoans.
+    std::vector<int> crownLoansOut_;
+    std::vector<int> crownLoansMade_;
+    /// Every (flower, crown in reach) pairing, ranked, for the allotment.
+    struct CrownOffer {
+        Entity flower = NULL_ENTITY;
+        std::size_t wearer = 0;
+        int rank = 0;
+        double gapSq = 0.0;
+    };
+    std::vector<CrownOffer> crownOffers_;
+    std::vector<Entity> actionList_;
+    /// The batteries with a charge ready this tick, snapshotted before the
+    /// first one fires: a discharge creates entities and can put its slot on
+    /// the reload, and neither is legal while the loadout's own list is walked.
+    std::vector<Entity> batteryList_;
+    /// The player's live capacitors, snapshotted for the same reason.
+    std::vector<Entity> capacitorList_;
+    /// One player's live petals bucketed by slot, rebuilt per player. Members
+    /// so the per-tick work does not allocate.
+    std::array<std::vector<Entity>, kLoadoutSlots> bySlot_;
+    /// Petals whose scripted spawn effect has not run yet, and petals whose
+    /// break effect has not. Both are filled by the slot pass and drained by
+    /// the action pass, for the reason PendingBreak documents.
+    std::vector<Entity> pendingSpawns_;
+    std::vector<PendingBreak> pendingBreaks_;
+    /// runPetBroods' snapshot of the queens it serves, and the slot each is filed under.
+    std::vector<std::pair<Entity, std::uint8_t>> broodScratch_;
+    std::vector<Entity> mobScratch_;
+    /// Where a strike's bolts end, rebuilt per strike so the report allocates
+    /// nothing once the vector has grown.
+    std::vector<Vec2> lightningTargets_;
+
+    /// This tick's event queue, installed by run(). Null outside a tick and in
+    /// a test that does not care about the wire.
+    EventQueue* events_ = nullptr;
+    /// This tick's terrain, installed by run() for loosePetalRestPoint: a
+    /// loose petal is put down on the ground beside its flower, and has to be
+    /// put down OUTSIDE the walls. Null outside a tick and in a test with no
+    /// map, where the ground is open everywhere.
+    const Terrain* terrain_ = nullptr;
+
+    /// Wild mobs and hostile NPCs, filed once at the top of this system's
+    /// pass. Its own grid rather than the server's: the reference's attraction
+    /// reads the enemy grid as it stood at the START of the tick, while the
+    /// grid the other systems share files every body and is not rebuilt until
+    /// after this system has run.
+    SpatialGrid attractionGrid_;
+    std::vector<Entity> attractionCandidates_;
+
+    /// The whole server detonates at most once per kExplosionThrottleMillis.
+    /// A server-wide throttle rather than a per-petal one, exactly as the
+    /// reference states it: a ring of bombs going off together is ONE
+    /// explosion, and a port without this hits far harder than production.
+    double lastExplosionMillis_ = 0;
+
+    /// Pet spawn jitter and the flower petal's corruption roll. Neither has to
+    /// agree with the client, and a fixed seed makes a failing test
+    /// reproducible.
+    Rng rng_{0xB17E5EEDull};
+};
+
+} // namespace flix
+
+FLIX_COMPONENT(flix::PetalSlotState);

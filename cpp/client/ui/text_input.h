@@ -1,0 +1,261 @@
+#pragma once
+// Text fields: the selection they hold, the keyboard that edits it and the
+// pointer that drags it out.
+//
+// Every field in the client -- the auth form, the lobby's name box, the chat
+// line, the inventory's search, the shop's code box, the guild prompts, the
+// settings endpoint and the skin studio's two editors -- grew its own copy of
+// "append typedText, erase on Backspace". Seven copies, seven sets of rules
+// about what a printable character is, no clipboard, and no selection at all:
+// there was nothing in the client a player could drag a highlight across, so
+// "copy" could only ever have meant the whole box.
+//
+// This is the one copy. Nothing here draws -- the field's plate and its scroll
+// are still the panel's business -- but everything here is what a panel needs
+// to draw a selection correctly: where a byte offset lands in x, and which
+// offset an x lands on.
+
+#include <cstddef>
+#include <functional>
+#include <string>
+#include <vector>
+
+#include "window.h"
+
+#include "shared/core/types.h"
+
+namespace flix::ui {
+
+struct TextEditOptions {
+    /// Cap on the value's LENGTH IN BYTES. A paste is trimmed to fit it on a
+    /// character boundary rather than cut mid-sequence.
+    std::size_t maxBytes = 128;
+    /// Printable ASCII only. The fields the server holds to ASCII anyway --
+    /// usernames, guild names, redemption codes -- take this, so a pasted
+    /// emoji is dropped at the field instead of being refused after a round
+    /// trip.
+    bool asciiOnly = false;
+    /// Enter inserts a newline instead of being left for the caller to read as
+    /// a submit. Also what turns Home/End into the line's ends and makes
+    /// Up/Down move between lines.
+    bool multiline = false;
+    /// Whether Up/Down move the caret: to the value's start and end in a
+    /// single-line field, as a browser's <input> does, and between lines in a
+    /// multiline one. Off while the field's owner spends them on something
+    /// else -- the chat line, while its command list is open.
+    bool upDown = true;
+    /// Whether the field will put its own contents on the clipboard. Off for
+    /// the password boxes: pasting INTO a masked field is fine, reading one
+    /// back out is the thing a mask exists to stop.
+    bool copyable = true;
+};
+
+/// A field's caret and its selection.
+///
+/// One pair of byte offsets, not a caret plus a separate range: `anchor` is
+/// where the selection was started from and `caret` is where it has been
+/// dragged to, so the two are equal exactly when there is no selection. That
+/// is also what makes a shift-extension in either direction fall out for free
+/// -- the caret crossing the anchor reverses the range without a special case.
+struct TextSelection {
+    std::size_t caret = 0;
+    std::size_t anchor = 0;
+
+    bool empty() const { return caret == anchor; }
+    std::size_t begin() const { return caret < anchor ? caret : anchor; }
+    std::size_t end() const { return caret < anchor ? anchor : caret; }
+    void collapse(std::size_t at) { caret = at; anchor = at; }
+    void selectAll(const std::string& value) { anchor = 0; caret = value.size(); }
+    std::string of(const std::string& value) const {
+        return empty() ? std::string() : value.substr(begin(), end() - begin());
+    }
+};
+
+/// One frame of keyboard input, as a text field sees it.
+///
+/// Split out from Window so the editing rules can be exercised without a
+/// window to open. That is not tidiness: the first version of this file
+/// resolved the caret through Window directly, and a bug that walked it back
+/// one character per frame -- every field typing in reverse -- was unreachable
+/// by any test, because the only parts a test could call were the pure helpers
+/// that happened to be correct.
+struct TextEditFrame {
+    /// Characters to take back from before the caret BEFORE `typed` goes in.
+    /// A phone keyboard edits text, not keys: correcting "helo" to "hello",
+    /// finishing a swiped word or deleting through its own suggestion arrives
+    /// as so many characters erased and a run inserted, in that order.
+    int eraseBefore = 0;
+    /// Characters the layout produced this frame.
+    std::string typed;
+    /// Text a paste delivered this frame.
+    std::string pasted;
+    /// Extends the selection instead of collapsing it, for every caret move.
+    bool shift = false;
+    bool copy = false;        ///< Ctrl/Cmd+C
+    bool cut = false;         ///< Ctrl/Cmd+X
+    bool selectAll = false;   ///< Ctrl/Cmd+A
+    bool backspace = false;
+    bool erase = false;       ///< the Delete key
+    bool left = false, right = false, up = false, down = false;
+    bool home = false, end = false;
+    /// Inserts a newline in a multiline field; ignored in any other.
+    bool enter = false;
+};
+
+struct TextEditResult {
+    bool changed = false;
+    /// What a copy or cut asked to put on the clipboard, empty when neither
+    /// happened. Returned rather than written, so the core needs no window.
+    std::string clipboard;
+    /// Whether the caret moved or the selection changed, which is separate
+    /// from `changed`: a field restarts its blink on either.
+    bool caretMoved = false;
+};
+
+/// Applies one frame of editing. Offsets are kept on UTF-8 boundaries, so a
+/// caller may measure `value.substr(0, selection.caret)` to place its caret and
+/// `value.substr(selection.begin(), ...)` to paint its highlight.
+TextEditResult editText(const TextEditFrame&, std::string& value, TextSelection&,
+                        const TextEditOptions& options = {});
+
+// ---------------------------------------------------------------------------
+// Layout
+// ---------------------------------------------------------------------------
+
+/// A single-line run of text as it is painted, for mapping between a byte
+/// offset in it and an x on screen.
+///
+/// `originX` is where the run's FIRST glyph is drawn, so a field that scrolls
+/// its own text passes its scroll through it (`box.x + pad - scrollX`) and one
+/// formula covers the scrolled and unscrolled cases alike.
+struct TextRun {
+    std::string text;
+    double originX = 0;
+    double size = 14.0;
+};
+
+double xOfIndex(const TextRun&, std::size_t at);
+
+/// The character boundary NEAREST `px` -- nearest, not the one before it, so a
+/// click on the right half of a glyph puts the caret after that glyph.
+std::size_t indexAtX(const TextRun&, double px);
+
+/// The word around `at`, for a double-click: a run of letters, digits and
+/// underscores, or a run of whatever else is there.
+std::size_t wordBegin(const std::string&, std::size_t at);
+std::size_t wordEnd(const std::string&, std::size_t at);
+
+// ---------------------------------------------------------------------------
+// The field
+// ---------------------------------------------------------------------------
+
+/// Everything a text field keeps between frames beyond its value.
+struct TextFieldState {
+    TextSelection selection;
+    bool focused = false;
+    bool dragging = false;
+    /// When the caret last moved or the value last changed. The blink is
+    /// phased on it rather than on the wall clock, so a caret being typed at
+    /// stays solid instead of blinking out mid-word.
+    double caretSeconds = 0;
+    /// The previous press, for double- and triple-click.
+    double lastClickSeconds = -10;
+    int clickStreak = 0;
+    /// How far a single-line field's text is pushed left, as followCaret last
+    /// left it. Mutable because it is the VIEW's memory, not the value's: the
+    /// run functions that lay a field out take its state const, and both the
+    /// hit test and the paint lay it out.
+    mutable double scrollX = 0;
+
+    /// Takes the caret, with everything selected -- what tabbing or clicking a
+    /// button that focuses a field should do.
+    void focus(const std::string& value, double timeSeconds);
+    /// Takes the caret with the cursor at the end and nothing selected.
+    void focusAtEnd(const std::string& value, double timeSeconds);
+    void blur();
+};
+
+/// True while the caret should be painted.
+bool caretVisible(const TextFieldState&, double timeSeconds);
+
+/// How far a single-line field's text is pushed left to keep its caret inside
+/// a view `span` wide; a field's run puts it in `originX` as `- scroll`.
+///
+/// The view moves only when the caret would leave it. Every field used to take
+/// `max(0, toCaret - span)` fresh each frame instead, which glues the caret to
+/// the right edge: walking it back through a long value slid the text under a
+/// caret that never moved. Nor is there blank space past the end while text is
+/// hidden off the left. Remembered in `state.scrollX`, and settled -- the hit
+/// test and the paint can both ask in one frame and get the same answer.
+double followCaret(const TextFieldState&, const std::string& value, double size, double span);
+
+/// Where this frame's text fields are.
+///
+/// A canvas takes no keyboard focus, so a phone browser never opens its
+/// keyboard for a painted field. Raising it means focusing a real element
+/// INSIDE the touch that asked for it -- the browser refuses to do it from a
+/// timer or an animation frame -- which is a frame earlier than any of this
+/// code runs. So each field records its box as it is hit-tested, the window is
+/// handed the set at the end of the frame, and its own touch handler answers
+/// from that. One frame stale, which a field that has not moved does not
+/// notice.
+///
+/// Filled from two places, and both are wanted: ui::inputField, which is what
+/// paints a field, and trackTextMouse and its multiline twin, which is what
+/// hit-tests one. Between them they cover every field in the client -- the
+/// panels draw their own plates but hit-test through the shared path, and the
+/// auth form does the reverse -- so a new field is covered by existing.
+/// Recording a box twice costs nothing: the set is only ever asked whether a
+/// point is in any of them.
+class TextFieldRegions {
+public:
+    static TextFieldRegions& instance();
+
+    /// Drops last frame's set. Called once, at the top of the frame.
+    void beginFrame() { boxes_.clear(); }
+    void record(Rect box) { boxes_.push_back(box); }
+    const std::vector<Rect>& boxes() const { return boxes_; }
+
+private:
+    std::vector<Rect> boxes_;
+};
+
+/// Reads this frame from the window, applies it, and posts a copy or cut to
+/// the system clipboard. Returns true when `value` changed.
+bool editText(Window&, std::string& value, TextFieldState&, double timeSeconds,
+              const TextEditOptions& options = {});
+
+/// One single-line field's pointer handling: a press inside `box` focuses it
+/// and places the caret, a drag extends the selection, a double-click takes
+/// the word under it and a third click the whole value. A press outside blurs.
+///
+/// Returns true when the press landed inside the field, so a panel can keep
+/// the same click from also reaching whatever is behind it.
+bool trackTextMouse(Window&, TextFieldState&, Rect box, const TextRun&,
+                    const std::string& value, double timeSeconds);
+
+/// The same for a multiline field, whose lines are laid out at `lineHeight`
+/// starting with the first line's centre at `firstBaseline`.
+bool trackTextMouseMultiline(Window&, TextFieldState&, Rect box, const std::string& value,
+                             double originX, double firstBaseline, double lineHeight,
+                             double size, double timeSeconds);
+
+/// The pointer handling of the two above for a field that lays out its own
+/// text -- one that scrolls, say, where the layout those two assume does not
+/// hold. `resolve` maps a point to the byte offset under it, and is asked about
+/// points past the box's edges too while a drag runs on. A press outside the
+/// box blurs the field when `blurOutside` is set, as a single-line field's
+/// does; the multiline one above leaves its focus alone.
+bool trackTextMouseWith(Window&, TextFieldState&, Rect box, const std::string& value,
+                        double timeSeconds, const std::function<std::size_t(Vec2)>& resolve,
+                        bool blurOutside);
+
+/// Start of the UTF-8 sequence ending at `at`, and start of the one beginning
+/// there -- one character back and one character forward. Trimming a single
+/// byte off a multi-byte character leaves a string that will neither measure
+/// nor draw, so every erase and every caret move in the client goes through
+/// these.
+std::size_t utf8Prev(const std::string&, std::size_t at);
+std::size_t utf8Next(const std::string&, std::size_t at);
+
+} // namespace flix::ui

@@ -1,0 +1,1285 @@
+#include "test.h"
+
+#include "client/ui/item_tile.h"
+#include "server_harness.h"
+#include "shared/game/shop.h"
+#include "shared/game/skills.h"
+
+#include <cmath>
+
+using namespace flix;
+using flix::testsupport::awaitProfile;
+using flix::testsupport::connectClient;
+using flix::testsupport::dataDir;
+using flix::testsupport::Harness;
+using flix::testsupport::loginNew;
+using flix::testsupport::onlyPlayer;
+using flix::testsupport::seedStack;
+
+// What the menus can actually do to an account: spend talent points, buy a
+// petal, wear a skin, and read the board. Every one of these is a request the
+// client sends and a Profile it must get back, so they are tested over a real
+// socket rather than against the handlers directly.
+
+namespace {
+
+/// What the first authentication of a UTC day pays. Every account these tests
+/// create or seed has never claimed, so its streak starts at one and the
+/// daily-login reward is one star -- on top of whatever the test put there.
+constexpr int kFirstLoginStars = 1;
+
+/// Writes an account with the given stars and kills straight into a database
+/// file, for the cases a test cannot reach by playing.
+void seedAccount(const std::string& path, const std::string& username,
+                 const std::string& password, double stars, double totalXp) {
+    Database db;
+    std::string error;
+    db.load(path, error);
+    db.setPasswordCost(4);   // the default cost makes this the slowest test
+    const CreateResult created = db.createUser(username, password);
+    if (!created.ok()) return;
+    PlayerRecord& record = db.progress(created.account->id);
+    record.stars = stars;
+    record.totalXp = totalXp;
+    record.recordKill("bee", Rarity::Common);
+    record.recordKill("bee", Rarity::Common);
+    record.recordKill("bee", Rarity::Rare);
+    db.markDirty();
+    db.save();
+}
+
+/// Puts a star code into the database's own `codes` table -- the key the
+/// TypeScript build's admin commands wrote, which this one reads and writes.
+void seedCode(const std::string& path, const std::string& code, int stars, int maxUses) {
+    Database db;
+    std::string error;
+    db.load(path, error);
+    Json entry = Json::object();
+    entry["code"] = Json(code);
+    entry["stars"] = Json(stars);
+    entry["uses"] = Json(0);
+    if (maxUses > 0) entry["maxUses"] = Json(maxUses);
+    db.rawTable("codes")[code] = std::move(entry);
+    db.markDirty();
+    db.save();
+}
+
+/// Waits for the shop's reply channel to answer, and hands the answer back
+/// with `pending` cleared, as the panel reads it.
+bool awaitShopAnswer(Harness& h, NetClient& client, ShopOutcome& out) {
+    if (!h.stepUntil({&client}, [&] { return client.shopOutcome().pending; }, 200)) return false;
+    out = client.shopOutcome();
+    client.shopOutcome().pending = false;
+    return true;
+}
+
+/// Waits for the newest page of the global feed to land.
+bool awaitFeed(Harness& h, NetClient& client) {
+    client.requestNotifications(50, 0);
+    return h.stepUntil({&client}, [&] { return !client.notificationsPending(); }, 200);
+}
+
+/// The shop prices a card and rolls its rotation off the process-wide
+/// content. A test that does either with no harness up yet -- before booting
+/// one, or with none at all -- loads that content itself, from the directory a
+/// harness would boot on, instead of pricing against whatever the test before
+/// it happened to leave there (or nothing, when it runs alone).
+bool ensureShippedContent() {
+    std::string error;
+    return loadContent(dataDir(), error);
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Talent points
+// ---------------------------------------------------------------------------
+
+TEST(talent_points_are_the_level_minus_what_the_tree_holds) {
+    SkillSet skills;
+    CHECK_EQ(skills.spent(), 0);
+    CHECK_EQ(availableTalentPoints(10, skills), 10);
+
+    // Buying rare means having bought common and uncommon too, so the cost is
+    // the sum of the ladder, not the price of the top tier.
+    skills.set(SkillId::Damage, rarityIndex(Rarity::Rare));
+    CHECK_EQ(skills.spent(), 1 + 2 + 3);
+    CHECK_EQ(availableTalentPoints(10, skills), 4);
+
+    // A tree worth more than the level can never mint negative points.
+    CHECK_EQ(availableTalentPoints(2, skills), 0);
+}
+
+TEST(a_talent_multiplier_is_neutral_until_a_tier_is_bought) {
+    SkillSet skills;
+    CHECK_NEAR(skills.statScale(SkillId::PlayerHealth), 1.0, 1e-9);
+    skills.set(SkillId::PlayerHealth, rarityIndex(Rarity::Mythic));
+    CHECK_NEAR(skills.statScale(SkillId::PlayerHealth), 1.5, 1e-9);
+    CHECK_NEAR(skills.effectScale(SkillId::Healing), 1.0, 1e-9);
+}
+
+TEST(talents_are_bought_one_tier_at_a_time) {
+    Harness h("talent-order");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "talentine", "password7"));
+    CHECK_EQ(client.profile().talentPoints(), 1);
+
+    // Skipping to a higher tier is refused outright: accepting it would sell
+    // three tiers for the price of one.
+    client.requestUpgradeSkill(SkillId::Damage, rarityIndex(Rarity::Rare));
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().skills.level(SkillId::Damage), -1);
+
+    client.requestUpgradeSkill(SkillId::Damage, 0);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::Damage) == 0;
+    }));
+    CHECK_EQ(client.profile().talentPoints(), 0);
+
+    // The second tier costs two, and a level-1 account has spent its only one.
+    client.requestUpgradeSkill(SkillId::Damage, 1);
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().skills.level(SkillId::Damage), 0);
+}
+
+TEST(the_reload_branch_is_bought_over_the_wire_like_any_other) {
+    Harness h("talent-reload");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "reloadie", "password7"));
+
+    // The branch was added between Absorption and Second Chance, which moved
+    // the fork's id along by one. Both halves of the wire read that id out of
+    // the same table, so buying the new branch and finding the fork untouched
+    // is what says they still agree.
+    client.requestUpgradeSkill(SkillId::Reload, 0);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::Reload) == 0;
+    }));
+    CHECK_EQ(client.profile().skills.level(SkillId::SecondChance), -1);
+    CHECK_NEAR(client.profile().skills.reloadScale(), kReloadSkillScale[0], 1e-12);
+}
+
+TEST(the_pet_health_branch_is_bought_over_the_wire_like_any_other) {
+    Harness h("talent-pet");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "petkeeper", "password7"));
+
+    // The branch was appended after Second Chance rather than filed beside
+    // Petal Health, so no id an older build knows moved. Buying it and finding
+    // both of its neighbours on the wire untouched is what says the two
+    // halves still read the same table.
+    client.requestUpgradeSkill(SkillId::PetHealth, 0);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::PetHealth) == 0;
+    }));
+    CHECK_EQ(client.profile().skills.level(SkillId::SecondChance), -1);
+    CHECK_EQ(client.profile().skills.level(SkillId::PetalHealth), -1);
+    CHECK_EQ(client.profile().talentPoints(), 0);
+}
+
+TEST(second_chance_stays_locked_until_flower_health_is_rare) {
+    Harness h("talent-fork");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "forkner", "password7"));
+    client.requestUpgradeSkill(SkillId::SecondChance, 0);
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().skills.level(SkillId::SecondChance), -1);
+    // The prerequisite is a property of the tree, not of the panel: the same
+    // answer has to come back from a client that never drew a node.
+    CHECK(!client.profile().skills.secondChanceUnlocked());
+}
+
+TEST(duplicator_is_priced_on_its_own_and_hangs_off_mythic_absorption) {
+    SkillSet skills;
+    CHECK(!skills.prerequisiteMet(SkillId::Duplicator));
+    skills.set(SkillId::Absorbing, rarityIndex(Rarity::Legendary));
+    CHECK(!skills.prerequisiteMet(SkillId::Duplicator));
+    skills.set(SkillId::Absorbing, rarityIndex(Rarity::Mythic));
+    CHECK(skills.prerequisiteMet(SkillId::Duplicator));
+    // Second Chance's fork is still its own: Absorption does not open it.
+    CHECK(!skills.secondChanceUnlocked());
+
+    // Duplicator 15, Triplicator 20 -- not the ladder's 1 and 2 -- and the
+    // refund total counts them at the same price the purchase charged.
+    const int absorption = skills.spent();
+    skills.set(SkillId::Duplicator, 0);
+    CHECK_EQ(skills.spent() - absorption, 15);
+    skills.set(SkillId::Duplicator, 1);
+    CHECK_EQ(skills.spent() - absorption, 15 + 20);
+    CHECK_EQ(std::string(skillTierLabel(SkillId::Duplicator, 0)), std::string("Duplicator"));
+    CHECK_EQ(std::string(skillTierLabel(SkillId::Duplicator, 1)), std::string("Triplicator"));
+}
+
+TEST(duplicator_adds_copies_only_to_petals_that_already_have_two) {
+    SkillSet skills;
+    skills.set(SkillId::Absorbing, rarityIndex(Rarity::Mythic));
+    CHECK_EQ(skills.petalCopies(4), 4);
+    skills.set(SkillId::Duplicator, 0);
+    CHECK_EQ(skills.petalCopies(0), 0);
+    CHECK_EQ(skills.petalCopies(1), 1);
+    CHECK_EQ(skills.petalCopies(2), 3);
+    CHECK_EQ(skills.petalCopies(4), 5);
+    // Triplicator replaces Duplicator's one copy with two; it does not stack.
+    skills.set(SkillId::Duplicator, 1);
+    CHECK_EQ(skills.petalCopies(1), 1);
+    CHECK_EQ(skills.petalCopies(4), 6);
+    CHECK_EQ(skills.petalCopies(kMaxPetalCopies - 1), kMaxPetalCopies);
+
+    // A record holding the branch without the mythic tier under it grants
+    // nothing, exactly as the panel shows the node locked.
+    skills.set(SkillId::Absorbing, rarityIndex(Rarity::Legendary));
+    CHECK_EQ(skills.petalCopies(4), 4);
+}
+
+TEST(duplicator_and_triplicator_are_bought_over_the_wire_after_mythic_absorption) {
+    Harness h("talent-duplicator", [](const std::string& path) {
+        seedAccount(path, "copycat", "password7", 0, 1e15);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("copycat", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [](const Profile& p) { return p.level > 100; }));
+
+    // Refused below mythic Absorption, however many points are in hand.
+    client.requestUpgradeSkill(SkillId::Duplicator, 0);
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().skills.level(SkillId::Duplicator), -1);
+
+    for (int tier = 0; tier <= rarityIndex(Rarity::Mythic); ++tier) {
+        client.requestUpgradeSkill(SkillId::Absorbing, tier);
+        CHECK(awaitProfile(h, client, [tier](const Profile& p) {
+            return p.skills.level(SkillId::Absorbing) == tier;
+        }));
+    }
+
+    const int before = client.profile().talentPoints();
+    client.requestUpgradeSkill(SkillId::Duplicator, 0);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::Duplicator) == 0;
+    }));
+    CHECK_EQ(client.profile().talentPoints(), before - 15);
+
+    client.requestUpgradeSkill(SkillId::Duplicator, 1);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::Duplicator) == 1;
+    }));
+    CHECK_EQ(client.profile().talentPoints(), before - 15 - 20);
+}
+
+TEST(magnetism_hangs_off_legendary_absorption_and_is_priced_on_its_own) {
+    SkillSet skills;
+    CHECK(!skills.prerequisiteMet(SkillId::Magnetism));
+    skills.set(SkillId::Absorbing, rarityIndex(Rarity::Epic));
+    CHECK(!skills.prerequisiteMet(SkillId::Magnetism));
+    skills.set(SkillId::Absorbing, rarityIndex(Rarity::Legendary));
+    CHECK(skills.prerequisiteMet(SkillId::Magnetism));
+    // Legendary opens Magnetism but not Duplicator, which waits for mythic.
+    CHECK(!skills.prerequisiteMet(SkillId::Duplicator));
+    CHECK_EQ(skillTierCount(SkillId::Magnetism), 3);
+
+    const int absorption = skills.spent();
+    CHECK_NEAR(skills.magnetismBonus(), 0.0, 1e-12);
+    skills.set(SkillId::Magnetism, 0);
+    CHECK_EQ(skills.spent() - absorption, 5);
+    CHECK_NEAR(skills.magnetismBonus(), 50.0, 1e-12);
+    skills.set(SkillId::Magnetism, 2);
+    CHECK_EQ(skills.spent() - absorption, 5 + 8 + 12);
+    // Each tier replaces the one below rather than stacking on it.
+    CHECK_NEAR(skills.magnetismBonus(), 150.0, 1e-12);
+    CHECK(skillFromKey("magnetism") == SkillId::Magnetism);
+}
+
+TEST(magnetism_is_bought_over_the_wire_after_legendary_absorption) {
+    Harness h("talent-magnetism", [](const std::string& path) {
+        seedAccount(path, "magneto", "password7", 0, 1e15);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("magneto", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [](const Profile& p) { return p.level > 100; }));
+
+    client.requestUpgradeSkill(SkillId::Magnetism, 0);
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().skills.level(SkillId::Magnetism), -1);
+
+    for (int tier = 0; tier <= rarityIndex(Rarity::Legendary); ++tier) {
+        client.requestUpgradeSkill(SkillId::Absorbing, tier);
+        CHECK(awaitProfile(h, client, [tier](const Profile& p) {
+            return p.skills.level(SkillId::Absorbing) == tier;
+        }));
+    }
+
+    const int before = client.profile().talentPoints();
+    for (int tier = 0; tier < 3; ++tier) {
+        client.requestUpgradeSkill(SkillId::Magnetism, tier);
+        CHECK(awaitProfile(h, client, [tier](const Profile& p) {
+            return p.skills.level(SkillId::Magnetism) == tier;
+        }));
+    }
+    CHECK_EQ(client.profile().talentPoints(), before - 5 - 8 - 12);
+}
+
+TEST(a_purchase_path_runs_through_every_missing_tier_parent_first) {
+    SkillSet skills;
+    // Nothing owned: Second Chance's second tier needs Flower Health up to
+    // rare first, then both of its own tiers.
+    const std::vector<SkillStep> path = skillPurchasePath(skills, SkillId::SecondChance, 1);
+    CHECK_EQ(path.size(), std::size_t{5});
+    CHECK(path[0].id == SkillId::PlayerHealth && path[0].tier == 0);
+    CHECK(path[2].id == SkillId::PlayerHealth && path[2].tier == rarityIndex(Rarity::Rare));
+    CHECK(path[3].id == SkillId::SecondChance && path[3].tier == 0);
+    CHECK(path[4].id == SkillId::SecondChance && path[4].tier == 1);
+    CHECK_EQ(skillPurchaseCost(skills, SkillId::SecondChance, 1), 1 + 2 + 3 + 1 + 2);
+
+    // A parent already past the fork's tier adds nothing; an owned tier, or
+    // one past the branch's top, is no purchase at all.
+    skills.set(SkillId::PlayerHealth, rarityIndex(Rarity::Epic));
+    CHECK_EQ(skillPurchaseCost(skills, SkillId::SecondChance, 0), 1);
+    CHECK(skillPurchasePath(skills, SkillId::PlayerHealth, 1).empty());
+    CHECK(skillPurchasePath(skills, SkillId::Magnetism, 3).empty());
+    CHECK_EQ(skillPurchaseCost(skills, SkillId::PlayerHealth, rarityIndex(Rarity::Mythic)), 8 + 12);
+}
+
+TEST(a_held_node_buys_its_whole_path_in_one_burst_of_requests) {
+    Harness h("talent-path", [](const std::string& path) {
+        seedAccount(path, "pathfinder", "password7", 0, 1e15);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("pathfinder", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [](const Profile& p) { return p.level > 100; }));
+
+    // What the talent tree sends when a hold completes: every step at once,
+    // before any answer comes back. The server takes them in order.
+    const int before = client.profile().talentPoints();
+    const int cost = skillPurchaseCost(client.profile().skills, SkillId::Duplicator, 0);
+    for (const SkillStep& step :
+         skillPurchasePath(client.profile().skills, SkillId::Duplicator, 0)) {
+        client.requestUpgradeSkill(step.id, step.tier);
+    }
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::Duplicator) == 0;
+    }));
+    CHECK_EQ(client.profile().skills.level(SkillId::Absorbing), rarityIndex(Rarity::Mythic));
+    CHECK_EQ(client.profile().talentPoints(), before - cost);
+}
+
+TEST(resetting_talents_hands_every_point_back) {
+    Harness h("talent-reset");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "resetta", "password7"));
+    client.requestUpgradeSkill(SkillId::PetalHealth, 0);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::PetalHealth) == 0;
+    }));
+    CHECK_EQ(client.profile().talentPoints(), 0);
+
+    client.requestResetSkills();
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.skills.level(SkillId::PetalHealth) == -1;
+    }));
+    CHECK_EQ(client.profile().talentPoints(), 1);
+}
+
+TEST(a_bought_talent_survives_a_reconnect) {
+    Harness h("talent-persist");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient first;
+    CHECK(loginNew(h, first, "lasting", "password7"));
+    first.requestUpgradeSkill(SkillId::PlayerHealth, 0);
+    CHECK(awaitProfile(h, first, [](const Profile& p) {
+        return p.skills.level(SkillId::PlayerHealth) == 0;
+    }));
+    first.disconnect();
+    h.step(5, {});
+
+    NetClient second;
+    CHECK(connectClient(h, second));
+    second.requestLogin("lasting", "password7");
+    CHECK(h.stepUntil({&second}, [&] { return second.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, second, [](const Profile& p) {
+        return p.skills.level(SkillId::PlayerHealth) == 0;
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// The shop
+// ---------------------------------------------------------------------------
+
+TEST(the_shop_never_stocks_a_sacrifice) {
+    // Hel's alone to hand out: a sacrifice at a tier the market deals in
+    // would be a boss for a handful of stars.
+    CHECK(ensureShippedContent());
+    const std::uint16_t sacrifice = content().petalIndex("sacrifice");
+    CHECK(sacrifice != kInvalidIndex);
+    CHECK(!shopSellsPetal(sacrifice));
+    CHECK(shopSellsPetal(content().petalIndex("rose")));
+}
+
+TEST(the_shop_never_offers_a_third_eye_below_legendary) {
+    // Its minRarity: a card that rolls lower is offered at legendary, and a
+    // purchase named below it is not for sale.
+    CHECK(ensureShippedContent());
+    const std::uint16_t thirdEye = content().petalIndex("third_eye");
+    CHECK(thirdEye != kInvalidIndex);
+    CHECK(shopSellsPetal(thirdEye));
+    CHECK(!petalComesAt(content().petal(thirdEye), Rarity::Epic));
+    CHECK(petalComesAt(content().petal(thirdEye), Rarity::Legendary));
+    int offered = 0;
+    for (std::int64_t rotation = 0; rotation < 3000; ++rotation) {
+        for (const ShopOffer& offer : shopOffers(rotation)) {
+            if (offer.petalIndex != thirdEye) continue;
+            ++offered;
+            CHECK(rarityIndex(offer.rarity) >= rarityIndex(Rarity::Legendary));
+            CHECK(shopSellsRarity(offer.rarity));
+        }
+    }
+    CHECK(offered > 0);
+}
+
+TEST(shop_prices_climb_by_tier_and_top_tiers_are_not_for_sale) {
+    CHECK(ensureShippedContent());
+    const double common = shopPrice("basic", Rarity::Common);
+    const double uncommon = shopPrice("basic", Rarity::Uncommon);
+    CHECK_NEAR(common, 10.0, 1e-9);
+    CHECK_NEAR(uncommon, 35.0, 1e-9);
+    CHECK(shopPrice("basic", Rarity::Legendary) > uncommon);
+    // The price is the petal's own `price` field, run up the ladder.
+    CHECK_NEAR(common, content().petal(content().petalIndex("basic")).price, 1e-9);
+    // Every petal has one: the load would have been refused otherwise, so
+    // there is no longer a default for an unpriced petal to fall through to.
+    for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
+        CHECK(std::isfinite(content().petal(i).price));
+        CHECK(shopPrice(i, Rarity::Common) >= 0.0);
+    }
+    // An id no petal answers to is not a petal and has no price at all.
+    CHECK_NEAR(shopPrice("a-petal-that-does-not-exist", Rarity::Common), 0.0, 1e-12);
+
+    CHECK(shopSellsRarity(Rarity::Super));
+    CHECK(!shopSellsRarity(Rarity::Unique));
+    CHECK(!shopSellsRarity(Rarity::Apex));
+    CHECK(!shopSellsRarity(Rarity::Universal));
+    CHECK(!shopSellsRarity(Rarity::Admin));
+    // Nor does any rotation ever put one on a card.
+    for (std::int64_t rotation = 0; rotation < 500; ++rotation) {
+        for (const ShopOffer& offer : shopOffers(rotation)) {
+            CHECK(offer.rarity != Rarity::Universal);
+        }
+    }
+}
+
+TEST(the_store_rotates_hourly_and_both_sides_derive_the_same_ten_cards) {
+    CHECK(ensureShippedContent());
+    const std::int64_t rotation = shopRotation(1'700'000'000);
+    // The same hour is the same store, twice over: the generator is what the
+    // client draws and what the server prices against, so a second call that
+    // disagreed would be a purchase refused at random.
+    const std::vector<ShopOffer> first = shopOffers(rotation);
+    const std::vector<ShopOffer> again = shopOffers(rotation);
+    CHECK_EQ(first.size(), static_cast<std::size_t>(kShopOfferCount));
+    CHECK_EQ(again.size(), first.size());
+    for (std::size_t i = 0; i < first.size(); ++i) {
+        CHECK_EQ(again[i].petalIndex, first[i].petalIndex);
+        CHECK_EQ(static_cast<int>(again[i].rarity), static_cast<int>(first[i].rarity));
+        CHECK_NEAR(again[i].price, first[i].price, 1e-9);
+    }
+
+    // The next hour is a different store.
+    const std::vector<ShopOffer> next = shopOffers(rotation + 1);
+    bool moved = false;
+    for (std::size_t i = 0; i < first.size() && i < next.size(); ++i) {
+        if (next[i].petalIndex != first[i].petalIndex) moved = true;
+    }
+    CHECK(moved);
+
+    // An hour is an hour, and a card never costs more than the ladder says.
+    const std::int64_t started = shopRotationEnd(rotation) - kShopRotationSeconds;
+    CHECK_EQ(shopRotation(started), rotation);
+    CHECK_EQ(shopRotation(started + kShopRotationSeconds - 1), rotation);
+    CHECK_EQ(shopRotation(started + kShopRotationSeconds), rotation + 1);
+    for (const ShopOffer& offer : first) {
+        CHECK(shopSellsPetal(offer.petalIndex));
+        CHECK(shopSellsRarity(offer.rarity));
+        CHECK(offer.price > 0);
+        CHECK(offer.price <= shopPrice(offer.petalIndex, offer.rarity));
+        CHECK(offer.discountPercent >= 0 && offer.discountPercent <= 30);
+    }
+}
+
+TEST(an_offer_is_charged_its_discounted_price_and_a_wrong_slot_is_refused) {
+    CHECK(ensureShippedContent());
+    const std::vector<ShopOffer> offers = shopOffers(shopRotation(shopClockNow()));
+    if (offers.empty()) { CHECK(false); return; }
+
+    // The cheapest card, so one seeded balance covers whatever the hour rolled.
+    std::size_t slot = 0;
+    for (std::size_t i = 1; i < offers.size(); ++i) {
+        if (offers[i].price < offers[slot].price) slot = i;
+    }
+    const ShopOffer& offer = offers[slot];
+    const int price = static_cast<int>(offer.price);
+
+    Harness h("shop-offer", [&](const std::string& path) {
+        seedAccount(path, "olive", "password7", price + 5, 0);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("olive", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stars == price + 5 + kFirstLoginStars;
+    }));
+
+    const std::uint32_t before = client.profile().stackCount(offer.petalIndex, offer.rarity);
+    client.requestBuyPetal(offer.petalIndex, offer.rarity, static_cast<int>(slot));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stars == 5 + kFirstLoginStars;
+    }));
+    CHECK_EQ(client.profile().stackCount(offer.petalIndex, offer.rarity), before + 1);
+
+    // A slot that does not hold what it claims buys nothing: the client names
+    // the card, and the server checks that card against its own rotation.
+    const double stars = client.profile().stars;
+    const std::size_t other = (slot + 1) % offers.size();
+    client.requestBuyPetal(offer.petalIndex, offer.rarity, static_cast<int>(other));
+    ShopOutcome answer;
+    CHECK(awaitShopAnswer(h, client, answer));
+    CHECK(!answer.ok);
+    CHECK_EQ(client.profile().stars, stars);
+}
+
+TEST(a_magic_petal_is_drawn_at_the_size_of_the_petal_it_is_the_form_of) {
+    // A magic petal's artwork IS its ordinary form's document in cyan, down to
+    // the viewBox, so its tile has to be measured the same way. Without that
+    // the six of them fell through to the generic 20-unit fallback: a magic
+    // leaf half the size of a leaf and lying flat where a leaf lies back, and
+    // a magic cactus at half the width of a cactus.
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+
+    for (const char* id : {"leaf", "stick", "cactus", "missile", "bubble", "rose"}) {
+        const std::uint16_t base = content().petalIndex(id);
+        const std::uint16_t magic = content().magicFormOf(base);
+        if (base == kInvalidIndex || magic == kInvalidIndex) { CHECK(false); continue; }
+
+        // Measured at the BASE petal's own size stat. `size` is not what the
+        // inherited measurement is made of -- a gardn row is a fixed drawn
+        // width and ignores it -- so the two petals are free to disagree
+        // there, and rose (0.9) and the orb (1.0) do.
+        const double sizeStat = content().petal(base).size;
+
+        const ui::PetalIconMetric want = ui::petalIconMetric(base, sizeStat);
+        const ui::PetalIconMetric got = ui::petalIconMetric(magic, sizeStat);
+        CHECK_NEAR(got.diameter, want.diameter, 1e-9);
+        CHECK_NEAR(got.tilt, want.tilt, 1e-12);
+        // And it is a real measurement rather than the fallback that happened
+        // to agree: every one of these six is drawn at something other than
+        // the basic-sized box an unscaled petal gardn does not have would take.
+        const double fallback =
+            ui::petalIconMetric(content().petalIndex("basic"), 1.0).diameter * sizeStat;
+        CHECK(std::fabs(got.diameter - fallback) > 1e-9);
+    }
+}
+
+TEST(a_petal_gardn_lacks_is_drawn_as_large_as_basic) {
+    // An unscaled petal no table row measures is fitted to basic by its
+    // PICTURE, not by its box. splitter's disc covers under nine tenths of its
+    // padded viewBox, and fitting the box drew it at 0.77 of basic.
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+    SpriteCache sprites;
+    sprites.build(content(), dataDir());
+
+    const std::uint16_t basic = content().petalIndex("basic");
+    const std::uint16_t splitter = content().petalIndex("splitter");
+    if (basic == kInvalidIndex || splitter == kInvalidIndex) { CHECK(false); return; }
+    // Padded, or the rest says nothing.
+    CHECK(sprites.petalCoverage(splitter) < 0.95);
+
+    const double size = content().petal(splitter).size;
+    const double picture =
+        ui::petalIconMetric(splitter, size, &sprites).diameter * sprites.petalCoverage(splitter);
+    CHECK_NEAR(picture, ui::petalIconMetric(basic, 1.0).diameter * size, 1e-9);
+
+    // A petal that authors a visual_scale states its whole box with it,
+    // padding and all -- basil's is florr's 42 / 26 -- and is taken as written.
+    const std::uint16_t basil = content().petalIndex("basil");
+    if (basil == kInvalidIndex) { CHECK(false); return; }
+    const PetalConfig& scaled = content().petal(basil);
+    if (scaled.visualScale != 1.0) {
+        CHECK_NEAR(ui::petalIconMetric(basil, scaled.size, &sprites).diameter,
+                   ui::kPetalIconSize * scaled.size * scaled.visualScale, 1e-9);
+    }
+}
+
+TEST(a_balance_past_32_bits_reaches_the_client_and_is_debited_exactly) {
+    // The balance is a JS number on the reference and a JSON number in the
+    // file; it used to cross the wire as a u32 and sit in an int at both ends,
+    // which is a cliff in the middle of an otherwise exact pipeline. A code
+    // for ten billion stars was not "slightly off" after it -- it was a
+    // different number, and the shop then charged against that.
+    CHECK(ensureShippedContent());
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+    const double price = shopPrice("rose", Rarity::Common);
+    constexpr double kBalance = 10'000'000'000.0;   // > 2^32
+
+    Harness h("shop-rich", [&](const std::string& path) {
+        seedAccount(path, "croesus", "password7", kBalance, 0);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("croesus", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stars == kBalance + kFirstLoginStars;
+    }));
+
+    // And the purchase takes the price off THAT, rather than off whatever a
+    // narrowing cast of it happened to produce.
+    client.requestBuyPetal(rose, Rarity::Common);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stars == kBalance + kFirstLoginStars - price;
+    }));
+}
+
+TEST(a_purchase_without_the_stars_is_refused) {
+    Harness h("shop-broke");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "pauline", "password7"));
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+    const std::uint32_t before = client.profile().stackCount(rose, Rarity::Common);
+
+    client.requestBuyPetal(rose, Rarity::Common);
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Common), before);
+    CHECK_EQ(client.profile().stars, kFirstLoginStars);
+}
+
+TEST(a_purchase_spends_the_servers_price_not_the_clients) {
+    CHECK(ensureShippedContent());
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+    const int price = static_cast<int>(shopPrice("rose", Rarity::Common));
+
+    Harness h("shop-buy", [&](const std::string& path) {
+        seedAccount(path, "richard", "password7", price + 5, 0);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("richard", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stars == price + 5 + kFirstLoginStars;
+    }));
+
+    const std::uint32_t before = client.profile().stackCount(rose, Rarity::Common);
+    client.requestBuyPetal(rose, Rarity::Common);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stars == 5 + kFirstLoginStars;
+    }));
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Common), before + 1);
+
+    // Unique is not for sale at any balance.
+    client.requestBuyPetal(rose, Rarity::Unique);
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().stars, 5 + kFirstLoginStars);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Unique), 0u);
+}
+
+TEST(a_star_code_pays_once_and_names_its_refusals) {
+    Harness h("shop-code", [](const std::string& path) {
+        seedAccount(path, "coder", "password7", 0, 0);
+        seedCode(path, "FREESTARS", 250, 0);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("coder", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) { return p.stars == kFirstLoginStars; }));
+
+    // Typed the way a player types it: trimmed and upper-cased server-side.
+    ShopOutcome answer;
+    client.requestRedeemCode("  freestars ");
+    CHECK(awaitShopAnswer(h, client, answer));
+    CHECK(answer.redeem);
+    CHECK(answer.ok);
+    CHECK_EQ(answer.stars, 250);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) { return p.stars == 250 + kFirstLoginStars; }));
+
+    // The same account cannot spend it twice, and an unknown code says so
+    // rather than quietly doing nothing.
+    client.requestRedeemCode("FREESTARS");
+    CHECK(awaitShopAnswer(h, client, answer));
+    CHECK(!answer.ok);
+    CHECK_EQ(answer.message, std::string("Code already redeemed"));
+    client.requestRedeemCode("NOTACODE");
+    CHECK(awaitShopAnswer(h, client, answer));
+    CHECK(!answer.ok);
+    CHECK_EQ(answer.message, std::string("Invalid code"));
+    CHECK_EQ(client.profile().stars, 250 + kFirstLoginStars);
+}
+
+TEST(a_refused_purchase_answers_on_the_shops_own_channel) {
+    Harness h("shop-refuse", [](const std::string& path) {
+        seedAccount(path, "pauper", "password7", 0, 0);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("pauper", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+
+    ShopOutcome answer;
+    client.requestBuyPetal(rose, Rarity::Common);
+    CHECK(awaitShopAnswer(h, client, answer));
+    CHECK(!answer.redeem);
+    CHECK(!answer.ok);
+    CHECK_EQ(answer.message, std::string("Not enough stars."));
+}
+
+TEST(a_craft_request_is_pooled_and_answered_once) {
+    Harness h("craft-pool", [](const std::string& path) {
+        seedAccount(path, "smith", "password7", 0, 0);
+        seedStack(path, "smith", "petal_rose", Rarity::Common, 15);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("smith", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Common) == 15u;
+    }));
+
+    // Three batches in ONE request: the server crafts them as a pool, recycling
+    // what a failure hands back until fewer than five are left, and answers
+    // with a single result rather than one per batch.
+    client.requestCraft(rose, Rarity::Common, 15);
+    CHECK(h.stepUntil({&client}, [&] { return client.craftOutcome().pending; }, 200));
+    const CraftOutcome outcome = client.craftOutcome();
+    client.craftOutcome().pending = false;
+
+    // Whatever the rolls were, the pool is spent down to a sub-batch tail, and
+    // the two counts the panel draws from are the account's actual holdings.
+    CHECK(outcome.petalsReturned < 5);
+    CHECK_EQ(outcome.success, outcome.crafted > 0);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Common) ==
+                   static_cast<std::uint32_t>(outcome.petalsReturned) &&
+               p.stackCount(rose, Rarity::Uncommon) ==
+                   static_cast<std::uint32_t>(outcome.crafted);
+    }));
+
+    // Nothing else follows: one request, one result.
+    h.step(20, {&client});
+    CHECK(!client.craftOutcome().pending);
+}
+
+TEST(a_full_stack_crafts_whole_in_one_request) {
+    // Two ways a deep stack broke the forge. The count went over the wire as a
+    // u16, so shift-staging 65,540 petals asked for 4 -- under one batch, and
+    // refused as "not enough petals". And the pool was rolled one attempt at a
+    // time: a full stack is ~800 million rolls, seconds of frozen tick. The
+    // stack above is seeded just short of full so the upgrades have to stop
+    // at the cap rather than wrap it negative and erase it.
+    Harness h("craft-deep", [](const std::string& path) {
+        seedAccount(path, "smith", "password7", 0, 0);
+        seedStack(path, "smith", "petal_rose", Rarity::Common, kMaxStackCount);
+        seedStack(path, "smith", "petal_rose", Rarity::Uncommon, kMaxStackCount - 10);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+    const auto full = static_cast<std::uint32_t>(kMaxStackCount);
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("smith", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Common) == full;
+    }));
+
+    client.requestCraft(rose, Rarity::Common, kMaxStackCount);
+    CHECK(h.stepUntil({&client}, [&] { return client.craftOutcome().pending; }, 200));
+    const CraftOutcome outcome = client.craftOutcome();
+    client.craftOutcome().pending = false;
+
+    // 64% odds on ~430 million attempts lands about 335 million; anything
+    // like that proves the whole pool was crafted, and past 65,535 proves the
+    // count survived the wire both ways.
+    CHECK(outcome.success);
+    CHECK(outcome.crafted > 300000000);
+    CHECK(outcome.petalsReturned < 5);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Common) ==
+                   static_cast<std::uint32_t>(outcome.petalsReturned) &&
+               p.stackCount(rose, Rarity::Uncommon) == full;
+    }));
+}
+
+TEST(a_stack_badge_stays_short_however_deep_the_stack) {
+    CHECK_EQ(ui::stackCountText(0), std::string("0"));
+    CHECK_EQ(ui::stackCountText(9999), std::string("9999"));
+    CHECK_EQ(ui::stackCountText(10000), std::string("10K"));
+    CHECK_EQ(ui::stackCountText(12345), std::string("12.3K"));
+    // Down, never up: 99,999 is not 100K of anything.
+    CHECK_EQ(ui::stackCountText(99999), std::string("99.9K"));
+    CHECK_EQ(ui::stackCountText(456789), std::string("456K"));
+    CHECK_EQ(ui::stackCountText(999999), std::string("999K"));
+    CHECK_EQ(ui::stackCountText(1000000), std::string("1M"));
+    CHECK_EQ(ui::stackCountText(65540), std::string("65.5K"));
+    CHECK_EQ(ui::stackCountText(static_cast<std::uint64_t>(kMaxStackCount)), std::string("2.1B"));
+    CHECK_EQ(ui::stackCountText(4294967295u), std::string("4.2B"));
+}
+
+TEST(the_forge_refuses_a_universal_stack_and_keeps_every_petal) {
+    Harness h("craft-universal", [](const std::string& path) {
+        seedAccount(path, "smith", "password7", 0, 0);
+        seedStack(path, "smith", "petal_rose", Rarity::Universal, 50);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("smith", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Universal) == 50u;
+    }));
+
+    // A client that asks anyway -- the panel never stages one -- is refused
+    // whole: nothing taken, nothing made.
+    client.requestCraft(rose, Rarity::Universal, 50);
+    CHECK(h.stepUntil({&client}, [&] { return client.craftOutcome().pending; }, 200));
+    const CraftOutcome outcome = client.craftOutcome();
+    client.craftOutcome().pending = false;
+    CHECK(!outcome.success);
+    CHECK_EQ(outcome.crafted, 0);
+
+    h.step(10, {&client});
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Universal), 50u);
+}
+
+TEST(a_super_craft_is_announced_in_chat_and_written_to_the_feed) {
+    Harness h("craft-notice", [](const std::string& path) {
+        seedAccount(path, "smith", "password7", 0, 0);
+        // Ultra -> super is a 1% roll, so the pool has to be deep enough that
+        // failing every attempt is not a thing that happens: 20,000 petals is
+        // four thousand tries, and 0.99^4000 is about 2e-18.
+        seedStack(path, "smith", "petal_rose", Rarity::Ultra, 20000);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("smith", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Ultra) == 20000u;
+    }));
+
+    const std::size_t chatBefore = client.chat().size();
+    client.requestCraft(rose, Rarity::Ultra, 20000);
+    CHECK(h.stepUntil({&client}, [&] { return client.craftOutcome().pending; }, 400));
+    CHECK(client.craftOutcome().crafted > 0);
+    client.craftOutcome().pending = false;
+
+    // ONE line however many the pool produced: the craft is announced, not
+    // each petal it yielded.
+    CHECK(h.stepUntil({&client}, [&] { return client.chat().size() > chatBefore; }, 200));
+    CHECK_EQ(client.chat().size(), chatBefore + 1);
+    // Marked up, as the TypeScript build's line was: the tier's own palette
+    // colour paints the sentence, and the account and the flower's name are
+    // separately coloured inside it -- which is why the handle is not
+    // contiguous with the words before it.
+    const std::string line = client.chat().back().text;
+    CHECK(line.find("<b style=\"color: #2bffa3;\">A Super Rose has been crafted by ") == 0);
+    CHECK(line.find("<b style=\"color: #00ff00;\">@smith</b>") != std::string::npos);
+    CHECK(line.find("<b style=\"color: yellow;\">smith</b>") != std::string::npos);
+
+    // And the same sentence, flat, in the feed the panel draws.
+    CHECK(awaitFeed(h, client));
+    CHECK_EQ(client.notifications().size(), static_cast<std::size_t>(1));
+    const NotificationEntry& notice = client.notifications().front();
+    CHECK_EQ(static_cast<int>(notice.kind), static_cast<int>(net::NotificationKind::SuperCraft));
+    CHECK_EQ(notice.message, std::string("A Super Rose has been crafted by @smith [smith]"));
+    CHECK(notice.message.find('<') == std::string::npos);
+}
+
+TEST(a_craft_below_super_is_announced_to_nobody) {
+    Harness h("craft-quiet", [](const std::string& path) {
+        seedAccount(path, "smith", "password7", 0, 0);
+        seedStack(path, "smith", "petal_rose", Rarity::Common, 500);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    const std::uint16_t rose = content().petalIndex("rose");
+    if (rose == kInvalidIndex) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("smith", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Common) == 500u;
+    }));
+
+    const std::size_t chatBefore = client.chat().size();
+    client.requestCraft(rose, Rarity::Common, 500);
+    CHECK(h.stepUntil({&client}, [&] { return client.craftOutcome().pending; }, 400));
+    CHECK(client.craftOutcome().crafted > 0);
+    client.craftOutcome().pending = false;
+
+    // An uncommon is crafted every few seconds by everyone playing. The feed
+    // and the transcript both stay empty.
+    CHECK(awaitFeed(h, client));
+    CHECK(client.notifications().empty());
+    CHECK_EQ(client.chat().size(), chatBefore);
+}
+
+TEST(a_redeemed_star_code_is_written_to_the_feed) {
+    Harness h("code-notice", [](const std::string& path) {
+        seedAccount(path, "coder", "password7", 0, 0);
+        seedCode(path, "FREESTARS", 250, 0);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("coder", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+
+    ShopOutcome answer;
+    client.requestRedeemCode("freestars");
+    CHECK(awaitShopAnswer(h, client, answer));
+    CHECK(answer.ok);
+
+    CHECK(awaitFeed(h, client));
+    CHECK_EQ(client.notifications().size(), static_cast<std::size_t>(1));
+    const NotificationEntry& notice = client.notifications().front();
+    CHECK_EQ(static_cast<int>(notice.kind), static_cast<int>(net::NotificationKind::StarCode));
+    // The code as STORED, not as typed, and the star the TypeScript build
+    // wrote -- so a feed that build saved reads the same as one written here.
+    CHECK_EQ(notice.message,
+             std::string("Star code \"FREESTARS\" redeemed by @coder [coder]! +250 "
+                         "\xE2\xAD\x90 Stars"));
+}
+
+TEST(a_mythic_kill_is_worth_stars_and_a_common_one_is_not) {
+    CHECK_EQ(starsForKill(Rarity::Common), 0);
+    CHECK_EQ(starsForKill(Rarity::Legendary), 0);
+    CHECK_EQ(starsForKill(Rarity::Mythic), 1);
+    CHECK_EQ(starsForKill(Rarity::Apex), 250);
+}
+
+// ---------------------------------------------------------------------------
+// Skins, the kill ledger and the board
+// ---------------------------------------------------------------------------
+
+TEST(a_skin_is_stored_and_an_unknown_one_is_ignored) {
+    Harness h("skins");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "skinner", "password7"));
+    CHECK_EQ(client.profile().renderFlags, 0u);
+
+    client.requestSkin(PlayerRenderPumpkin);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.renderFlags == PlayerRenderPumpkin;
+    }));
+
+    // Two bits at once, and the transient glitch bit, are both refused: a skin
+    // is a choice of one, and glitch is an effect rather than a cosmetic.
+    client.requestSkin(PlayerRenderPumpkin | PlayerRenderRobot);
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().renderFlags, static_cast<std::uint32_t>(PlayerRenderPumpkin));
+    client.requestSkin(PlayerRenderGlitch);
+    h.step(20, {&client});
+    CHECK_EQ(client.profile().renderFlags, static_cast<std::uint32_t>(PlayerRenderPumpkin));
+
+    client.requestSkin(PlayerRenderNone);
+    CHECK(awaitProfile(h, client, [](const Profile& p) { return p.renderFlags == 0u; }));
+}
+
+TEST(the_kill_ledger_reaches_the_gallery) {
+    Harness h("kills", [](const std::string& path) {
+        seedAccount(path, "hunter", "password7", 0, 500);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("hunter", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+
+    const std::uint16_t bee = content().mobIndex("bee");
+    if (bee == kInvalidIndex) { CHECK(false); return; }
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.killCount(bee, Rarity::Common) == 2;
+    }));
+    CHECK_EQ(client.profile().killCount(bee, Rarity::Rare), 1u);
+    CHECK_EQ(client.profile().killCount(bee, Rarity::Mythic), 0u);
+}
+
+TEST(the_leaderboard_ranks_accounts_by_lifetime_xp) {
+    Harness h("board", [](const std::string& path) {
+        seedAccount(path, "small", "password7", 0, 10);
+        seedAccount(path, "large", "password7", 0, 900000);
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("small", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+
+    client.requestLeaderboard();
+    CHECK(h.stepUntil({&client}, [&] { return !client.leaderboard().empty(); }, 200));
+    CHECK_EQ(client.leaderboard().size(), static_cast<std::size_t>(2));
+    CHECK_EQ(client.leaderboard()[0].name, std::string("large"));
+    CHECK(client.leaderboard()[0].totalXp > client.leaderboard()[1].totalXp);
+    // The level travels with the row: the panel must not have to re-derive it
+    // from XP with a curve that could drift from the server's.
+    CHECK(client.leaderboard()[0].level > client.leaderboard()[1].level);
+}
+
+TEST(admins_rank_on_the_leaderboard_only_when_asked_for) {
+    Harness h("board-admins", [](const std::string& path) {
+        seedAccount(path, "player", "password7", 0, 10);
+        seedAccount(path, "staff", "password7", 0, 900000);
+        Database db;
+        std::string error;
+        db.load(path, error);
+        if (Account* staff = db.findUser("staff")) staff->admin = true;
+        db.markDirty();
+        db.save();
+    });
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("player", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+
+    // Off by default: the admin outranks everyone and still is not shown.
+    client.requestLeaderboard();
+    CHECK(h.stepUntil({&client}, [&] { return !client.leaderboardPending(); }, 200));
+    CHECK_EQ(client.leaderboard().size(), static_cast<std::size_t>(1));
+    CHECK_EQ(client.leaderboard()[0].name, std::string("player"));
+
+    // The settings switch: asked for by a non-admin, and honoured, as the
+    // TypeScript server honoured ?includeAdmins=true for any caller.
+    client.requestLeaderboard(true);
+    CHECK(h.stepUntil({&client}, [&] { return !client.leaderboardPending(); }, 200));
+    CHECK_EQ(client.leaderboard().size(), static_cast<std::size_t>(2));
+    CHECK_EQ(client.leaderboard()[0].name, std::string("staff"));
+}
+
+TEST(killing_a_mob_credits_the_ledger_and_pays_its_stars) {
+    Harness h("kill-credit");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "slayer", "password7"));
+    client.joinGame(1280, 720);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    // Reaching into the world is the only way to make a kill deterministic:
+    // waiting for a real fight to resolve is a test that fails on a slow
+    // machine. Everything from the damage onward is the shipping path. The
+    // usual bots are running, so the flower is found by its account rather
+    // than as whichever one a query visits last.
+    World& world = h.server.world();
+    const Entity player = onlyPlayer(world);
+    CHECK(player != NULL_ENTITY);
+    if (player == NULL_ENTITY) return;
+
+    // Mobs arrive on the spawner's own schedule, and the starter petals need a
+    // tick or two to reach the ring, so wait for both -- and take a mob IN THE
+    // PLAYER'S REALM. Every map with spawn bands stocks its own, and one from
+    // another map cannot be parked on this flower: the park below moves a
+    // position, and the same position in another coordinate space is not the
+    // same place, so the two never touch and the kill never happens.
+    const Realm realm = world.get<Transform>(player).realm;
+    Entity mob = NULL_ENTITY;
+    Query<MobTag, MobType, Transform> mobs{world};
+    Query<PetalInstance, Transform> petals{world};
+    const bool armed = h.stepUntil({&client}, [&] {
+        mob = NULL_ENTITY;
+        mobs.each([&](Entity e, MobTag&, MobType&, Transform& at) {
+            if (mob == NULL_ENTITY && at.realm == realm) mob = e;
+        });
+        bool anyPetal = false;
+        petals.each([&](Entity, PetalInstance&, Transform&) { anyPetal = true; });
+        return mob != NULL_ENTITY && anyPetal;
+    }, 600);
+    CHECK(armed);
+    if (!armed) return;
+
+    const std::uint16_t mobIndex = world.get<MobType>(mob).configIndex;
+    // Mythic, so the kill is worth a star as well as a tally.
+    world.get<MobType>(mob).rarity = Rarity::Mythic;
+    // And unarmoured, because whatever this map happened to stock may be one
+    // whose armour a starting ring cannot get through -- an ultra bee wears
+    // 729, and the stock basic petal swings 10. This test is about the kill
+    // ledger; armour has its own tests.
+    if (world.has<Armor>(mob)) world.get<Armor>(mob).amount = 0.0;
+
+    const bool credited = h.stepUntil({&client}, [&] {
+        if (client.profile().killCount(mobIndex, Rarity::Mythic) > 0) return true;
+        if (!world.isAlive(mob) || world.has<Dead>(mob)) return false;
+        // Park the mob on the flower, one hit from death. The TypeScript
+        // player pipeline resolves this body contact before moveEnemies(), so
+        // this is deterministic without predicting next tick's petal angle.
+        // The MAX comes down with it: a kill is only credited to a flower
+        // that did 1% of the mob's health, and one body hit on whatever this
+        // map stocked need not be 1% of its spawned pool.
+        world.get<Transform>(mob).position = world.get<Transform>(player).position;
+        world.get<Health>(mob).max = 1.0;
+        world.get<Health>(mob).current = 1.0;
+        world.get<Health>(mob).invulnerableUntilMillis = 0;
+        world.get<Health>(player).current = world.get<Health>(player).max;
+        return false;
+    }, 200);
+    CHECK(credited);
+    if (!credited) return;
+    CHECK_EQ(client.profile().stars, starsForKill(Rarity::Mythic) + kFirstLoginStars);
+}
+
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
+
+TEST(a_talent_tree_round_trips_through_the_database) {
+    const std::string path = flix::testsupport::tempPath("skill-json");
+    std::remove(path.c_str());
+    {
+        Database db;
+        std::string error;
+        db.load(path, error);
+        db.setPasswordCost(4);
+        const CreateResult created = db.createUser("treeholder", "password7");
+        CHECK(created.ok());
+        if (!created.ok()) return;
+        PlayerRecord& record = db.progress(created.account->id);
+        record.totalXp = 100000;
+        record.skills.set(SkillId::Healing, rarityIndex(Rarity::Epic));
+        record.skills.set(SkillId::Absorbing, rarityIndex(Rarity::Common));
+        record.skills.set(SkillId::Reload, rarityIndex(Rarity::Unique));
+        record.skills.set(SkillId::PetHealth, rarityIndex(Rarity::Legendary));
+        record.skills.set(SkillId::Duplicator, 1);
+        db.markDirty();
+        CHECK(db.save());
+    }
+
+    Database reopened;
+    std::string error;
+    CHECK(reopened.load(path, error));
+    const Account* account = reopened.findUser("treeholder");
+    CHECK(account != nullptr);
+    if (account != nullptr) {
+        const PlayerRecord* record = reopened.findProgress(account->id);
+        CHECK(record != nullptr);
+        if (record != nullptr) {
+            CHECK_EQ(record->skills.level(SkillId::Healing), rarityIndex(Rarity::Epic));
+            CHECK_EQ(record->skills.level(SkillId::Absorbing), rarityIndex(Rarity::Common));
+            CHECK_EQ(record->skills.level(SkillId::Reload), rarityIndex(Rarity::Unique));
+            CHECK_NEAR(record->skills.reloadScale(), 0.292, 1e-12);
+            // The newest branch, at the tier the tree's own key table has to
+            // spell correctly for a saved account to keep it.
+            CHECK_EQ(record->skills.level(SkillId::PetHealth), rarityIndex(Rarity::Legendary));
+            CHECK_NEAR(record->skills.healthScale(SkillId::PetHealth), 1.6, 1e-12);
+            // Triplicator, stored as the Duplicator branch's second tier.
+            CHECK_EQ(record->skills.level(SkillId::Duplicator), 1);
+            CHECK_EQ(record->skills.level(SkillId::Damage), -1);
+        }
+    }
+    std::remove(path.c_str());
+}
+
+TEST(a_saved_tier_past_the_top_of_its_branch_loads_clamped) {
+    // Reload used to go to apex. An account saved back then keeps the unique
+    // tier it paid for on the way up, and gets back only the apex tier's cost,
+    // rather than losing the whole branch.
+    const std::string path = flix::testsupport::tempPath("skill-clamp-json");
+    std::remove(path.c_str());
+    {
+        Database db;
+        std::string error;
+        db.load(path, error);
+        db.setPasswordCost(4);
+        const CreateResult created = db.createUser("apexreload", "password7");
+        CHECK(created.ok());
+        if (!created.ok()) return;
+        PlayerRecord& record = db.progress(created.account->id);
+        record.totalXp = 100000;
+        record.skills.set(SkillId::Reload, rarityIndex(Rarity::Apex));
+        db.markDirty();
+        CHECK(db.save());
+    }
+
+    Database reopened;
+    std::string error;
+    CHECK(reopened.load(path, error));
+    const Account* account = reopened.findUser("apexreload");
+    CHECK(account != nullptr);
+    if (account != nullptr) {
+        const PlayerRecord* record = reopened.findProgress(account->id);
+        CHECK(record != nullptr);
+        if (record != nullptr) {
+            CHECK_EQ(skillTierCount(SkillId::Reload), rarityIndex(Rarity::Unique) + 1);
+            CHECK_EQ(record->skills.level(SkillId::Reload), rarityIndex(Rarity::Unique));
+            CHECK_NEAR(record->skills.reloadScale(), 0.292, 1e-12);
+        }
+    }
+    std::remove(path.c_str());
+}

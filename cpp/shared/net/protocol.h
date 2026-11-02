@@ -1,0 +1,1042 @@
+#pragma once
+// The client/server wire protocol.
+//
+// Framing:   every message is [u32 byteLength][u8 type][payload], little-endian.
+// Direction: ClientMessage ids and ServerMessage ids are separate spaces.
+//
+// There are no type tags inside a payload -- both sides read the fields a
+// message declares, in order. Compatibility is therefore established once, at
+// connect time: the client sends kProtocolVersion together with a hash of the
+// content it was built against, and a server that disagrees says so plainly
+// instead of letting the two sides misread each other's bytes for a session.
+
+#include <cstddef>
+#include <cstdint>
+
+#include "shared/game/player_flags.h"
+#include "shared/net/bytebuffer.h"
+
+namespace flix::net {
+
+/// Identifies one connected client for the lifetime of its socket.
+using ConnectionId = std::uint32_t;
+
+/// Bumped whenever any message layout in this file changes.
+inline constexpr std::uint16_t kProtocolVersion = 69;
+
+/// "Not one of the rotating store's cards": a purchase at the full ladder
+/// price. Any other value is a slot index the server checks against the offers
+/// it generates for itself.
+inline constexpr std::uint8_t kNoShopOffer = 0xFF;
+
+/// Frames larger than this are refused before allocation, so a bad length
+/// prefix costs a dropped connection rather than a 4GB allocation.
+inline constexpr std::uint32_t kMaxFrameBytes = 1u << 20;   // 1 MiB
+
+/// Simulation rate. Fixed, because the physics integrates a constant step:
+/// input, movement and cooldowns are all expressed per tick.
+// The TypeScript server this was ported from advanced gameplay at 30 Hz, and
+// so does this one. This is simulation behaviour, not a transport
+// implementation detail: contact opportunities, fixed-step mob AI and every
+// one-tick transition depend on it.
+inline constexpr int kTicksPerSecond = 30;
+inline constexpr double kTickSeconds = 1.0 / kTicksPerSecond;
+inline constexpr double kTickMillis = 1000.0 / kTicksPerSecond;
+
+/// How often each client is sent a snapshot.
+///
+/// Deliberately BELOW the tick rate. Physics and combat want 30 Hz resolution;
+/// the wire does not, and the reference server says so in as many words -- the
+/// snapshot broadcast runs on its own 20 Hz timer so the per-recipient
+/// encode/cull/delta pass and its socket writes are not charged to the tick's
+/// 33 ms budget. A client interpolating between snapshots needs its delay
+/// window to cover this interval, not the tick.
+inline constexpr int kSnapshotsPerSecond = 20;
+inline constexpr double kSnapshotMillis = 1000.0 / kSnapshotsPerSecond;
+
+// ---------------------------------------------------------------------------
+// Message ids
+// ---------------------------------------------------------------------------
+
+enum class ClientMessage : std::uint8_t {
+    Hello = 1,          ///< u16 protocolVersion, u32 contentHash
+    Register,           ///< str username, str password
+    Login,              ///< str username, str password
+    ResumeSession,      ///< str token
+    Logout,             ///< (empty)
+    JoinGame,           ///< u16 viewportWidth, u16 viewportHeight, str spawnBiome,
+                        ///< str playerName, u8 prestige. An empty biome picks the
+                        ///< beginner ground; an empty name spawns as "Unnamed".
+                        ///< `prestige` nonzero asks for the chosen door's
+                        ///< prestige twin (shared/game/prestige.h), which the
+                        ///< server grants only to a tree holding Prestige.
+    LeaveGame,          ///< (empty) -- back to the title screen, keeps the session
+    Input,              ///< see InputFrame
+    SetLoadout,         ///< u8 slot, u16 itemType, u8 rarity  (0xFFFF = clear)
+    SwapLoadout,        ///< u8 slotA, u8 slotB
+    Craft,              ///< u16 itemType, u8 rarity, u32 count -- the whole
+                        ///< staging area at once, which the server crafts as
+                        ///< one pool. u32 because a shift-craft stages every
+                        ///< petal of a stack, and a stack runs to
+                        ///< kMaxStackCount; a u16 wrapped a 65,540 stage to 4.
+    Chat,               ///< str text
+    Respawn,            ///< (empty)
+    Ping,               ///< u64 clientTimeMillis
+    UpgradeSkill,       ///< u8 skillId, u8 tier   -- buys ONE tier, the next one
+    ResetSkills,        ///< (empty) -- refunds the whole tree
+    BuyPetal,           ///< u16 itemType, u8 rarity, u8 offerSlot -- price is server-side
+                        ///< only. `offerSlot` names WHICH card of the current
+                        ///< rotation was clicked, or kNoShopOffer for a
+                        ///< full-price catalogue purchase; it is a claim about
+                        ///< the card, never about the price.
+    SetSkin,            ///< u32 renderFlags
+    RequestLeaderboard, ///< bool includeAdmins -- the TypeScript client's
+                        ///< `?includeAdmins=true`, and sent as that was, from
+                        ///< the "Show Admins on Leaderboard" switch, for anyone.
+    RedeemCode,         ///< str code -- a star code, checked server-side
+    PublishSkin,        ///< str name, u8 shapeCount, { SkinShape }*  (skin_format.h)
+    EquipSkin,          ///< str skinId -- empty takes the current skin off
+    DeleteSkin,         ///< str skinId -- own skin, or anyone's for an admin
+    RequestNotifications, ///< u16 limit, f64 beforeMillis (0 asks for the newest
+                        ///< page). The TypeScript client fetched GET
+                        ///< /api/notifications; this client has no HTTP, so
+                        ///< the same query is an opcode with the same two
+                        ///< parameters.
+    GuildCreate,        ///< str tag, str displayName. The tag is the guild's
+                        ///< key -- 5 alphanumerics, upper-cased server-side --
+                        ///< and the display name is free text; an empty one
+                        ///< falls back to the tag. (Version 45.)
+    GuildInvite,        ///< str username
+    GuildAccept,        ///< (empty) -- answers the one pending invite
+    GuildDecline,       ///< (empty)
+    GuildKick,          ///< str username
+    GuildLeave,         ///< (empty)
+    GuildSquadAll,      ///< (empty)
+    GuildInviteToSquad, ///< str username
+    ChangePassword,     ///< str currentPassword, str newPassword. The account
+                        ///< is the session's, never a name on the wire: an
+                        ///< authenticated socket already says whose password
+                        ///< this is, and accepting one would make this an
+                        ///< endpoint for changing somebody else's. An account
+                        ///< with kAccountNoPassword has no current password to
+                        ///< give, so `currentPassword` is not read for it
+                        ///< (version 59).
+    UsePetal,           ///< u8 slot -- the loadout slot whose petal was CLICKED
+                        ///< on the bar. Only the petals that DO something when
+                        ///< they are used answer to it (petalIsClickToUse in
+                        ///< shared/game/config.h); every other slot is refused
+                        ///< server-side, so naming a slot cannot fire a petal
+                        ///< that has no action.
+    OracleCraft,        ///< u16 itemType, u8 rarity -- ONE guaranteed upgrade at
+                        ///< an oracle NPC, for oracleCraftCost(rarity) of that
+                        ///< petal. One per craft and one craft per
+                        ///< kOracleCooldownMillis, per account. Refused unless
+                        ///< the body is standing within kNpcServiceReach of a
+                        ///< friendly oracle, which names no NPC on the wire --
+                        ///< the server finds the nearest one itself, so a
+                        ///< client cannot claim one it is nowhere near.
+    SwapLoadoutRows,    ///< (empty) -- slot i trades places with slot i + 10 for
+                        ///< every column at once: the R key. One message rather
+                        ///< than ten SwapLoadouts, which would each have sent a
+                        ///< whole Profile back.
+    SaveLoadoutPreset,  ///< u8 preset -- copies the account's loadout, both rows,
+                        ///< into saved preset `preset` (loadoutPresetName).
+    LoadLoadoutPreset,  ///< u8 preset -- re-equips a saved preset out of the
+                        ///< bag and the current loadout together, stepping a
+                        ///< petal down a rarity at a time when the saved one is
+                        ///< not there. Resolved server-side in one pass: the
+                        ///< client does not know the presets, and a string of
+                        ///< SetLoadouts could not move a petal between two slots.
+    Trade,              ///< u16 itemType, u8 rarity -- ONE petal handed to a
+                        ///< trader NPC for one kTraderCoinPetal of the same
+                        ///< tier. One trade per kTraderCooldownMillis, per
+                        ///< account, and only a petal petals.json does not
+                        ///< mark `"tradable": false`. Found and reached exactly
+                        ///< as OracleCraft's oracle is: the server looks for
+                        ///< the trader itself. (Version 41.)
+    AdminDb,            ///< u8 AdminDbOp, then that op's payload -- the admin
+                        ///< database editor (shared/net/admin_db.h). Refused,
+                        ///< silently, for anyone the database does not flag
+                        ///< as an admin: a temporary grant does not open it.
+                        ///< (Version 44.)
+    GuildEdit,          ///< str displayName, str description -- both replace
+                        ///< what the guild has. Leader only; the tag is the
+                        ///< guild's key and cannot be edited. (Version 45.)
+    TitanForge,         ///< u16 itemType -- kTitanForgeCost APEX petals of it
+                        ///< forged into one universal at a titan NPC. Never a
+                        ///< roll. Found and reached exactly as OracleCraft's
+                        ///< oracle is: the server looks for the titan itself.
+                        ///< Every other account's universal of that petal is
+                        ///< taken and refunded at kTitanForgeRefund apex
+                        ///< apiece. (Version 47.)
+    TitanHolder,        ///< u16 itemType -- who holds that petal at universal,
+                        ///< for the titan to remember forging it for. Answered
+                        ///< only to a flower standing at the titan, and at most
+                        ///< once per kTitanHolderQueryMillis per session: a
+                        ///< faster one is dropped, and the client asks again.
+                        ///< (Version 47.)
+    AdminDashboard,     ///< u8 AdminDashboardOp, then that op's payload -- the
+                        ///< admin dashboard's requests (shared/net/admin_dashboard.h).
+                        ///< Refused, silently, unless the session may run the
+                        ///< admin console. Every op is billed to the session's
+                        ///< command allowance, a page as much as a Control, as a
+                        ///< console command is: a binary road past that budget
+                        ///< let a temporary grantee wipe a player's chat with
+                        ///< control notices as fast as frames could be sent. A
+                        ///< request over it is answered with the console's
+                        ///< notice and AdminDashboardReply::Refused. A request
+                        ///< about a player names it by connection AND account
+                        ///< name, and is refused when the two no longer match.
+                        ///< (Version 51.)
+    Assemble,           ///< u8 rarity, u8 recipe, u16 count -- runs the recipe
+                        ///< of the assembler of tier `rarity` the body is
+                        ///< standing at `count` times: everything it takes, at
+                        ///< that tier, for everything it makes. `recipe` must be
+                        ///< the one that assembler offers (its spawn record's).
+                        ///< The server finds the assembler itself, as
+                        ///< OracleCraft's oracle is found; the tier only says
+                        ///< WHICH one when two stand close. Never a roll, and
+                        ///< all or nothing. (Version 55.)
+    Absorb,             ///< u16 stackCount, { u16 itemType, u8 rarity, u32 count }*
+                        ///< -- the craft window's Absorb side: every staged
+                        ///< stack in ONE request, destroyed for XP
+                        ///< (shared/game/absorb.h). All or nothing: one stack
+                        ///< the bag cannot cover, or that may not be absorbed,
+                        ///< refuses the lot. Anywhere, in or out of the world.
+                        ///< (Version 58.)
+    RegisterGuest,      ///< (empty) -- a new GUEST account, which the server
+                        ///< names (`User` and eight digits) and gives a random
+                        ///< password nobody is told: its only credential is
+                        ///< the session token in the AuthResult, which is how
+                        ///< a first visit plays without a form. Held to the
+                        ///< same limits as Register, because it is one.
+                        ///< (Version 59.)
+    SetUsername,        ///< str username -- a guest account picks its name,
+                        ///< once: the account stops being a guest in the same
+                        ///< write, and only a guest may ask. The account is the
+                        ///< session's, as ChangePassword's is. Answered with
+                        ///< SetUsernameResult. (Version 59.)
+    ProfileCheck,       ///< u32 revision, u32 digest -- a ProfileDigest of the
+                        ///< bag and bar this client holds, every
+                        ///< kProfileCheckMillis while signed in, and the
+                        ///< revision of the last Profile or ProfileDelta it
+                        ///< applied. A server that last sent that revision and
+                        ///< owes nothing since, and whose own copy folds to
+                        ///< something else, sends the whole Profile again:
+                        ///< how a client whose memory was edited, or which
+                        ///< missed something, comes back into line. A check
+                        ///< behind the server's revision describes a state the
+                        ///< server has moved on from and is not judged.
+                        ///< Answered with nothing when the two agree.
+                        ///< (Version 65; the revision, version 66.)
+    DowngradeSkill,     ///< u8 skillId, u8 tier -- refunds this owned node and
+                        ///< every higher tier on the same branch (level becomes
+                        ///< tier - 1), plus any fork children whose prerequisite
+                        ///< is then unmet. Hold-to-refund on the talent tree;
+                        ///< points come back because spent() drops. (Version 69.)
+};
+
+enum class ServerMessage : std::uint8_t {
+    Welcome = 1,        ///< u16 protocolVersion, u8 accepted, str reason
+    AuthResult,         ///< u8 status(AuthStatus), str token, str username, str reason
+    Profile,            ///< u32 revision (see ProfileDelta), str username,
+                        ///< u8 accountFlags (AccountFlags), then
+                        ///< the full account state: xp, level, stars, inventory, loadout,
+                        ///< skins, the talent tree and the mob-kill ledger,
+                        ///< then u32 milliseconds until the account may craft
+                        ///< at an oracle again (0 when it may now), u32 the
+                        ///< same until it may trade at a trader, and last
+                        ///< u8 count, { u8 preset, u8 slotCount,
+                        ///< { u16 itemType, u8 rarity }* }* -- the saved
+                        ///< loadouts (loadoutPresetName), only those that exist
+    JoinAccepted,       ///< u32 selfNetId, f32 x, f32 y, u32 tick, i64 mazeDay,
+                        ///< MapGrid (see below). `mazeDay` is the maze the
+                        ///< server is playing, so the client builds the same
+                        ///< walls without any of them going over the wire.
+    Snapshot,           ///< see below
+    Chat,               ///< u8 channel, str author, str text, u32 speakerNetId.
+                        ///< `speakerNetId` is the flower that said it, so the
+                        ///< line can also be drawn as a bubble over that body;
+                        ///< 0 for anything the server said in its own voice.
+    Notice,             ///< u8 severity, str text
+    Died,               ///< str killerName, u32 xpLost, u32 survivedTicks
+    CraftResult,        ///< u8 success, u16 itemType, u8 rarity, u32 crafted,
+                        ///< u8 petalsReturned, str reason. `crafted` is how
+                        ///< many upgrades the pool produced and
+                        ///< `petalsReturned` the sub-batch tail (0-4) handed
+                        ///< back, which is what the ring's surviving slots
+                        ///< are drawn from.
+    Leaderboard,        ///< u8 count, u32 totalAccounts, u32 dailyActiveUsers,
+                        ///< { str name, u16 level, f64 totalXp }*.
+                        ///< `dailyActiveUsers` is 0 for a non-admin, where the
+                        ///< TypeScript server's payload left the field out.
+    Pong,               ///< u64 clientTimeMillis, u64 serverTimeMillis
+    Kick,               ///< str reason. Never sent: this server says why it is
+                        ///< done with a connection in the message the occasion
+                        ///< already has -- Welcome for a refused handshake,
+                        ///< SessionReplaced for a second sign-in, AuthResult
+                        ///< for a revoked session. The client still handles
+                        ///< it, and the id keeps its place so that the ones
+                        ///< after it keep theirs.
+    DailyStreak,        ///< u16 streak, u8 newDay, u16 starsAwarded,
+                        ///< i64 nextClaimAtMillis, i64 streakExpiresAtMillis.
+                        ///< Sent once per authentication, after Profile, so the
+                        ///< stars it awarded are already in the profile beside it.
+    ShopResult,         ///< u8 kind(ShopResultKind), u8 ok, f64 stars, str reason.
+                        ///< The shop panel's own reply channel: a refusal is a
+                        ///< modal on the card, not a line in the chat, so it
+                        ///< cannot travel as a Notice.
+    SkinCatalog,        ///< u8 isAdmin, str equippedSkinId, u16 count,
+                        ///< { CustomSkin }*. Sent once per authentication: the
+                        ///< studio's Browse tab lists it, and it is also what
+                        ///< lets a client draw a skin somebody else is wearing.
+    SkinPublished,      ///< CustomSkin -- broadcast, for the same reason
+    SkinDeleted,        ///< str skinId -- broadcast
+    Notifications,      ///< u8 more, u16 count,
+                        ///< { str id, u8 kind(NotificationKind), str message,
+                        ///<   f64 timestampMillis }*, newest first.
+                        ///< `more` is set when the page filled the requested
+                        ///< limit, which is the TypeScript build's `hasMore`.
+    GuildUpdate,        ///< u8 joined, str tag, str displayName, str description,
+                        ///< str leader, u16 memberCount,
+                        ///< { str username, u8 online, str location }*.
+                        ///< `joined` 0 is the TypeScript build's
+                        ///< `guildUpdate null` and carries no rest.
+                        ///< `location` names the biome an online member's
+                        ///< body is in, and is empty for one with no body
+                        ///< (title screen, death card) and for every offline
+                        ///< member. (Version 45.)
+    GuildInviteReceived, ///< str guildName, str fromUsername, str displayName.
+                        ///< `guildName` is the tag. (Version 45.)
+    SquadUpdate,        ///< u8 inSquad, str squadId, u8 isPublic, u8 memberCount,
+                        ///< { str account, str name, u32 netId, u8 flags }*.
+                        ///< `inSquad` 0 is the TypeScript build's
+                        ///< `squadUpdate null` and carries nothing after its
+                        ///< flag. `flags` bit 0 marks the leader and bit 1 a
+                        ///< bot; `netId` is 0 for a member with no body in
+                        ///< the world just now, which is every member sitting
+                        ///< on the title screen.
+    DebugStats,         ///< f64 residentBytes, f64 heapBytes, f32 tickAvgMs,
+                        ///< f32 tickMaxMs -- once a second, and only while
+                        ///< somebody is authenticated. The TypeScript server's
+                        ///< payload also carried heapTotal; nothing draws it,
+                        ///< so it is not on this wire.
+    MazeInfo,           ///< i64 dayNumber -- the maze the server is playing now.
+                        ///< Sent when it rotates; JoinAccepted carries the same
+                        ///< number for a client that has just arrived. The
+                        ///< TypeScript build's `mazeInfo {day}`.
+    RealmChange,        ///< f32 x, f32 y, MapGrid. The body moved to another
+                        ///< REALM -- through a teleporter, which now leads to
+                        ///< another map. The client clears its view, adopts the
+                        ///< grid and snaps its camera; nothing else about the
+                        ///< body changed, so the snapshot stream carries on.
+    Revived,            ///< str reviverName -- a yggdrasil raised this body
+                        ///< back up. The counterpart of `Died`: the corpse the
+                        ///< client was shown is standing again, so the death
+                        ///< card comes down and the body takes input. The name
+                        ///< is the reviver's nameplate, which is what the
+                        ///< system line thanks.
+    ChangePasswordResult, ///< u8 ok, str token, str reason. The Account
+                        ///< panel's own reply channel, for the same reason
+                        ///< ShopResult is the shop's: the answer belongs on
+                        ///< the form that asked, not in the chat.
+                        ///<
+                        ///< `token` is a FRESH session token, sent only on
+                        ///< success: changing a password revokes every session
+                        ///< the account had, this one included, so without a
+                        ///< replacement the client that just succeeded would
+                        ///< be the one locked out at its next resume. It is
+                        ///< NOT an AuthResult -- that message also moves the
+                        ///< client's login state, and this client is already
+                        ///< logged in and staying that way.
+    OracleResult,       ///< u8 ok, u16 itemType, u8 rarity, u16 crafted,
+                        ///< u32 spent, str reason. `rarity` is the tier that
+                        ///< was MADE on success and the tier offered on a
+                        ///< refusal; `spent` is how many petals went in. Its
+                        ///< own reply rather than a CraftResult, because the
+                        ///< forge and the oracle are two panels with two
+                        ///< animations, and a result either one could consume
+                        ///< would land in whichever happened to be open.
+    SessionReplaced,    ///< str reason. The account signed in on another
+                        ///< connection, so this one has been signed out and
+                        ///< is about to be closed: one account, one live
+                        ///< session. Not a Kick -- the client answers it with
+                        ///< a "play on this tab" offer rather than a bare
+                        ///< refusal, and must NOT redial on its own, or the
+                        ///< two tabs would take the account back from each
+                        ///< other forever. (Version 36.)
+    ChatHistory,        ///< u8 count, { u8 channel, str author, str text,
+                        ///< f64 sentAtMillis }*, oldest first. The last lines
+                        ///< the server broadcast, sent once per authentication
+                        ///< in the same breath that starts the live Chat
+                        ///< stream to this session -- so a client that has
+                        ///< just loaded opens on the conversation already in
+                        ///< progress, with no gap and no line twice.
+                        ///< `sentAtMillis` is Unix time on the server's clock:
+                        ///< a replayed line is stamped with when it was said,
+                        ///< not when it arrived. No speaker: a backlog is
+                        ///< never floated as a bubble. (Version 40.)
+    TradeResult,        ///< u8 ok, u16 itemType, u8 rarity, u16 receivedType,
+                        ///< str reason. `itemType` and `rarity` are the petal
+                        ///< that was offered; `receivedType` is what came back
+                        ///< for it, at that same tier -- kNoPetal on a
+                        ///< refusal. Its own reply for OracleResult's reason:
+                        ///< the trade panel lands the coin, and a result any
+                        ///< other panel could read might land in that one.
+                        ///< (Version 41.)
+    AdminDb,            ///< u8 AdminDbReply, then that reply's payload -- the
+                        ///< database editor's answers (shared/net/admin_db.h).
+                        ///< Sent to full admins only. (Version 44.)
+    TitanForgeResult,   ///< u8 ok, u16 itemType, str reason. `itemType` is the
+                        ///< petal that was forged, or offered on a refusal;
+                        ///< a success is always one universal of it. Its own
+                        ///< reply for OracleResult's reason. (Version 47.)
+    TitanHolder,        ///< u16 itemType, str username -- the answer to
+                        ///< ClientMessage::TitanHolder: the account holding that
+                        ///< petal at universal, or empty for nobody. (Version 47.)
+    AdminDashboard,     ///< u8 AdminDashboardReply, then that reply's payload --
+                        ///< the admin dashboard's answers, and the flower
+                        ///< control state the server pushes whenever it starts
+                        ///< or ends (shared/net/admin_dashboard.h). Sent only to
+                        ///< a session that may run the admin console.
+                        ///< (Version 51: binary sub-replies, where version 50
+                        ///< sent one JSON string.)
+    AssembleResult,     ///< u8 ok, u8 rarity, u8 recipe, u16 count, str reason
+                        ///< -- the answer to ClientMessage::Assemble, echoing
+                        ///< what was asked. `count` is how many were made: all
+                        ///< that were asked for, or 0 on a refusal, which
+                        ///< `reason` explains. (Version 55.)
+    LeftWorld,          ///< (empty). The server took this client's body out of
+                        ///< the world on its own -- a talent reset in a
+                        ///< prestige biome took the talent that let it be
+                        ///< there -- so the client goes back to the title
+                        ///< screen as if it had left. The Profile after it is
+                        ///< the one a LeaveGame is answered with. (Version 57.)
+    AbsorbResult,       ///< u8 ok, f64 xpGained, u32 petalsAbsorbed, str reason
+                        ///< -- the answer to ClientMessage::Absorb. On a
+                        ///< refusal nothing was taken and `reason` says why.
+                        ///< The Profile follows it. (Version 58.)
+    SetUsernameResult,  ///< u8 ok, str username, str reason -- the answer to
+                        ///< ClientMessage::SetUsername. `username` is the name
+                        ///< the account is now filed under (its stored
+                        ///< spelling) on success, and empty on a refusal. The
+                        ///< Profile follows a success. (Version 59.)
+    Teleported,         ///< (empty). This client's flower was just moved by a
+                        ///< teleport -- a pad, a nest's entrance or exit, an
+                        ///< admin's teleport -- and the client plays the iris
+                        ///< over the jump. Sent before the RealmChange a move
+                        ///< to another map also gets, so the frame the iris
+                        ///< closes over is still the one from before it.
+                        ///< (Version 62.)
+    ProfileDelta,       ///< What kills and pickups changed since the last
+                        ///< Profile or delta, instead of the whole account
+                        ///< again: u32 revision, f64 xp, u16 level, f64 stars
+                        ///< (the Profile's own header fields), u16 groups,
+                        ///< { u16 itemType, u8 rarity, u8 n, { u32 count }*n }*,
+                        ///< u16 kills, { u16 mobIndex, u8 rarity, u32 count }*.
+                        ///< A group REPLACES every stack the client holds of
+                        ///< that petal and rarity with the n listed, which is
+                        ///< what the whole Profile would carry for it now --
+                        ///< n = 0 when none is left. A kill cell is the
+                        ///< ledger's new count. Applied, it leaves the client
+                        ///< exactly where that Profile would. `revision` counts
+                        ///< Profiles and deltas together, per connection, from
+                        ///< 1; ProfileCheck reports the last one applied.
+                        ///< (Version 66.)
+    OnlineRoster,       ///< u8 count (max 64), { str name, u16 level, str guild,
+                        ///< str location, u8 placed, [u8 realm, f32 x, f32 y if
+                        ///< placed != 0] }*. Live signed-in players for the
+                        ///< top-right roster and whole-map dots. `location` is
+                        ///< the biome label (empty on title / death). Readers
+                        ///< must consume `placed` and optional coords.
+    SquadInviteReceived, ///< str fromUsername, u8 fromGuild (0/1). Pending
+                        ///< squad invite for the top-left Accept/Decline toast.
+                        ///< Additive; older clients skip an unknown id.
+};
+
+// ---------------------------------------------------------------------------
+// MapGrid
+// ---------------------------------------------------------------------------
+//
+// One realm's tile grid, as JoinAccepted and RealmChange both carry it:
+//
+//   u8  realm          which coordinate space these tiles are (realm.h)
+//   u16 cols
+//   u16 rows           the map's own dimensions -- maps are not all one size
+//   u32 byteCount
+//   u8  bytes[]        the tiles, 0 Open or 1 Solid, run-length encoded
+//                      (terrain.h)
+//
+// The dimensions travel WITH the tiles because the client has no map file to
+// read them out of, and a grid interpreted at the wrong width is a world
+// sheared diagonally. The encoding is there because a raw grid of a large map
+// is a quarter of a megabyte -- far past the socket's backpressure ceiling.
+//
+// COLLISION ONLY. What a cell looks like is not on this wire at all: the
+// artwork is the map file's own tile layers, which the client reads out of the
+// staged data directory for itself (shared/game/tiled_map.h), and this grid is
+// the authoritative open/solid view the server collides with -- derived on
+// the server from which layers the author marked as colliding, so a client
+// never has to agree with one about it. Whether a shape is water is the map
+// file's to say, not this grid's. A generated realm (the arena, the maze)
+// sends 0x0 with an empty stream. (Version 21: one tile stream, where there
+// used to be two. Version 63: two values, where there used to be six.)
+
+/// What a notification announces. The stripe down a card's left edge is the
+/// only thing that distinguishes them. The TypeScript build carried the first
+/// five as a string tag (`super_craft`, `unique_craft`, `apex_craft`,
+/// `star_code`, and the generic stripe for anything else); UniversalCraft is
+/// this build's own.
+enum class NotificationKind : std::uint8_t {
+    Generic = 0,
+    SuperCraft,
+    UniqueCraft,
+    ApexCraft,
+    StarCode,
+    UniversalCraft,     ///< a universal forged at a titan (version 47)
+};
+
+/// What the Profile says about the account itself rather than its progress:
+/// the two facts the Account panel draws itself from. (Version 59.)
+enum AccountFlags : std::uint8_t {
+    /// A guest: the server made the account and named it, and its owner may
+    /// still pick a name (ClientMessage::SetUsername), once.
+    kAccountGuest = 1u << 0,
+    /// The owner has never chosen a password -- a guest's is a random one the
+    /// server keeps to itself -- so the session token is the only way into the
+    /// account, and ChangePassword does not ask for the current one.
+    kAccountNoPassword = 1u << 1,
+};
+
+/// Which shop action a ShopResult answers.
+enum class ShopResultKind : std::uint8_t { Purchase = 0, Redeem = 1 };
+
+enum class AuthStatus : std::uint8_t {
+    Ok = 0,
+    BadCredentials,
+    UsernameTaken,
+    UsernameInvalid,
+    PasswordInvalid,
+    SessionExpired,
+    AlreadyOnline,      ///< never sent: a second sign-in replaces the first
+                        ///< (ServerMessage::SessionReplaced) rather than being
+                        ///< refused. Kept so the statuses after it keep their
+                        ///< values.
+    RateLimited,
+    ServerError,
+};
+
+/// Who a chat line was said to, which is what the transcript tags it with and
+/// what its channel filters sort it by. A line on Squad, Guild or a whisper
+/// channel with no author is the server's own notice to that group.
+enum class ChatChannel : std::uint8_t {
+    Global = 0,        ///< everyone on the server
+    System = 1,        ///< the server answering, or announcing to, everyone
+    Squad = 2,
+    Guild = 3,
+    Whisper = 4,       ///< to this player alone; `author` is who sent it
+    WhisperSent = 5,   ///< the sender's copy of one; `author` is who it went to
+    Local = 6,         ///< the players whose screens show the speaker's flower
+    Admin = 7,         ///< an admin's announcement to everyone; `author` is the
+                       ///< admin's account name. Every client raises a banner
+                       ///< for it as well as filing it under its Admin tab.
+                       ///< (Version 50.)
+};
+enum class NoticeSeverity : std::uint8_t { Info = 0, Good = 1, Warning = 2, Bad = 3 };
+
+/// The longest announcement the Admin channel carries, in bytes of the text
+/// as typed. One number for both ends: the server refuses past it, and the
+/// dashboard's field stops taking keystrokes at it, so the two cannot drift
+/// into a box that lets a player type what the server will turn down.
+inline constexpr std::size_t kMaxAnnouncementBytes = 120;
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
+enum InputFlags : std::uint8_t {
+    InputAttack  = 1 << 0,
+    InputDefend  = 1 << 1,
+};
+
+/// One tick of intent from a client.
+///
+/// `sequence` is what lets the server drop a duplicated or reordered frame:
+/// one at or below the session's lastInputSequence is ignored. Snapshots used
+/// to echo the last one applied, for a client that predicted its own movement;
+/// it predicts nothing now, and version 53 took the echo off the wire.
+struct InputFrame {
+    std::uint32_t sequence = 0;
+    double moveAngle = 0;      ///< radians; meaningless when moveStrength is 0
+    double moveStrength = 0;   ///< 0..1, so an analogue stick can walk
+    double aimAngle = 0;       ///< radians, where the petals point
+    std::uint8_t flags = 0;
+
+    /// The window the client is actually drawing, in world units.
+    ///
+    /// It rides every input frame rather than being fixed at join because the
+    /// reference refreshes it from every input packet: a window resize or a
+    /// zoom change widens the drawn world, and a server still culling to the
+    /// join-time box would leave the new margins empty of entities that exist.
+    /// Zero on either axis means "unchanged", which is what an older client
+    /// that never learned to report it sends.
+    std::uint16_t viewportWidth = 0;
+    std::uint16_t viewportHeight = 0;
+
+    /// How far from the flower the pointer is, in world units, along
+    /// `aimAngle`. moveStrength cannot say: it saturates at
+    /// kFullSpeedCursorDistance, and a worn cursor walks pets to the pointer
+    /// itself (MobAiSystem::steerPet). Zero is "on the flower", which is what
+    /// a bot, which has no pointer, sends.
+    std::uint16_t aimDistance = 0;
+
+    void write(ByteWriter& w) const {
+        w.u32(sequence);
+        w.angle(moveAngle);
+        w.unitByte(moveStrength);
+        w.angle(aimAngle);
+        w.u8(flags);
+        w.u16(viewportWidth);
+        w.u16(viewportHeight);
+        w.u16(aimDistance);
+    }
+
+    static InputFrame read(ByteReader& r) {
+        InputFrame f;
+        f.sequence = r.u32();
+        f.moveAngle = r.angle();
+        f.moveStrength = r.unitByte();
+        f.aimAngle = r.angle();
+        f.flags = r.u8();
+        f.viewportWidth = r.u16();
+        f.viewportHeight = r.u16();
+        f.aimDistance = r.u16();
+        return f;
+    }
+
+    bool attacking() const { return (flags & InputAttack) != 0; }
+    bool defending() const { return (flags & InputDefend) != 0; }
+};
+
+// ---------------------------------------------------------------------------
+// Snapshots
+// ---------------------------------------------------------------------------
+//
+//   u32 tick, f64 nowMillis
+//   f32 x, f32 y                  the viewer's own position, always
+//   u8  SelfFields, then the self figures it names, in bit order
+//   u8  slot count, { slot report }*            (kMaxReportedSlots)
+//   u16 spawns, u16 updates, { spawn }*, { update }*
+//   u16 removals, { varU32 id gap }*
+//   u16 events, { event }*
+//
+// Every record in the spawn, update and removal lists is in ascending net id
+// order and names its entity by the GAP from the previous record's id in the
+// same list (the first from 0), as a varU32. Net ids are never reused, so on a
+// server that has been up a while they are in the millions -- four bytes as a
+// u32, three as a plain varint -- while the gap between two entities on one
+// screen is one byte or two. (Version 53.)
+
+/// How many of the viewer's own slots a snapshot can report on.
+///
+/// The block is written as
+/// `u8 count, { u8 slot, u16 reloadRemainingMillis, u8 healthFraction, u16 counter }*`
+/// rather than a fixed entry per slot, because a bar of untouched petals is by
+/// far the common case and costs one byte that way. A slot appears when it is
+/// reloading, when it is damaged, when it has a counter to print, or any
+/// combination -- they travel together because a clump does several at once,
+/// having lost a grain while the rest orbit on.
+///
+/// `counter` is the number the bar prints inside that slot's top border, and
+/// kNoSlotCounter is "this petal has no number", which is nearly all of them.
+/// Zero is a VALUE, not an absence: a sponge holding nothing prints 0, because
+/// a gauge that disappears when it reads empty is one the player cannot tell
+/// from a petal that never had one -- and a slot carrying a counter is
+/// therefore reported on every snapshot, idle or not. It is a whole number
+/// because the bar prints it as one.
+///
+/// It is STREAMED STATE, not one-shot break and damage events: a dropped event
+/// would leave the wedge stuck on a slot that reloaded long ago, or the tile
+/// drained on a petal back at full health, and the client has no way to notice.
+inline constexpr std::uint8_t kMaxReportedSlots = 10;
+
+/// A slot entry's `counter` when the petal in it has no number to print.
+/// Sentinel rather than zero, because zero is a number a sponge really does
+/// hold. A counter at the sentinel's own value is clamped one below it.
+inline constexpr std::uint16_t kNoSlotCounter = 0xFFFFu;
+
+/// Which of the viewer's own figures a snapshot restates. Each is sent when it
+/// differs from what this viewer was last sent, and in full on the first
+/// snapshot after the view resets; an absent one means "unchanged". Before
+/// version 53 all of them rode every snapshot, with an input echo and a
+/// velocity nothing read -- 45 of an idle snapshot's bytes, twenty times a
+/// second.
+enum SelfFields : std::uint8_t {
+    SelfHealth   = 1 << 0,   ///< f32 health, f32 maxHealth
+    SelfMana     = 1 << 1,   ///< f32 mana, f32 maxMana (0 max: no mana bar)
+    SelfProgress = 1 << 2,   ///< f64 totalXp, u16 level, f64 stars
+};
+
+/// What a networked entity is, which decides how the client draws it.
+enum class EntityKind : std::uint8_t {
+    Player = 0,
+    Mob,
+    Petal,
+    Projectile,
+    Drop,        ///< a dropped petal waiting to be picked up
+    Effect,      ///< a ground effect: poison cloud, web, lightning scar
+    /// An NPC. Its `typeIndex` is a MOB config -- an NPC wears a mob's
+    /// artwork, size and tier, which is what lets an admin spawn the same
+    /// creature as an enemy -- but it is not a mob: its health never moves, so
+    /// its plate carries an invulnerable bar, and the client offers the
+    /// service its config names to a flower that walks up to it. See
+    /// shared/game/npc.h.
+    Npc,
+};
+
+/// Immutable per-entity facts, sent once when an entity first enters view.
+///
+/// A Player record additionally carries u8 face flags, u16 equipment flags,
+/// u32 render flags, u16 level, u8 best-loadout rarity, u32 arena score
+/// (zero outside the PVP ring, where nothing keeps one), u8 shield in 255ths
+/// of max health and the str id of the custom skin that flower is wearing,
+/// "" for none; a Petal record
+/// carries the u32 net id of the flower it orbits, which is what lets the
+/// client anchor a ring to the DRAWN owner rather than to a snapshot-old one;
+/// an Npc record carries u8 recipe, the index into its mob's `npc.recipes` of
+/// the one recipe an assembler makes (0 for any other NPC). (Version 55.)
+enum SpawnFlags : std::uint8_t {
+    SpawnHasName    = 1 << 0,   ///< a player name follows
+    SpawnIsSelf     = 1 << 1,   ///< this is the viewer's own body
+    /// A summoned ally, drawn with an owner tint. Also set on a Projectile
+    /// record a pet fired, so the client can file the shot with its shooter
+    /// rather than with the petals. (Projectiles since version 42.)
+    SpawnIsPet      = 1 << 2,
+    /// This record's health fraction is an f32 rather than a u16. See
+    /// healthFieldIsWide(): it is the pool that decides, not the kind.
+    SpawnHealthWide = 1 << 3,
+    /// A Petal record that is a seat on a MOB's ring rather than one of a
+    /// flower's own. It is drawn turned to its outward bearing -- gardn's
+    /// kFollowRot, which is what points a dandelion seed's stem back into the
+    /// body -- and sized from the radius the server replicated for it rather
+    /// than from its config, because a bigger mob carries bigger seeds.
+    ///
+    /// A flag rather than a lookup through the owner: the client would have to
+    /// have already spawned the owner to ask what kind it is, and a spawn
+    /// record has to decode on its own.
+    SpawnRingPetal  = 1 << 4,
+    /// A Petal record that is a loose body on the ground -- wax -- rather
+    /// than a place on its flower's ring. It is smoothed in the WORLD, not in
+    /// its owner's frame: it stands still while the flower walks away, and
+    /// anchoring it to the drawn owner would drag it along by the easing gap.
+    /// Sized from the replicated radius, which grows with its tier, and drawn
+    /// on the ground under everything that moves.
+    SpawnLoosePetal = 1 << 5,
+    /// Somebody else's: a flower's petal, a pet, or a shot either one fired,
+    /// belonging to a player who is not the viewer. Worked out per VIEWER,
+    /// like SpawnIsSelf, and by connection as well as by body -- a splitter's
+    /// parked half is the viewer's own, and so is everything it owns. Never
+    /// set on a wild mob's things; a mob's ring seed is not a flower's petal.
+    /// It is what Settings' Hide Other Petals and Hide Other Pets read, with
+    /// SpawnIsPet telling the two apart. (Version 42.)
+    SpawnForeign    = 1 << 6,
+    /// A mob a sacrifice summoned -- or a body segment or ring seed of one. It
+    /// keeps its colour under its ritual's grey star, which greys every other
+    /// mob under it. (Version 52.)
+    SpawnSacrificed = 1 << 7,
+};
+
+// ---------------------------------------------------------------------------
+// The health fraction
+// ---------------------------------------------------------------------------
+//
+// A bar is read as a proportion, so a fraction is what goes on the wire -- but
+// the pool it is a proportion OF runs from 35 points on a common bee to 2e11
+// on an apex digger, and one width cannot serve both. A u16 splits the bar
+// into 65535 parts: exact to the point of health on anything up to that many
+// points, and blind to a whole petal hit above it.
+//
+// So the width travels WITH the record, chosen per entity from its own pool.
+// Self-describing rather than re-derived on the client: an update names an
+// entity the client may not have spawned yet, and a reader that had to look up
+// a pool before it knew how many bytes to consume would lose the rest of the
+// frame the one time it guessed wrong.
+
+/// Whether a pool this size needs the wide field.
+///
+/// The rule is ONE STEP PER POINT OF HEALTH, wherever that is affordable. A
+/// u16's 65535 steps do exactly that for any pool of 65535 or fewer points --
+/// which is every mob up to and including legendary, every flower, and every
+/// petal -- and those are the overwhelming majority of what is ever on screen.
+/// Above it the f32 takes over.
+inline bool healthFieldIsWide(double maxHealth) { return maxHealth > 65535.0; }
+
+/// The wide field carries what is MISSING from the bar, not what is left.
+///
+/// Both are the same f32 and the same four bytes; the difference is where the
+/// mantissa's precision sits. A float's steps are relative to the value it
+/// holds, so `1 - fraction` resolves finely near ZERO -- which is a full bar,
+/// exactly where a huge pool needs it: the first petal hit on an apex mob
+/// takes a millionth of it, and as a fraction-of-max near 1.0 that rounds
+/// clean away, while as a missing-fraction near 0 it survives with seven
+/// digits to spare. The trade is resolution on an almost-empty bar, where the
+/// mob is a sliver about to die and nobody is reading the exact number.
+inline double quantizeHealthFraction(double fraction, bool wide) {
+    const double clamped = clamp(fraction, 0.0, 1.0);
+    if (wide) return 1.0 - static_cast<double>(static_cast<float>(1.0 - clamped));
+    return static_cast<double>(static_cast<std::uint16_t>(clamped * 65535.0 + 0.5)) / 65535.0;
+}
+
+/// Writes a fraction at the chosen width, returning the value the CLIENT will
+/// hold once it reads it back.
+///
+/// The return is the point of the function: the sender tracks what it has told
+/// each client so it can send only changes, and tracking the unrounded double
+/// would have it re-send a value that decodes to exactly what the client
+/// already has, every snapshot, forever.
+inline double writeHealthFraction(ByteWriter& out, double fraction, bool wide) {
+    const double clamped = clamp(fraction, 0.0, 1.0);
+    if (wide) out.f32(static_cast<float>(1.0 - clamped));
+    else out.u16(static_cast<std::uint16_t>(clamped * 65535.0 + 0.5));
+    return quantizeHealthFraction(clamped, wide);
+}
+
+/// Reads back what writeHealthFraction wrote. `wide` comes from the record's
+/// own flag or mask bit, never from anything the reader has to look up.
+inline double readHealthFraction(ByteReader& in, bool wide) {
+    return wide ? 1.0 - static_cast<double>(in.f32()) : in.unitShort();
+}
+
+/// Which mutable fields a snapshot carries for one entity this tick.
+///
+/// The mask exists because most entities change one or two of these per tick:
+/// a drifting mob moves, a full-health petal does not, and a corpse changes
+/// nothing at all. Sending the mask costs a byte and saves the rest.
+enum UpdateFields : std::uint8_t {
+    /// f32 x, f32 y -- or, with FieldPositionDelta, the move from the last
+    /// position sent.
+    FieldPosition = 1 << 0,
+    FieldAngle    = 1 << 1,   ///< u16 quantised
+    /// Fraction of max: u16, or f32 when FieldHealthWide rides with it.
+    ///
+    /// The sender compares this field at the width it is about to send in, so
+    /// it costs nothing at all until something is actually hurt -- and then it
+    /// costs whatever it takes to describe the hit. See healthFieldIsWide().
+    FieldHealth   = 1 << 2,
+    FieldState    = 1 << 3,   ///< u8 EntityState bits
+    FieldSize     = 1 << 4,   ///< f32 radius; changes only on level-up or growth
+    /// u8 face flags, u16 equipment flags, u32 render/skin flags, u16 level,
+    /// u8 best loadout rarity, u32 arena score, u8 shield (255ths of MAX
+    /// health; the white pill rides the health bar, so that is the scale it
+    /// has to be measured in), str equipped custom-skin id ("" for none).
+    /// Set only for players; the payload remains self-contained for decoding.
+    FieldPlayerVisuals = 1 << 5,
+    /// Modifies FieldHealth: the fraction is an f32, not a u16. Meaningless
+    /// on its own, and never set without FieldHealth.
+    FieldHealthWide = 1 << 6,
+    /// Modifies FieldPosition: i16 dx, i16 dy in 1/kPositionDeltaScale units,
+    /// added to the position the client last decoded for this entity -- its
+    /// authoritative one, never the eased one it draws. Half the bytes of
+    /// the absolute form, and nearly every update is a position. Used when the
+    /// move fits the i16 range, which a snapshot interval's move always does
+    /// short of a teleport; the absolute form covers the rest. The sender
+    /// tracks the sum the client will hold, so rounding never accumulates.
+    /// (Version 53.)
+    FieldPositionDelta = 1 << 7,
+};
+
+/// FieldPositionDelta's resolution: 1/32 of a unit, which is finer than the
+/// position tolerance (ReplicationTolerances::position), and reaches 1024
+/// units either way.
+inline constexpr double kPositionDeltaScale = 32.0;
+
+/// Transient visual state, refreshed whenever FieldState is set.
+///
+/// The server sets every bit (computeEntityState in server/replication.cpp),
+/// but the client reads only five of them: Invulnerable, Unloaded, Dead,
+/// Chasing and PadCharging. Hurt, Poisoned, Slowed, Defending and Attacking
+/// are sent, and nothing on the client draws from them today.
+enum EntityState : std::uint8_t {
+    StateHurt      = 1 << 0,   ///< took damage recently (Health::flashUntilMillis);
+                               ///< no client draws a flash from it
+    StatePoisoned  = 1 << 1,
+    StateSlowed    = 1 << 2,
+    StateInvulnerable = 1 << 3,
+    StateDefending = 1 << 4,   ///< a flower's petals pulled in
+    /// A stinger mob whose missile has just left and is not loaded yet. Its
+    /// sting IS the missile, so the client draws none until this clears and
+    /// slides it back out of the tail meanwhile. Shares the bit with
+    /// StateDefending, which only a flower sets -- the byte is full, and the
+    /// two can never be on the same record. (Version 49.)
+    StateUnloaded  = 1 << 4,
+    StateAttacking = 1 << 5,   ///< a flower's petals pushed out
+    /// A sacrifice's ritual (Effect of kind Sacrifice) whose pentagram is
+    /// complete and whose mob is out: drawn whole, not traced. Shares the bit
+    /// with StateAttacking, which only a flower sets. (Version 52.)
+    StateRitualComplete = 1 << 5,
+    StateDead      = 1 << 6,   ///< playing its death animation
+    /// A mob that has locked on. Costs no bytes -- it rides in the state byte
+    /// that was already being sent -- and is what makes a chasing bug beat its
+    /// wings at twice the rate an idle one does.
+    StateChasing   = 1 << 7,
+    /// A flower charging up on a teleporter pad: standing on one that is not
+    /// the pad it just came out of (TeleporterState). Its body spins while
+    /// this is set. Shares the bit with StateChasing, which only a mob sets.
+    /// (Version 62.)
+    StatePadCharging = 1 << 7,
+};
+
+/// `flag` bits on a Damage event. Poison is called out because the client
+/// shows a poison tick in its own purple, nudged sideways so it cannot stack
+/// on the petal hit that landed in the same tick -- as the TypeScript build
+/// did.
+enum DamageEventFlags : std::uint8_t {
+    /// Set by nothing and read by nothing: a claw's crit bonus (critDamage)
+    /// lands as an ordinary hit.
+    DamageCritical = 1 << 0,
+    DamagePoison   = 1 << 1,
+    /// A lightning strike's damage, which the client paints cyan.
+    ///
+    /// It rides the flag byte rather than being inferred from the Lightning
+    /// event beside it: the strike names where it LANDED and which bodies it
+    /// drew arms to, not what each of them lost, and pairing the two on the
+    /// client would mean matching a position against an entity that the same
+    /// tick may already have killed. The bit costs nothing -- the byte was
+    /// being sent anyway.
+    DamageLightning = 1 << 2,
+    /// The flower RECEIVING this snapshot dealt the hit -- its body, its
+    /// petals, its shots, its pets, its poison; either half of a split. Set per
+    /// viewer by the replicator, so the same hit reads as yours on your wire
+    /// and as someone else's on theirs. A target dummy's DPS readout counts
+    /// these and nothing else: it is a measure of YOUR build, and a dummy three
+    /// people are hitting would otherwise report the three of them.
+    DamageByViewer = 1 << 3,
+    /// The hit landed outside the receiving flower's view, and is on its wire
+    /// only because the body it struck is a squadmate: it flashes the party
+    /// HUD's avatar and puts no number in the world. Set per viewer by the
+    /// replicator, like DamageByViewer.
+    DamageOffView = 1 << 4,
+    /// The body struck is one nothing numbers -- a flower's petal, a seed on a
+    /// mob's ring, a shot -- and the event is only there to flash it. On the
+    /// wire of the flower WEARING the petal, `otherNetId` is 1 + the loadout
+    /// slot it is in, so the bar flashes that tile too; 0 everywhere else. A
+    /// killing blow is sent only to that wearer, for the tile: nothing of the
+    /// petal is left in the world to flash.
+    DamageFlashOnly = 1 << 5,
+};
+
+/// One-off things that happened this tick, for effects the client can play
+/// without the server streaming per-frame animation state.
+///
+/// The ids are positional, so a kind nothing produces any more keeps its
+/// place: deleting it would renumber every kind after it. Four are like that
+/// -- Heal, PetalBroke, LevelUp and Explosion.
+enum class EventKind : std::uint8_t {
+    /// u32 netId, f32 amount, u8 DamageEventFlags -- the floating number --
+    /// and, in the f32 `radius` no hit has, the share of the victim's max
+    /// health the hit took, which sets how hard the client flashes the body.
+    Damage = 0,
+    Heal,           ///< u32 netId, u16 amount. Never produced, and the client
+                    ///< no longer reads it.
+    PetalBroke,     ///< u32 ownerNetId, u8 slot. Never produced: a slot's
+                    ///< breaks and reloads are streamed state instead (see
+                    ///< kMaxReportedSlots).
+    Killed,         ///< u32 netId  -- pop/particles at its last position
+    /// A drop was collected: u32 dropNetId, u32 byNetId, and -- in the fields
+    /// no other use of this kind has -- f32 amount carrying the drop's PETAL
+    /// INDEX and u8 flag its RARITY, at `position`.
+    ///
+    /// The look rides along because the client may never have held the drop.
+    /// Magnetism is a pickup radius, so loot that lands inside it is taken on
+    /// the tick it spawned, before any snapshot could carry the entity: an
+    /// apex observer alone is a 437-unit reach, and a magnet petal 2187. A cue
+    /// that named only the id would be unplayable for exactly the flowers that
+    /// pick up the most.
+    PickedUp,
+    LevelUp,        ///< u32 netId, u16 newLevel. Never produced: a level
+                    ///< travels as streamed state (FieldPlayerVisuals, and
+                    ///< the viewer's own block).
+    Explosion,      ///< f32 x, f32 y, f32 radius, u8 colorIndex. Never
+                    ///< produced by this server, though the client still
+                    ///< draws one at `position` with `radius`.
+    /// A lightning strike: `position` is where it landed and `radius` its
+    /// reach. The ONLY event with a variable tail -- u8 count, then that many
+    /// f32 x, f32 y -- because a bolt is drawn to each mob the strike hit and
+    /// the client has no way to work out which those were: the strike's damage
+    /// is resolved a tick later, by which time the dead are gone.
+    Lightning,
+};
+
+/// How many struck mobs ride a Lightning event.
+///
+/// A strike into an admin-spawned pile hits as many mobs as the pile holds, and
+/// every one of them would be eight bytes on every viewer's wire. Past a couple
+/// of dozen the bolts overlap into a solid white patch, so the ones beyond the
+/// cap buy nothing that can be seen. The set kept is the NEAREST, which is a
+/// disc around the strike -- the shape the effect should have anyway.
+inline constexpr std::size_t kMaxLightningTargets = 24;
+
+// ---------------------------------------------------------------------------
+// Content hash
+// ---------------------------------------------------------------------------
+
+/// FNV-1a over the config files both sides load.
+///
+/// Mob and petal stats are read from JSON at startup by BOTH the server and
+/// the client (the client needs names, colours and artwork). If the two read
+/// different files, every stat the client shows is quietly wrong. Hashing the
+/// bytes at load and comparing them in the handshake turns that into an
+/// explicit "your content is out of date" at connect time.
+inline std::uint32_t contentHash(const std::string& text, std::uint32_t seed = 2166136261u) {
+    std::uint32_t h = seed;
+    for (const unsigned char c : text) {
+        h ^= c;
+        h *= 16777619u;
+    }
+    return h;
+}
+
+// ---------------------------------------------------------------------------
+// Profile check
+// ---------------------------------------------------------------------------
+
+/// How often a signed-in client sends ClientMessage::ProfileCheck.
+inline constexpr double kProfileCheckMillis = 2000.0;
+
+/// A fingerprint of the bag and the bar as a Profile carries them, folded the
+/// same way at both ends: by the client over the Profile it last read, and by
+/// the server over the record it would send now.
+///
+/// Order-free on purpose. Each stack is mixed on its own and the mixes are
+/// SUMMED, so the server's dictionary order and the client's list order cannot
+/// matter; a slot mixes in its own index, so the bar's order does. It detects
+/// drift and is not a security boundary: every request that spends a petal is
+/// checked against the server's record whatever a client says this is.
+class ProfileDigest {
+public:
+    void stack(std::uint16_t petalIndex, std::uint8_t rarity, std::uint32_t count) {
+        sum_ += mix((std::uint64_t{1} << 56) | (std::uint64_t{rarity} << 48) |
+                    (std::uint64_t{petalIndex} << 32) | count);
+    }
+    void slot(std::size_t slot, std::uint16_t petalIndex, std::uint8_t rarity) {
+        sum_ += mix((std::uint64_t{2} << 56) | ((std::uint64_t{slot} & 0xFFFFu) << 32) |
+                    (std::uint64_t{rarity} << 16) | petalIndex);
+    }
+    std::uint32_t value() const {
+        const std::uint64_t h = mix(sum_);
+        return static_cast<std::uint32_t>(h ^ (h >> 32));
+    }
+
+private:
+    /// splitmix64's finaliser: every input bit reaches every output bit, so
+    /// one stack's count moving by one changes the whole sum.
+    static std::uint64_t mix(std::uint64_t x) {
+        x += 0x9E3779B97F4A7C15ull;
+        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+        x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+        return x ^ (x >> 31);
+    }
+    std::uint64_t sum_ = 0;
+};
+
+} // namespace flix::net

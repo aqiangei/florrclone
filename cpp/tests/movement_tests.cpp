@@ -1,0 +1,1372 @@
+#include "test.h"
+
+#include "server/systems/movement.h"
+#include "server_harness.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+using namespace flix;
+
+namespace {
+
+const double kNan = std::numeric_limits<double>::quiet_NaN();
+
+/// One world, one map, one system, driven a tick at a time.
+///
+/// Every test builds its own: MovementSystem caches queries against the World
+/// it is handed, and sharing one across fixtures is exactly the mistake the
+/// rebind path exists to survive -- so it gets its own test rather than being
+/// baked into every other one.
+struct Fixture {
+    World world;
+    Terrain terrain;
+    MovementSystem movement;
+    double nowMillis = 0;
+
+    Entity spawnPlayer(Vec2 at) {
+        const Entity e = world.create();
+        world.add<PlayerTag>(e);
+        world.add<Transform>(e, Transform{at, 0});
+        world.add<Motion>(e, Motion{});
+        world.add<Body>(e, Body{kPlayerBaseRadius, 1.0});
+        world.add<PlayerInput>(e, PlayerInput{});
+        world.add<Knockback>(e, Knockback{});
+        world.add<PlayerModifiers>(e, PlayerModifiers{});
+        world.add<Afflictions>(e, Afflictions{});
+        world.add<Health>(e, Health{100, 100, 0, 0});
+        world.add<Faction>(e, Faction{Team::Players, false});
+        return e;
+    }
+
+    Entity spawnMob(Vec2 at, double radius = 20.0, double mass = 1.0) {
+        const Entity e = world.create();
+        world.add<MobTag>(e);
+        world.add<Transform>(e, Transform{at, 0});
+        world.add<Motion>(e, Motion{});
+        world.add<Body>(e, Body{radius, mass});
+        world.add<Knockback>(e, Knockback{});
+        world.add<Afflictions>(e, Afflictions{});
+        world.add<Health>(e, Health{100, 100, 0, 0});
+        world.add<Faction>(e, Faction{Team::Hostiles, false});
+        return e;
+    }
+
+    Entity spawnProjectile(Vec2 at, Vec2 velocity, double range,
+                           double seekRange = 0, double seekCone = 0) {
+        const Entity e = world.create();
+        world.add<ProjectileTag>(e);
+        world.add<Transform>(e, Transform{at, velocity.angle()});
+        world.add<Motion>(e, Motion{velocity});
+        Projectile p;
+        p.damage = 10;
+        p.remainingDistance = range;
+        p.seekRange = seekRange;
+        p.seekCone = seekCone;
+        world.add<Projectile>(e, p);
+        world.add<Faction>(e, Faction{Team::Players, false});
+        return e;
+    }
+
+    /// The same shot with a weave on it -- what a wasp throws.
+    Entity spawnWeavingProjectile(Vec2 at, Vec2 velocity, double range, double amplitude,
+                                  double frequency) {
+        const Entity e = spawnProjectile(at, velocity, range);
+        Projectile& p = world.get<Projectile>(e);
+        p.waveAmplitude = amplitude;
+        p.waveFrequency = frequency;
+        return e;
+    }
+
+    /// A loose petal as the petal system puts one down: solid, on the ground,
+    /// with the mass its radius buys and no Motion of its own.
+    Entity spawnLoose(Vec2 at, double radius) {
+        const Entity e = world.create();
+        world.add<PetalTag>(e);
+        world.add<LoosePetal>(e);
+        world.add<Transform>(e, Transform{at, 0});
+        world.add<Body>(e, Body{radius, kLoosePetalMass});
+        return e;
+    }
+
+    void drive(Entity e, double angle, double strength) {
+        PlayerInput& input = world.get<PlayerInput>(e);
+        input.current.moveAngle = angle;
+        input.current.moveStrength = strength;
+    }
+
+    void step(int ticks = 1, double dt = net::kTickSeconds) {
+        for (int i = 0; i < ticks; ++i) {
+            movement.run(world, terrain, nowMillis, dt);
+            nowMillis += dt * 1000.0;
+        }
+    }
+
+    Vec2 positionOf(Entity e) { return world.get<Transform>(e).position; }
+    Vec2 velocityOf(Entity e) { return world.get<Motion>(e).velocity; }
+
+    /// A full-height wall at tile column `tx`, i.e. x in
+    /// [tx*kTileSize, (tx+1)*kTileSize).
+    void wallColumn(int tx) {
+        for (int ty = 0; ty < terrain.tileRows(); ++ty) terrain.setTile(tx, ty, Tile::Solid);
+    }
+};
+
+/// The faces of the wall every test here paints, written from kTileSize rather
+/// than spelled out: the cell size lives in constants.h and nowhere else, so a
+/// change to it moves these tests with it instead of failing them.
+constexpr double kWallWest = 10.0 * kTileSize;
+constexpr double kWallEast = 11.0 * kTileSize;
+constexpr double kWallMid = (kWallWest + kWallEast) * 0.5;
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Players
+// ---------------------------------------------------------------------------
+
+TEST(player_accelerates_to_terminal_velocity_and_coasts_to_rest) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({3000, 3000});
+    fx.drive(player, 0.0, 1.0);
+    fx.step(200);
+
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 0.5);
+    CHECK_NEAR(fx.velocityOf(player).y, 0.0, 1e-9);
+    CHECK(fx.positionOf(player).x > 3000.0);
+
+    // Releasing the cursor decays under friction; it does not stop dead.
+    const Vec2 released = fx.positionOf(player);
+    fx.drive(player, 0.0, 0.0);
+    fx.step(1);
+    CHECK(fx.velocityOf(player).x < kPlayerMaxSpeed);
+    CHECK(fx.velocityOf(player).x > 0.0);
+    fx.step(200);
+    CHECK_NEAR(fx.velocityOf(player).length(), 0.0, 0.01);
+    // ...and it drifted a little further before settling.
+    CHECK(fx.positionOf(player).x > released.x);
+}
+
+TEST(partial_move_strength_walks_instead_of_sprinting) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({3000, 3000});
+    fx.drive(player, 0.0, 0.5);
+    fx.step(200);
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed * 0.5, 0.5);
+}
+
+TEST(movement_velocity_is_frame_rate_independent) {
+    Fixture coarse, fine;
+    const Entity a = coarse.spawnPlayer({3000, 3000});
+    const Entity b = fine.spawnPlayer({3000, 3000});
+    coarse.drive(a, 0.0, 1.0);
+    fine.drive(b, 0.0, 1.0);
+
+    // One second, in five 200ms steps versus twenty-five 40ms ones.
+    coarse.step(5, 0.2);
+    fine.step(25, 0.04);
+    CHECK_NEAR(coarse.velocityOf(a).x, fine.velocityOf(b).x, 1e-9);
+
+    // Position integration is explicit Euler, so the two disagree DURING the
+    // acceleration transient -- the coarse step spends the whole 200ms at the
+    // velocity it ended with. Once both are at terminal velocity they cover
+    // ground at the same rate, which is what the player actually feels.
+    const double coarseStart = coarse.positionOf(a).x;
+    const double fineStart = fine.positionOf(b).x;
+    coarse.step(5, 0.2);
+    fine.step(25, 0.04);
+    CHECK_NEAR(coarse.positionOf(a).x - coarseStart, fine.positionOf(b).x - fineStart, 0.5);
+}
+
+TEST(speed_modifier_scales_the_target_not_the_momentum) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({3000, 3000});
+    fx.world.get<PlayerModifiers>(player).speedScale = 1.5;
+    fx.drive(player, 0.0, 1.0);
+    fx.step(200);
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed * 1.5, 0.5);
+
+    // A ludicrous modifier is capped rather than obeyed: past the cap a
+    // flower would outrun the substep budget and start clipping walls.
+    fx.world.get<PlayerModifiers>(player).speedScale = 1e6;
+    fx.step(400);
+    CHECK(fx.velocityOf(player).length() <= kPlayerMaxSpeed * 8.0 + 1.0);
+}
+
+TEST(an_unset_or_corrupt_speed_modifier_means_unmodified) {
+    Fixture fx;
+    const Entity zeroed = fx.spawnPlayer({3000, 3000});
+    const Entity broken = fx.spawnPlayer({3000, 6000});
+    // A zero -- what an entity carried before any phase recomputed it, back
+    // when Archetype::addRow zero-filled its columns (it default-constructs
+    // them now; see world.cpp) -- and a NaN, which is what a corrupt one reads
+    // as.
+    fx.world.get<PlayerModifiers>(zeroed).speedScale = 0.0;
+    fx.world.get<PlayerModifiers>(broken).speedScale = kNan;
+    fx.drive(zeroed, 0.0, 1.0);
+    fx.drive(broken, 0.0, 1.0);
+    fx.step(200);
+
+    // Nothing in the game roots a player, so neither reading may freeze one.
+    CHECK_NEAR(fx.velocityOf(zeroed).x, kPlayerMaxSpeed, 0.5);
+    CHECK_NEAR(fx.velocityOf(broken).x, kPlayerMaxSpeed, 0.5);
+    CHECK(std::isfinite(fx.positionOf(broken).x));
+}
+
+TEST(a_slow_never_reaches_a_flowers_top_speed) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({3000, 3000});
+    Afflictions& afflictions = fx.world.get<Afflictions>(player);
+    afflictions.slowFactor = 0.25;
+    afflictions.slowUntilMillis = 5000.0;   // fx.nowMillis starts at 0
+    fx.drive(player, 0.0, 1.0);
+
+    // A slow is a MOB affliction over there: its one writer scales a `Speed`
+    // component, a flower has no such component, and the flower's own movement
+    // is `MAX_SPEED * speedFactor` with no slow term anywhere in it. So a
+    // player standing in a web runs at full speed even where an orphaned field
+    // has stamped an Afflictions on them -- and the water penalty below is the
+    // only environmental brake a flower has.
+    fx.step(60);                            // well inside the stall window
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 0.5);
+    fx.step(200);
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 0.5);
+}
+
+TEST(a_mobs_web_holds_a_flower_to_its_slow_and_then_lets_go) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({3000, 3000});
+    Afflictions& afflictions = fx.world.get<Afflictions>(player);
+    afflictions.webbedFactor = 0.5;
+    afflictions.webbedUntilMillis = 5000.0;   // fx.nowMillis starts at 0
+    fx.drive(player, 0.0, 1.0);
+
+    // gardn's web halves speed_ratio, which halves the flower's terminal
+    // speed; the friction integrator settles on it well inside two seconds.
+    fx.step(60);
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed * 0.5, 0.5);
+    // Released when the hold lapses, back to full speed.
+    fx.step(200);
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 0.5);
+}
+
+TEST(the_aim_angle_is_the_aim_and_the_walk_heading_is_the_facing) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({3000, 3000});
+    fx.world.get<PlayerInput>(player).current.aimAngle = kPi * 0.5;
+    fx.step(1);
+    // The aim is the frame's own angle, left exactly as the client sent it.
+    CHECK_NEAR(fx.world.get<PlayerInput>(player).current.aimAngle, kPi * 0.5, 1e-12);
+    // The FACING is not the aim. The reference writes `Math.atan2` of the
+    // movement it is about to apply, and leaves the angle untouched when there
+    // is no movement, so a flower standing still keeps the heading it stopped
+    // on rather than swivelling after a mouse it never followed.
+    CHECK_NEAR(fx.world.get<Transform>(player).angle, 0.0, 1e-12);
+
+    fx.drive(player, kPi * 0.5, 1.0);
+    fx.step(1);
+    CHECK_NEAR(fx.world.get<Transform>(player).angle, kPi * 0.5, 1e-12);
+
+    // Held, not reset, once the input stops.
+    fx.drive(player, 0.0, 0.0);
+    fx.step(5);
+    CHECK_NEAR(fx.world.get<Transform>(player).angle, kPi * 0.5, 1e-12);
+}
+
+// ---------------------------------------------------------------------------
+// Knockback
+// ---------------------------------------------------------------------------
+
+TEST(a_flowers_knockback_is_spent_as_momentum_over_the_same_distance) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({5000, 5000});
+    const double startX = fx.positionOf(player).x;
+    fx.world.get<Knockback>(player).impulse = {600, 0};
+
+    // Not in one tick: a jump that size, with the camera pinned to the flower,
+    // shakes the whole screen. The shove becomes velocity that the walking
+    // friction spends, so the first tick covers only part of it...
+    fx.step(1);
+    const double firstTick = fx.positionOf(player).x - startX;
+    CHECK(firstTick > 0.0);
+    CHECK(firstTick < 600.0 * 0.5);
+    CHECK(fx.velocityOf(player).x > 0.0);
+    CHECK_NEAR(fx.world.get<Knockback>(player).impulse.x, 0.0, 1e-12);
+
+    // ...and the flower comes to rest the full distance away.
+    fx.step(90);
+    CHECK_NEAR(fx.positionOf(player).x, startX + 600.0, 0.01);
+    CHECK_NEAR(fx.velocityOf(player).x, 0.0, 0.01);
+}
+
+TEST(a_mobs_knockback_is_spent_as_a_recoil_and_leaves_its_velocity_alone) {
+    Fixture fx;
+    const Entity light = fx.spawnMob({5000, 5000}, 20.0, 1.0);
+    const Entity heavy = fx.spawnMob({5000, 6000}, 20.0, 4.0);
+
+    // Combat has already divided by mass when it writes the offset, so the
+    // movement pass applies what it is handed, whatever the body weighs --
+    // over several ticks, the way gardn's friction spends a shove, rather than
+    // in one jump the client would replay as a teleport.
+    fx.world.get<Knockback>(light).impulse = {40, 0};
+    fx.world.get<Knockback>(heavy).impulse = {0, -10};
+    fx.step(1);
+
+    const double kept = std::pow(kKnockbackSpendDecay, net::kTickSeconds * kKnockbackSpendRate);
+    CHECK_NEAR(fx.positionOf(light).x, 5000.0 + 40.0 * (1.0 - kept), 1e-9);
+    CHECK_NEAR(fx.positionOf(light).y, 5000.0, 1e-9);
+    CHECK_NEAR(fx.positionOf(heavy).y, 6000.0 - 10.0 * (1.0 - kept), 1e-9);
+
+    fx.step(60);
+    CHECK_NEAR(fx.positionOf(light).x, 5040.0, kKnockbackSettleDistance);
+    CHECK_NEAR(fx.positionOf(heavy).y, 5990.0, kKnockbackSettleDistance);
+    // Spent, and not turned into momentum: the AI owns a mob's velocity.
+    CHECK_NEAR(fx.world.get<Knockback>(light).impulse.x, 0.0, 1e-12);
+    CHECK_NEAR(fx.velocityOf(light).length(), 0.0, 1e-12);
+
+    // Settled: nothing left owed, so it stays where the recoil left it.
+    const double settled = fx.positionOf(light).x;
+    fx.step(10);
+    CHECK_NEAR(fx.positionOf(light).x, settled, 1e-12);
+}
+
+TEST(a_stationary_mob_is_not_moved_by_knockback) {
+    Fixture fx;
+    const Entity nest = fx.spawnMob({5000, 5000});
+    MobAi ai;
+    ai.kind = AiKind::Stationary;
+    fx.world.add<MobAi>(nest, ai);
+
+    fx.world.get<Knockback>(nest).impulse = {50, 0};
+    fx.step(1);
+    CHECK_NEAR(fx.positionOf(nest).x, 5000.0, 1e-12);
+    // Spent all the same, so it cannot land later on a mob that changed.
+    CHECK_NEAR(fx.world.get<Knockback>(nest).impulse.x, 0.0, 1e-12);
+}
+
+TEST(knockback_cannot_put_a_mob_through_a_wall) {
+    Fixture fx;
+    fx.wallColumn(10);                       // x in [kWallWest, kWallEast)
+    const Entity mob = fx.spawnMob({kWallWest - 30.0, 5000}, 20.0, 1.0);
+
+    // Enough to carry the whole body clear of the far face if nothing stopped
+    // it.
+    fx.world.get<Knockback>(mob).impulse = {400, 0};
+    fx.step(1);
+
+    // Against the face: a mob meets walls as a point, so its body overlaps
+    // the wall it was shoved into, but its centre never enters it.
+    const Vec2 at = fx.positionOf(mob);
+    CHECK(!fx.terrain.blocked(at, Realm::Overworld));
+    CHECK(at.x <= kWallWest - kMobWallRadius + 1e-6);
+    CHECK(at.x > kWallWest - 1.0);
+}
+
+TEST(a_nonsense_impulse_is_dropped_rather_than_propagated) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({5000, 5000});
+    fx.world.get<Knockback>(player).impulse = {kNan, 1e300};
+    fx.step(3);
+    CHECK(std::isfinite(fx.positionOf(player).x));
+    CHECK(std::isfinite(fx.positionOf(player).y));
+    CHECK_NEAR(fx.positionOf(player).x, 5000.0, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Tile collision
+// ---------------------------------------------------------------------------
+
+TEST(a_player_driven_at_a_wall_stops_against_it) {
+    Fixture fx;
+    fx.wallColumn(10);                       // x in [kWallWest, kWallEast)
+    const Entity player = fx.spawnPlayer({2000, 5000});
+    fx.drive(player, 0.0, 1.0);
+    fx.step(200);
+
+    const Vec2 at = fx.positionOf(player);
+    CHECK(!fx.terrain.blocked(at, Realm::Overworld));
+    // Resting against the tile's flat face: the edge a wall is drawn with
+    // lies inside the tile, so the rectangle is where the body stops.
+    CHECK(at.x <= kWallWest - kPlayerBaseRadius + 1e-6);
+    CHECK(at.x >= kWallWest - kPlayerBaseRadius - 0.1);
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 1.0);
+}
+
+TEST(a_wall_removes_only_the_velocity_that_points_into_it) {
+    Fixture fx;
+    fx.wallColumn(10);
+    const Entity player = fx.spawnPlayer({kWallWest - 100.0, 5000});
+    fx.drive(player, kPi * 0.25, 1.0);       // hard into the wall, and +y
+    fx.step(60);
+
+    CHECK(!fx.terrain.blocked(fx.positionOf(player), Realm::Overworld));
+    CHECK(fx.positionOf(player).x <= kWallWest - kPlayerBaseRadius + 1e-6);
+    // Sliding: the tangential half of the input survives the contact.
+    CHECK(fx.positionOf(player).y > 5100.0);
+    CHECK(fx.velocityOf(player).y > kPlayerMaxSpeed * 0.5);
+}
+
+TEST(a_body_spawned_inside_a_wall_is_ejected_without_gaining_speed) {
+    Fixture fx;
+    fx.wallColumn(10);
+    const Entity mob = fx.spawnMob({kWallMid, 5000});   // dead centre of the wall
+    fx.step(1);
+
+    const Vec2 at = fx.positionOf(mob);
+    CHECK(!fx.terrain.blocked(at, Realm::Overworld));
+    // The ejection is a correction, not a launch: it must not be read back as
+    // velocity, or the mob rockets away from every wall it clips.
+    CHECK_NEAR(fx.velocityOf(mob).length(), 0.0, 1e-9);
+}
+
+TEST(an_absurd_velocity_cannot_tunnel_through_a_wall) {
+    Fixture fx;
+    fx.wallColumn(10);
+    const Entity mob = fx.spawnMob({2000, 5000});
+
+    // Re-asserted every tick, so the friction that would otherwise bleed it off
+    // never gets the chance: this is the corrupt-velocity case, not a fast mob.
+    for (int i = 0; i < 60; ++i) {
+        fx.world.get<Motion>(mob).velocity = {100000.0, 0};
+        fx.step(1);
+        const Vec2 at = fx.positionOf(mob);
+        CHECK(!fx.terrain.blocked(at, Realm::Overworld));
+        CHECK(at.x <= kWallWest - kMobWallRadius + 1e-6);
+    }
+    // It did travel -- the cap slows it, it does not freeze it.
+    CHECK(fx.positionOf(mob).x > 2000.0 + (kWallWest - 2000.0) * 0.5);
+}
+
+TEST(one_tick_of_travel_is_bounded_by_the_substep_budget) {
+    Fixture fx;
+    const Entity mob = fx.spawnMob({30000, 30000}, 20.0);
+    fx.world.get<Motion>(mob).velocity = {1e9, 0};
+    fx.step(1);
+    // A mob meets walls as a point, below the substep floor, so the budget is
+    // the floor times the substep cap -- covered in shorter substeps, never
+    // extended by them. Exceeding it would mean the loop took longer steps --
+    // which is how a body ends up on the far side of a wall.
+    const double budget = kMinSubstepLength * kMaxSubstepCount;
+    CHECK(fx.positionOf(mob).x - 30000.0 <= budget + 1e-6);
+    CHECK(fx.positionOf(mob).x > 30000.0);
+}
+
+TEST(a_zero_or_nan_radius_terminates_and_stays_out_of_walls) {
+    Fixture fx;
+    fx.wallColumn(10);
+    const Entity pointBody = fx.spawnMob({2000, 5000}, 0.0);
+    const Entity nanBody = fx.spawnMob({2000, 6000}, kNan, kNan);
+
+    // The bound on this test is the tick count: if the substep loop were not
+    // capped, one of these would never return and the suite would hang here.
+    for (int i = 0; i < 50; ++i) {
+        fx.world.get<Motion>(pointBody).velocity = {100000.0, 0};
+        fx.world.get<Motion>(nanBody).velocity = {kNan, 100000.0};
+        fx.step(1);
+    }
+
+    CHECK(std::isfinite(fx.positionOf(pointBody).x));
+    CHECK(!fx.terrain.blocked(fx.positionOf(pointBody), Realm::Overworld));
+    CHECK(fx.positionOf(pointBody).x < kWallWest);
+    // A NaN velocity is dropped, so the body never left its start.
+    CHECK(std::isfinite(fx.positionOf(nanBody).x));
+    CHECK_NEAR(fx.positionOf(nanBody).x, 2000.0, 1e-9);
+    CHECK_NEAR(fx.positionOf(nanBody).y, 6000.0, 1e-9);
+}
+
+TEST(a_nan_position_is_replaced_rather_than_propagated) {
+    Fixture fx;
+    const Entity mob = fx.spawnMob({1000, 1000});
+    fx.world.get<Transform>(mob).position = {kNan, kNan};
+    fx.step(1);
+    CHECK(std::isfinite(fx.positionOf(mob).x));
+    CHECK(std::isfinite(fx.positionOf(mob).y));
+    CHECK(!fx.terrain.blocked(fx.positionOf(mob), Realm::Overworld));
+}
+
+TEST(everything_is_clamped_inside_the_world) {
+    Fixture fx;
+    const Entity escapee = fx.spawnMob({100, 100});
+    const Entity teleported = fx.spawnMob({40000, 40000});
+    fx.world.get<Transform>(teleported).position = {-5000, kWorldSize + 5000};
+
+    for (int i = 0; i < 40; ++i) {
+        fx.world.get<Motion>(escapee).velocity = {-4000, -4000};
+        fx.step(1);
+    }
+
+    for (const Entity e : {escapee, teleported}) {
+        const Vec2 at = fx.positionOf(e);
+        CHECK(at.x >= 0.0 && at.x <= kWorldSize);
+        CHECK(at.y >= 0.0 && at.y <= kWorldSize);
+    }
+}
+
+TEST(a_dead_body_stops_moving) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({3000, 3000});
+    fx.drive(player, 0.0, 1.0);
+    fx.step(20);
+    const Vec2 lastLiving = fx.positionOf(player);
+    CHECK(lastLiving.x > 3000.0);
+
+    fx.world.add<Dead>(player, Dead{});
+    fx.step(20);
+    // A corpse stays where it fell so later systems can still see it die.
+    CHECK_NEAR(fx.positionOf(player).x, lastLiving.x, 1e-12);
+}
+
+// ---------------------------------------------------------------------------
+// Mobs
+// ---------------------------------------------------------------------------
+
+TEST(a_mob_moves_at_the_velocity_the_ai_gave_it) {
+    Fixture fx;
+    const Entity mob = fx.spawnMob({5000, 5000});
+    const double dt = net::kTickSeconds;
+    for (int i = 0; i < 10; ++i) {
+        fx.world.get<Motion>(mob).velocity = {200, 0};   // what the AI phase does
+        fx.step(1, dt);
+    }
+    CHECK_NEAR(fx.positionOf(mob).x, 5000.0 + 200.0 * dt * 10.0, 1e-6);
+}
+
+TEST(a_mob_meets_a_wall_with_its_centre_not_its_body) {
+    // The body is what fights and is shoved; against terrain only the centre
+    // counts. A big mob walks until its middle touches the wall, half of it
+    // drawn over the stone -- where a flower stops a whole radius short.
+    Fixture fx;
+    fx.wallColumn(10);
+    const Entity mob = fx.spawnMob({2000, 5000}, 80.0);
+    for (int i = 0; i < 200; ++i) {
+        fx.world.get<Motion>(mob).velocity = {300, 0};
+        fx.step(1);
+    }
+
+    const Vec2 at = fx.positionOf(mob);
+    CHECK(!fx.terrain.blocked(at, Realm::Overworld));
+    CHECK(at.x <= kWallWest - kMobWallRadius + 1e-6);
+    CHECK(at.x > kWallWest - 1.0);
+    // Blocked, not merely slowed: nothing of the velocity into the wall is left.
+    CHECK_NEAR(fx.velocityOf(mob).x, 0.0, 1e-6);
+}
+
+TEST(a_mob_fits_through_a_gap_narrower_than_its_body) {
+    // One open cell in a wall column is a gap a quarter of this mob's width;
+    // its centre fits, so it goes through.
+    Fixture fx;
+    fx.wallColumn(10);
+    fx.terrain.setTile(10, 19, Tile::Open);   // y in [19, 20) tiles
+    const double gapMid = 19.5 * kTileSize;
+    const Entity mob = fx.spawnMob({kWallWest - 300.0, gapMid}, 4.0 * kTileSize * 0.5);
+    for (int i = 0; i < 120; ++i) {
+        fx.world.get<Motion>(mob).velocity = {300, 0};
+        fx.step(1);
+    }
+    CHECK(fx.positionOf(mob).x > kWallEast + 100.0);
+    CHECK(!fx.terrain.blocked(fx.positionOf(mob), Realm::Overworld));
+}
+
+TEST(separation_cannot_shove_a_mob_into_a_wall) {
+    // Two mobs piled up against a wall: the one pushed toward it stops with
+    // its centre at the face, however much of its body that puts over the wall.
+    // Separation reads each mob's config, so this one needs content.
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+    const std::uint16_t ladybug = content().mobIndex("ladybug");
+
+    Fixture fx;
+    fx.wallColumn(10);
+    const Entity a = fx.spawnMob({kWallWest - 2.0, 5000}, 40.0);
+    const Entity b = fx.spawnMob({kWallWest - 12.0, 5000}, 40.0);
+    for (const Entity e : {a, b}) fx.world.add<MobType>(e, MobType{ladybug, Rarity::Common, 1.0});
+    fx.step(3);
+
+    for (const Entity e : {a, b}) {
+        CHECK(!fx.terrain.blocked(fx.positionOf(e), Realm::Overworld));
+        CHECK(fx.positionOf(e).x <= kWallWest - kMobWallRadius + 1e-6);
+    }
+    CHECK(fx.positionOf(a).x > kWallWest - 1.0);
+    // And the separation did act: the one with room to go was pushed away.
+    CHECK(fx.positionOf(a).x - fx.positionOf(b).x > 20.0);
+}
+
+TEST(a_centipede_collides_with_its_own_beads_everywhere_but_its_joints) {
+    // gardn's segments are ordinary bodies: a centipede curled round on itself
+    // is pushed back out of its own beads. The two a bead is joined to are the
+    // exception -- the chain pass holds that pair at its spacing. A leech's
+    // tube never pushes itself.
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+
+    for (const char* id : {"centipede_body", "leech_body"}) {
+        const std::uint16_t index = content().mobIndex(id);
+        Fixture fx;
+        // head - joined - curled: `curled` has come round onto the head.
+        const Vec2 home{5000, 5000};
+        const Entity head = fx.spawnMob(home, 30.0);
+        const Entity joined = fx.spawnMob(home + Vec2{40.0, 0.0}, 30.0);
+        const Entity curled = fx.spawnMob(home + Vec2{0.0, 40.0}, 30.0);
+        for (const Entity e : {head, joined, curled}) {
+            fx.world.add<MobType>(e, MobType{index, Rarity::Common, 1.0});
+        }
+        BodySegment link;
+        link.chainHead = head;
+        link.head = true;
+        link.behind = joined;
+        fx.world.add<BodySegment>(head, link);
+        link.head = false;
+        link.ahead = head;
+        link.behind = curled;
+        fx.world.add<BodySegment>(joined, link);
+        link.ahead = joined;
+        link.behind = NULL_ENTITY;
+        fx.world.add<BodySegment>(curled, link);
+
+        fx.step(1);
+        const bool gardn = content().mob(index).gardnChain;
+        CHECK(gardn == (std::string(id) == "centipede_body"));
+        if (gardn) {
+            // Head and curled bead pushed apart along the line between them.
+            CHECK(fx.positionOf(head).y < home.y - 1.0);
+            CHECK(fx.positionOf(curled).y > home.y + 40.0 + 1.0);
+            CHECK_NEAR(fx.positionOf(head).x, home.x, 1e-9);
+        } else {
+            CHECK_NEAR(distance(fx.positionOf(head), home), 0.0, 1e-9);
+            CHECK_NEAR(distance(fx.positionOf(curled), home + Vec2{0.0, 40.0}), 0.0, 1e-9);
+        }
+        // Joined both ways round, so nothing pushes the middle bead.
+        CHECK_NEAR(distance(fx.positionOf(joined), home + Vec2{40.0, 0.0}), 0.0, 1e-9);
+    }
+}
+
+TEST(a_child_climbs_out_of_its_parent_without_shoving_it) {
+    // Escorts are spawned in the middle of whatever spawned them. A queen is
+    // an ordinary colliding mob, so without the pass-through every soldier she
+    // lays would shove her half a body aside.
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+
+    Fixture fx;
+    const Vec2 home{5000, 5000};
+    const Entity queen = fx.spawnMob(home, 60.0);
+    const Entity soldier = fx.spawnMob(home + Vec2{1.0, 0.0}, 30.0);
+    fx.world.add<MobType>(queen, MobType{content().mobIndex("queen_ant"), Rarity::Rare, 1.0});
+    fx.world.add<MobType>(soldier,
+                          MobType{content().mobIndex("soldier_ant"), Rarity::Uncommon, 1.0});
+    fx.world.add<HoleTether>(soldier, HoleTether{queen, home, false, true});
+
+    // Right on top of each other, and neither gives way.
+    fx.step(5);
+    CHECK_NEAR(distance(fx.positionOf(queen), home), 0.0, 1e-9);
+    CHECK_NEAR(distance(fx.positionOf(soldier), home + Vec2{1.0, 0.0}), 0.0, 1e-9);
+    CHECK(fx.world.get<HoleTether>(soldier).emerging);
+
+    // Clear of her once, and it has emerged for good.
+    fx.world.get<Transform>(soldier).position = home + Vec2{200.0, 0.0};
+    fx.step(1);
+    CHECK(!fx.world.get<HoleTether>(soldier).emerging);
+
+    // From then on the pair collide like any other.
+    fx.world.get<Transform>(soldier).position = home + Vec2{50.0, 0.0};
+    fx.step(1);
+    CHECK(fx.positionOf(queen).x < home.x);
+    CHECK(fx.positionOf(soldier).x > home.x + 50.0);
+}
+
+TEST(movement_does_not_apply_the_ai_owned_mob_slow_twice) {
+    Fixture fx;
+    const Entity mob = fx.spawnMob({5000, 5000});
+    Afflictions& afflictions = fx.world.get<Afflictions>(mob);
+    afflictions.slowFactor = 0.25;
+    afflictions.slowUntilMillis = 1000.0;
+    const double dt = net::kTickSeconds;
+
+    fx.world.get<Motion>(mob).velocity = {400, 0};
+    fx.step(1, dt);
+    const double slowedStep = fx.positionOf(mob).x - 5000.0;
+    // MobAiSystem already scales its desired velocity. Movement consumes the
+    // velocity it is given instead of squaring the slow factor again.
+    CHECK_NEAR(slowedStep, 400.0 * dt, 1e-9);
+
+    fx.nowMillis = 5000.0;                  // the stall has expired
+    const double before = fx.positionOf(mob).x;
+    fx.world.get<Motion>(mob).velocity = {400, 0};
+    fx.step(1, dt);
+    CHECK_NEAR(fx.positionOf(mob).x - before, 400.0 * dt, 1e-9);
+}
+
+TEST(mob_velocity_is_left_for_the_ai_phase_to_own) {
+    Fixture fx;
+    const Entity mob = fx.spawnMob({5000, 5000});
+    fx.world.get<Knockback>(mob).impulse = {80, 0};
+    fx.step(1);
+    // The AI is the sole owner of a mob's velocity: the movement pass reads it
+    // and integrates it, and writes it only to zero it against a wall. A
+    // knockback moves the body -- over a few ticks -- and contributes nothing
+    // to it.
+    CHECK_NEAR(fx.velocityOf(mob).x, 0.0, 1e-9);
+    fx.step(60);
+    CHECK_NEAR(fx.velocityOf(mob).x, 0.0, 1e-9);
+    CHECK_NEAR(fx.positionOf(mob).x, 5080.0, kKnockbackSettleDistance);
+
+    // What the AI DOES write is carried, undamped, exactly as handed over.
+    const double before = fx.positionOf(mob).x;
+    fx.world.get<Motion>(mob).velocity = {600, 0};
+    fx.step(1);
+    CHECK_NEAR(fx.velocityOf(mob).x, 600.0, 1e-9);
+    CHECK_NEAR(fx.positionOf(mob).x, before + 600.0 * net::kTickSeconds, 1e-9);
+}
+
+// ---------------------------------------------------------------------------
+// Projectiles
+// ---------------------------------------------------------------------------
+
+TEST(a_projectile_flies_straight_and_spends_its_range_exactly) {
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    const Entity shot = fx.spawnProjectile({5000, 5000}, {500, 0}, 30.0);
+
+    fx.step(1, dt);                                   // 16 2/3 units of a 30 budget
+    CHECK_NEAR(fx.positionOf(shot).x, 5000.0 + 500.0 * dt, 1e-9);
+    CHECK_NEAR(fx.world.get<Projectile>(shot).remainingDistance,
+               30.0 - 500.0 * dt, 1e-9);
+
+    fx.step(1, dt);                                   // the last 10, not 20
+    CHECK_NEAR(fx.positionOf(shot).x, 5030.0, 1e-9);
+    CHECK_NEAR(fx.world.get<Projectile>(shot).remainingDistance, 0.0, 1e-12);
+    CHECK(fx.world.has<Dead>(shot));                  // lifecycle will reap it
+
+    fx.step(5, dt);                                   // dead: it cannot move again
+    CHECK_NEAR(fx.positionOf(shot).x, 5030.0, 1e-9);
+    CHECK_NEAR(fx.velocityOf(shot).length(), 0.0, 1e-12);
+}
+
+TEST(a_projectile_at_the_end_of_its_range_dies_whatever_the_rounding) {
+    // Real shots do not fly along an axis for a whole number of ticks. Sweep
+    // odd headings, speeds and budgets: the last step is clamped to the
+    // remaining budget, so whatever floating-point residual that leaves must
+    // still count as spent -- a residual too small to move a coordinate near
+    // 5000 would otherwise never be consumed and the shot would live forever.
+    int stuck = 0;
+    for (int k = 0; k < 40; ++k) {
+        Fixture fx;
+        const double heading = 0.1 + k * 0.37;
+        const double speed = 300.0 + k * 13.7;
+        const double range = 100.0 + k * 7.3;
+        const Entity shot = fx.spawnProjectile({5123.7, 4987.3},
+                                               Vec2::fromAngle(heading, speed), range);
+        fx.step(200);
+        if (!fx.world.has<Dead>(shot)) ++stuck;
+    }
+    CHECK_EQ(stuck, 0);
+}
+
+TEST(a_projectile_that_cannot_fly_still_dies_on_its_lifetime) {
+    // A velocity the sanitiser zeroes spends no range at all. The flight-time
+    // backstop is what retires it; without one it would lie on the ground
+    // until something walked into it.
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    const Entity shot = fx.spawnProjectile({5000, 5000}, {0, 0}, 300.0);
+    fx.world.add<Lifetime>(shot, Lifetime{dt * 10});
+
+    fx.step(10, dt);                                  // the lifetime reaches zero
+    CHECK(!fx.world.has<Dead>(shot));                 // the tie is the distance rule's
+    fx.step(2, dt);
+    CHECK(fx.world.has<Dead>(shot));
+}
+
+TEST(the_lifetime_backstop_never_cuts_an_ordinary_flight_short) {
+    // Spawned exactly as the petal and mob systems do: lifetime = range/speed.
+    // The distance rule must always be the one that ends the flight, at the
+    // full range.
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    const double speed = 437.0, range = 291.3;
+    const Entity shot = fx.spawnProjectile({5000, 5000}, {speed, 0}, range);
+    fx.world.add<Lifetime>(shot, Lifetime{range / speed});
+    fx.step(200, dt);
+    CHECK(fx.world.has<Dead>(shot));
+    CHECK_NEAR(fx.positionOf(shot).x, 5000.0 + range, 1e-6);
+}
+
+TEST(a_projectile_flies_through_walls) {
+    // Walls do not stop a shot. It crosses a full-height wall column as if the
+    // ground were open, spends its range at the ordinary rate while inside the
+    // solid, and dies where its range runs out on the far side.
+    Fixture fx;
+    fx.wallColumn(10);
+    const double startX = kWallWest - 100.0;
+    const double range = 1000.0;
+    const Entity shot = fx.spawnProjectile({startX, 5000}, {800, 0}, range);
+
+    // Five ticks at 800 u/s is ~133 units: through the west face and inside.
+    fx.step(5);
+    CHECK(!fx.world.has<Dead>(shot));
+    CHECK(fx.terrain.blocked(fx.positionOf(shot), Realm::Overworld));
+    CHECK_NEAR(fx.positionOf(shot).x, startX + 800.0 * 5 * net::kTickSeconds, 1e-6);
+
+    fx.step(40);
+    CHECK(fx.world.has<Dead>(shot));
+    CHECK_NEAR(fx.positionOf(shot).x, startX + range, 1e-6);
+    CHECK(fx.positionOf(shot).x > kWallEast);
+    CHECK_NEAR(fx.positionOf(shot).y, 5000.0, 1e-9);
+}
+
+TEST(a_projectile_that_reaches_the_edge_of_the_world_is_spent_there) {
+    // The one thing a shot cannot fly through: the realm's own boundary.
+    Fixture fx;
+    const Entity shot = fx.spawnProjectile({100.0, 5000}, {-800, 0}, 100000.0);
+    fx.step(40);
+
+    CHECK_NEAR(fx.world.get<Projectile>(shot).remainingDistance, 0.0, 1e-12);
+    CHECK(fx.world.has<Dead>(shot));
+    CHECK(fx.positionOf(shot).x >= 0.0);
+    CHECK(fx.positionOf(shot).x < 100.0);
+}
+
+TEST(a_guided_shot_re_aims_once_at_launch_and_then_flies_straight) {
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    const Entity mob = fx.spawnMob({5400, 5400});     // bearing +45 degrees
+
+    const Entity homing = fx.spawnProjectile({5000, 5000}, {500, 0}, 5000.0, 1000.0, kPi * 0.5);
+    const Entity dumb = fx.spawnProjectile({5000, 4000}, {500, 0}, 5000.0);
+
+    fx.step(1, dt);
+    const Vec2 turned = fx.velocityOf(homing);
+    // SNAPPED onto the mob's bearing, on the shot's first step and only there.
+    // Seeking is a launch correction in the reference -- the nearest mob
+    // inside a cone around the firing bearing, chosen once at the firing site
+    // -- and never a guidance system: the client dead-reckons a projectile
+    // along a fixed heading, so a shot that curved in flight would be drawn
+    // somewhere the server does not have it.
+    CHECK_NEAR(turned.angle(), kPi * 0.25, 1e-9);
+    // ...and it steers, it does not accelerate.
+    CHECK_NEAR(turned.length(), 500.0, 1e-9);
+    CHECK_NEAR(fx.world.get<Transform>(homing).angle, turned.angle(), 1e-12);
+
+    CHECK_NEAR(fx.velocityOf(dumb).y, 0.0, 1e-12);
+    CHECK_NEAR(fx.velocityOf(dumb).angle(), 0.0, 1e-12);
+
+    // The correction is spent: dragging the mob elsewhere does not bend the
+    // shot, which holds the bearing it left on.
+    fx.world.get<Transform>(mob).position = Vec2{5000, 4000};
+    fx.step(30, dt);
+    CHECK_NEAR(fx.velocityOf(homing).angle(), kPi * 0.25, 1e-9);
+    CHECK(fx.positionOf(homing).y > 5100.0);
+    CHECK_NEAR(fx.velocityOf(homing).length(), 500.0, 1e-9);
+    CHECK_NEAR(fx.velocityOf(dumb).y, 0.0, 1e-12);
+}
+
+TEST(homing_ignores_targets_outside_the_cone_and_on_its_own_team) {
+    Fixture behind, friendly;
+    const double dt = net::kTickSeconds;
+
+    // 180 degrees off the heading, well outside a 45 degree cone.
+    behind.spawnMob({4600, 5000});
+    const Entity ignoring = behind.spawnProjectile({5000, 5000}, {500, 0}, 5000.0,
+                                                   1000.0, kPi * 0.25);
+    behind.step(5, dt);
+    CHECK_NEAR(behind.velocityOf(ignoring).y, 0.0, 1e-12);
+
+    // In the cone and in range, but the projectile's own team.
+    const Entity ally = friendly.spawnMob({5400, 5400});
+    friendly.world.get<Faction>(ally).team = Team::Players;
+    const Entity restrained = friendly.spawnProjectile({5000, 5000}, {500, 0}, 5000.0,
+                                                       1000.0, kPi * 0.5);
+    friendly.step(5, dt);
+    CHECK_NEAR(friendly.velocityOf(restrained).y, 0.0, 1e-12);
+}
+
+TEST(homing_ignores_targets_out_of_range_and_dead_ones) {
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    fx.spawnMob({5000, 9000});                        // 4000 away, range is 1000
+    const Entity shot = fx.spawnProjectile({5000, 5000}, {0, 500}, 100000.0,
+                                           1000.0, kPi * 0.5);
+    fx.step(1, dt);
+    CHECK_NEAR(fx.velocityOf(shot).x, 0.0, 1e-12);
+
+    // A corpse in range is not a target either.
+    const Entity corpse = fx.spawnMob({5400, 5400});
+    fx.world.get<Health>(corpse).current = 0.0;
+    fx.step(1, dt);
+    CHECK_NEAR(fx.velocityOf(shot).x, 0.0, 1e-12);
+}
+
+TEST(homing_picks_the_nearest_valid_target) {
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    fx.spawnMob({5000, 5900});                        // far, straight ahead of +y
+    const Entity near = fx.spawnMob({4700, 5300});    // nearer, off to -x
+    const Entity shot = fx.spawnProjectile({5000, 5000}, {0, 500}, 5000.0,
+                                           1000.0, kPi * 0.75);
+    fx.step(1, dt);
+    // Turning toward -x is only explicable by having chosen the nearer mob.
+    CHECK(fx.velocityOf(shot).x < 0.0);
+    CHECK(fx.positionOf(near).x < 5000.0);
+}
+
+TEST(a_seek_range_without_a_cone_still_homes) {
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    fx.spawnMob({5400, 5400});
+    // seekCone left at its config default of 0: seekRange is the switch, so a
+    // config that forgets the cone gets a missile, not a dud.
+    const Entity shot = fx.spawnProjectile({5000, 5000}, {500, 0}, 5000.0, 1000.0, 0.0);
+    fx.step(1, dt);
+    CHECK(fx.velocityOf(shot).y > 0.0);
+}
+
+TEST(a_weaving_shot_snakes_about_the_bearing_it_was_fired_on) {
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    const double amplitude = 30.0;
+    const double frequency = 1.5;
+    // Due east at 400 u/s, with range enough for two full cycles.
+    const Entity weaver =
+        fx.spawnWeavingProjectile({5000, 5000}, {400, 0}, 2000.0, amplitude, frequency);
+    const Entity straight = fx.spawnProjectile({5000, 4000}, {400, 0}, 2000.0);
+
+    // Two full cycles of it. The sampling lands exactly on the axis twice a
+    // cycle at these numbers, so a crossing is counted off the last SIGNED
+    // sample rather than off the last sample: an exact zero is the shot
+    // arriving at the axis, not a side of it.
+    const int ticks = static_cast<int>(2.0 / (frequency * dt));
+    double maxOffset = 0.0;
+    double minOffset = 0.0;
+    int crossings = 0;
+    int side = 0;
+    for (int i = 0; i < ticks; ++i) {
+        fx.step(1, dt);
+        const double offset = fx.positionOf(weaver).y - 5000.0;
+        maxOffset = std::max(maxOffset, offset);
+        minOffset = std::min(minOffset, offset);
+        const int now = offset > 0.0 ? 1 : (offset < 0.0 ? -1 : 0);
+        if (now != 0) {
+            if (side != 0 && now != side) ++crossings;
+            side = now;
+        }
+    }
+
+    // It leaves the axis, to BOTH sides, by about the amplitude it was given
+    // -- not by a little, and not off to one side like a shot that was simply
+    // aimed wrong.
+    CHECK(maxOffset > amplitude * 0.8);
+    CHECK(minOffset < -amplitude * 0.8);
+    CHECK(maxOffset < amplitude * 1.2);
+    CHECK(minOffset > -amplitude * 1.2);
+    // Two cycles, so it has changed sides three times after leaving the axis
+    // at launch.
+    CHECK(crossings >= 3);
+
+    // The axis itself never rotates: a weave folded into the stored velocity
+    // would compound into a spiral, and this shot is still travelling east as
+    // fast as it started.
+    CHECK_NEAR(fx.velocityOf(weaver).y, 0.0, 1e-9);
+    CHECK_NEAR(fx.velocityOf(weaver).length(), 400.0, 1e-9);
+    // ...and it has covered the ground east that a straight shot has, give or
+    // take the rounding either path leaves.
+    CHECK_NEAR(fx.positionOf(weaver).x, fx.positionOf(straight).x, 1e-6);
+
+    // The drawn heading follows the PATH, so the missile noses into its turns
+    // instead of sliding sideways.
+    CHECK(std::fabs(fx.world.get<Transform>(weaver).angle) > 1e-3);
+    CHECK_NEAR(fx.world.get<Transform>(straight).angle, 0.0, 1e-12);
+
+    // The straight shot is untouched by any of this.
+    CHECK_NEAR(fx.positionOf(straight).y, 4000.0, 1e-9);
+}
+
+TEST(a_weave_spends_range_along_the_path_it_actually_flies) {
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    const Entity weaver = fx.spawnWeavingProjectile({5000, 5000}, {400, 0}, 400.0, 40.0, 2.0);
+    const Entity straight = fx.spawnProjectile({5000, 4000}, {400, 0}, 400.0);
+
+    fx.step(60, dt);
+    // Both are spent -- the budget is a distance and both spend it -- but the
+    // weaver travelled its snaking path to do so, so it is not as far east.
+    CHECK_NEAR(fx.world.get<Projectile>(weaver).remainingDistance, 0.0, 1e-9);
+    CHECK_NEAR(fx.world.get<Projectile>(straight).remainingDistance, 0.0, 1e-9);
+    CHECK_NEAR(fx.positionOf(straight).x, 5400.0, 1e-6);
+    CHECK(fx.positionOf(weaver).x < 5400.0);
+    // Not a token shortfall either: a real weave costs real ground.
+    CHECK(fx.positionOf(weaver).x < 5395.0);
+}
+
+TEST(a_weave_needs_both_of_its_numbers) {
+    Fixture fx;
+    const double dt = net::kTickSeconds;
+    // Amplitude with no frequency, and frequency with no amplitude. Neither
+    // is a weave, and neither may bend the shot.
+    const Entity noFrequency = fx.spawnWeavingProjectile({5000, 5000}, {400, 0}, 2000.0, 30.0, 0.0);
+    const Entity noAmplitude = fx.spawnWeavingProjectile({5000, 4000}, {400, 0}, 2000.0, 0.0, 1.5);
+
+    fx.step(10, dt);
+    CHECK_NEAR(fx.positionOf(noFrequency).y, 5000.0, 1e-12);
+    CHECK_NEAR(fx.positionOf(noAmplitude).y, 4000.0, 1e-12);
+}
+
+// ---------------------------------------------------------------------------
+// System plumbing
+// ---------------------------------------------------------------------------
+
+TEST(the_system_rebinds_its_queries_when_handed_a_new_world) {
+    Terrain terrain;
+    MovementSystem movement;
+
+    Vec2 first{0, 0};
+    {
+        World world;
+        const Entity e = world.create();
+        world.add<MobTag>(e);
+        world.add<Transform>(e, Transform{{5000, 5000}, 0});
+        world.add<Motion>(e, Motion{{200, 0}});
+        world.add<Body>(e, Body{20, 1});
+        movement.run(world, terrain, 0.0, net::kTickSeconds);
+        first = world.get<Transform>(e).position;
+    }
+    CHECK(first.x > 5000.0);
+
+    // The cached archetype list belongs to the world it was built against;
+    // reusing it here would read freed storage.
+    World fresh;
+    const Entity e = fresh.create();
+    fresh.add<MobTag>(e);
+    fresh.add<Transform>(e, Transform{{1000, 1000}, 0});
+    fresh.add<Motion>(e, Motion{{200, 0}});
+    fresh.add<Body>(e, Body{20, 1});
+    movement.run(fresh, terrain, 0.0, net::kTickSeconds);
+    CHECK(fresh.get<Transform>(e).position.x > 1000.0);
+}
+
+TEST(a_zero_dt_tick_changes_nothing_but_still_resolves_geometry) {
+    Fixture fx;
+    fx.wallColumn(10);
+    const Entity player = fx.spawnPlayer({5000, 5000});
+    fx.drive(player, 0.0, 1.0);
+    fx.world.get<Motion>(player).velocity = {300, 0};
+    fx.step(1, 0.0);
+    CHECK_NEAR(fx.positionOf(player).x, 5000.0, 1e-12);
+
+    // ...but a body sitting in geometry is still pushed out of it.
+    const Entity stuck = fx.spawnMob({kWallMid, 5000});
+    fx.step(1, 0.0);
+    CHECK(!fx.terrain.blocked(fx.positionOf(stuck), Realm::Overworld));
+}
+
+TEST(step_collide_is_usable_without_a_world) {
+    Terrain terrain;
+    for (int ty = 0; ty < terrain.tileRows(); ++ty) terrain.setTile(10, ty, Tile::Solid);
+
+    Vec2 position{kWallWest - 100.0, 5000};
+    const StepOutcome open = stepCollide(terrain, Realm::Overworld, position, {100, 0}, 20.0, 0.04);
+    CHECK(!open.blocked);
+    CHECK_NEAR(open.displacement.x, 4.0, 1e-9);
+
+    const StepOutcome hit = stepCollide(terrain, Realm::Overworld, position, {5000, 0}, 20.0, 0.04);
+    CHECK(hit.blocked);
+    CHECK(position.x <= kWallWest - 20.0 + 1e-6);
+    CHECK(hit.displacement.x > 0.0);
+
+    // Sanitisers are total.
+    CHECK_NEAR(sanitizeCollisionRadius(kNan), 0.0, 1e-12);
+    CHECK_NEAR(sanitizeCollisionRadius(-5.0), 0.0, 1e-12);
+    CHECK_NEAR(sanitizeCollisionRadius(1e9), kMaxCollisionRadius, 1e-12);
+    CHECK_NEAR(sanitizeMovementVelocity({kNan, 1.0}).length(), 0.0, 1e-12);
+    CHECK_NEAR(sanitizeMovementVelocity({1e9, 0}).length(), kMaxMovementSpeed, 1e-9);
+    CHECK_NEAR(sanitizeMovementVelocity({3, 4}).length(), 5.0, 1e-12);
+}
+
+TEST(the_containment_guard_holds_on_every_authored_map) {
+    // The flower containment guard is a tile question, and every world realm
+    // has a tile grid of its own: the same geometry loaded as the overworld
+    // and as a second map must give the same physics, guard included. It
+    // used to be asked of realm 0 alone, so the same wall seam pinned a
+    // flower on world.tmj and let it through on every other map.
+    const Realm other = worldRealm(1);
+    Terrain terrain;
+    std::vector<std::uint8_t> tiles(static_cast<std::size_t>(kTilesPerAxis) * kTilesPerAxis,
+                                    static_cast<std::uint8_t>(Tile::Open));
+    const auto wall = [&](int tx, int ty) {
+        tiles[static_cast<std::size_t>(ty) * kTilesPerAxis + tx] = static_cast<std::uint8_t>(Tile::Solid);
+    };
+    // A staircase of tiles touching at their corners -- the diagonal seams the
+    // guard exists for -- plus a solid column beside it.
+    for (int i = 0; i < 12; ++i) wall(20 + i, 20 + i);
+    for (int i = 0; i < 12; ++i) wall(20 + i, 33 - i);
+    for (int ty = 15; ty < 40; ++ty) wall(40, ty);
+    CHECK(terrain.setTiles(tiles, kTilesPerAxis, kTilesPerAxis, Realm::Overworld));
+    CHECK(terrain.setTiles(tiles, kTilesPerAxis, kTilesPerAxis, other));
+    CHECK(terrain.blocked(Terrain::tileCenter(25, 25), other));
+
+    Rng rng{0x5EED5u};
+    int guarded = 0;
+    int compared = 0;
+    for (int n = 0; n < 6000; ++n) {
+        // Near the staircase, at a radius that can wedge into a seam, with a
+        // fast random velocity so the substeps meet the geometry.
+        const Vec2 start{rng.range(19.0 * kTileSize, 33.0 * kTileSize),
+                         rng.range(19.0 * kTileSize, 35.0 * kTileSize)};
+        const double radius = rng.range(15.0, 75.0);
+        const Vec2 velocity = Vec2::fromAngle(rng.angle(), rng.range(200.0, 1500.0));
+        if (terrain.blocked(start, Realm::Overworld)) continue;
+
+        Vec2 onOverworld = start;
+        Vec2 onOther = start;
+        const StepOutcome a = stepCollide(terrain, Realm::Overworld, onOverworld, velocity,
+                                          radius, net::kTickSeconds, true, true);
+        const StepOutcome b = stepCollide(terrain, other, onOther, velocity, radius,
+                                          net::kTickSeconds, true, true);
+        ++compared;
+        CHECK_NEAR(onOverworld.x, onOther.x, 1e-9);
+        CHECK_NEAR(onOverworld.y, onOther.y, 1e-9);
+        CHECK_EQ(a.blocked, b.blocked);
+
+        // And the guard is what is being compared: on the second map it has
+        // to change SOME outcome relative to the unguarded resolver.
+        Vec2 unguarded = start;
+        stepCollide(terrain, other, unguarded, velocity, radius, net::kTickSeconds, true, false);
+        if (distanceSq(unguarded, onOther) > 1e-12) ++guarded;
+    }
+    CHECK(compared > 1000);
+    CHECK(guarded > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Loose petals (wax)
+// ---------------------------------------------------------------------------
+
+/// How far a flower walking at full speed sinks into a loose petal once it
+/// has settled into pushing it: each tick it walks kPlayerMaxSpeed * dt in,
+/// and the soft contact takes back kLoosePetalContactStiffness of the overlap.
+constexpr double kPushSink =
+    kPlayerMaxSpeed * net::kTickSeconds * (1.0 - kLoosePetalContactStiffness) /
+    kLoosePetalContactStiffness;
+
+TEST(a_flower_leans_a_little_way_into_a_loose_petal_and_shoves_it) {
+    Fixture fx;
+    const Entity player = fx.spawnPlayer({3000, 3000});
+    const Entity wax = fx.spawnLoose({3100, 3000}, 30.0);
+    const double reach = 30.0 + kPlayerBaseRadius;
+    CHECK_NEAR(kPushSink, 10.0, 1e-9);
+
+    fx.drive(player, 0.0, 1.0);
+    double waxAtHalfway = 0;
+    for (int i = 0; i < 100; ++i) {
+        fx.step(1);
+        // Soft, not a wall and not a ghost: the flower sinks in no further
+        // than the settled push takes it, however long it keeps pressing.
+        CHECK(distance(fx.positionOf(player), fx.positionOf(wax)) >= reach - kPushSink - 0.5);
+        if (i == 49) waxAtHalfway = fx.positionOf(wax).x;
+    }
+    // ...and it does sink in, the way a flower leans into a mob.
+    CHECK_NEAR(distance(fx.positionOf(player), fx.positionOf(wax)), reach - kPushSink, 0.5);
+    // Shoved the way it was pushed, and only that way.
+    CHECK(fx.positionOf(wax).x > 3100.0 + 100.0);
+    CHECK_NEAR(fx.positionOf(wax).y, 3000.0, 1e-6);
+
+    // At full speed the pair moves at the slab's share of the push: the
+    // flower's mass over both, which is 1 / 1.25 -- 80% of walking speed.
+    const double share = 1.0 / (1.0 + kLoosePetalMass);
+    CHECK_NEAR(share, 0.8, 1e-12);
+    CHECK_NEAR(fx.positionOf(wax).x - waxAtHalfway, kPlayerMaxSpeed * share * 50.0 *
+                                                        net::kTickSeconds,
+               3.0);
+
+    // A flower walking free for the same time gets further: pushing costs it
+    // a little speed, not most of it.
+    Fixture free;
+    const Entity unburdened = free.spawnPlayer({3000, 3000});
+    free.drive(unburdened, 0.0, 1.0);
+    free.step(100);
+    const double lead = free.positionOf(unburdened).x - fx.positionOf(player).x;
+    CHECK(lead > 100.0);
+    CHECK(lead < 400.0);
+
+    // Let go of, it stays exactly where it was left: a slab does not slide,
+    // and does not follow the flower that pushed it. (The flower coasts into
+    // it for a few ticks while it turns round, so "left" is once it is clear.)
+    fx.drive(player, kPi, 1.0);
+    for (int i = 0; i < 40 && distance(fx.positionOf(player), fx.positionOf(wax)) <= reach + 1.0;
+         ++i) {
+        fx.step(1);
+    }
+    CHECK(distance(fx.positionOf(player), fx.positionOf(wax)) > reach + 1.0);
+    const Vec2 left = fx.positionOf(wax);
+    fx.step(40);
+    CHECK_NEAR(fx.positionOf(wax).x, left.x, 1e-9);
+    CHECK_NEAR(fx.positionOf(wax).y, left.y, 1e-9);
+}
+
+TEST(a_loose_petal_shoved_into_a_wall_stops_there_and_so_does_the_flower) {
+    Fixture fx;
+    fx.wallColumn(10);
+    const Entity wax = fx.spawnLoose({kWallWest - 120.0, 5000}, 30.0);
+    const Entity player = fx.spawnPlayer({kWallWest - 200.0, 5000});
+    const double reach = 30.0 + kPlayerBaseRadius;
+
+    fx.drive(player, 0.0, 1.0);
+    for (int i = 0; i < 120; ++i) {
+        fx.step(1);
+        CHECK(fx.positionOf(wax).x <= kWallWest - 30.0 + 1e-6);
+        CHECK(!fx.terrain.blocked(fx.positionOf(wax), Realm::Overworld));
+        CHECK(distance(fx.positionOf(player), fx.positionOf(wax)) >= reach - kPushSink - 0.5);
+    }
+    // Pinned against the face, with the flower leaning into it as far as a
+    // settled push goes and no further: the wall hands the slab's share of
+    // every push back to the flower.
+    CHECK_NEAR(fx.positionOf(wax).x, kWallWest - 30.0, 1.0);
+    CHECK_NEAR(fx.positionOf(player).x, fx.positionOf(wax).x - (reach - kPushSink), 1.0);
+}
+
+TEST(a_mob_and_a_loose_petal_are_eased_apart_by_mass) {
+    // The mob side of the pass rides on the separation set, which reads each
+    // mob's config, so this one needs content.
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+    const std::uint16_t ladybug = content().mobIndex("ladybug");
+    const std::uint16_t rock = content().mobIndex("rock");
+
+    // Overlapping by ten: half of it is taken back this tick, the slab giving
+    // way by the mob's mass over both and the mob by the rest.
+    Fixture fx;
+    const Entity wax = fx.spawnLoose({5000, 5000}, 30.0);
+    const Entity mob = fx.spawnMob({5040, 5000}, 20.0, 4.0);
+    fx.world.add<MobType>(mob, MobType{ladybug, Rarity::Common, 1.0});
+    fx.step(1);
+    const double waxShare = 4.0 / (4.0 + kLoosePetalMass);
+    CHECK_NEAR(fx.positionOf(wax).x, 5000.0 - 5.0 * waxShare, 1e-6);
+    CHECK_NEAR(fx.positionOf(mob).x, 5040.0 + 5.0 * (1.0 - waxShare), 1e-6);
+    CHECK_NEAR(distance(fx.positionOf(wax), fx.positionOf(mob)), 45.0, 1e-6);
+    // Left alone, they settle exactly touching.
+    fx.step(30);
+    CHECK_NEAR(distance(fx.positionOf(wax), fx.positionOf(mob)), 50.0, 1e-4);
+
+    // A mob that cannot walk never gives way: the slab is eased round it.
+    Fixture still;
+    const Entity slab = still.spawnLoose({5000, 5000}, 30.0);
+    const Entity boulder = still.spawnMob({5040, 5000}, 20.0, 4.0);
+    still.world.add<MobType>(boulder, MobType{rock, Rarity::Common, 1.0});
+    still.step(1);
+    CHECK_NEAR(still.positionOf(boulder).x, 5040.0, 1e-9);
+    CHECK_NEAR(still.positionOf(slab).x, 4995.0, 1e-6);
+    still.step(30);
+    CHECK_NEAR(still.positionOf(boulder).x, 5040.0, 1e-9);
+    CHECK_NEAR(still.positionOf(slab).x, 4990.0, 1e-4);
+}
+
+TEST(an_npc_never_gives_way_to_a_loose_petal_and_two_slabs_split_evenly) {
+    Fixture fx;
+    const auto npcAt = [](Fixture& f, Vec2 at, double radius) {
+        const Entity npc = f.world.create();
+        f.world.add<NpcTag>(npc);
+        f.world.add<Transform>(npc, Transform{at, 0});
+        f.world.add<Body>(npc, Body{radius, 1.0});
+        return npc;
+    };
+    const Entity npc = npcAt(fx, {5000, 5000}, 40.0);
+    const Entity wax = fx.spawnLoose({5060, 5000}, 30.0);
+    fx.step(1);
+    CHECK_NEAR(fx.positionOf(npc).x, 5000.0, 1e-9);
+    CHECK_NEAR(fx.positionOf(wax).x, 5065.0, 1e-6);
+    fx.step(30);
+    CHECK_NEAR(fx.positionOf(npc).x, 5000.0, 1e-9);
+    CHECK_NEAR(fx.positionOf(wax).x, 5070.0, 1e-4);
+
+    // However deep the overlap, one tick takes back no more than a pair of
+    // mobs is ever separated by: a slab put down 60 deep comes out over
+    // several ticks, not in one jump.
+    Fixture deep;
+    npcAt(deep, {5000, 5000}, 40.0);
+    const Entity buried = deep.spawnLoose({5010, 5000}, 30.0);
+    deep.step(1);
+    CHECK_NEAR(deep.positionOf(buried).x, 5010.0 + kLoosePetalMaxPushPerTick, 1e-6);
+
+    // Two slabs overlapping by twenty: each gives way by the OTHER's mass
+    // over both -- and every slab weighs the same whatever its size, so they
+    // split it evenly.
+    Fixture pair;
+    const Entity small = pair.spawnLoose({5000, 5000}, 30.0);
+    const Entity big = pair.spawnLoose({5070, 5000}, 60.0);
+    pair.step(1);
+    CHECK_NEAR(pair.positionOf(small).x, 4995.0, 1e-6);
+    CHECK_NEAR(pair.positionOf(big).x, 5075.0, 1e-6);
+    pair.step(30);
+    CHECK_NEAR(pair.positionOf(small).x, 4990.0, 1e-4);
+    CHECK_NEAR(pair.positionOf(big).x, 5080.0, 1e-4);
+}
+
+TEST(a_bouncing_shot_comes_back_off_a_wall_instead_of_crossing_it) {
+    // A carrot's shot meets the wall a body would, and leaves it with the
+    // part of its velocity into the face turned round.
+    Fixture fx;
+    fx.wallColumn(10);
+    const double startX = kWallWest - 100.0;
+    const Entity shot = fx.spawnProjectile({startX, 5000}, {600, 0}, 2000.0);
+    fx.world.get<Projectile>(shot).bouncesOffWalls = true;
+
+    fx.step(15);
+    CHECK(!fx.world.has<Dead>(shot));
+    CHECK(fx.positionOf(shot).x < kWallWest);
+    CHECK(fx.velocityOf(shot).x < 0.0);
+    CHECK_NEAR(fx.velocityOf(shot).length(), 600.0, 1e-6);
+    CHECK_NEAR(fx.positionOf(shot).y, 5000.0, 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// Teleporter pads
+// ---------------------------------------------------------------------------
+
+TEST(a_flowers_first_tick_on_a_map_pulls_no_other_flower) {
+    // A flower is given its TeleporterState on the first tick it spends on a
+    // world map, and adding a component moves it to another archetype: the
+    // last flower of the archetype it left is swapped into its old row. The
+    // pass used to keep the Transform pointer it read before that, so the
+    // pads' suction was measured on, and committed to, the OTHER flower. Here
+    // the other one is a flower the pads are told never to take, standing in
+    // a pad's well, and it must not be pulled at all.
+    const std::string dir = flix::testsupport::twoMapDataDir("movement-pad-row");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Fixture f;
+    WorldMaps maps;
+    std::string error;
+    const bool loaded = maps.load(dir, &f.terrain, error);
+    flix::testsupport::removeDataDir(dir);
+    CHECK(loaded);
+    const MapData* meadow = loaded ? maps.forRealm(Realm::Overworld) : nullptr;
+    const MapElement* pad = nullptr;
+    if (meadow != nullptr) {
+        for (const MapElement& element : meadow->elements()) {
+            if (element.kind == MapElementKind::Teleporter) pad = &element;
+        }
+    }
+    CHECK(pad != nullptr);
+    if (pad == nullptr) return;
+    f.movement.worldMaps = &maps;
+
+    // Spawned in this order, so the refused flower is the LAST row of the
+    // archetype the walker leaves. The walker stands beyond every pad's reach.
+    const Entity walker =
+        f.spawnPlayer(pad->centre() + Vec2{0.0, kTeleporterSuctionRadius * 2.0});
+    const Entity refused =
+        f.spawnPlayer(pad->centre() + Vec2{kTeleporterSuctionRadius * 0.5, 0.0});
+    f.movement.takesTeleporters = [&](Entity e) { return e != refused; };
+    const Vec2 walkerAt = f.positionOf(walker);
+    const Vec2 refusedAt = f.positionOf(refused);
+
+    f.step();
+    CHECK(f.world.has<TeleporterState>(walker));
+    CHECK(!f.world.has<TeleporterState>(refused));
+    CHECK(distance(f.positionOf(refused), refusedAt) < 1e-9);
+    CHECK(distance(f.positionOf(walker), walkerAt) < 1e-9);
+}

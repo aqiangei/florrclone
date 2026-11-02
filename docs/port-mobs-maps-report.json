@@ -1,0 +1,62 @@
+{
+  "added": [],
+  "updatedCount": 1,
+  "mobCount": 96,
+  "mapPatches": [
+    {
+      "file": "garden.tmj",
+      "status": "patched",
+      "count": 27,
+      "dist": "garden 50% ladybug 3.57% baby_ant 3.57% worker_ant 3.57% bee 3.57% rock 3.57% spider 3.57% soldier_ant 3.57% centipede 3.57% bumble_bee 3.57% hornet 3.57% dandelion 3.57% ant_hole 3.57% queen_ant 3.57% ant_egg 3.57%"
+    },
+    {
+      "file": "desert.tmj",
+      "status": "patched",
+      "count": 16,
+      "dist": "desert 50% beetle 5.56% scorpion 5.56% desert_centipede 5.56% desert_ladybug 5.56% cactus 5.56% sandstorm 5.56% fire_ant_burrow 5.56% mummy_beetle 5.56% nazar_beetle 5.56%"
+    },
+    {
+      "file": "ocean.tmj",
+      "status": "patched",
+      "count": 17,
+      "dist": "ocean 50% bubble 6.25% shell 6.25% crab 6.25% jellyfish 6.25% starfish 6.25% sponge 6.25% leech 6.25% soldier_diver_ant 6.25%"
+    },
+    {
+      "file": "jungle.tmj",
+      "status": "patched",
+      "count": 14,
+      "dist": "jungle 50% ladybug 2.78% centipede 2.78% crab 2.78% jungle_centipede 2.78% jungle_ladybug 2.78% leafbug 2.78% mantis 2.78% baby_termite 2.78% worker_termite 2.78% soldier_termite 2.78% termite_overmind 2.78% termite_mound 2.78% termite_egg 2.78% bush 2.78% firefly 2.78% wasp 2.78% magic_firefly 2.78% golden_leafbug 2.78%"
+    },
+    {
+      "file": "hel.tmj",
+      "status": "patched",
+      "count": 1,
+      "dist": "hel 50% hel_beetle 10.00% hel_spider 10.00% hel_centipede 10.00% hel_wasp 10.00% gambler 10.00%"
+    },
+    {
+      "file": "ant_hell.tmj",
+      "status": "patched",
+      "count": 42,
+      "dist": "ant_hell 50% baby_ant 3.13% worker_ant 3.13% soldier_ant 3.13% queen_ant 3.13% ant_egg 3.13% baby_termite 3.13% worker_termite 3.13% soldier_termite 3.13% termite_overmind 3.13% termite_egg 3.13% soldier_fire_ant 3.13% baby_fire_ant 3.13% worker_fire_ant 3.13% queen_fire_ant 3.13% fire_ant_egg 3.13% worm 3.13%"
+    },
+    {
+      "file": "sewers.tmj",
+      "status": "patched",
+      "count": 9,
+      "dist": "sewers 50% spider 10.00% roach 10.00% moth 10.00% silverfish 10.00% garbage 10.00%"
+    },
+    {
+      "file": "computer.tmj",
+      "status": "patched",
+      "count": 13,
+      "dist": "computer 50% mecha_flower 10.00% mecha_wasp 10.00% mecha_spider 10.00% mecha_crab 10.00% barrel 10.00%"
+    },
+    {
+      "file": "pyramid.tmj",
+      "status": "patched",
+      "count": 100,
+      "dist": "pyramid 50% mummy_beetle 12.50% nazar_beetle 12.50% pharaoh_beetle 12.50% tomb 12.50%"
+    }
+  ],
+  "stillMissingFlor": []
+}

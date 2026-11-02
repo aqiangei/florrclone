@@ -1,0 +1,1270 @@
+{
+  "petalNumericDiffs": [
+    {
+      "key": "square",
+      "florr": "Square",
+      "cpp": "square",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 10,
+          "florrMapped": 0
+        },
+        "hp": {
+          "florr": 1,
+          "cpp": 10,
+          "florrMapped": 1
+        },
+        "reload": {
+          "florr": 60,
+          "cpp": 1000,
+          "florrMapped": 60000
+        }
+      }
+    },
+    {
+      "key": "magic_cactus",
+      "florr": "Magic Cactus",
+      "cpp": "magic_cactus",
+      "fields": {
+        "damage": {
+          "florr": 7,
+          "cpp": 15,
+          "florrMapped": 7
+        }
+      }
+    },
+    {
+      "key": "magic_stinger",
+      "florr": "Magic Stinger",
+      "cpp": "magic_stinger",
+      "fields": {
+        "hp": {
+          "florr": 1,
+          "cpp": 2,
+          "florrMapped": 1
+        },
+        "reload": {
+          "florr": 1,
+          "cpp": 2000,
+          "florrMapped": 1000
+        }
+      }
+    },
+    {
+      "key": "magic_missile",
+      "florr": "Magic Missile",
+      "cpp": "magic_missile",
+      "fields": {
+        "reload": {
+          "florr": 0,
+          "cpp": 200,
+          "florrMapped": 0
+        }
+      }
+    },
+    {
+      "key": "magic_stick",
+      "florr": "Magic Stick",
+      "cpp": "magic_stick",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 1,
+          "florrMapped": 0
+        },
+        "hp": {
+          "florr": 1,
+          "cpp": 10,
+          "florrMapped": 1
+        },
+        "reload": {
+          "florr": 2,
+          "cpp": 3000,
+          "florrMapped": 2000
+        }
+      }
+    },
+    {
+      "key": "mimic",
+      "florr": "Mimic",
+      "cpp": "mimic",
+      "fields": {
+        "hp": {
+          "florr": 1,
+          "cpp": 0,
+          "florrMapped": 1
+        },
+        "reload": {
+          "florr": 0,
+          "cpp": 10000,
+          "florrMapped": 0
+        }
+      }
+    },
+    {
+      "key": "mecha_antennae",
+      "florr": "Mecha Antennae",
+      "cpp": "observer",
+      "fields": {
+        "reload": {
+          "florr": 0,
+          "cpp": 1,
+          "florrMapped": 0
+        }
+      }
+    },
+    {
+      "key": "light",
+      "florr": "Light",
+      "cpp": "light",
+      "fields": {
+        "damage": {
+          "florr": 13,
+          "cpp": 5,
+          "florrMapped": 13
+        },
+        "reload": {
+          "florr": 0.8,
+          "cpp": 400,
+          "florrMapped": 800
+        }
+      }
+    },
+    {
+      "key": "rock",
+      "florr": "Rock",
+      "cpp": "rock",
+      "fields": {
+        "damage": {
+          "florr": 22,
+          "cpp": 15,
+          "florrMapped": 22
+        },
+        "hp": {
+          "florr": 30,
+          "cpp": 45,
+          "florrMapped": 30
+        },
+        "reload": {
+          "florr": 3,
+          "cpp": 3500,
+          "florrMapped": 3000
+        }
+      }
+    },
+    {
+      "key": "stinger",
+      "florr": "Stinger",
+      "cpp": "stinger",
+      "fields": {
+        "hp": {
+          "florr": 1,
+          "cpp": 2,
+          "florrMapped": 1
+        }
+      }
+    },
+    {
+      "key": "leaf",
+      "florr": "Leaf",
+      "cpp": "leaf",
+      "fields": {
+        "reload": {
+          "florr": 1.8,
+          "cpp": 1000,
+          "florrMapped": 1800
+        }
+      }
+    },
+    {
+      "key": "iris",
+      "florr": "Iris",
+      "cpp": "iris",
+      "fields": {
+        "damage": {
+          "florr": 5,
+          "cpp": 0,
+          "florrMapped": 5
+        },
+        "hp": {
+          "florr": 5,
+          "cpp": 1,
+          "florrMapped": 5
+        },
+        "reload": {
+          "florr": 4,
+          "cpp": 1000,
+          "florrMapped": 4000
+        }
+      }
+    },
+    {
+      "key": "wing",
+      "florr": "Wing",
+      "cpp": "wing",
+      "fields": {
+        "reload": {
+          "florr": 3,
+          "cpp": 2500,
+          "florrMapped": 3000
+        }
+      }
+    },
+    {
+      "key": "faster",
+      "florr": "Faster",
+      "cpp": "faster",
+      "fields": {
+        "damage": {
+          "florr": 12,
+          "cpp": 5,
+          "florrMapped": 12
+        },
+        "reload": {
+          "florr": 2.5,
+          "cpp": 500,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "cactus",
+      "florr": "Cactus",
+      "cpp": "cactus",
+      "fields": {
+        "damage": {
+          "florr": 7,
+          "cpp": 15,
+          "florrMapped": 7
+        }
+      }
+    },
+    {
+      "key": "missile",
+      "florr": "Missile",
+      "cpp": "missile",
+      "fields": {
+        "damage": {
+          "florr": 35,
+          "cpp": 10,
+          "florrMapped": 35
+        },
+        "hp": {
+          "florr": 2,
+          "cpp": 10,
+          "florrMapped": 2
+        },
+        "reload": {
+          "florr": 1.5,
+          "cpp": 2000,
+          "florrMapped": 1500
+        }
+      }
+    },
+    {
+      "key": "peas",
+      "florr": "Peas",
+      "cpp": "peas",
+      "fields": {
+        "damage": {
+          "florr": 15,
+          "cpp": 2.5,
+          "florrMapped": 15
+        },
+        "hp": {
+          "florr": 5,
+          "cpp": 10,
+          "florrMapped": 5
+        },
+        "reload": {
+          "florr": 1.5,
+          "cpp": 1000,
+          "florrMapped": 1500
+        }
+      }
+    },
+    {
+      "key": "pollen",
+      "florr": "Pollen",
+      "cpp": "pollen",
+      "fields": {
+        "damage": {
+          "florr": 38,
+          "cpp": 10,
+          "florrMapped": 38
+        },
+        "hp": {
+          "florr": 5,
+          "cpp": 10,
+          "florrMapped": 5
+        },
+        "reload": {
+          "florr": 2,
+          "cpp": 1000,
+          "florrMapped": 2000
+        }
+      }
+    },
+    {
+      "key": "sand",
+      "florr": "Sand",
+      "cpp": "sand",
+      "fields": {
+        "reload": {
+          "florr": 1.5,
+          "cpp": 800,
+          "florrMapped": 1500
+        }
+      }
+    },
+    {
+      "key": "antennae",
+      "florr": "Antennae",
+      "cpp": "antennae",
+      "fields": {
+        "reload": {
+          "florr": 1,
+          "cpp": 1,
+          "florrMapped": 1000
+        }
+      }
+    },
+    {
+      "key": "lentil",
+      "florr": "Lentil",
+      "cpp": "lentil",
+      "fields": {
+        "damage": {
+          "florr": 13,
+          "cpp": 10,
+          "florrMapped": 13
+        },
+        "hp": {
+          "florr": 12,
+          "cpp": 10,
+          "florrMapped": 12
+        },
+        "reload": {
+          "florr": 2,
+          "cpp": 1000,
+          "florrMapped": 2000
+        }
+      }
+    },
+    {
+      "key": "grapes",
+      "florr": "Grapes",
+      "cpp": "grapes",
+      "fields": {
+        "damage": {
+          "florr": 3,
+          "cpp": 0.625,
+          "florrMapped": 3
+        },
+        "hp": {
+          "florr": 5,
+          "cpp": 10,
+          "florrMapped": 5
+        },
+        "reload": {
+          "florr": 1.5,
+          "cpp": 1000,
+          "florrMapped": 1500
+        }
+      }
+    },
+    {
+      "key": "rice",
+      "florr": "Rice",
+      "cpp": "rice",
+      "fields": {
+        "damage": {
+          "florr": 4,
+          "cpp": 5,
+          "florrMapped": 4
+        },
+        "hp": {
+          "florr": 1,
+          "cpp": 2,
+          "florrMapped": 1
+        }
+      }
+    },
+    {
+      "key": "honey",
+      "florr": "Honey",
+      "cpp": "honey",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 10,
+          "florrMapped": 0
+        },
+        "hp": {
+          "florr": 50,
+          "cpp": 10,
+          "florrMapped": 50
+        },
+        "reload": {
+          "florr": 2,
+          "cpp": 1700,
+          "florrMapped": 2000
+        }
+      }
+    },
+    {
+      "key": "bone",
+      "florr": "Bone",
+      "cpp": "bone",
+      "fields": {
+        "reload": {
+          "florr": 2.5,
+          "cpp": 1500,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "dahlia",
+      "florr": "Dahlia",
+      "cpp": "dahlia",
+      "fields": {
+        "damage": {
+          "florr": 1.7,
+          "cpp": 3,
+          "florrMapped": 1.7
+        },
+        "hp": {
+          "florr": 1.7,
+          "cpp": 3,
+          "florrMapped": 1.7
+        },
+        "reload": {
+          "florr": 1.5,
+          "cpp": 1.2,
+          "florrMapped": 1500
+        }
+      }
+    },
+    {
+      "key": "jelly",
+      "florr": "Jelly",
+      "cpp": "jelly",
+      "fields": {
+        "damage": {
+          "florr": 10,
+          "cpp": 1,
+          "florrMapped": 10
+        },
+        "hp": {
+          "florr": 10,
+          "cpp": 100,
+          "florrMapped": 10
+        },
+        "reload": {
+          "florr": 10,
+          "cpp": 1000,
+          "florrMapped": 10000
+        }
+      }
+    },
+    {
+      "key": "sawblade",
+      "florr": "Sawblade",
+      "cpp": "sawblade",
+      "fields": {
+        "damage": {
+          "florr": 40,
+          "cpp": 25,
+          "florrMapped": 40
+        },
+        "hp": {
+          "florr": 25,
+          "cpp": 10,
+          "florrMapped": 25
+        }
+      }
+    },
+    {
+      "key": "soil",
+      "florr": "Soil",
+      "cpp": "soil",
+      "fields": {
+        "reload": {
+          "florr": 2.5,
+          "cpp": 1000,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "starfish",
+      "florr": "Starfish",
+      "cpp": "starfish",
+      "fields": {
+        "damage": {
+          "florr": 5,
+          "cpp": 10,
+          "florrMapped": 5
+        },
+        "hp": {
+          "florr": 7,
+          "cpp": 10,
+          "florrMapped": 7
+        },
+        "reload": {
+          "florr": 1.5,
+          "cpp": 2000,
+          "florrMapped": 1500
+        }
+      }
+    },
+    {
+      "key": "third_eye",
+      "florr": "Third Eye",
+      "cpp": "third_eye",
+      "fields": {
+        "reload": {
+          "florr": 2.5,
+          "cpp": 1,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "web",
+      "florr": "Web",
+      "cpp": "web",
+      "fields": {
+        "hp": {
+          "florr": 5,
+          "cpp": 10,
+          "florrMapped": 5
+        }
+      }
+    },
+    {
+      "key": "yucca",
+      "florr": "Yucca",
+      "cpp": "yucca",
+      "fields": {
+        "damage": {
+          "florr": 5,
+          "cpp": 10,
+          "florrMapped": 5
+        },
+        "reload": {
+          "florr": 2.5,
+          "cpp": 1000,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "magnet",
+      "florr": "Magnet",
+      "cpp": "magnet",
+      "fields": {
+        "hp": {
+          "florr": 30,
+          "cpp": 5,
+          "florrMapped": 30
+        },
+        "reload": {
+          "florr": 1.5,
+          "cpp": 2000,
+          "florrMapped": 1500
+        }
+      }
+    },
+    {
+      "key": "lightning",
+      "florr": "Lightning",
+      "cpp": "lightning",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 25,
+          "florrMapped": 0
+        },
+        "hp": {
+          "florr": 20,
+          "cpp": 10,
+          "florrMapped": 20
+        },
+        "reload": {
+          "florr": 2.5,
+          "cpp": 700,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "poo",
+      "florr": "Poo",
+      "cpp": "poo",
+      "fields": {
+        "damage": {
+          "florr": 5,
+          "cpp": 0,
+          "florrMapped": 5
+        },
+        "hp": {
+          "florr": 5,
+          "cpp": 1,
+          "florrMapped": 5
+        }
+      }
+    },
+    {
+      "key": "cutter",
+      "florr": "Cutter",
+      "cpp": "cutter",
+      "fields": {
+        "reload": {
+          "florr": 0,
+          "cpp": 1,
+          "florrMapped": 0
+        }
+      }
+    },
+    {
+      "key": "disc",
+      "florr": "Disc",
+      "cpp": "disc",
+      "fields": {
+        "reload": {
+          "florr": 2.5,
+          "cpp": 1,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "glass",
+      "florr": "Glass",
+      "cpp": "glass",
+      "fields": {
+        "damage": {
+          "florr": 22,
+          "cpp": 12,
+          "florrMapped": 22
+        },
+        "reload": {
+          "florr": 2.5,
+          "cpp": 1000,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "golden_leaf",
+      "florr": "Golden Leaf",
+      "cpp": "golden_leaf",
+      "fields": {
+        "damage": {
+          "florr": 16,
+          "cpp": 1,
+          "florrMapped": 16
+        },
+        "hp": {
+          "florr": 12,
+          "cpp": 100,
+          "florrMapped": 12
+        },
+        "reload": {
+          "florr": 2.5,
+          "cpp": 200,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "lotus",
+      "florr": "Lotus",
+      "cpp": "lotus",
+      "fields": {
+        "reload": {
+          "florr": 2.5,
+          "cpp": 2000,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "root",
+      "florr": "Root",
+      "cpp": "root",
+      "fields": {
+        "reload": {
+          "florr": 5,
+          "cpp": 1000,
+          "florrMapped": 5000
+        }
+      }
+    },
+    {
+      "key": "sponge",
+      "florr": "Sponge",
+      "cpp": "sponge",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 10,
+          "florrMapped": 0
+        },
+        "hp": {
+          "florr": 1,
+          "cpp": 10,
+          "florrMapped": 1
+        },
+        "reload": {
+          "florr": 2.5,
+          "cpp": 2000,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "triangle",
+      "florr": "Triangle",
+      "cpp": "triangle",
+      "fields": {
+        "damage": {
+          "florr": 5,
+          "cpp": 15,
+          "florrMapped": 5
+        },
+        "reload": {
+          "florr": 2,
+          "cpp": 1000,
+          "florrMapped": 2000
+        }
+      }
+    },
+    {
+      "key": "uranium",
+      "florr": "Uranium",
+      "cpp": "uranium",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 4,
+          "florrMapped": 0
+        },
+        "hp": {
+          "florr": 75,
+          "cpp": 10,
+          "florrMapped": 75
+        }
+      }
+    },
+    {
+      "key": "yin_yang",
+      "florr": "Yin Yang",
+      "cpp": "yin_yang",
+      "fields": {
+        "reload": {
+          "florr": 2,
+          "cpp": 1000,
+          "florrMapped": 2000
+        }
+      }
+    },
+    {
+      "key": "air",
+      "florr": "Air",
+      "cpp": "air",
+      "fields": {
+        "hp": {
+          "florr": 1,
+          "cpp": 0,
+          "florrMapped": 1
+        },
+        "reload": {
+          "florr": 2.5,
+          "cpp": 1000,
+          "florrMapped": 2500
+        }
+      }
+    },
+    {
+      "key": "basil",
+      "florr": "Basil",
+      "cpp": "basil",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 5,
+          "florrMapped": 0
+        },
+        "hp": {
+          "florr": 1,
+          "cpp": 15,
+          "florrMapped": 1
+        }
+      }
+    },
+    {
+      "key": "coral",
+      "florr": "Coral",
+      "cpp": "coral",
+      "fields": {
+        "damage": {
+          "florr": 11,
+          "cpp": 35,
+          "florrMapped": 11
+        },
+        "hp": {
+          "florr": 1,
+          "cpp": 10,
+          "florrMapped": 1
+        },
+        "reload": {
+          "florr": 1.5,
+          "cpp": 2499,
+          "florrMapped": 1500
+        }
+      }
+    },
+    {
+      "key": "blueberries",
+      "florr": "Blueberries",
+      "cpp": "magic_peas",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 8,
+          "florrMapped": 0
+        },
+        "hp": {
+          "florr": 5,
+          "cpp": 10,
+          "florrMapped": 5
+        }
+      }
+    },
+    {
+      "key": "yggdrasil",
+      "florr": "Yggdrasil",
+      "cpp": "yggdrasil",
+      "fields": {
+        "hp": {
+          "florr": 10,
+          "cpp": 1,
+          "florrMapped": 10
+        },
+        "reload": {
+          "florr": 5,
+          "cpp": 2048000,
+          "florrMapped": 5000
+        }
+      }
+    },
+    {
+      "key": "bandage",
+      "florr": "Bandage",
+      "cpp": "bandage",
+      "fields": {
+        "reload": {
+          "florr": 0,
+          "cpp": 1,
+          "florrMapped": 0
+        }
+      }
+    },
+    {
+      "key": "champion_s_crown",
+      "florr": "Champion's Crown",
+      "cpp": "champion_crown",
+      "fields": {
+        "reload": {
+          "florr": 0,
+          "cpp": 1,
+          "florrMapped": 0
+        }
+      }
+    }
+  ],
+  "petalDiffCount": 53,
+  "mobNumericDiffs": [
+    {
+      "key": "square",
+      "florr": "Square",
+      "cpp": "square",
+      "fields": {
+        "hp": {
+          "florr": 35,
+          "cpp": 20
+        },
+        "speedRaw": {
+          "florr": 55,
+          "cpp": 0
+        }
+      }
+    },
+    {
+      "key": "ladybug",
+      "florr": "Ladybug",
+      "cpp": "ladybug",
+      "fields": {
+        "hp": {
+          "florr": 62.5,
+          "cpp": 60
+        },
+        "speedRaw": {
+          "florr": 42,
+          "cpp": 0.1
+        }
+      }
+    },
+    {
+      "key": "worker_ant",
+      "florr": "Worker Ant",
+      "cpp": "worker_ant",
+      "fields": {
+        "hp": {
+          "florr": 25,
+          "cpp": 60
+        },
+        "speedRaw": {
+          "florr": 55,
+          "cpp": 0.48
+        }
+      }
+    },
+    {
+      "key": "soldier_ant",
+      "florr": "Soldier Ant",
+      "cpp": "soldier_ant",
+      "fields": {
+        "hp": {
+          "florr": 50,
+          "cpp": 100
+        },
+        "speedRaw": {
+          "florr": 90,
+          "cpp": 0.48
+        }
+      }
+    },
+    {
+      "key": "rock",
+      "florr": "Rock",
+      "cpp": "rock",
+      "fields": {
+        "hp": {
+          "florr": 100,
+          "cpp": 50
+        },
+        "speedRaw": {
+          "florr": 0,
+          "cpp": 0
+        }
+      }
+    },
+    {
+      "key": "mummy_beetle",
+      "florr": "Mummy Beetle",
+      "cpp": "mummy_beetle",
+      "fields": {
+        "hp": {
+          "florr": 70,
+          "cpp": 100
+        },
+        "speedRaw": {
+          "florr": 290,
+          "cpp": 0.52
+        }
+      }
+    },
+    {
+      "key": "scorpion",
+      "florr": "Scorpion",
+      "cpp": "scorpion",
+      "fields": {
+        "damage": {
+          "florr": 15,
+          "cpp": 20
+        },
+        "speedRaw": {
+          "florr": 180,
+          "cpp": 0.56
+        }
+      }
+    },
+    {
+      "key": "sandstorm",
+      "florr": "Sandstorm",
+      "cpp": "sandstorm",
+      "fields": {
+        "hp": {
+          "florr": 75,
+          "cpp": 125
+        },
+        "speedRaw": {
+          "florr": 180,
+          "cpp": 0.4
+        }
+      }
+    },
+    {
+      "key": "crab",
+      "florr": "Crab",
+      "cpp": "crab",
+      "fields": {
+        "hp": {
+          "florr": 75,
+          "cpp": 80
+        },
+        "speedRaw": {
+          "florr": 150,
+          "cpp": 0.56
+        }
+      }
+    },
+    {
+      "key": "shell",
+      "florr": "Shell",
+      "cpp": "shell",
+      "fields": {
+        "hp": {
+          "florr": 80,
+          "cpp": 50
+        },
+        "speedRaw": {
+          "florr": 10,
+          "cpp": 2
+        }
+      }
+    },
+    {
+      "key": "cactus",
+      "florr": "Cactus",
+      "cpp": "cactus",
+      "fields": {
+        "hp": {
+          "florr": 100,
+          "cpp": 35
+        },
+        "speedRaw": {
+          "florr": 0,
+          "cpp": 0
+        }
+      }
+    },
+    {
+      "key": "queen_ant",
+      "florr": "Queen Ant",
+      "cpp": "queen_ant",
+      "fields": {
+        "hp": {
+          "florr": 300,
+          "cpp": 250
+        },
+        "speedRaw": {
+          "florr": 90,
+          "cpp": 0.44
+        }
+      }
+    },
+    {
+      "key": "ant_hole",
+      "florr": "Ant Hole",
+      "cpp": "ant_hole",
+      "fields": {
+        "hp": {
+          "florr": 500,
+          "cpp": 750
+        },
+        "speedRaw": {
+          "florr": 0,
+          "cpp": 0
+        }
+      }
+    },
+    {
+      "key": "digger",
+      "florr": "Digger",
+      "cpp": "digger",
+      "fields": {
+        "damage": {
+          "florr": 30,
+          "cpp": 25
+        },
+        "hp": {
+          "florr": 375,
+          "cpp": 1000
+        },
+        "speedRaw": {
+          "florr": 180,
+          "cpp": 0.52
+        }
+      }
+    },
+    {
+      "key": "leech",
+      "florr": "Leech",
+      "cpp": "leech_body",
+      "fields": {
+        "hp": {
+          "florr": 100,
+          "cpp": 35
+        },
+        "speedRaw": {
+          "florr": 435,
+          "cpp": 2
+        }
+      }
+    },
+    {
+      "key": "baby_termite",
+      "florr": "Baby Termite",
+      "cpp": "baby_termite",
+      "fields": {
+        "hp": {
+          "florr": 25,
+          "cpp": 50
+        },
+        "speedRaw": {
+          "florr": 200,
+          "cpp": 0.48
+        }
+      }
+    },
+    {
+      "key": "worker_termite",
+      "florr": "Worker Termite",
+      "cpp": "worker_termite",
+      "fields": {
+        "hp": {
+          "florr": 60,
+          "cpp": 125
+        },
+        "speedRaw": {
+          "florr": 200,
+          "cpp": 0.48
+        }
+      }
+    },
+    {
+      "key": "soldier_termite",
+      "florr": "Soldier Termite",
+      "cpp": "soldier_termite",
+      "fields": {
+        "hp": {
+          "florr": 100,
+          "cpp": 200
+        },
+        "speedRaw": {
+          "florr": 230,
+          "cpp": 0.48
+        }
+      }
+    },
+    {
+      "key": "termite_mound",
+      "florr": "Termite Mound",
+      "cpp": "termite_mound",
+      "fields": {
+        "damage": {
+          "florr": 0,
+          "cpp": 15
+        },
+        "hp": {
+          "florr": 1,
+          "cpp": 750
+        },
+        "speedRaw": {
+          "florr": 0,
+          "cpp": 0
+        }
+      }
+    },
+    {
+      "key": "bush",
+      "florr": "Bush",
+      "cpp": "bush",
+      "fields": {
+        "hp": {
+          "florr": 50,
+          "cpp": 40
+        },
+        "speedRaw": {
+          "florr": 0,
+          "cpp": 0
+        }
+      }
+    },
+    {
+      "key": "firefly",
+      "florr": "Firefly",
+      "cpp": "firefly",
+      "fields": {
+        "damage": {
+          "florr": 5,
+          "cpp": 30
+        },
+        "hp": {
+          "florr": 40,
+          "cpp": 50
+        },
+        "speedRaw": {
+          "florr": 255,
+          "cpp": 0.48
+        }
+      }
+    },
+    {
+      "key": "magic_firefly",
+      "florr": "Magic Firefly",
+      "cpp": "magic_firefly",
+      "fields": {
+        "damage": {
+          "florr": 5,
+          "cpp": 30
+        },
+        "hp": {
+          "florr": 40,
+          "cpp": 50
+        },
+        "speedRaw": {
+          "florr": 200,
+          "cpp": 0.48
+        }
+      }
+    },
+    {
+      "key": "pharaoh_beetle",
+      "florr": "Pharaoh Beetle",
+      "cpp": "pharaoh_beetle",
+      "fields": {
+        "hp": {
+          "florr": 30,
+          "cpp": 100
+        },
+        "speedRaw": {
+          "florr": 290,
+          "cpp": 0.52
+        }
+      }
+    },
+    {
+      "key": "garbage",
+      "florr": "Garbage",
+      "cpp": "garbage",
+      "fields": {
+        "damage": {
+          "florr": 3,
+          "cpp": 5
+        },
+        "speedRaw": {
+          "florr": 0,
+          "cpp": 0
+        }
+      }
+    }
+  ],
+  "mobDiffCount": 24
+}

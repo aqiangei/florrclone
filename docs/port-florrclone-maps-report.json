@@ -1,0 +1,155 @@
+{
+  "tilesetInfo": {
+    "added": 0,
+    "copied": 111,
+    "tilecount": 122
+  },
+  "written": [
+    {
+      "biome": "Garden",
+      "file": "garden.tmj",
+      "cols": 121,
+      "rows": 121,
+      "layers": 7
+    },
+    {
+      "biome": "Ant Hell",
+      "file": "ant_hell.tmj",
+      "cols": 123,
+      "rows": 123,
+      "layers": 3
+    },
+    {
+      "biome": "Desert",
+      "file": "desert.tmj",
+      "cols": 121,
+      "rows": 121,
+      "layers": 5
+    },
+    {
+      "biome": "Jungle",
+      "file": "jungle.tmj",
+      "cols": 121,
+      "rows": 121,
+      "layers": 7
+    },
+    {
+      "biome": "Ocean",
+      "file": "ocean.tmj",
+      "cols": 121,
+      "rows": 121,
+      "layers": 5
+    },
+    {
+      "biome": "Sewers",
+      "file": "sewers.tmj",
+      "cols": 90,
+      "rows": 90,
+      "layers": 4
+    },
+    {
+      "biome": "Factory",
+      "file": "computer.tmj",
+      "cols": 90,
+      "rows": 90,
+      "layers": 3
+    },
+    {
+      "biome": "Hel",
+      "file": "hel.tmj",
+      "cols": 90,
+      "rows": 90,
+      "layers": 2
+    },
+    {
+      "biome": "Worm",
+      "file": "worm.tmj",
+      "cols": 12,
+      "rows": 12,
+      "layers": 2
+    },
+    {
+      "biome": "Pyramid",
+      "file": "pyramid.tmj",
+      "cols": 50,
+      "rows": 50,
+      "layers": 1,
+      "flat": true
+    },
+    {
+      "biome": "dps test",
+      "file": "dps_test.tmj",
+      "cols": 50,
+      "rows": 50,
+      "layers": 1,
+      "flat": true
+    },
+    {
+      "biome": "Swarm",
+      "file": "swarm.tmj",
+      "cols": 80,
+      "rows": 80,
+      "layers": 1,
+      "flat": true
+    },
+    {
+      "biome": "Super",
+      "file": "super.tmj",
+      "cols": 80,
+      "rows": 80,
+      "layers": 1,
+      "flat": true
+    }
+  ],
+  "mapsJson": [
+    {
+      "file": "garden.tmj",
+      "prestige": true
+    },
+    {
+      "file": "desert.tmj",
+      "prestige": true
+    },
+    {
+      "file": "computer.tmj",
+      "prestige": true
+    },
+    {
+      "file": "ocean.tmj",
+      "prestige": true
+    },
+    {
+      "file": "jungle.tmj",
+      "prestige": true
+    },
+    {
+      "file": "hel.tmj",
+      "prestige": true
+    },
+    {
+      "file": "ant_hell.tmj",
+      "prestige": true
+    },
+    {
+      "file": "sewers.tmj",
+      "prestige": true
+    },
+    {
+      "file": "pyramid.tmj",
+      "prestige": true
+    },
+    {
+      "file": "worm.tmj",
+      "copies": 4
+    },
+    {
+      "file": "swarm.tmj"
+    },
+    {
+      "file": "super.tmj"
+    },
+    {
+      "file": "dps_test.tmj"
+    }
+  ]
+}

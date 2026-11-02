@@ -1,0 +1,175 @@
+{
+  "dry": true,
+  "updated": 11,
+  "unresolvedCount": 1,
+  "changes": [
+    {
+      "florName": "Mysterious Stick",
+      "cppKey": "mysterious_stick",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 4000
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 4000,
+        "zh": "Stick"
+      }
+    },
+    {
+      "florName": "Magic Cotton",
+      "cppKey": "magic_cotton",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 1500
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 1500,
+        "zh": "Magic Cotton"
+      }
+    },
+    {
+      "florName": "Magic Eye",
+      "cppKey": "magic_eye",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 2000
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 2000,
+        "zh": "Magic Eye"
+      }
+    },
+    {
+      "florName": "Blood Sacrifice",
+      "cppKey": "blood_sacrifice",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 10000
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 10000,
+        "zh": "Blood Sacrifice"
+      }
+    },
+    {
+      "florName": "Nazar Amulet",
+      "cppKey": "amulet",
+      "before": {
+        "damage": 0,
+        "health": 10,
+        "cooldown": 2000
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 60000,
+        "zh": "邪眼护符"
+      }
+    },
+    {
+      "florName": "Amulet",
+      "cppKey": "amulet",
+      "before": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 60000
+      },
+      "after": {
+        "damage": 0,
+        "health": 10,
+        "cooldown": 2000,
+        "zh": "护符"
+      }
+    },
+    {
+      "florName": "Totem",
+      "cppKey": "totem",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 2500
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 2500,
+        "zh": "图腾"
+      }
+    },
+    {
+      "florName": "Shovel",
+      "cppKey": "shovel",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 15000
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 15000,
+        "zh": "铲子"
+      }
+    },
+    {
+      "florName": "Mysterious Relic",
+      "cppKey": "mysterious_relic",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 0
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 0,
+        "zh": "神秘遗物"
+      }
+    },
+    {
+      "florName": "Paranormal Goggles",
+      "cppKey": "paranormal_goggles",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 0
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 0,
+        "zh": "灵异护目镜"
+      }
+    },
+    {
+      "florName": "Corruption",
+      "cppKey": "corruption",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 0
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 0,
+        "zh": "腐化"
+      }
+    }
+  ],
+  "unresolved": [
+    "Pharaoh's Crown"
+  ]
+}

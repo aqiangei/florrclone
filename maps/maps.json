@@ -1,0 +1,57 @@
+{
+  "_comment": [
+    "Maps converted from florrclone client geometry + engine biome/portal tables.",
+    "Reference florr_clone-web maps were moved to maps_ref_backup/."
+  ],
+  "maps": [
+    {
+      "file": "garden.tmj",
+      "prestige": true
+    },
+    {
+      "file": "desert.tmj",
+      "prestige": true
+    },
+    {
+      "file": "computer.tmj",
+      "prestige": true
+    },
+    {
+      "file": "ocean.tmj",
+      "prestige": true
+    },
+    {
+      "file": "jungle.tmj",
+      "prestige": true
+    },
+    {
+      "file": "hel.tmj",
+      "prestige": true
+    },
+    {
+      "file": "ant_hell.tmj",
+      "prestige": true
+    },
+    {
+      "file": "sewers.tmj",
+      "prestige": true
+    },
+    {
+      "file": "pyramid.tmj",
+      "prestige": true
+    },
+    {
+      "file": "worm.tmj",
+      "copies": 4
+    },
+    {
+      "file": "swarm.tmj"
+    },
+    {
+      "file": "super.tmj"
+    },
+    {
+      "file": "dps_test.tmj"
+    }
+  ]
+}

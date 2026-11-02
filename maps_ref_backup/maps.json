@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Every world map the server runs, in the order that decides which realm",
+    "each one is. Realm 0 is the first entry -- the overworld -- and the rest",
+    "follow it. The ORDER is the contract: a client and a server that read this",
+    "file agree about which realm is which map, which is what makes a",
+    "teleporter's `targetMap` and a saved spawn choice mean the same thing on",
+    "both ends. Reorder it and everyone standing in a map moves to another one.",
+    "",
+    "A map's id is its file stem, and that is what a teleporter's `targetMap`",
+    "names. See maps/README.md.",
+    "",
+    "`copies` loads one file into that many realms, side by side: private",
+    "instances of one place, such as the dungeon inside each termite mound.",
+    "",
+    "`prestige: true` also loads the map's PRESTIGE twin, `prestige_<id>`, in",
+    "a realm after every entry's own: the same place one rarity harder, with",
+    "no unique or apex, for players with the Prestige talent. Its pads lead",
+    "to other twins. See cpp/shared/game/prestige.h."
+  ],
+  "maps": [
+    { "file": "garden.tmj", "prestige": true },
+    { "file": "desert.tmj", "prestige": true },
+    { "file": "computer.tmj", "prestige": true },
+    { "file": "ocean.tmj", "prestige": true },
+    { "file": "jungle.tmj", "prestige": true },
+    { "file": "hel.tmj", "prestige": true },
+    { "file": "ant_hell.tmj", "prestige": true },
+    { "file": "sewers.tmj", "prestige": true },
+    { "file": "pyramid.tmj", "prestige": true },
+    { "file": "termite_mound.tmj", "copies": 8 }
+  ]
+}

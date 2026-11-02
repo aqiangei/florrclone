@@ -1,0 +1,808 @@
+// Settings.
+//
+// Four tabs in a fixed 420x500 card pinned under the top icon row: the key
+// bindings, the graphics switches and sliders, the server address, and the
+// credits. Every SWITCH here is local to this client and none of them can
+// change what the simulation does -- which is why hitboxes can be switched on
+// without it being a cheat. The account's own controls -- its password, Log
+// Out -- used to sit on the Advanced tab; they are the Account card's now
+// (menu_account.cpp), and the offline build's Grant Admin is the one request
+// to a server left here.
+//
+// The panel keeps more between frames than SettingsPanel has members for: a
+// tab, a press, a slider drag, a focused field, and the switches that have no
+// home in ClientSettings yet. That state lives in this file because there is
+// exactly one settings panel in the process, so a file-scope instance is the
+// same thing as a member.
+//
+// Which rows reach the rest of the client, and which do not:
+//   wired   all sixteen bindings -> ClientSettings, which is what App reads
+//           for movement, the petal keys, chat and zoom and what MenuSystem
+//           reads for the panel keys and the two in-game switches; Show
+//           Hitboxes -> settings.render.hitboxes, Use Mouse Controls ->
+//           settings.useMouseControls, Movement Helper / Invert Attack /
+//           Invert Defend -> settings.movementHelper/invertAttack/invertDefend,
+//           Enable Debug Menu button -> settings.showDebugButton, Request
+//           Mobile -> settings.requestMobile, which is what App puts the
+//           on-screen stick and its two buttons up from, Hide Other Players'
+//           Petals and Pets -> settings.render.hideOtherPetals/hideOtherPets,
+//           Show Admins on Leaderboard -> settings.showAdminsOnLeaderboard,
+//           which the leaderboard panel sends with its request, Screen Shake ->
+//           settings.render.screenShake, Low Latency Canvas
+//           -> settings.desynchronizedCanvas, which App hands to
+//           Window::setDesynchronized (browser only; inert natively). These
+//           are read elsewhere and persisted with the rest of ClientSettings.
+//   local   every other switch and the mob-framerate slider. The rows are
+//           drawn because the reference draws them -- the row set is the
+//           panel's shape, not a claim about this client -- but a value
+//           cannot outlive the process until ClientSettings carries a field
+//           for it to be saved in, so they are remembered for the session and
+//           no longer. Number Keys Use Items is the one whose row is real and
+//           whose behaviour is not: this client has no "use the petal in a
+//           slot" path for the number keys to take, so the switch has nothing
+//           to switch yet.
+//   inert   Anti-aliasing and GPU Acceleration are not switchable at runtime.
+//           The browser build always uses its native Canvas2D backend; the
+//           desktop build owns a fixed software canvas plus SDL presentation.
+//           The rows keep their value for parity, but nothing reads it. Render
+//           Resolution is different: it sizes the backing canvas through
+//           Window::setRenderScale and genuinely buys frame rate.
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <string>
+
+#include "client/ui/menu_theme.h"
+#include "client/ui/menus.h"
+#include "client/ui/text.h"
+#include "client/ui/text_input.h"
+
+namespace flix {
+
+using namespace flix::ui;
+
+namespace {
+
+// --- layout, straight from the browser panel's getLayout() ------------------
+
+constexpr double kPad = 15.0;
+constexpr double kHeaderHeight = 30.0;
+constexpr double kTabHeight = 32.0;
+constexpr double kTabGap = 5.0;
+constexpr double kRowStride = 32.0;
+constexpr double kCheckSize = 22.0;
+constexpr double kKeyBoxHeight = 26.0;
+constexpr double kSliderThickness = 8.0;
+constexpr double kThumbRadius = 10.0;
+constexpr double kFieldHeight = 32.0;
+/// Chrome reports 100 CSS px of deltaY per wheel notch and the browser panel
+/// scrolls 1:1 with it; SDL reports one notch as 1.0.
+constexpr double kWheelStep = 100.0;
+
+// --- palette ----------------------------------------------------------------
+
+constexpr std::uint32_t kTabActiveFill = 0x8888BBu;
+constexpr std::uint32_t kNeutralFill = 0xA3A3A3u;   ///< inactive tab, reset buttons
+constexpr std::uint32_t kActionFill = 0x5A9FDBu;    ///< Save Controls, and the slider fill
+constexpr std::uint32_t kDangerFill = 0xCC4444u;    ///< Reset Tutorial, armed
+/// hsvAdjust('#a3a3a3', 0.8) -- the surround every white inset field sits in.
+constexpr std::uint32_t kSurroundFill = 0x828282u;
+constexpr std::uint32_t kSurfaceIdle = 0xE6E6E6u;
+constexpr std::uint32_t kSurfaceHover = 0xF0F0F0u;
+constexpr std::uint32_t kSurfaceActive = 0xFFFFFFu;
+/// hsvAdjust('#666666', 0.4).
+constexpr std::uint32_t kCheckShell = 0x292929u;
+constexpr std::uint32_t kCheckOff = 0x666666u;
+constexpr std::uint32_t kCheckOn = 0xCFCFCFu;
+constexpr std::uint32_t kTrackGrey = 0x888888u;
+constexpr std::uint32_t kThumbFill = 0xDDDDDDu;
+constexpr std::uint32_t kGoldHeading = 0xFFDD66u;
+constexpr std::uint32_t kFooterGrey = 0xCCCCCCu;
+
+/// The address the client dials when nothing overrides it. Duplicated from
+/// AppConfig because the panel has no accessor for the live one; the browser
+/// falls back to window.location.origin for exactly the same reason.
+constexpr const char* kDefaultServerAddress = "127.0.0.1:3000";
+
+// --- what the panel can point at --------------------------------------------
+
+enum class Tab : std::uint8_t { Controls, Graphics, Advanced, Credits };
+constexpr int kTabCount = 4;
+
+/// Which widget a press began on. Two fields rather than the browser's string
+/// ids ("settings_tab_graphics"), which is the same thing without an
+/// allocation per frame. Only the gardn buttons appear here: checkboxes, key
+/// boxes and the IP field have no pressed state in the browser either.
+enum class Widget : std::uint8_t { None, Tab, Button };
+
+struct WidgetId {
+    Widget kind = Widget::None;
+    int index = 0;
+};
+bool operator==(WidgetId a, WidgetId b) { return a.kind == b.kind && a.index == b.index; }
+
+/// Every switch in the panel. Two of them are real client settings; the rest
+/// have no consumer yet and are held beside them so the panel still reads and
+/// writes one value per row rather than faking it.
+enum Toggle : int {
+    kShowHitboxes,
+    kShowStats,
+    kDynamicSkybox,
+    kMobDeathAnimation,
+    kAntialiasing,
+    kGpuAcceleration,
+    kDisableUltraParticles,
+    /// One value, two rows: Graphics calls it "Show Console Logs" and Advanced
+    /// "Show Console Logs on Screen", as the browser does.
+    kShowConsoleLogs,
+    kShowAdminCommands,
+    kShowAdminsOnLeaderboard,
+    kDebugMenuEnabled,
+    kNumberKeysUseItems,
+    kClassicLoadoutBar,
+    kUseMouseControls,
+    kRequestMobile,
+    kMovementHelper,
+    kInvertAttack,
+    kInvertDefend,
+    kHideOtherPetals,
+    kHideOtherPets,
+    kDesynchronizedCanvas,
+    kScreenShake,
+    kToggleCount,
+};
+
+enum Slider : int { kRenderScale, kMobFramerate, kInterpolation };
+
+enum Button : int {
+    kSaveControls,
+    kResetControls,
+    kResetTutorial,
+    kGrantAdmin,
+    kLanguageZh,
+    kLanguageEn,
+};
+
+/// The Controls tab's rows are ControlAction's own order, and every binding
+/// they show lives in ClientSettings -- see controlMeta() in menus.h. The
+/// panel keeps none of them: a key the player rebinds here is read by the app
+/// and written to the settings file, which is the whole point of the row.
+
+/// A key as the browser's `event.key` spells it, which is what the browser
+/// panel stores and shows: lower-case letters, "Space", "Shift", "=", "-".
+const char* keyLabel(Key key) {
+    switch (key) {
+        case Key::A: return "a"; case Key::B: return "b"; case Key::C: return "c";
+        case Key::D: return "d"; case Key::E: return "e"; case Key::F: return "f";
+        case Key::G: return "g"; case Key::H: return "h"; case Key::I: return "i";
+        case Key::J: return "j"; case Key::K: return "k"; case Key::L: return "l";
+        case Key::M: return "m"; case Key::N: return "n"; case Key::O: return "o";
+        case Key::P: return "p"; case Key::Q: return "q"; case Key::R: return "r";
+        case Key::S: return "s"; case Key::T: return "t"; case Key::U: return "u";
+        case Key::V: return "v"; case Key::W: return "w"; case Key::X: return "x";
+        case Key::Y: return "y"; case Key::Z: return "z";
+        case Key::Num0: return "0"; case Key::Num1: return "1"; case Key::Num2: return "2";
+        case Key::Num3: return "3"; case Key::Num4: return "4"; case Key::Num5: return "5";
+        case Key::Num6: return "6"; case Key::Num7: return "7"; case Key::Num8: return "8";
+        case Key::Num9: return "9";
+        case Key::Space: return "Space"; case Key::Enter: return "Enter";
+        case Key::Tab: return "Tab"; case Key::Backspace: return "Backspace";
+        case Key::Escape: return "Escape";
+        case Key::Minus: return "-"; case Key::Equals: return "=";
+        case Key::Comma: return ","; case Key::Period: return ".";
+        case Key::Slash: return "/"; case Key::Backslash: return "\\";
+        case Key::Semicolon: return ";"; case Key::Apostrophe: return "'";
+        case Key::LeftShift: case Key::RightShift: return "Shift";
+        case Key::LeftCtrl: case Key::RightCtrl: return "Control";
+        case Key::LeftAlt: case Key::RightAlt: return "Alt";
+        case Key::Left: return "ArrowLeft"; case Key::Right: return "ArrowRight";
+        case Key::Up: return "ArrowUp"; case Key::Down: return "ArrowDown";
+        case Key::F1: return "F1"; case Key::F2: return "F2"; case Key::F3: return "F3";
+        case Key::F4: return "F4"; case Key::F5: return "F5"; case Key::F6: return "F6";
+        case Key::F7: return "F7"; case Key::F8: return "F8"; case Key::F9: return "F9";
+        case Key::F10: return "F10"; case Key::F11: return "F11"; case Key::F12: return "F12";
+        default: return "";
+    }
+}
+
+// --- state ------------------------------------------------------------------
+
+struct PanelState {
+    Tab tab = Tab::Controls;
+    WidgetId pressed{};
+    int dragging = -1;              ///< index into Slider, or -1
+    ui::TextFieldState ipField;
+    std::string serverIp = kDefaultServerAddress;
+    std::array<bool, kToggleCount> toggles{};
+    double mobFramerate = 15.0;
+    // No `interpolation` or `renderScale` here: those two sliders are bound
+    // straight to the ClientSettings fields of the same name, which are what
+    // the renderer's ease and the window's canvas size read and what the
+    // settings file persists. A panel-local copy would move the thumb and
+    // change nothing.
+    /// Measured by the last paint, the way the browser captures
+    /// contentBottomY, so the scroll range is always the real one.
+    double contentHeight = 0;
+    /// Reset Tutorial asks twice. The browser asks with confirm() and then
+    /// says so with alert(); this client has no dialog to put either in, so
+    /// the button relabels and only a second click inside the arming window
+    /// does anything -- the same guard the talents panel's reset already uses.
+    bool tutorialResetArmed = false;
+    double tutorialResetArmedUntil = 0;
+
+    PanelState() {
+        toggles[kMobDeathAnimation] = true;
+        toggles[kAntialiasing] = true;
+        toggles[kGpuAcceleration] = true;
+    }
+};
+
+/// The one settings panel's state. See the note at the top of the file for
+/// why it lives here rather than in SettingsPanel.
+PanelState& panelState() {
+    static PanelState s;
+    return s;
+}
+
+bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
+    switch (id) {
+        case kShowHitboxes: return &settings.render.hitboxes;
+        case kShowStats: return &settings.showStats;
+        case kDebugMenuEnabled: return &settings.showDebugButton;
+        case kClassicLoadoutBar: return &settings.classicLoadoutBar;
+        case kUseMouseControls: return &settings.useMouseControls;
+        case kRequestMobile: return &settings.requestMobile;
+        case kMovementHelper: return &settings.movementHelper;
+        case kInvertAttack: return &settings.invertAttack;
+        case kInvertDefend: return &settings.invertDefend;
+        case kHideOtherPetals: return &settings.render.hideOtherPetals;
+        case kHideOtherPets: return &settings.render.hideOtherPets;
+        case kScreenShake: return &settings.render.screenShake;
+        case kShowAdminsOnLeaderboard: return &settings.showAdminsOnLeaderboard;
+        case kDesynchronizedCanvas: return &settings.desynchronizedCanvas;
+        // Everything else lands in the panel's own copy, because ClientSettings
+        // has no field for it: nothing outside this file could read one, and
+        // nothing would write it to disk. A row moves up here the moment a
+        // field exists -- and Number Keys Use Items has no consumer yet either
+        // (see the file comment).
+        default: return &st.toggles[static_cast<std::size_t>(id)];
+    }
+}
+
+/// The row index the panel lays out in, as the action it binds.
+ControlAction rowAction(int row) { return static_cast<ControlAction>(row); }
+
+// --- primitives -------------------------------------------------------------
+
+TextStyle bodyStyle(double size, std::uint32_t fill, std::uint32_t stroke,
+                    Align align = Align::Left) {
+    TextStyle style;
+    style.size = size;
+    style.fill = fill;
+    style.stroke = stroke;
+    style.align = align;
+    return style;
+}
+
+/// A white inset surface in a grey surround: the key boxes. Rounded outside,
+/// SHARP inside, as the browser draws it.
+void insetSurface(Canvas& canvas, Rect r, std::uint32_t surface) {
+    fillRound(canvas, r, 3.0, kSurroundFill);
+    setFill(canvas, surface);
+    canvas.fillRect(static_cast<float>(r.x + 3.0), static_cast<float>(r.y + 3.0),
+                    static_cast<float>(r.w - 6.0), static_cast<float>(r.h - 6.0));
+}
+
+std::uint32_t surfaceColour(bool active, bool hovered) {
+    if (active) return kSurfaceActive;
+    return hovered ? kSurfaceHover : kSurfaceIdle;
+}
+
+ButtonStyle gardnStyle(std::uint32_t fill, double textSize) {
+    ButtonStyle style;
+    style.fill = fill;
+    style.outlineWidth = 3.0;
+    style.radius = 3.0;
+    style.textSize = textSize;
+    return style;
+}
+
+/// The layout cursor and the widget helpers the four tabs share.
+///
+/// Hover and click are answered inline, next to the geometry that produced
+/// them, so there is no second copy of the layout for an input pass to drift
+/// away from -- the same reason every other panel here is immediate-mode.
+struct Painter {
+    MenuContext& ctx;
+    PanelState& st;
+    double x = 0;           ///< content column, left edge
+    double w = 0;           ///< content column width
+    bool inView = false;    ///< the cursor is inside the clipped viewport
+    double cy = 0;          ///< running layout cursor
+    bool consumed = false;  ///< a widget answered this frame's release
+
+    Canvas& canvas() const { return ctx.canvas; }
+    Vec2 mouse() const { return ctx.mouse(); }
+    bool over(Rect r) const { return inView && r.contains(mouse()); }
+
+    /// Records the press and reports whether this widget is the pressed one.
+    /// The browser keeps its press on the widget it started on even as the
+    /// cursor leaves, so this deliberately does not re-test the hover.
+    bool press(Rect r, WidgetId id) {
+        if (over(r) && ctx.pressed()) st.pressed = id;
+        return st.pressed == id;
+    }
+
+    bool click(Rect r) {
+        if (!over(r) || !ctx.released()) return false;
+        consumed = true;
+        return true;
+    }
+
+    void label(const std::string& caption, double y, double size, std::uint32_t fill,
+               std::uint32_t stroke, Align align = Align::Left) {
+        const double at = align == Align::Centre ? x + w * 0.5 : x;
+        text(canvas(), caption, at, y, bodyStyle(size, fill, stroke, align));
+    }
+
+    /// A gardn button, laid out and hit-tested. Returns true when clicked.
+    bool button(Rect r, const std::string& caption, std::uint32_t fill, double textSize, int id) {
+        const WidgetId self{Widget::Button, id};
+        const bool pressed = press(r, self);
+        ui::button(canvas(), r, caption, over(r), pressed, gardnStyle(fill, textSize));
+        return click(r);
+    }
+
+    /// One checkbox row. Advances the cursor by a full row.
+    void checkbox(int toggleId, const std::string& caption) {
+        const Rect row{x, cy, w, kRowStride};
+        const bool hovered = over(row);
+        bool* value = toggleValue(st, ctx.settings, toggleId);
+
+        fillRound(canvas(), Rect{x, cy + 2.0, kCheckSize, kCheckSize}, 4.0, kCheckShell);
+        const std::uint32_t inner = *value ? kCheckOn : kCheckOff;
+        // Only the inner square lights up: there is no row-wide wash anywhere
+        // in this panel.
+        setFill(canvas(), hovered ? hsvScale(inner, 1.1) : inner);
+        canvas().fillRect(static_cast<float>(x + 3.0), static_cast<float>(cy + 5.0),
+                          static_cast<float>(kCheckSize - 6.0),
+                          static_cast<float>(kCheckSize - 6.0));
+
+        text(canvas(), caption, x + kCheckSize + 8.0, cy + 2.0 + kCheckSize * 0.5,
+             bodyStyle(13.0, kPaper, kInk));
+
+        if (click(row)) {
+            *value = !*value;
+            // Touching this row IS the choice, and the choice is what stops
+            // the device's own answer from overruling it -- see
+            // ClientSettings::touchControlsWanted.
+            if (toggleId == kRequestMobile) ctx.settings.requestMobileChosen = true;
+        }
+        cy += kRowStride;
+    }
+
+    /// A captioned slider: the caption, then the track 22px under it, then
+    /// `trailing` px of gap. `value` is quantised to `step` and reported as
+    /// `value * scale` at `decimals` places between `prefix` and `suffix`.
+    ///
+    /// The row owns the value rather than handing back a ratio, because the
+    /// caption and the thumb must agree about it: the browser quantises before
+    /// it paints, and a thumb that slides between the steps its own label
+    /// reports is the tell that something ported this wrong.
+    void sliderRow(int id, const char* prefix, const char* suffix, double& value, double lo,
+                   double hi, double step, double scale, int decimals,
+                   std::uint32_t captionStroke, double trailing) {
+        const double span = hi - lo;
+        // The track lands 22px below the cursor, so its hit band -- ten above
+        // to twenty below -- is known before the caption is laid out.
+        const Rect hit{x, cy + 12.0, w, 30.0};
+        if (over(hit) && ctx.pressed()) st.dragging = id;
+        if (over(hit) && ctx.released()) consumed = true;
+        if (st.dragging == id) {
+            const double raw = lo + clamp((mouse().x - x) / w, 0.0, 1.0) * span;
+            value = clamp(std::round(raw / step) * step, lo, hi);
+        }
+
+        char caption[96];
+        std::snprintf(caption, sizeof caption, "%s%.*f%s", prefix, decimals, value * scale, suffix);
+        label(caption, cy + 8.0, 13.0, kPaper, captionStroke);
+        cy += 22.0;
+
+        const double r = clamp((value - lo) / span, 0.0, 1.0);
+        fillRound(canvas(), Rect{x, cy, w, kSliderThickness}, kSliderThickness * 0.5, kTrackGrey);
+        // Floored at the track height: a rounded rect narrower than its own
+        // radius paints as a sliver of the wrong shape rather than nothing.
+        fillRound(canvas(), Rect{x, cy, std::max(kSliderThickness, w * r), kSliderThickness},
+                  kSliderThickness * 0.5, kActionFill);
+
+        setFill(canvas(), (over(hit) || st.dragging == id) ? kSurfaceActive : kThumbFill);
+        setStroke(canvas(), kTrackGrey);
+        canvas().setLineWidth(2.0f);
+        canvas().beginPath();
+        canvas().arc(static_cast<float>(x + w * r),
+                     static_cast<float>(cy + kSliderThickness * 0.5),
+                     static_cast<float>(kThumbRadius), 0.0f, static_cast<float>(kTau));
+        canvas().fill();
+        canvas().stroke();
+        cy += trailing;
+    }
+};
+
+// --- credits ----------------------------------------------------------------
+
+struct CreditLine {
+    const char* body;
+    double size;
+    std::uint32_t fill;
+    bool centred;
+    double offset;   ///< baseline, relative to the cursor
+    double advance;  ///< how far the cursor moves afterwards
+};
+
+constexpr std::array<CreditLine, 16> kCredits = {{
+    {"Flowrix.pro", 18.0, kPaper, true, 10.0, 30.0},
+    {"Developers", 14.0, kGoldHeading, false, 10.0, 24.0},
+    {"• sussybite8888", 12.0, kPaper, false, 8.0, 20.0},
+    {"• Cookery", 12.0, kPaper, false, 8.0, 20.0},
+    {"• Codelinkd203", 12.0, kPaper, false, 8.0, 20.0},
+    {"• NachoFrenchFry", 12.0, kPaper, false, 8.0, 20.0},
+    {"• Arras Guard YT", 12.0, kPaper, false, 8.0, 20.0},
+    {"Inspired By", 14.0, kGoldHeading, false, 10.0, 24.0},
+    {"• florr.io by M28", 12.0, kPaper, false, 8.0, 28.0},
+    {"Assets & Libraries", 14.0, kGoldHeading, false, 10.0, 24.0},
+    {"• Icons from game-icons.net and svgrepo.com", 12.0, kPaper, false, 8.0, 20.0},
+    {"• Ubuntu font by Canonical", 12.0, kPaper, false, 8.0, 28.0},
+    {"• Assets extracted by Bismuth(https://github.com/trigonal-bacon/gardn)",
+     12.0, kPaper, false, 8.0, 20.0},
+    {"• UI style by Bismuth(https://github.com/trigonal-bacon/gardn)",
+     12.0, kPaper, false, 8.0, 20.0},
+    {"• Some SVG images from FreeSVG.org(https://freesvg.org)",
+     12.0, kPaper, false, 8.0, 20.0},
+    {"Thanks for playing!", 13.0, kFooterGrey, true, 8.0, 20.0},
+}};
+
+} // namespace
+
+double SettingsPanel::preferredWidth() { return 420.0; }
+
+void SettingsPanel::reset() {
+    // Deliberately not the scroll offset. The browser's toggle() only re-reads
+    // the stored values, so a player who scrolled down to the Controls
+    // checkboxes, closed the panel and reopened it finds it where they left
+    // it. The offset is zeroed on a tab change, which is where the browser
+    // zeroes it too.
+    rebinding_ = -1;
+    PanelState& st = panelState();
+    st.pressed = WidgetId{};
+    st.dragging = -1;
+    st.ipField.blur();
+}
+
+bool SettingsPanel::render(MenuContext& ctx) {
+    Canvas& canvas = ctx.canvas;
+    ClientSettings& settings = ctx.settings;
+    PanelState& st = panelState();
+    const Rect panel = ctx.bounds;
+    const Vec2 mouse = ctx.mouse();
+
+    // The browser clears its press on mouseup and only runs the click after,
+    // so a button is never painted pressed on the frame it fires.
+    if (ctx.released()) {
+        st.pressed = WidgetId{};
+        st.dragging = -1;
+    }
+
+    const double contentX = panel.x + kPad;
+    const double contentW = panel.w - kPad * 2;
+    const double contentTop = panel.y + kHeaderHeight + kPad + kTabHeight + 10.0;
+    const double contentBottom = panel.bottom() - kPad;
+    const double viewHeight = std::max(0.0, contentBottom - contentTop);
+
+    // Keys first: a rebind or a keystroke has to show in the paint that
+    // follows it, not one frame later.
+    if (rebinding_ >= 0) {
+        // Escape binds like any other key. The browser's key handler takes its
+        // editing branch before the one that closes the panel and writes
+        // event.key verbatim, so there is no cancel gesture here to port; and
+        // MenuSystem::handleKeys swallows every key while a row is capturing,
+        // so the Escape that lands on a binding cannot also close the panel.
+        for (int code = 1; code < static_cast<int>(Key::Count); ++code) {
+            const Key key = static_cast<Key>(code);
+            if (!ctx.window.keyPressed(key)) continue;
+            settings.bindControl(rowAction(rebinding_), key);
+            rebinding_ = -1;
+            break;
+        }
+    } else if (st.ipField.focused) {
+        if (ctx.window.keyPressed(Key::Escape) || ctx.window.keyPressed(Key::Enter)) {
+            st.ipField.blur();
+        } else {
+            // ASCII: a host name or an address is, and this is the one field a
+            // player is most likely to paste rather than type.
+            TextEditOptions typing;
+            typing.asciiOnly = true;
+            editText(ctx.window, st.serverIp, st.ipField, ctx.timeSeconds, typing);
+        }
+    }
+    if (st.ipField.focused) ctx.wantsText = true;
+
+    // --- card ---------------------------------------------------------------
+    panelCard(canvas, panel, kSettingsSkin);
+
+    text(canvas, tr(Msg::Settings), contentX, panel.y + kPad + kHeaderHeight * 0.5,
+         bodyStyle(20.0, kPaper, kInk));
+
+    const bool inPanel = panel.contains(mouse);
+    bool keepOpen = true;
+
+    const Rect closeRect = closeButtonRect(panel);
+    const bool closeHovered = inPanel && closeRect.contains(mouse);
+    ui::panelClose(canvas, closeRect, closeHovered);
+    if (closeHovered && ctx.released()) keepOpen = false;
+
+    // Language sits in the header so it is reachable from every tab.
+    {
+        const double langY = panel.y + kPad + 4.0;
+        const double langH = 26.0;
+        const double langW = 72.0;
+        const double langGap = 6.0;
+        const double langRight = panel.right() - kPad - closeRect.w - 10.0;
+        const Rect enRect{langRight - langW, langY, langW, langH};
+        const Rect zhRect{enRect.x - langW - langGap, langY, langW, langH};
+        text(canvas, tr(Msg::Language), zhRect.x - 8.0, langY + langH * 0.5,
+             bodyStyle(12.0, kPaper, kInk, Align::Right));
+        auto langBtn = [&](Rect r, const char* caption, bool on, int id) {
+            const WidgetId self{Widget::Button, id};
+            if (inPanel && r.contains(mouse) && ctx.pressed()) st.pressed = self;
+            const bool hovered = inPanel && r.contains(mouse);
+            ui::button(canvas, r, caption, hovered && !on, st.pressed == self,
+                       gardnStyle(on ? kActionFill : kNeutralFill, 12.0));
+            if (hovered && ctx.released()) {
+                settings.language = (id == kLanguageZh) ? Language::Zh : Language::En;
+                setLanguage(settings.language);
+            }
+        };
+        langBtn(zhRect, tr(Msg::LanguageZh), settings.language == Language::Zh, kLanguageZh);
+        langBtn(enRect, tr(Msg::LanguageEn), settings.language == Language::En, kLanguageEn);
+    }
+
+    // --- tab bar ------------------------------------------------------------
+    const std::array<const char*, kTabCount> kTabLabels = {
+        {tr(Msg::TabControls), tr(Msg::TabGraphics), tr(Msg::TabAdvanced), tr(Msg::TabCredits)}};
+    const double tabW = (contentW - (kTabCount - 1) * kTabGap) / kTabCount;
+    const double tabY = panel.y + kHeaderHeight + kPad + 5.0;
+    for (int i = 0; i < kTabCount; ++i) {
+        const Rect r{contentX + i * (tabW + kTabGap), tabY, tabW, kTabHeight};
+        const bool active = static_cast<int>(st.tab) == i;
+        const bool hovered = inPanel && r.contains(mouse);
+        const WidgetId self{Widget::Tab, i};
+        if (hovered && ctx.pressed()) st.pressed = self;
+        // Hover does not brighten the tab that is already selected, but a
+        // press darkens it like any other button.
+        ui::button(canvas, r, kTabLabels[static_cast<std::size_t>(i)], hovered && !active,
+                   st.pressed == self, gardnStyle(active ? kTabActiveFill : kNeutralFill, 13.0));
+        if (hovered && ctx.released()) {
+            st.tab = static_cast<Tab>(i);
+            scroll_.offset = 0;
+            rebinding_ = -1;
+            st.ipField.blur();
+        }
+    }
+
+    // --- scrolling ----------------------------------------------------------
+    scroll_.viewHeight = viewHeight;
+    scroll_.contentHeight = st.contentHeight;
+    // Wherever the pointer is: the browser's wheel listener sits on the UI
+    // canvas, not on the card, and forwards every notch to whichever panel is
+    // open. A cursor resting over the world still scrolls this list.
+    scroll_.offset -= static_cast<double>(ctx.wheel()) * kWheelStep;
+    // A finger is more particular: only the list itself, the band the clip
+    // below spans. A sideways drag still reaches a slider -- see Window's
+    // note on dragging a list.
+    scroll_.offset -= touchScroll(ctx.window, Rect{panel.x, contentTop, panel.w, viewHeight},
+                                  scroll_.maxOffset() > 0);
+    scroll_.offset = clamp(scroll_.offset, 0.0, scroll_.maxOffset());
+
+    canvas.save();
+    // The clip spans the FULL panel width, not the content column: a label
+    // that overruns the column is cut by the card's edge, not by the padding.
+    canvas.beginPath();
+    canvas.rect(static_cast<float>(panel.x), static_cast<float>(contentTop),
+                static_cast<float>(panel.w), static_cast<float>(viewHeight));
+    canvas.clip();
+
+    Painter p{ctx, st, contentX, contentW,
+              inPanel && mouse.y >= contentTop && mouse.y <= contentBottom,
+              contentTop - scroll_.offset, false};
+    const double contentStart = p.cy;
+
+    switch (st.tab) {
+        case Tab::Controls: {
+            p.label(tr(Msg::ControlsHeading), p.cy + 10.0, 15.0, kPaper, kInk);
+            p.cy += 28.0;
+
+            const double labelW = contentW * 0.55;
+            const double inputW = contentW * 0.4;
+            for (int i = 0; i < kControlCount; ++i) {
+                const Rect box{contentX + labelW, p.cy, inputW, kKeyBoxHeight};
+                const bool editing = rebinding_ == i;
+                text(canvas, controlTitle(rowAction(i)), contentX,
+                     p.cy + kKeyBoxHeight * 0.5, bodyStyle(12.0, kPaper, kInk));
+                insetSurface(canvas, box, surfaceColour(editing, p.over(box)));
+                TextStyle keyText = bodyStyle(12.0, kInk, kInk, Align::Centre);
+                keyText.strokeWidth = 0;
+                text(canvas, editing ? "..." : keyLabel(settings.controlKey(rowAction(i))),
+                     box.x + box.w * 0.5, p.cy + kKeyBoxHeight * 0.5, keyText);
+                if (p.click(box)) rebinding_ = i;
+                p.cy += kKeyBoxHeight + 6.0;
+            }
+            // The preset chords are fixed, like the number row they ride on:
+            // K1 is named after the keys that load it, so the keys cannot move.
+            p.cy += 4.0;
+            p.label(tr(Msg::HoldLoadPreset), p.cy + 8.0, 12.0, kPaper, kInk);
+            p.cy += 20.0;
+            p.label(tr(Msg::HoldSavePreset), p.cy + 8.0, 12.0, kPaper, kInk);
+            p.cy += 20.0;
+
+            p.cy += 10.0;
+            const double btnW = (contentW - 10.0) / 2.0;
+            // Every rebind is already live; the browser's Save Controls only
+            // ever put up an alert, so this is the same button doing the same
+            // amount of work.
+            p.button(Rect{contentX, p.cy, btnW, 30.0}, tr(Msg::SaveControls), kActionFill, 13.0,
+                     kSaveControls);
+            if (p.button(Rect{contentX + btnW + 10.0, p.cy, btnW, 30.0}, tr(Msg::ResetToDefault),
+                         kNeutralFill, 13.0, kResetControls)) {
+                for (int i = 0; i < kControlCount; ++i) {
+                    settings.bindControl(rowAction(i), controlMeta(rowAction(i)).defaultKey);
+                }
+                rebinding_ = -1;
+            }
+            p.cy += 40.0;
+
+            p.checkbox(kNumberKeysUseItems, tr(Msg::NumberKeysUseItems));
+            p.checkbox(kUseMouseControls, tr(Msg::UseMouseControls));
+            p.checkbox(kRequestMobile, tr(Msg::RequestMobile));
+            p.checkbox(kMovementHelper, tr(Msg::MovementHelper));
+            p.checkbox(kInvertAttack, tr(Msg::InvertAttack));
+            p.checkbox(kInvertDefend, tr(Msg::InvertDefend));
+            break;
+        }
+
+        case Tab::Graphics: {
+            p.checkbox(kClassicLoadoutBar, tr(Msg::ClassicLoadoutBar));
+            p.checkbox(kShowHitboxes, tr(Msg::ShowHitboxes));
+            p.checkbox(kHideOtherPetals, tr(Msg::HideOtherPetals));
+            p.checkbox(kHideOtherPets, tr(Msg::HideOtherPets));
+            p.checkbox(kScreenShake, tr(Msg::ScreenShake));
+            p.checkbox(kShowStats, tr(Msg::ShowStats));
+            p.checkbox(kDynamicSkybox, tr(Msg::DynamicSkybox));
+            p.checkbox(kMobDeathAnimation, tr(Msg::MobDeathAnimation));
+            p.checkbox(kAntialiasing, tr(Msg::Antialiasing));
+            p.checkbox(kGpuAcceleration, tr(Msg::GpuAcceleration));
+            p.checkbox(kDesynchronizedCanvas, tr(Msg::DesynchronizedCanvas));
+            p.checkbox(kDisableUltraParticles, tr(Msg::DisableUltraParticles));
+            p.checkbox(kShowConsoleLogs, tr(Msg::ShowConsoleLogs));
+
+            p.cy += 5.0;
+            // Render resolution snaps to 5%, so the thumb lands on values
+            // worth naming rather than on 63%.
+            p.sliderRow(kRenderScale, tr(Msg::RenderResolution), "%", settings.renderScale, 0.25,
+                        1.0, 0.05, 100.0, 0, kInk, 25.0);
+            // The next two captions are outlined in the slider thumb's
+            // leftover grey rather than black. The browser build does it too,
+            // and the panel does not read the same with them "corrected".
+            p.sliderRow(kMobFramerate, tr(Msg::MobAnimationFps), "", st.mobFramerate, 5.0, 60.0, 1.0,
+                        1.0, 0, kTrackGrey, 25.0);
+            p.sliderRow(kInterpolation, tr(Msg::Interpolation), "", settings.interpolation,
+                        0.05, 0.5, 0.01, 1.0, 2, kTrackGrey, 30.0);
+
+            // Sits below the viewport until the list is scrolled, exactly as
+            // it does in the browser.
+            const bool armed =
+                st.tutorialResetArmed && ctx.timeSeconds < st.tutorialResetArmedUntil;
+            if (p.button(Rect{contentX, p.cy, 160.0, 30.0},
+                         armed ? tr(Msg::AreYouSure) : tr(Msg::ResetTutorial),
+                         armed ? kDangerFill : kNeutralFill, 13.0, kResetTutorial)) {
+                if (armed) {
+                    // What the browser's two localStorage.removeItem calls do.
+                    // Nothing happens to the game in progress: the reference
+                    // only ever starts a tutorial on a join, which is why its
+                    // own alert says "on your next game".
+                    settings.tutorialCompleted = false;
+                    settings.tutorialStep = 0;
+                    st.tutorialResetArmed = false;
+                } else {
+                    st.tutorialResetArmed = true;
+                    st.tutorialResetArmedUntil = ctx.timeSeconds + 4.0;
+                }
+            }
+            p.cy += 40.0;
+            break;
+        }
+
+        case Tab::Advanced: {
+            p.label(tr(Msg::ServerIp), p.cy + 10.0, 13.0, kPaper, kInk);
+            p.cy += 25.0;
+
+            const Rect field{contentX, p.cy, contentW, kFieldHeight};
+            inputField(canvas, field, st.serverIp, "", st.ipField.focused, ctx.timeSeconds,
+                       &st.ipField);
+            const TextRun run = inputFieldRun(field, st.serverIp, st.ipField);
+            if (p.inView) {
+                trackTextMouse(ctx.window, st.ipField, field, run, st.serverIp, ctx.timeSeconds);
+            }
+            if (p.over(field)) ctx.window.setCursorShape(CursorShape::Text);
+            p.cy += kFieldHeight + 15.0;
+
+            p.checkbox(kShowConsoleLogs, tr(Msg::ShowConsoleLogsOnScreen));
+            p.checkbox(kShowAdminCommands, tr(Msg::ShowAdminCommands));
+            p.checkbox(kShowAdminsOnLeaderboard, tr(Msg::ShowAdminsOnLeaderboard));
+            p.checkbox(kDebugMenuEnabled, tr(Msg::EnableDebugMenu));
+
+            p.cy += 14.0;
+            // Offline only: the row is there when this build has a server of
+            // its own to ask (see AppConfig::grantAdmin), which is the
+            // single-file page and nothing else. A client dialling a real
+            // server has no hook, draws no row, and has nothing to send.
+            if (ctx.adminGrantOffered) {
+                const Rect grant{contentX, p.cy, 160.0, 32.0};
+                if (ctx.net.isSkinAdmin()) {
+                    // Painted, not laid out as a button: there is nothing left
+                    // to press, and a row that lit up under the cursor would
+                    // say there is. The row stays so the panel goes on
+                    // answering "am I an admin?" -- `isSkinAdmin` is the same
+                    // flag the chat autocomplete hides its /admin rows behind.
+                    ui::button(canvas, grant, tr(Msg::AdminGranted), false, false,
+                               gardnStyle(kNeutralFill, 14.0));
+                } else if (p.button(grant, tr(Msg::GrantAdmin), kActionFill, 14.0, kGrantAdmin)) {
+                    // The app owns the server object in that build; the panel
+                    // only says it was asked, exactly as the Account card's Log
+                    // Out does. The label flips on its own once the server's
+                    // answer lands.
+                    ctx.adminGrantRequested = true;
+                }
+                p.cy += 42.0;
+            }
+            break;
+        }
+
+        case Tab::Credits: {
+            // Not hit-testable: the browser draws the credits and nothing else.
+            for (const CreditLine& line : kCredits) {
+                p.label(line.body, p.cy + line.offset, line.size, line.fill, kInk,
+                        line.centred ? Align::Centre : Align::Left);
+                p.cy += line.advance;
+            }
+            break;
+        }
+    }
+
+    st.contentHeight = p.cy - contentStart;
+    canvas.restore();
+
+    // --- input the widgets did not take -------------------------------------
+    if (!ctx.released()) return keepOpen;
+    if (inPanel) {
+        // A click on the card's empty space drops whatever had focus, the way
+        // clicking off a field does everywhere else.
+        if (!p.consumed) {
+            rebinding_ = -1;
+            st.ipField.blur();
+        }
+        return keepOpen;
+    }
+    // A click anywhere outside the card closes the panel. The gear is the one
+    // exemption: on the title screen the strip is hit-tested AFTER the panel,
+    // so closing here would race the gear's own toggle and reopen the panel on
+    // the same click. Its rect is the strip's own, tested the way the strip
+    // tests it, so the two cannot disagree about where the button is. The
+    // strip's other buttons need no exemption -- closing this panel and
+    // opening theirs is what one-menu-at-a-time already does.
+    if (insideInclusive(ctx.settingsButton, mouse)) return keepOpen;
+    return false;
+}
+
+} // namespace flix

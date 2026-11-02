@@ -1,0 +1,723 @@
+#pragma once
+// The account database: accounts, login sessions, and per-player progress,
+// persisted as one JSON file.
+//
+// The file is `inventory.json` in the shape the old TypeScript server wrote,
+// because live player data exists in that shape and nothing here is allowed to
+// invalidate it. Two consequences run through the whole implementation:
+//
+//  * Fields this build does not model are NOT dropped. Every record carries an
+//    `extra` object holding the keys we do not understand, and they are
+//    written back out untouched. A rewrite that quietly ate the maze
+//    progression on first save would be worse than no rewrite at all.
+//
+//  * A file that exists but does not parse is fatal for writes, not for
+//    startup reads. Overwriting a corrupt database with our empty default
+//    converts a problem an operator can recover from into total account loss.
+//
+// Key order is preserved on the round trip. `Json` keeps insertion order and
+// the tables below keep theirs, so a save produces a file that diffs cleanly
+// against the one it was loaded from instead of reshuffling every account.
+
+#include <cstdint>
+#include <map>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "server/admin_tiers.h"
+#include "server/crypto.h"
+#include "shared/core/json.h"
+#include "shared/game/rarity.h"
+#include "shared/game/skills.h"
+
+namespace flix {
+
+/// One item as the database stores it -- an inventory entry that has been
+/// equipped, not the live petal entity. `type` is the old server's item
+/// discriminator ("petal" for everything that is currently obtainable).
+struct StoredItem {
+    std::string type = "petal";
+    Rarity rarity = Rarity::Common;
+    /// Petal name WITHOUT the `petal_` prefix that inventory keys carry --
+    /// "basic", "rose". The two spellings of the same petal is the old
+    /// schema's one real wart, and it is load-bearing: changing either side
+    /// orphans every stored loadout.
+    std::string petalType;
+
+    double health = 0;
+    double maxHealth = 0;
+    bool hasHealth = false;
+    bool hasMaxHealth = false;
+
+    /// Per-slot state this build does not model: cooldown timestamps, custom
+    /// damage/size overrides, the per-instance arrays for clumped petals.
+    Json extra = Json::object();
+
+    static StoredItem fromJson(const Json& value);
+    Json toJson() const;
+};
+
+/// Everything an account owns. Keyed by userId, not by username, so renaming
+/// an account never has to move its progress.
+struct PlayerRecord {
+    double totalXp = 0;
+    double stars = 0;   ///< see PlayerProgress::stars for why it is not an int
+    int dailyStreak = 0;
+    /// "YYYY-MM-DD" in UTC. A date string rather than a timestamp because the
+    /// reward is per calendar day, and comparing days is what the rule is.
+    std::string lastStreakDate;
+    std::uint32_t renderFlags = 0;
+    std::string equippedSkinId;
+
+    /// rarity name -> item type -> count. Left as JSON rather than mirrored
+    /// into a typed map: it is genuinely a sparse dictionary over two open
+    /// string domains, and a typed copy would only be a lossy one that drops
+    /// keys it has no enum for.
+    Json inventory = Json::object();
+    /// mob type -> rarity name -> count.
+    Json mobKills = Json::object();
+
+    /// The talent tree. Stored as tiers only: the point balance is derived
+    /// from the level, so there is nothing here that can disagree with it.
+    SkillSet skills;
+
+    /// One entry per loadout slot; an empty slot is a JSON null.
+    std::vector<std::optional<StoredItem>> loadout;
+
+    /// Saved loadouts, by loadoutPresetName ("K1".."L0"), each in `loadout`'s
+    /// own shape. A preset never saved has no entry. Stored as `loadoutPresets`
+    /// and only when there is at least one.
+    std::map<std::string, std::vector<std::optional<StoredItem>>> loadoutPresets;
+
+    /// The maze's own progression track. XP earned inside the maze lands here
+    /// and its talents are bought from here, so a maze run can neither inflate
+    /// nor spend the outside level (src/server/playerManager.ts:231-245). The
+    /// same JSON shape as `totalXP`/`skills`, under `mazeTotalXP`/`mazeSkills`.
+    double mazeTotalXp = 0;
+    SkillSet mazeSkills;
+    /// Maze-tree branches this build does not know, round-tripped verbatim.
+    /// The outside tree drops unknown branches -- a tier only means something
+    /// to the code that applies it -- but files the TypeScript server wrote
+    /// can hold maze talents this build does not model yet, and losing them
+    /// would strip a player's maze build.
+    Json mazeSkillsExtra = Json::object();
+
+    /// Keys this build does not model, round-tripped verbatim (`mazeLoadout`,
+    /// the reference's separately-authored maze preset).
+    Json extra = Json::object();
+
+    int itemCount(Rarity rarity, const std::string& itemType) const;
+    void setItemCount(Rarity rarity, const std::string& itemType, int count);
+    /// Adds `delta` (may be negative). Counts clamp at zero and an entry that
+    /// reaches zero is erased, so the inventory does not accumulate rubble.
+    /// They clamp at kMaxStackCount too: what lands on a full stack is lost.
+    void addItem(Rarity rarity, const std::string& itemType, int delta);
+
+    /// A stored count as a stack, whatever the file holds: 0 for anything that
+    /// is not a positive number, kMaxStackCount for anything past it. The one
+    /// way a count is read out of `inventory` -- a hand-edited 1e12 cast
+    /// straight to int is undefined, and in practice a negative stack.
+    static int stackCount(const Json& stored);
+
+    int killCount(const std::string& mobType, Rarity rarity) const;
+    void recordKill(const std::string& mobType, Rarity rarity);
+
+    /// Unspent talent points, from the level this record's XP buys.
+    int talentPoints() const;
+    /// The same, on the maze track.
+    int mazeTalentPoints() const;
+};
+
+/// A registered account. `passwordHash` is a bcrypt string; see verifyPassword
+/// for the one legacy case where it is not.
+struct Account {
+    std::string id;
+    std::string username;
+    std::string passwordHash;
+    /// Set by an ancient import that stored passwords in the clear. Advisory
+    /// only -- the stored value's shape decides how it is checked.
+    bool isPlainText = false;
+    bool admin = false;
+    /// How much of the console `admin` reaches (server/admin_tiers.h). Read
+    /// only while `admin` is set. An absent field is tier 1, which every admin
+    /// from before tiers is; one that is there but is not a tier reads as the
+    /// bottom one, so a typo in the file never hands out more than it meant.
+    /// kOwnerAdminTier for the server owner, which the file says as
+    /// `"owner": true` instead (accountFromJson).
+    int adminTier = kTopAdminTier;
+    /// Barred from every admin power by an admin of a higher tier (`/admin
+    /// ban_admin`) until one lifts it. The account stays an admin -- its tier,
+    /// its locked password -- but no session of it holds the console.
+    bool adminBanned = false;
+    std::int64_t adminBannedAtMillis = 0;
+    std::string adminBannedBy;
+    /// Whether a session signed into this account holds admin powers: the
+    /// flag, less a ban.
+    bool adminActive() const { return admin && !adminBanned; }
+    /// Wall-clock millis of the last successful authentication. Drives the
+    /// daily-active count, so it must survive restarts: wall clock, not the
+    /// server's monotonic tick clock.
+    std::int64_t lastActiveAtMillis = 0;
+
+    bool muted = false;
+    std::int64_t mutedAtMillis = 0;
+    std::string mutedBy;
+
+    /// Wall-clock millis the account was created. Zero on accounts that predate
+    /// the field. Wall clock, not the tick clock: it is compared against a
+    /// 24-hour window across restarts.
+    std::int64_t createdAtMillis = 0;
+    /// Salted hash of the address that created the account -- see
+    /// Database::accountAddressHash. Never the address itself: this file is
+    /// backed up and read by operators, and a rolling count is all the abuse
+    /// limit needs. Empty when the creator could not be identified.
+    std::string createdFromHash;
+
+    /// Made by Database::createGuest: the server named it, and its owner may
+    /// still pick a name of their own, once (Database::renameUser clears it).
+    /// Server-held, never inferred from the name -- a registered account can
+    /// be called `User12345678` too. Stored as `guest` only while true.
+    bool guest = false;
+    /// False while the account's password is one its owner was never told --
+    /// a guest's random one -- so the session token is the only way in and a
+    /// password change has no current password to ask for. Stored as
+    /// `passwordChosen: false` only while false: every account that predates
+    /// the field was registered with a password somebody typed.
+    bool passwordChosen = true;
+
+    Json extra = Json::object();
+};
+
+/// What one authentication's daily-login award came to.
+///
+/// The rule is the browser build's: the first login of each UTC day pays
+/// `((streak - 1) % 5) + 1` stars, a missed day resets the streak to 1, and the
+/// two timestamps are what the title screen's streak card counts down to.
+struct DailyStreakResult {
+    int starsAwarded = 0;
+    int streak = 0;
+    /// True when THIS call is the one that claimed today.
+    bool newDay = false;
+    /// Unix millis when the next claim window opens: the next UTC midnight if
+    /// today is already claimed, otherwise now.
+    std::int64_t nextClaimAtMillis = 0;
+    /// Unix millis when an unclaimed streak lapses -- the end of the day after
+    /// the next claim window.
+    std::int64_t streakExpiresAtMillis = 0;
+};
+
+enum class CreateStatus : std::uint8_t {
+    Ok = 0,
+    UsernameInvalid,
+    UsernameTaken,
+    PasswordInvalid,
+    /// Could not allocate an account id. Not reachable in practice; a
+    /// distinct status because silently aliasing two accounts onto one id
+    /// would be far worse than refusing the registration.
+    ServerError,
+};
+
+struct CreateResult {
+    CreateStatus status = CreateStatus::Ok;
+    /// Valid only when status is Ok. Stable: accounts live in a node-based
+    /// map, so later insertions never move this.
+    Account* account = nullptr;
+    /// Player-facing explanation for a rejection.
+    std::string reason;
+
+    bool ok() const { return status == CreateStatus::Ok; }
+};
+
+class Database {
+public:
+    /// One logged-in client. Nested rather than `flix::Session`, which is the
+    /// per-connection state in server/session.h -- a socket and a credential
+    /// are different things and both deserve the obvious name in their own
+    /// scope.
+    ///
+    /// The raw token exists exactly twice: in the reply to the client, and in
+    /// that client's local storage. Only its SHA-256 is stored here, so a
+    /// leaked database hands out no live sessions.
+    struct Session {
+        std::string tokenHash;
+        std::string userId;
+        std::string username;
+        std::int64_t createdAtMillis = 0;
+        std::int64_t expiresAtMillis = 0;
+    };
+
+    /// A dictionary that remembers insertion order.
+    ///
+    /// The database is a file people read and back up; rebuilding it from an
+    /// unordered_map would reshuffle every key on the first save and make the
+    /// diff between two backups useless. Order lives in a side vector, so
+    /// lookup stays O(1) and only the rare erase pays for it.
+    ///
+    /// Each row also keeps the compact JSON it was last written as. The two
+    /// MUTABLE accessors, find() and insert(), are the only ways to change a
+    /// row and both drop that text, so a save re-serialises only the rows
+    /// somebody could have touched since the last one -- a handful of online
+    /// players rather than every account ever made. Serialising all of them
+    /// was a 300 ms tick on prod every thirty seconds. The rule this rests on:
+    /// nobody holds a mutable pointer ACROSS a save. Every caller takes one,
+    /// changes the row and lets it go; a loop that only reads should go
+    /// through std::as_const so it does not invalidate what it looks at.
+    template <class T>
+    class Table {
+    public:
+        T* find(const std::string& key) {
+            auto it = byKey_.find(key);
+            if (it == byKey_.end()) return nullptr;
+            it->second.cached = false;
+            return &it->second.value;
+        }
+        const T* find(const std::string& key) const {
+            auto it = byKey_.find(key);
+            return it == byKey_.end() ? nullptr : &it->second.value;
+        }
+        T& insert(const std::string& key) {
+            auto it = byKey_.find(key);
+            if (it == byKey_.end()) {
+                order_.push_back(key);
+                it = byKey_.try_emplace(key).first;
+            }
+            it->second.cached = false;
+            return it->second.value;
+        }
+        /// The row as compact JSON, re-serialised with `toJson` only when it
+        /// was handed out mutably since the last call. `key` must exist.
+        template <class ToJson>
+        const std::string& text(const std::string& key, const ToJson& toJson) const {
+            const Row& row = byKey_.find(key)->second;
+            if (!row.cached) {
+                row.text = toJson(row.value).dump(0);
+                row.cached = true;
+            }
+            return row.text;
+        }
+        /// Files the row under `to` instead, in the same place in the order,
+        /// keeping its value. False when `from` is absent or `to` is taken.
+        bool rekey(const std::string& from, const std::string& to) {
+            if (from == to) return byKey_.count(from) != 0;
+            auto it = byKey_.find(from);
+            if (it == byKey_.end() || byKey_.count(to) != 0) return false;
+            Row row = std::move(it->second);
+            row.cached = false;
+            byKey_.erase(it);
+            byKey_.emplace(to, std::move(row));
+            for (std::string& key : order_) {
+                if (key == from) { key = to; break; }
+            }
+            return true;
+        }
+        bool erase(const std::string& key) {
+            if (byKey_.erase(key) == 0) return false;
+            for (std::size_t i = 0; i < order_.size(); ++i) {
+                if (order_[i] == key) { order_.erase(order_.begin() + static_cast<long>(i)); break; }
+            }
+            return true;
+        }
+        const std::vector<std::string>& keys() const { return order_; }
+        std::size_t size() const { return byKey_.size(); }
+        void clear() { order_.clear(); byKey_.clear(); }
+
+    private:
+        struct Row {
+            T value{};
+            mutable std::string text;
+            mutable bool cached = false;
+        };
+        std::vector<std::string> order_;
+        std::unordered_map<std::string, Row> byKey_;
+    };
+
+    /// Wall-clock source, in Unix milliseconds. Overridable so a test can age
+    /// a 30-day session TTL without waiting 30 days; production never sets it.
+    using ClockFn = std::int64_t (*)();
+
+    /// Sessions live 30 days. Long enough that a player is not re-typing a
+    /// password every week, short enough that an abandoned machine stops
+    /// being a way in.
+    static constexpr std::int64_t kSessionTtlMillis = 30LL * 24 * 60 * 60 * 1000;
+
+    /// At most one disk write per this interval. A save serialises the whole
+    /// database, and at a few megabytes that is not something to do on every
+    /// petal pickup.
+    static constexpr std::int64_t kMinWriteIntervalMillis = 2000;
+
+    Database() = default;
+    ~Database();
+
+    Database(const Database&) = delete;
+    Database& operator=(const Database&) = delete;
+
+    /// Reads `path`. A missing file is not an error -- it is a first run, and
+    /// the empty database that results is marked dirty so the file appears on
+    /// the first save. A file that exists but cannot be read or parsed IS an
+    /// error, and latches loadFailed() so no save can ever overwrite it.
+    bool load(const std::string& path, std::string& errorOut);
+
+    /// Writes now, atomically: staged to `path + ".tmp"`, size-verified, then
+    /// renamed over the original. A crash at any point leaves the previous
+    /// good file intact. Returns false without touching the live file if
+    /// anything went wrong, and leaves the database dirty so the change is
+    /// retried rather than lost.
+    bool save();
+
+    /// The per-tick pump. Writes only when something changed and the rate
+    /// limit allows it; because dirty state is only cleared by a successful
+    /// write, the last change in a burst is always written eventually.
+    /// `nowMillis` must come from one monotonic clock across all calls.
+    bool maybeSave(std::int64_t nowMillis);
+
+    void markDirty() { dirty_ = true; }
+
+    /// True when the file on disk could not be understood. Every save is
+    /// refused while this holds.
+    bool loadFailed() const { return loadFailed_; }
+
+    // -- accounts ----------------------------------------------------------
+
+    /// Case-insensitive: accounts keep the spelling they registered with, but
+    /// nobody remembers their own capitalisation, and letting "Bob" and "bob"
+    /// coexist is a free impersonation vector.
+    Account* findUser(const std::string& username);
+    const Account* findUser(const std::string& username) const;
+    Account* findUserById(const std::string& userId);
+    const Account* findUserById(const std::string& userId) const;
+
+    /// The stored spelling of `username`, or empty if there is no such
+    /// account.
+    std::string canonicalUsername(const std::string& username) const;
+
+    /// `createdFromHash` stamps the account with accountAddressHash(...) of the
+    /// address that asked for it, so creatorStanding can size that address's
+    /// allowance across restarts. Empty means "creator unknown", which counts
+    /// for and against nobody -- the in-memory and global limits still apply.
+    CreateResult createUser(const std::string& username, const std::string& password,
+                            const std::string& createdFromHash = {});
+
+    /// A guest account: named `User` and eight digits (guestUsername), with a
+    /// random password nobody is told, `guest` set and `passwordChosen`
+    /// cleared. Its only credential is whatever session the caller mints for
+    /// it. A real bcrypt hash rather than an empty or sentinel one, so that no
+    /// password -- not even an empty one, on a build that predates the flag --
+    /// opens it. Hashed at bcrypt's MINIMUM cost: the cost is there to slow a
+    /// guess at a password a person chose, and nobody guesses 256 random bits
+    /// however fast each try is -- while at the full cost every first visit
+    /// would be tens of milliseconds of CPU anyone could ask for.
+    CreateResult createGuest(const std::string& createdFromHash = {});
+
+    /// Whether `username` has the shape guest accounts are given: `User` and
+    /// eight digits. A name the guests own, which SetUsername will not hand a
+    /// player; NOT a test of whether an account is a guest -- Account::guest is.
+    static bool isGuestUsername(const std::string& username);
+
+    /// Files the account `userId` under `username` instead, and ends its guest
+    /// standing: a guest names itself once. Moves everything this class keys
+    /// on the name -- the account row (in place, keeping the file's order),
+    /// both indices and every session record, so the tokens the account holds
+    /// still resume -- and nothing else: the guild table and the like are the
+    /// caller's. Refuses, with a sentence in `reasonOut`, a name validUsername
+    /// refuses, a guest-shaped name, or one another account holds in any case.
+    bool renameUser(const std::string& userId, const std::string& username,
+                    std::string& reasonOut);
+
+    /// A stable, non-reversible label for an address, for the per-address
+    /// registration cap.
+    ///
+    /// Salted with a secret stored in the database file, so the value cannot be
+    /// matched back to an address by hashing a candidate list -- the file and
+    /// every backup of it would otherwise be a de-anonymisable log of who
+    /// played from where. The salt is generated once and persisted: a fresh one
+    /// each boot would silently reset the cap it exists to enforce.
+    std::string accountAddressHash(const std::string& addressKey);
+
+    /// The secret salt stored in the database file (`ipSalt`), generated and
+    /// persisted on first use. Never sent to a client: the editor does not list
+    /// it. Besides the address hashes above, it keys the database editor's key
+    /// (see server/admin_db_key.h).
+    std::string serverSecret();
+
+    /// What the accounts `addressHash` created have done since: how many made
+    /// in the last `idleWindowMillis` have never been played, and how many made
+    /// in the last `standingWindowMillis` have. "Played" is anything past the
+    /// starter kit (isStarterProgress). Walks only that address's own accounts,
+    /// newest first, and stops at the standing window -- an index kept beside
+    /// the accounts, so the cost is the address's recent accounts, never the
+    /// whole user table.
+    struct CreatorStanding {
+        int idleToday = 0;
+        int played = 0;
+    };
+    CreatorStanding creatorStanding(const std::string& addressHash, std::int64_t idleWindowMillis,
+                                    std::int64_t standingWindowMillis) const;
+
+    /// Deletes an account and the progress record behind it, by any spelling
+    /// of the name. Returns false when there is no such account.
+    ///
+    /// Sessions go with it: a token that outlived its account would resolve to
+    /// nothing on the next resume, and resolveSession would drop it anyway --
+    /// but doing it here means the file never carries the orphans at all.
+    bool eraseUser(const std::string& username);
+
+    /// True when this record is a brand-new account that has done nothing: no
+    /// XP, no skin, and nothing in the inventory or loadout beyond the starter
+    /// kit. The guest sweep keeps anything that fails this, because a guest
+    /// who actually played is a player.
+    static bool isStarterProgress(const PlayerRecord& record);
+
+    /// Checks a password and, on success, stamps lastActiveAt. An account
+    /// still holding a plaintext password from the old import is upgraded to
+    /// bcrypt here, on the one occasion the password is available.
+    bool verifyPassword(const std::string& username, const std::string& password);
+
+    /// Replaces an account's password with a fresh bcrypt hash at the current
+    /// cost. Checks the new password against validPassword first and reports
+    /// why through `reasonOut`, so a caller never stores something the rules
+    /// would have refused.
+    ///
+    /// Says nothing about the OLD password: proving the account is yours is
+    /// the caller's job, and a database that also demanded it could not be
+    /// used by an administrative reset. It does not revoke sessions either --
+    /// see revokeSessionsForUser, which the caller decides the timing of.
+    /// Sets `passwordChosen`: whoever set it, somebody now knows it.
+    ///
+    /// Never an ADMIN's password (kAdminPasswordLocked), whoever asks and
+    /// whatever either side's tier: see the body for why.
+    bool setPassword(const std::string& username, const std::string& password,
+                     std::string& reasonOut);
+    /// What every road to an admin's password answers.
+    static constexpr const char* kAdminPasswordLocked = "Admin passwords cannot be changed.";
+
+    /// The account rules, and the only copy of them: 3 to 16 of letters,
+    /// digits and underscore, starting with a letter or digit; a password of 8 to 72
+    /// bytes with no control characters. Registration asks them before it
+    /// spends anything (GameServer::handleRegister) and createUser asks again,
+    /// so the two cannot drift into a name the first lets through and the
+    /// second refuses; setPassword holds a new password to the same rule.
+    /// Login asks neither: an account made under an older, looser rule must
+    /// still be able to sign in. `reasonOut` is a sentence for the player.
+    static bool validUsername(const std::string& username, std::string& reasonOut);
+    static bool validPassword(const std::string& password, std::string& reasonOut);
+
+    /// bcrypt cost for new and upgraded passwords. Clamped to bcrypt's legal
+    /// range. Tests lower it; a production server has no reason to.
+    void setPasswordCost(int cost);
+
+    const std::vector<std::string>& usernames() const { return users_.keys(); }
+    std::size_t userCount() const { return users_.size(); }
+
+    // -- sessions ----------------------------------------------------------
+
+    /// Mints a session and returns the RAW token. This is the only moment the
+    /// raw token exists server-side; only its hash is kept, so it cannot be
+    /// recovered from the database or from a backup.
+    std::string createSession(const std::string& userId, const std::string& username);
+
+    /// Resolves a raw token. Returns null for unknown, expired, or orphaned
+    /// tokens -- and drops the stored record in the latter two cases, so a
+    /// deleted account, or one whose name was taken over, can never be
+    /// resumed into. A token of an account with no chosen password is pushed
+    /// out another kSessionTtlMillis each time it resolves: it is the only key
+    /// to that account, and a guest who plays once a month must not lose it.
+    const Session* resolveSession(const std::string& token);
+
+    void revokeSession(const std::string& token);
+    /// Revokes every session of one account (password change, ban, logout
+    /// everywhere). Returns how many were dropped.
+    int revokeSessionsForUser(const std::string& username);
+    int pruneExpiredSessions();
+
+    // -- progress ----------------------------------------------------------
+
+    /// The record for `userId`, created empty if absent. Mutating the result
+    /// does not mark the database dirty -- the caller knows whether it changed
+    /// anything and must call markDirty().
+    PlayerRecord& progress(const std::string& userId);
+    const PlayerRecord* findProgress(const std::string& userId) const;
+
+    /// Claims today's daily-login reward for `userId`, if it is not claimed
+    /// already, and reports the resulting streak. Called once per successful
+    /// authentication; calling it twice on the same UTC day is a no-op that
+    /// still reports the current state, which is what a reconnect needs.
+    DailyStreakResult processDailyStreak(const std::string& userId);
+    /// Every userId with a progress record, in stored order. Read with
+    /// findProgress(); reach for progress() only for the rows actually being
+    /// changed, so a sweep does not throw away every row's cached text.
+    const std::vector<std::string>& playerIds() const { return players_.keys(); }
+
+    void setClock(ClockFn fn) { clock_ = fn; }
+    /// Unix milliseconds from the active clock.
+    std::int64_t nowMillis() const;
+
+    /// The whole database as JSON, in the shape and key order it is stored in.
+    /// Exposed because it is exactly what a backup wants.
+    Json toJson() const;
+
+    /// What save() writes: byte for byte toJson().dump(0), but assembled from
+    /// each row's cached text (see Table) instead of rebuilt as a tree.
+    std::string serialise() const;
+
+    // -- backups -----------------------------------------------------------
+    //
+    // Timestamped snapshots kept ONE LEVEL ABOVE the runtime directory, in
+    // db_backups/, so a redeploy that replaces dist/ cannot delete them. The
+    // `update` command takes one before it touches a single file and aborts if
+    // it cannot, which is the only reason a self-installing server is safe to
+    // have at all.
+    //
+    // That directory is shared. The TypeScript server wrote its snapshots
+    // there under the same `inventory-<time>-<label>.json` pattern, and an
+    // operator may keep copies of their own beside them, so a name in that
+    // pattern says nothing about who wrote it. This build's own snapshots end
+    // `.snapshot.json` -- a dot no label the TypeScript server could write
+    // contains -- and only those are ever pruned. Everything else matching
+    // `inventory-*.json` is listed, and left exactly where it is.
+    //
+    // Under Node the directory is the HOST's (server/main.cpp mounts it from
+    // the real filesystem, as it does the database's); anything else there is
+    // in memory, and a snapshot in memory is gone at the restart it was taken
+    // for. So a backup is checked through Node's own fs before it counts, and
+    // refused when it is not on the disk -- in a page, which has no disk to
+    // put it on, always.
+
+    struct BackupInfo {
+        std::string file;
+        std::size_t bytes = 0;
+        std::int64_t modifiedMillis = 0;
+    };
+
+    /// How many of this server's own snapshots are kept. The reference's
+    /// MAX_DB_BACKUPS: enough to reach back past a bad deploy, few enough that
+    /// they cannot fill a disk.
+    static constexpr std::size_t kMaxDatabaseBackups = 30;
+
+    /// What ends the name of every snapshot this build writes. See above.
+    static constexpr const char* kSnapshotSuffix = ".snapshot.json";
+
+    /// Writes one snapshot, labelled for whoever asked for it. False with
+    /// `errorOut` set on any failure -- a backup that half-wrote, or that
+    /// landed somewhere a restart forgets, is not a backup, so the file is
+    /// verified by length, and under Node on the host's own disk, before it
+    /// counts.
+    bool backup(const std::string& label, BackupInfo& out, std::string& errorOut);
+
+    /// Existing snapshots, newest first: every `inventory-*.json` in the
+    /// directory, whoever wrote it.
+    std::vector<BackupInfo> listBackups() const;
+
+    /// Where those snapshots live, derived from the database's own path.
+    std::string backupDirectory() const { return backupDirectoryFor(path_); }
+
+    /// The same rule for a database path that is not open yet. The ONE copy:
+    /// server/main.cpp mounts this directory from the host before start()
+    /// opens anything, and a mount and a writer that worked the path out
+    /// separately could disagree.
+    static std::string backupDirectoryFor(const std::string& databasePath);
+
+    /// Whether `name`, a bare file name, is one backup() writes:
+    /// `inventory-<YYYY-MM-DDTHH-MM-SS-mmmZ>-<label>.snapshot.json`. The only
+    /// files pruning may delete.
+    static bool isOwnSnapshotName(const std::string& name);
+
+    /// One unmodelled top-level table, read exactly as the file stores it.
+    ///
+    /// Separate from rawTable() because that one COERCES its value to an
+    /// object. That is right for the dictionaries it was written for and fatal
+    /// for `notifications`, which is stored as an ARRAY, the shape the browser
+    /// build gave it: one coercing read would replace the whole feed with
+    /// `{}`. Returns a null Json when the table is absent.
+    const Json& storedTable(const std::string& key) const { return otherTop_[key]; }
+
+    /// Whether the next save writes table `key` from text it already holds
+    /// rather than dumping it again: false once rawTable or rawArrayTable has
+    /// handed it out since the last save. What keeps a read-only path honest
+    /// about which of the three it calls.
+    bool tableTextCached(const std::string& key) const { return otherTopText_.count(key) != 0; }
+
+    /// The array-shaped counterpart of rawTable(), for `notifications`.
+    ///
+    /// rawTable() COERCES its value to an object, which is right for the
+    /// dictionaries it was written for and fatal here: one coercing read would
+    /// replace the whole feed with `{}`. Creates the table -- and its place in
+    /// the key order -- on first access; the caller marks the database dirty.
+    Json& rawArrayTable(const std::string& key);
+
+    /// One of the top-level tables this build does not model, as raw JSON.
+    ///
+    /// The star codes are genuinely a dictionary of open-ended records that
+    /// only one handler ever reads, and a typed mirror of them would be a
+    /// lossy copy of the file's own shape. Creates the table -- and its place
+    /// in the key order, or a save would drop it again -- on first access; the
+    /// caller marks the database dirty.
+    Json& rawTable(const std::string& key);
+
+    /// The unmodelled top-level tables that hold an object or an array, in
+    /// file order -- what the admin editor lists. `ipSalt` is left out: it is
+    /// a secret, not a table, and the address hashes stay unlinkable only for
+    /// as long as nobody can read it.
+    std::vector<std::string> storedTableNames() const;
+
+private:
+    void reset();
+    bool parseRoot(Json& root, std::string& errorOut);
+    std::string newUserId();
+    void indexUser(const std::string& storedKey, const Account& account);
+    CreateResult createAccount(const std::string& username, const std::string& password,
+                               const std::string& createdFromHash, int cost);
+
+    Table<Account> users_;
+    Table<PlayerRecord> players_;
+    Table<Session> sessions_;
+
+    /// lowercase username -> the key it is stored under, and userId -> the
+    /// same. Both are derived indices, rebuilt on load and maintained on
+    /// insert; neither is serialised.
+    std::unordered_map<std::string, std::string> usersByLowerName_;
+    std::unordered_map<std::string, std::string> usersById_;
+    /// createdFromHash -> the userIds that address made, oldest first. Derived
+    /// like the two above: sorted by createdAt once a load is done, appended to
+    /// as accounts are made, and what creatorStanding walks.
+    std::unordered_map<std::string, std::vector<std::string>> usersByCreator_;
+
+    /// Top-level keys we do not model -- codes, notifications, guilds,
+    /// apiKeys, customSkins -- held as raw JSON and written back untouched.
+    Json otherTop_ = Json::object();
+    /// Each of those tables as last serialised, on Table's terms: whatever
+    /// hands one out mutably (rawTable, rawArrayTable, the salt) drops it.
+    mutable std::unordered_map<std::string, std::string> otherTopText_;
+    /// Original top-level key order, so a save does not move `players` to the
+    /// front of a file that had it elsewhere.
+    std::vector<std::string> topKeyOrder_;
+    /// The last save's size, to reserve the next one's buffer in one go.
+    std::size_t lastSaveBytes_ = 0;
+
+    std::string path_;
+    bool loadFailed_ = false;
+    bool dirty_ = false;
+    bool everWrote_ = false;
+    std::int64_t lastWriteMillis_ = 0;
+    int passwordCost_ = crypto::kBcryptDefaultCost;
+    ClockFn clock_ = nullptr;
+};
+
+// -- one row as JSON ---------------------------------------------------------
+//
+// The conversions load() and save() use, exposed for the admin database editor
+// (server/admin_db.cpp). An edit is applied to a row's JSON and then read back
+// through the SAME parse a load does, so what the editor leaves in memory is
+// exactly what the next restart would read off disk: a value the parse would
+// drop or clamp is dropped or clamped now, where the admin can see it, rather
+// than surviving in memory until the first restart quietly loses it.
+
+Json playerRecordJson(const PlayerRecord&);
+PlayerRecord parsePlayerRecord(const Json&);
+Json accountRecordJson(const Account&);
+/// `storedKey` is the name the row is filed under, which the parse falls back
+/// to when the JSON carries no username of its own.
+Account parseAccountRecord(const Json&, const std::string& storedKey);
+
+} // namespace flix

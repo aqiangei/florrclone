@@ -1,0 +1,28 @@
+{
+  "name": "florrclone-cpp",
+  "version": "2026.10.10bw",
+  "scripts": {
+    "svg2skin": "node scripts/svg-to-skin.js",
+    "build": "FLIX_BUILD=release node scripts/build-web.js all",
+    "build:web-client": "FLIX_BUILD=release node scripts/build-web.js client",
+    "build:server": "FLIX_BUILD=release node scripts/build-web.js server",
+    "build:offline": "FLIX_BUILD=release node scripts/build-web.js offline",
+    "build:offline:asmjs": "FLIX_BUILD=release node scripts/build-web.js offline-asmjs",
+    "build:skia": "FLIX_BUILD=release FLIX_RENDERER=skia node scripts/build-web.js all",
+    "build:offline:skia": "FLIX_BUILD=release FLIX_RENDERER=skia node scripts/build-web.js offline",
+    "dev:cert": "node scripts/gen-dev-cert.js",
+    "start": "npm run build && npm run start_nobuild",
+    "build:dev": "FLIX_BUILD=dev node scripts/build-web.js all",
+    "start_nobuild": "node dist/server.js --port 3001 --db dist/inventory.json --web-root dist",
+    "build:wsl": "node scripts/build-wsl.js",
+    "test:ws": "node scripts/ws-conformance.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "AGPL-3.0-or-later",
+  "description": "",
+  "optionalDependencies": {
+    "@fails-components/webtransport": "^1.6.8",
+    "@fails-components/webtransport-transport-http3-quiche": "^1.6.8"
+  }
+}

@@ -1,0 +1,812 @@
+{
+  "florrclone": {
+    "petals": 118,
+    "mobs": 73
+  },
+  "cpp": {
+    "petals": 123,
+    "mobs": 76
+  },
+  "sharedPetals": 76,
+  "sharedMobs": 53,
+  "onlyFlorP": [
+    {
+      "key": "ankh",
+      "names": [
+        "Ankh"
+      ]
+    },
+    {
+      "key": "ant_egg",
+      "names": [
+        "Ant Egg"
+      ]
+    },
+    {
+      "key": "bean",
+      "names": [
+        "Bean"
+      ]
+    },
+    {
+      "key": "beetle_egg",
+      "names": [
+        "Beetle Egg"
+      ]
+    },
+    {
+      "key": "blood_sacrifice",
+      "names": [
+        "Blood Sacrifice"
+      ]
+    },
+    {
+      "key": "blood_stinger",
+      "names": [
+        "Blood Stinger"
+      ]
+    },
+    {
+      "key": "blueberries",
+      "names": [
+        "Blueberries"
+      ]
+    },
+    {
+      "key": "broccoli",
+      "names": [
+        "Broccoli"
+      ]
+    },
+    {
+      "key": "card",
+      "names": [
+        "Card"
+      ]
+    },
+    {
+      "key": "champion_s_crown",
+      "names": [
+        "Champion's Crown"
+      ]
+    },
+    {
+      "key": "clay",
+      "names": [
+        "Clay"
+      ]
+    },
+    {
+      "key": "cogwheel",
+      "names": [
+        "Cogwheel"
+      ]
+    },
+    {
+      "key": "corruption",
+      "names": [
+        "Corruption"
+      ]
+    },
+    {
+      "key": "dark_mark",
+      "names": [
+        "Dark Mark"
+      ]
+    },
+    {
+      "key": "dead_leaf",
+      "names": [
+        "Dead Leaf"
+      ]
+    },
+    {
+      "key": "dice",
+      "names": [
+        "Dice"
+      ]
+    },
+    {
+      "key": "domino",
+      "names": [
+        "Domino"
+      ]
+    },
+    {
+      "key": "dust",
+      "names": [
+        "Dust"
+      ]
+    },
+    {
+      "key": "electric_web",
+      "names": [
+        "Electric Web"
+      ]
+    },
+    {
+      "key": "fragment",
+      "names": [
+        "Fragment"
+      ]
+    },
+    {
+      "key": "heavy",
+      "names": [
+        "Heavy"
+      ]
+    },
+    {
+      "key": "laser",
+      "names": [
+        "Laser"
+      ]
+    },
+    {
+      "key": "light_bulb",
+      "names": [
+        "Light Bulb"
+      ]
+    },
+    {
+      "key": "magic_cotton",
+      "names": [
+        "Magic Cotton"
+      ]
+    },
+    {
+      "key": "magic_eye",
+      "names": [
+        "Magic Eye"
+      ]
+    },
+    {
+      "key": "mana_orb",
+      "names": [
+        "Mana Orb"
+      ]
+    },
+    {
+      "key": "mecha_antennae",
+      "names": [
+        "Mecha Antennae"
+      ]
+    },
+    {
+      "key": "mecha_missile",
+      "names": [
+        "Mecha Missile"
+      ]
+    },
+    {
+      "key": "mjolnir",
+      "names": [
+        "Mjolnir"
+      ]
+    },
+    {
+      "key": "monstera",
+      "names": [
+        "Monstera"
+      ]
+    },
+    {
+      "key": "moon_rock",
+      "names": [
+        "Moon Rock"
+      ]
+    },
+    {
+      "key": "mysterious_powder",
+      "names": [
+        "Mysterious Powder"
+      ]
+    },
+    {
+      "key": "mysterious_relic",
+      "names": [
+        "Mysterious Relic"
+      ]
+    },
+    {
+      "key": "mysterious_stick",
+      "names": [
+        "Mysterious Stick"
+      ]
+    },
+    {
+      "key": "nazar_amulet",
+      "names": [
+        "Nazar Amulet"
+      ]
+    },
+    {
+      "key": "paranormal_goggles",
+      "names": [
+        "Paranormal Goggles"
+      ]
+    },
+    {
+      "key": "pharaoh_s_crown",
+      "names": [
+        "Pharaoh's Crown"
+      ]
+    },
+    {
+      "key": "poker_chip",
+      "names": [
+        "Poker Chip"
+      ]
+    },
+    {
+      "key": "privet_berry",
+      "names": [
+        "Privet Berry"
+      ]
+    },
+    {
+      "key": "shovel",
+      "names": [
+        "Shovel"
+      ]
+    },
+    {
+      "key": "talisman_of_evasion",
+      "names": [
+        "Talisman of Evasion"
+      ]
+    },
+    {
+      "key": "totem",
+      "names": [
+        "Totem"
+      ]
+    }
+  ],
+  "onlyCppP": [
+    {
+      "key": "action_test",
+      "names": [
+        "action_test"
+      ]
+    },
+    {
+      "key": "azalea",
+      "names": [
+        "azalea"
+      ]
+    },
+    {
+      "key": "blood_leaf",
+      "names": [
+        "blood_leaf"
+      ]
+    },
+    {
+      "key": "blue_iris",
+      "names": [
+        "blue_iris"
+      ]
+    },
+    {
+      "key": "bomb",
+      "names": [
+        "bomb"
+      ]
+    },
+    {
+      "key": "bulb",
+      "names": [
+        "bulb"
+      ]
+    },
+    {
+      "key": "bumble_bee_pollen",
+      "names": [
+        "bumble_bee_pollen"
+      ]
+    },
+    {
+      "key": "c",
+      "names": [
+        "c++"
+      ]
+    },
+    {
+      "key": "capacitor",
+      "names": [
+        "capacitor"
+      ]
+    },
+    {
+      "key": "champion_crown",
+      "names": [
+        "champion_crown"
+      ]
+    },
+    {
+      "key": "computer_chip",
+      "names": [
+        "computer_chip"
+      ]
+    },
+    {
+      "key": "cube",
+      "names": [
+        "cube"
+      ]
+    },
+    {
+      "key": "cursor",
+      "names": [
+        "cursor"
+      ]
+    },
+    {
+      "key": "egg",
+      "names": [
+        "egg"
+      ]
+    },
+    {
+      "key": "explosive",
+      "names": [
+        "explosive"
+      ]
+    },
+    {
+      "key": "flower",
+      "names": [
+        "flower"
+      ]
+    },
+    {
+      "key": "gas",
+      "names": [
+        "gas"
+      ]
+    },
+    {
+      "key": "glasss",
+      "names": [
+        "glasss"
+      ]
+    },
+    {
+      "key": "glitch",
+      "names": [
+        "glitch"
+      ]
+    },
+    {
+      "key": "guided_missile",
+      "names": [
+        "guided_missile"
+      ]
+    },
+    {
+      "key": "healing",
+      "names": [
+        "healing"
+      ]
+    },
+    {
+      "key": "heaviest",
+      "names": [
+        "heaviest"
+      ]
+    },
+    {
+      "key": "hornet_missile",
+      "names": [
+        "hornet_missile"
+      ]
+    },
+    {
+      "key": "icosahedron",
+      "names": [
+        "icosahedron"
+      ]
+    },
+    {
+      "key": "infinity",
+      "names": [
+        "infinity"
+      ]
+    },
+    {
+      "key": "javascript",
+      "names": [
+        "javascript"
+      ]
+    },
+    {
+      "key": "lightning_cutter",
+      "names": [
+        "lightning_cutter"
+      ]
+    },
+    {
+      "key": "magic_orb",
+      "names": [
+        "magic_orb"
+      ]
+    },
+    {
+      "key": "magic_peas",
+      "names": [
+        "magic_peas"
+      ]
+    },
+    {
+      "key": "moon",
+      "names": [
+        "moon"
+      ]
+    },
+    {
+      "key": "observer",
+      "names": [
+        "observer"
+      ]
+    },
+    {
+      "key": "pentagon",
+      "names": [
+        "pentagon"
+      ]
+    },
+    {
+      "key": "poison_cactus",
+      "names": [
+        "poison_cactus"
+      ]
+    },
+    {
+      "key": "powder",
+      "names": [
+        "powder"
+      ]
+    },
+    {
+      "key": "rainbow",
+      "names": [
+        "rainbow"
+      ]
+    },
+    {
+      "key": "raindrop",
+      "names": [
+        "raindrop"
+      ]
+    },
+    {
+      "key": "ram",
+      "names": [
+        "ram"
+      ]
+    },
+    {
+      "key": "relic",
+      "names": [
+        "relic"
+      ]
+    },
+    {
+      "key": "sacrifice",
+      "names": [
+        "sacrifice"
+      ]
+    },
+    {
+      "key": "shield",
+      "names": [
+        "shield"
+      ]
+    },
+    {
+      "key": "spaceship",
+      "names": [
+        "spaceship"
+      ]
+    },
+    {
+      "key": "sparkle",
+      "names": [
+        "sparkle"
+      ]
+    },
+    {
+      "key": "splitter",
+      "names": [
+        "splitter"
+      ]
+    },
+    {
+      "key": "stick",
+      "names": [
+        "stick"
+      ]
+    },
+    {
+      "key": "talisman",
+      "names": [
+        "talisman"
+      ]
+    },
+    {
+      "key": "test_explosive",
+      "names": [
+        "test_explosive"
+      ]
+    },
+    {
+      "key": "wasp_missile",
+      "names": [
+        "wasp_missile"
+      ]
+    }
+  ],
+  "onlyFlorM": [
+    {
+      "key": "barrel",
+      "names": [
+        "Barrel"
+      ]
+    },
+    {
+      "key": "desert_ladybug",
+      "names": [
+        "Desert Ladybug"
+      ]
+    },
+    {
+      "key": "fire_ant_burrow",
+      "names": [
+        "Fire Ant Burrow"
+      ]
+    },
+    {
+      "key": "gambler",
+      "names": [
+        "Gambler"
+      ]
+    },
+    {
+      "key": "ghost",
+      "names": [
+        "Ghost"
+      ]
+    },
+    {
+      "key": "hel_centipede",
+      "names": [
+        "Hel Centipede"
+      ]
+    },
+    {
+      "key": "hel_spider",
+      "names": [
+        "Hel Spider"
+      ]
+    },
+    {
+      "key": "hel_wasp",
+      "names": [
+        "Hel Wasp"
+      ]
+    },
+    {
+      "key": "jungle_centipede",
+      "names": [
+        "Jungle Centipede"
+      ]
+    },
+    {
+      "key": "jungle_ladybug",
+      "names": [
+        "Jungle Ladybug"
+      ]
+    },
+    {
+      "key": "mecha_crab",
+      "names": [
+        "Mecha Crab"
+      ]
+    },
+    {
+      "key": "mecha_flower",
+      "names": [
+        "Mecha Flower"
+      ]
+    },
+    {
+      "key": "mecha_spider",
+      "names": [
+        "Mecha Spider"
+      ]
+    },
+    {
+      "key": "mecha_wasp",
+      "names": [
+        "Mecha Wasp"
+      ]
+    },
+    {
+      "key": "nazar_beetle",
+      "names": [
+        "Nazar Beetle"
+      ]
+    },
+    {
+      "key": "queen_fire_ant",
+      "names": [
+        "Queen Fire Ant"
+      ]
+    },
+    {
+      "key": "silverfish",
+      "names": [
+        "Silverfish"
+      ]
+    },
+    {
+      "key": "soldier_diver_ant",
+      "names": [
+        "Soldier Diver Ant"
+      ]
+    },
+    {
+      "key": "test_dummy",
+      "names": [
+        "Test Dummy"
+      ]
+    },
+    {
+      "key": "worm",
+      "names": [
+        "Worm"
+      ]
+    }
+  ],
+  "onlyCppM": [
+    {
+      "key": "assembler",
+      "names": [
+        "assembler"
+      ]
+    },
+    {
+      "key": "c",
+      "names": [
+        "c++"
+      ]
+    },
+    {
+      "key": "centipede_body",
+      "names": [
+        "centipede_body"
+      ]
+    },
+    {
+      "key": "cube",
+      "names": [
+        "cube"
+      ]
+    },
+    {
+      "key": "dark_ladybug",
+      "names": [
+        "dark_ladybug"
+      ]
+    },
+    {
+      "key": "desert_centipede_body",
+      "names": [
+        "desert_centipede_body"
+      ]
+    },
+    {
+      "key": "dust",
+      "names": [
+        "dust"
+      ]
+    },
+    {
+      "key": "evil_centipede",
+      "names": [
+        "evil_centipede"
+      ]
+    },
+    {
+      "key": "evil_centipede_body",
+      "names": [
+        "evil_centipede_body"
+      ]
+    },
+    {
+      "key": "fire_ant_hole",
+      "names": [
+        "fire_ant_hole"
+      ]
+    },
+    {
+      "key": "glitch",
+      "names": [
+        "glitch"
+      ]
+    },
+    {
+      "key": "glitch_flower",
+      "names": [
+        "glitch_flower"
+      ]
+    },
+    {
+      "key": "item_spawner",
+      "names": [
+        "item_spawner"
+      ]
+    },
+    {
+      "key": "javascript",
+      "names": [
+        "javascript"
+      ]
+    },
+    {
+      "key": "leech_body",
+      "names": [
+        "leech_body"
+      ]
+    },
+    {
+      "key": "oracle",
+      "names": [
+        "oracle"
+      ]
+    },
+    {
+      "key": "server",
+      "names": [
+        "server"
+      ]
+    },
+    {
+      "key": "shiny_ladybug",
+      "names": [
+        "shiny_ladybug"
+      ]
+    },
+    {
+      "key": "sun",
+      "names": [
+        "sun"
+      ]
+    },
+    {
+      "key": "sun_pet",
+      "names": [
+        "sun_pet"
+      ]
+    },
+    {
+      "key": "target_dummy",
+      "names": [
+        "target_dummy"
+      ]
+    },
+    {
+      "key": "titan",
+      "names": [
+        "titan"
+      ]
+    },
+    {
+      "key": "trader",
+      "names": [
+        "trader"
+      ]
+    }
+  ]
+}

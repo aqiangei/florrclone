@@ -1,0 +1,1715 @@
+#include "test.h"
+
+#include "server_harness.h"
+#include "shared/game/prestige.h"
+#include "shared/game/map_elements.h"
+
+#include <set>
+
+using namespace flix;
+using flix::testsupport::bodyNamed;
+using flix::testsupport::connectClient;
+using flix::testsupport::dataDir;
+using flix::testsupport::Harness;
+using flix::testsupport::loginNew;
+// The tests below that run the usual bot population find their own flower by
+// its account (onlyPlayer skips the bots), not as the last PlayerTag a query
+// happens to visit.
+using flix::testsupport::onlyPlayer;
+using flix::testsupport::seedUser;
+
+// Where a player appears.
+//
+// The map says where a player may be put down: a `player_spawns` rectangle is
+// a door, and the picker's row is the list of doors. The middle of the world
+// is the legendary and mythic band, which a level-1 flower cannot survive and
+// cannot walk out of. These tests exist because spawning there was not an
+// obviously wrong line of code -- it was a plausible-looking "start at the
+// centre".
+
+namespace {
+
+/// True when `at` is inside the player spawn rectangle called `spawnId`.
+bool inSpawnPoint(const MapData& map, const std::string& spawnId, Vec2 at) {
+    const MapElement* point = map.playerSpawn(spawnId);
+    return point != nullptr && point->contains(at);
+}
+
+/// True when a band over `at` is DANGEROUS ground -- difficulty
+/// kDangerousGroundDifficulty or above, which is where the curve's blend first
+/// CAN produce a rare (difficulty 16.61, the top of pure uncommon), or the
+/// random-spread sentinel, whose spread reaches mythic. A spawn that lands in
+/// one of these is a spawn into mobs a fresh flower cannot fight.
+///
+/// The invariant this expresses is the same one the old `spawnType` version
+/// did -- "no door under rare-or-better ground" -- said on the scale the map
+/// now uses: a band carries a difficulty, and the difficulty curve
+/// (shared/game/difficulty.h) says which tiers that difficulty grows.
+bool onDangerousGround(const MapData& map, Vec2 at) {
+    for (const MapElement& element : map.elements()) {
+        if (!element.isSpawnBand()) continue;
+        if (!isDangerousGround(element.difficulty)) continue;
+        if (element.contains(at)) return true;
+    }
+    return false;
+}
+
+/// The same question asked of a door the AUTHOR drew, which is a weaker one: a
+/// RANDOM band (-1) is exempt.
+///
+/// Two different questions hide behind "is this ground safe". When the engine
+/// has to GUESS where to put a body -- a bot's birthplace, the fallback a
+/// door-less map uses -- a random band is dangerous and it refuses it, because
+/// its spread reaches mythic and nobody said to put anyone there. A door drawn
+/// inside one is the opposite case: the author placed that rectangle in that
+/// band deliberately, and the two statements together are the answer. Hel is
+/// the map that says it -- one random band, one door inside it.
+bool onDangerousGradedGround(const MapData& map, Vec2 at) {
+    for (const MapElement& element : map.elements()) {
+        if (!element.isSpawnBand()) continue;
+        if (isRandomDifficulty(element.difficulty)) continue;
+        if (element.difficulty < kDangerousGroundDifficulty) continue;
+        if (element.contains(at)) return true;
+    }
+    return false;
+}
+
+/// The difficulty of the ground at `at`, read off the MAP -- the first band
+/// covering it, and zero anywhere else, because a square no band covers grows
+/// nothing to be dangerous.
+///
+/// The same rule SpawnSystem::difficultyAt() applies, stated here so a test can
+/// ask it of a map without reaching inside the running server for its spawner.
+/// If the two ever disagree this is the copy that is wrong.
+double difficultyOnMap(const MapData& map, Vec2 at) {
+    for (const MapElement& element : map.elements()) {
+        if (!element.isSpawnBand()) continue;
+        if (element.contains(at)) return element.difficulty;
+    }
+    return 0.0;
+}
+
+/// True when `at` is inside any spawn band on `map`. The whole of the question
+/// "may a mob have been placed here": nothing else spawns one.
+bool onABand(const MapData& map, Vec2 at) {
+    for (const MapElement& element : map.elements()) {
+        if (element.isSpawnBand() && element.contains(at)) return true;
+    }
+    return false;
+}
+
+/// How far a mob may have walked since it was placed. A mob is judged against
+/// its OWN square only when it is this far outside every band -- otherwise it
+/// may have been born on a band and strolled off, and the square it is standing
+/// on now never chose it. The same margin spawning_tests.cpp uses.
+constexpr double kWanderMargin = 4000.0;
+
+/// True when `at` is this far outside every band's box on `map`, so nothing a
+/// band placed could plausibly have wandered here.
+bool clearOfEveryBand(const MapData& map, Vec2 at) {
+    for (const MapElement& element : map.elements()) {
+        if (!element.isSpawnBand()) continue;
+        if (element.bounds.x - kWanderMargin < at.x && at.x < element.bounds.right() + kWanderMargin &&
+            element.bounds.y - kWanderMargin < at.y && at.y < element.bounds.bottom() + kWanderMargin) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// The hardest difficulty any band on `map` declares -- the ceiling for the
+/// whole map, which is what a mob standing on ground it was not placed on has
+/// to be judged against.
+///
+/// Bands OVERLAP: difficultyOnMap() returns the first one in map order, which
+/// for a square two bands cover may be the softer of the two, while the mob
+/// standing there was rolled by the harder. Judging such a mob against its own
+/// square would fail correct code, so the per-square check below only ever
+/// tightens this bound, never replaces it.
+double hardestBandOn(const MapData& map) {
+    double hardest = 0.0;
+    for (const MapElement& element : map.elements()) {
+        if (element.isSpawnBand()) hardest = std::max(hardest, element.difficulty);
+    }
+    return hardest;
+}
+
+const MapData& overworld(const Harness& h) {
+    static const MapData kEmpty;
+    const MapData* map = h.server.worldMaps().forRealm(Realm::Overworld);
+    return map != nullptr ? *map : kEmpty;
+}
+
+} // namespace
+
+TEST(the_shipped_catalogue_loads_and_resolves_its_defaults) {
+    // THE INVARIANT IS DERIVED FROM THE FILES, NOT PINNED TO THEM.
+    //
+    // maps/maps.json is the author's to grow -- it once named one map, it
+    // names a good many today, and it will name more -- so nothing here
+    // counts maps, layers, bands or doors. What is pinned is that the
+    // catalogue is non-empty and SELF-CONSISTENT: every map the manifest names
+    // loads without a warning, realm i is the manifest's i'th entry both ways
+    // round, and each map resolves the defaults that make an unedited Tiled
+    // file work -- `biome` falls back to the map id and `defaultMobGroup`
+    // falls back to `biome`, which the shipped files leave to those fallbacks
+    // (all but the dungeon's, below).
+    //
+    // A band's roster is checked against the content, so the content is loaded
+    // here rather than left to whichever harness test happened to run first.
+    std::string contentError;
+    CHECK(loadContent(dataDir(), contentError));
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), nullptr, error));
+    CHECK(error.empty());
+    // Nothing about the shipped data may be broken: a pad that leads nowhere,
+    // a door a teleporter cannot reach. Empty is the only passing answer.
+    for (const std::string& warning : maps.warnings()) {
+        ::testing::reportFailure(__FILE__, __LINE__, "map warning: " + warning);
+    }
+    CHECK(maps.warnings().empty());
+
+    // A catalogue with no map in it is a game with nowhere to be.
+    CHECK(maps.count() >= 1);
+    CHECK(!maps.empty());
+    CHECK_EQ(maps.count(), static_cast<int>(maps.maps().size()));
+    // Realm i IS the manifest's i'th entry, and there is no realm past the
+    // last one. That order is the contract between client and server (see
+    // maps/maps.json), so it is worth asserting both directions of.
+    for (int i = 0; i < maps.count(); ++i) {
+        const MapData* map = maps.forRealm(worldRealm(i));
+        CHECK(map != nullptr);
+        if (map == nullptr) continue;
+        CHECK_EQ(map->id(), maps.maps()[static_cast<std::size_t>(i)].id());
+        bool found = false;
+        CHECK(maps.realmOfId(map->id(), found) == worldRealm(i));
+        CHECK(found);
+    }
+    CHECK(maps.forRealm(worldRealm(maps.count())) == nullptr);
+    CHECK(maps.forRealm(Realm::Arena) == nullptr);
+    CHECK(maps.forRealm(Realm::Maze) == nullptr);
+    // Realm 0 is the overworld, whatever map is parked there.
+    CHECK(maps.forRealm(Realm::Overworld) != nullptr);
+
+    for (const MapData& world : maps.maps()) {
+        // None of these is written in any shipped .tmj: they are the fallbacks.
+        CHECK(!world.id().empty());
+        // Except a map loaded as instance copies (`copies` in the manifest):
+        // a dungeon belongs to the biome its entrance stands in, and says so,
+        // or a squad would be split up at its door.
+        if (maps.copiesOf(world.templateId()).size() > 1) {
+            CHECK(!world.biome().empty());
+            CHECK(world.biome() != world.id());
+        } else if (world.prestige()) {
+            // A prestige twin is the plain map under another id, and its
+            // biome and mobs are the plain map's (shared/game/prestige.h).
+            CHECK_EQ(world.id(), std::string(kPrestigeMapPrefix) + world.templateId());
+            CHECK_EQ(world.biome(), world.templateId());
+        } else {
+            CHECK_EQ(world.biome(), world.id());
+        }
+        CHECK_EQ(world.defaultMobGroup(), world.biome());
+
+        // The load line reports what the map resolved to: how many bands and
+        // the range they span. The COUNT is not written down here (the author
+        // draws bands as the map grows), but the shape of the sentence is,
+        // because its other branch -- the one a bandless map prints -- is the
+        // only warning an author gets that their world will be empty.
+        const std::string summary = world.bandSummary();
+        if (summary.find(" band") == std::string::npos &&
+            summary.find("NO SPAWN BANDS") == std::string::npos) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "the load line for " + world.id() +
+                                         " does not report its bands: " + summary);
+        }
+
+        // Big enough to be a world, and no SHAPE pinned: a map is whatever
+        // rectangle the author sized the canvas to, and two maps in one
+        // catalogue need not be the same size as each other (see terrain.h).
+        CHECK(world.width() >= 32);
+        CHECK(world.height() >= 32);
+        CHECK(!world.artFiles().empty());
+
+        // The layer count is NOT pinned: the author adds and removes layers as
+        // the map is drawn. What is pinned is the shape the engine needs --
+        // every layer is a full grid, and the map has both kinds of layer,
+        // because a map with no colliding layer is one a player walks straight
+        // off and a map with no scenery layer means the collision rule has
+        // collapsed into "everything painted is a wall".
+        CHECK(world.layers().size() >= 2);
+        int collidingLayers = 0, sceneryLayers = 0;
+        for (const TiledLayer& layer : world.layers()) {
+            CHECK_EQ(layer.cells.size(),
+                     std::size_t(world.width()) * std::size_t(world.height()));
+            (layer.collides ? collidingLayers : sceneryLayers) += 1;
+            // A layer cannot both add and remove collision; the reader forces
+            // negation to win, and that resolution is what the rest of the
+            // engine reads.
+            CHECK(!(layer.collides && layer.negates));
+        }
+        CHECK(collidingLayers > 0);
+        CHECK(sceneryLayers > 0);
+        // Every non-empty cell names an artwork the map actually carries.
+        for (const TiledLayer& layer : world.layers()) {
+            for (const TiledCell& cell : layer.cells) {
+                CHECK(cell.art < static_cast<int>(world.artFiles().size()));
+            }
+        }
+        // Off the map is an empty cell rather than a read past the end.
+        CHECK_EQ(world.cellAt(0, -1, 0).art, -1);
+        CHECK_EQ(world.cellAt(0, world.width(), 0).art, -1);
+        CHECK_EQ(world.cellAt(world.layers().size(), 0, 0).art, -1);
+
+        // The BAND COUNT IS NOT PINNED either: the author draws difficulty
+        // onto a map as it is balanced. What is pinned is that each band the
+        // file carries is one the engine can act on -- a difficulty at or
+        // above zero, or the random-spread sentinel (-1, kRandomDifficulty),
+        // and nothing else in between; an area that can contain a point; and
+        // either its own mob group that the content actually defines or none
+        // at all, which falls back to the map's.
+        int bands = 0, regions = 0, doors = 0, teleporters = 0;
+        for (const MapElement& element : world.elements()) {
+            if (element.isSpawnBand()) {
+                ++bands;
+                CHECK(element.difficulty >= 0.0 ||
+                      element.difficulty == kRandomDifficulty);
+                CHECK(element.bounds.w > 0.0);
+                CHECK(element.bounds.h > 0.0);
+                for (const ZoneMobEntry& row : element.mobDistribution) {
+                    CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
+                          content().mobIndex(row.name) != kInvalidIndex);
+                }
+            }
+            if (element.isMobRegion()) {
+                ++regions;
+                for (const ZoneMobEntry& row : element.mobDistribution) {
+                    CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
+                          content().mobIndex(row.name) != kInvalidIndex);
+                }
+            }
+            if (element.kind == MapElementKind::PlayerSpawn) ++doors;
+            if (element.kind == MapElementKind::Teleporter) ++teleporters;
+        }
+        // Every map has somewhere to arrive: a door of its own, or a pad that
+        // leads to it. A map with neither cannot be reached at all.
+        if (doors == 0 && teleporters == 0) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     world.id() + " has no door and no teleporter, so nothing "
+                                                  "can ever arrive in it");
+        }
+        // Bands and regions are two readings of one `spawn` object, and no
+        // object is ever both: a `spawn` with a difficulty is a band, one
+        // without is a region.
+        int spawnObjects = 0;
+        for (const MapElement& element : world.elements()) {
+            if (element.kind == MapElementKind::Spawn) ++spawnObjects;
+            CHECK(!(element.isSpawnBand() && element.isMobRegion()));
+        }
+        CHECK_EQ(bands + regions, spawnObjects);
+        // A pad still has to say where it leads.
+        for (const MapElement& element : world.elements()) {
+            if (element.kind != MapElementKind::Teleporter) continue;
+            CHECK(!element.targetMap.empty());
+        }
+    }
+
+    // AT LEAST ONE BAND IN THE OVERWORLD. Bands are the only source of ambient
+    // mobs there is, so the map a new player lands in has to carry one or the
+    // game ships a silent, empty world. It is asked of realm 0 only: a map the
+    // author is still drawing may legitimately have none yet, and failing on
+    // that would make every work-in-progress map a red suite.
+    const MapData* overworld = maps.forRealm(Realm::Overworld);
+    CHECK(overworld != nullptr);
+    int overworldBands = 0;
+    if (overworld != nullptr) {
+        for (const MapElement& element : overworld->elements()) {
+            if (element.isSpawnBand()) ++overworldBands;
+        }
+    }
+    if (overworldBands == 0) {
+        ::testing::reportFailure(__FILE__, __LINE__,
+                                 "the overworld carries no spawn band, so the world a new "
+                                 "player lands in would grow no mobs anywhere");
+    }
+}
+
+TEST(every_shipped_door_is_named_by_its_label_and_is_offered) {
+    // Doors are DERIVED FROM THE FILES too. No shipped door has a `spawnId`,
+    // and all but the termite mound's say nothing but a `label`, which is
+    // enough, because the id falls back to a slug of the label. (The mound's
+    // three -- `spawn`, `termites` and `overmind` -- carry Tiled names,
+    // which the reader takes as the id first, and share one label.) Before
+    // that fallback an unnamed object was dropped at load and its map had no
+    // doors at all.
+    //
+    // So what is pinned is the round trip, for however many doors the
+    // catalogue has: every player-spawn rectangle on every map resolves to a
+    // non-empty id, that id is unique across the catalogue, doors() finds it,
+    // and a PICKABLE one is also offered by the picker under its map's biome.
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), nullptr, error));
+
+    std::set<std::string> ids;
+    std::size_t doorCount = 0;
+    std::size_t pickableCount = 0;
+    for (int i = 0; i < maps.count(); ++i) {
+        const MapData* world = maps.forRealm(worldRealm(i));
+        CHECK(world != nullptr);
+        if (world == nullptr) continue;
+        // A twin's doors are the plain map's, reached through the plain door
+        // with the prestige flag; it adds none of its own.
+        if (world->prestige()) continue;
+        for (const MapElement* spawn : world->playerSpawns()) {
+            ++doorCount;
+            CHECK(!spawn->spawnId.empty());
+            CHECK(!spawn->label.empty());
+            // Unique across the catalogue -- except between the copies of an
+            // instanced map, which are one place loaded several times: those
+            // doors are told apart by their map-qualified ids.
+            const bool copy = maps.copiesOf(world->templateId()).size() > 1;
+            const std::string id = copy ? world->id() + ":" + spawn->spawnId : spawn->spawnId;
+            CHECK(ids.insert(id).second);
+            const SpawnChoice* door = maps.door(id);
+            CHECK(door != nullptr);
+            if (door == nullptr) continue;
+            CHECK_EQ(door->label, spawn->label);
+            CHECK_EQ(door->biome, world->biome());
+            CHECK(door->realm == worldRealm(i));
+            CHECK_EQ(door->pickable, spawn->pickable);
+            if (!spawn->pickable) {
+                // Not offered, still reachable through a pad.
+                CHECK(maps.choice(spawn->spawnId) == nullptr);
+                continue;
+            }
+            ++pickableCount;
+            const SpawnChoice* choice = maps.choice(spawn->spawnId);
+            CHECK(choice != nullptr);
+            if (choice == nullptr) continue;
+            CHECK_EQ(choice->label, spawn->label);
+            CHECK_EQ(choice->biome, world->biome());
+            CHECK(choice->realm == worldRealm(i));
+            CHECK(choice->pickable);
+        }
+    }
+    // A catalogue nobody can join is the one failure mode worth naming.
+    CHECK(doorCount >= 1);
+    CHECK(pickableCount >= 1);
+    CHECK_EQ(maps.doors().size(), doorCount);
+    CHECK_EQ(maps.spawnChoices().size(), pickableCount);
+}
+
+TEST(the_shipped_door_stands_on_open_ground) {
+    // THE test of the shipped data under the layer collision rule. Collision
+    // is now a property of the LAYER -- water, dirt and castle all have
+    // `has_collision` ticked, so about half of garden.tmj is solid (the
+    // background layer is painted over all of it and blocks nothing, which is
+    // the rule working) -- and the one thing that has to survive that is the
+    // door: a player must be able to be put down inside it.
+    //
+    // The door is NOT wall-free to its last millimetre, and that is fine. Its
+    // rectangle is the author's and is not tile-aligned, so it can overhang
+    // the walls round its edges by part of a cell. What matters is that the
+    // room inside it is open -- most of the cells it touches are ground -- and
+    // that every real placement lands clear, which is what findOpenPoint's
+    // body test guarantees. So this pins the two facts a player depends on:
+    // the great majority of the rectangle is standable, and a placement never
+    // is not.
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    const MapData* world = maps.forRealm(Realm::Overworld);
+    CHECK(world != nullptr);
+    if (world == nullptr || world->playerSpawns().empty()) { CHECK(false); return; }
+    const MapElement& door = *world->playerSpawns().front();
+
+    CHECK(!terrain.blocked(door.centre(), Realm::Overworld));
+
+    // The door's own cells, counted exactly rather than sampled: a wall
+    // growing across the room shows up here as a number, not as a flaky
+    // sample.
+    int openCells = 0, walledCells = 0;
+    const int minTx = Terrain::toTileCoord(door.bounds.x);
+    const int maxTx = Terrain::toTileCoord(door.bounds.right() - 1e-6);
+    const int minTy = Terrain::toTileCoord(door.bounds.y);
+    const int maxTy = Terrain::toTileCoord(door.bounds.bottom() - 1e-6);
+    for (int ty = minTy; ty <= maxTy; ++ty) {
+        for (int tx = minTx; tx <= maxTx; ++tx) {
+            if (tileBlocks(terrain.atTile(tx, ty, Realm::Overworld))) ++walledCells;
+            else ++openCells;
+        }
+    }
+    // Loudly: a door with no room in it is a map bug, and this is the number
+    // that says so.
+    if (openCells * 2 < openCells + walledCells) {
+        ::testing::reportFailure(__FILE__, __LINE__,
+                                 "the shipped door is mostly wall: " +
+                                     std::to_string(openCells) + " open cells, " +
+                                     std::to_string(walledCells) + " walled");
+    }
+    CHECK(openCells >= 24);
+
+    // And two hundred real placements, every one of them clear -- not the
+    // centre, not a nudge, the actual answer the join path takes.
+    Rng rng(0xD00D);
+    for (int i = 0; i < 200; ++i) {
+        Vec2 placed{};
+        CHECK(world->spawnAt("garden", rng, terrain, placed));
+        CHECK(door.contains(placed));
+        if (terrain.blocked(placed, Realm::Overworld)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "spawnAt landed in a wall at " +
+                                         std::to_string(placed.x) + "," +
+                                         std::to_string(placed.y));
+            break;
+        }
+    }
+}
+
+TEST(a_player_joins_on_the_beginner_ground) {
+    Harness h("spawn-default");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "newcomer", "password7"));
+    client.joinGame(1280, 720);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    const Entity body = onlyPlayer(h.server.world());
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+    const Vec2 at = h.server.world().get<Transform>(body).position;
+
+    // Joining with NO choice at all lands in the map's first door in button
+    // order, which on the shipped data is its only one.
+    CHECK(inSpawnPoint(overworld(h), "garden", at));
+    CHECK(!onDangerousGround(overworld(h), at));
+    CHECK(!h.server.terrain().blocked(at, Realm::Overworld));
+    CHECK(h.server.world().get<Transform>(body).realm == Realm::Overworld);
+}
+
+TEST(a_join_is_pending_until_answered_and_never_outlives_its_connection) {
+    // What the loading screen stands on: joinPending() is true from the
+    // moment Ready goes out until the server answers, and a join cut off by a
+    // drop must not bring the loading screen back up on the next login.
+    Harness h("spawn-pending");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "patient", "password7"));
+    CHECK(!client.joinPending());
+    client.joinGame(1280, 720);
+    CHECK(client.joinPending());
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    CHECK(!client.joinPending());
+
+    NetClient dropped;
+    CHECK(loginNew(h, dropped, "dropped", "password7"));
+    dropped.joinGame(1280, 720);
+    CHECK(dropped.joinPending());
+    dropped.disconnect();
+    CHECK(!dropped.joinPending());
+    CHECK(connectClient(h, dropped));
+    dropped.requestLogin("dropped", "password7");
+    CHECK(h.stepUntil({&dropped}, [&] { return dropped.status() == NetClient::Status::LoggedIn; }));
+    CHECK(!dropped.joinPending());
+}
+
+TEST(the_live_server_grows_what_the_ground_under_each_mob_declares) {
+    // The real GameServer, the real garden.tmj, a real client joining through
+    // the real door -- and every mob the population controller puts around that
+    // flower is no rarer than the ground it stands on says. Every one of them
+    // came out of a band, because bands are the only thing that spawns
+    // anything; this is the end-to-end form of what a new player actually
+    // meets, with the author's own bands allowed to be as hard as they claim
+    // and no harder.
+    Harness h("spawn-commons");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "greenhorn", "password7"));
+    client.joinGame(1280, 720);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    // Long enough for several population passes (they run on a 500ms clock).
+    World& world = h.server.world();
+    int mobs = 0;
+    for (int i = 0; i < 400 && mobs < 20; ++i) {
+        h.step(1, {&client});
+        Query<MobTag> live{world};
+        mobs = static_cast<int>(live.count());
+    }
+    CHECK(mobs > 0);
+
+    // The door's own ground has to be beginner ground whatever else the author
+    // paints: that is the rule a joining flower depends on. And it has to be
+    // BANDED ground, because ground no band covers grows nothing -- a door onto
+    // unbanded ground would drop a new player into a silent, empty world.
+    const Vec2 spawnedAt = h.server.world().get<Transform>(onlyPlayer(world)).position;
+    const double doorDifficulty = difficultyOnMap(overworld(h), spawnedAt);
+    CHECK(onABand(overworld(h), spawnedAt));
+    CHECK(!onDangerousGround(overworld(h), spawnedAt));
+    CHECK(doorDifficulty < kDangerousGroundDifficulty);
+    CHECK(tierMixForDifficulty(doorDifficulty).lower == Rarity::Common);
+
+    // The hardest thing the whole map declares. A mob may only be judged
+    // against its own square when nothing else can explain how it got there:
+    // bands overlap (first-match-in-map-order can name the softer of two), and
+    // a mob that has wandered is standing on ground that never chose it.
+    const int worldCeiling = rarityIndex(tierMixForDifficulty(hardestBandOn(overworld(h))).upper);
+
+    int commonGround = 0;
+    int bandedGround = 0;
+    int borrowed = 0;
+    Query<MobTag, MobType, Transform> live{world};
+    live.each([&](Entity e, MobTag&, MobType& type, Transform& transform) {
+        const MobConfig& config = content().mob(type.configIndex);
+        // An escort and a body segment are not ambient spawns and the ground
+        // they stand on did not choose them: a nest is placed by a band at that
+        // band's tier and its brood comes up at the nest's own centre
+        // (escortSpawnPoint) and walks out from there, and a centipede's body
+        // trails its head. Both routinely reach over the band's edge onto
+        // ground no band covers. The parent answers for the tier; where the
+        // children stand is theirs. Same exemption -- and the same reason -- as
+        // spawning_tests.cpp's shipped-map test.
+        if (world.has<HoleTether>(e) || config.id.find("_body") != std::string::npos) {
+            ++borrowed;
+            return;
+        }
+        // A mob's own min_rarity still floors it, which is the mob's property
+        // rather than the ground's; above both that floor and the hardest tier
+        // the MAP can roll, something happened that no band on it licensed.
+        const double difficulty = difficultyOnMap(overworld(h), transform.position);
+        if (rarityIndex(type.rarity) > std::max(worldCeiling, rarityIndex(config.minRarity))) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     std::string("the live garden grew a ") + rarityName(type.rarity) +
+                                         " " + config.id + ", above anything the hardest band on the "
+                                         "map can roll");
+        }
+        // Standing on a band (or near enough one to have walked off it): its own
+        // square is not the authority on what rolled it, and the map-wide
+        // ceiling above is all that can be said.
+        if (difficulty != 0.0 || !clearOfEveryBand(overworld(h), transform.position)) {
+            ++bandedGround;
+            return;
+        }
+        // Well clear of every band, so whatever put this mob here, it was not a
+        // band rolling above commons.
+        ++commonGround;
+        if (type.rarity != Rarity::Common && rarityIndex(type.rarity) > rarityIndex(config.minRarity)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     std::string("the live garden grew a ") + rarityName(type.rarity) +
+                                         " " + config.id + " on difficulty-zero ground");
+        }
+    });
+    // Which of the three arms the population landed in is the author's
+    // business: a difficulty-0 band reads as "difficulty zero" here, exactly as
+    // a mob that has since wandered well off its band does. What is pinned is
+    // that EVERY live mob was accounted for rather than skipped by a lookup
+    // that found nothing.
+    CHECK_EQ(commonGround + bandedGround + borrowed, mobs);
+}
+
+TEST(respawning_stands_near_the_corpse) {
+    Harness h("spawn-respawn");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "phoenix", "password7"));
+    client.joinGame(1280, 720);
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    World& world = h.server.world();
+    const Entity body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+
+    // Move far from the door, then die there -- Continue must come back near
+    // this spot (ashflor in-place), not the title-screen spawn.
+    const Vec2 deathSite{1800.0, 1800.0};
+    world.get<Transform>(body).position = deathSite;
+    world.get<Health>(body).current = 0.0;
+    world.add<Dead>(body, Dead{NULL_ENTITY});
+    CHECK(h.stepUntil({&client}, [&] { return client.dead(); }));
+
+    client.requestRespawn();
+    CHECK(h.stepUntil({&client}, [&] {
+        const Entity respawned = onlyPlayer(world);
+        return respawned != NULL_ENTITY && !world.has<Dead>(respawned) && !client.dead();
+    }));
+
+    const Entity respawned = onlyPlayer(world);
+    CHECK(respawned != NULL_ENTITY);
+    if (respawned == NULL_ENTITY) return;
+    const Vec2 at = world.get<Transform>(respawned).position;
+
+    // Within findOpenSpawn's 200-unit search (plus a little room for the
+    // nearest-open fallback when the exact cell is blocked).
+    CHECK(distance(at, deathSite) < 400.0);
+    CHECK(!onDangerousGround(overworld(h), at));
+}
+
+namespace {
+
+// ---------------------------------------------------------------------------
+// A two-map world, built here rather than taken from the shipped data
+// ---------------------------------------------------------------------------
+//
+// The shipped maps have few doors -- most of them one -- and no pads at all,
+// and they are the author's to redraw. Everything about choosing between
+// doors, a pad that lands somewhere, or a door an admin may name and nobody
+// else may therefore gets a world of its own. Bending the shipped maps into
+// that shape would make the game's art a test fixture and stop an author from
+// ever changing it.
+//
+// `meadow` is the overworld: two pickable doors and a pad into `warren`.
+// `warren` is a second, differently-sized realm whose only door is NOT
+// pickable, which is exactly the sublevel arrangement the picker's rules are
+// written for.
+
+using flix::testsupport::twoMapDataDir;
+
+/// The admin account these tests log in as, seeded before the server opens
+/// the database.
+void seedAdminAccount(const std::string& path) { seedUser(path, "boss", "password7", true); }
+
+} // namespace
+
+TEST(a_chosen_spawn_point_is_honoured_and_survives_a_respawn) {
+    const std::string dir = twoMapDataDir("choice");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-choice", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+    CHECK(h.server.worldMaps().choice("dunes") != nullptr);
+
+    NetClient client;
+    CHECK(loginNew(h, client, "wanderer", "password7"));
+    client.joinGame(1280, 720, "dunes");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    World& world = h.server.world();
+    Entity body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+    CHECK(inSpawnPoint(overworld(h), "dunes", world.get<Transform>(body).position));
+
+    // The choice lives on the session, so dying does not quietly move the
+    // player back to the map's first door.
+    world.get<Health>(body).current = 0.0;
+    world.add<Dead>(body, Dead{NULL_ENTITY});
+    CHECK(h.stepUntil({&client}, [&] { return client.dead(); }));
+    client.requestRespawn();
+    CHECK(h.stepUntil({&client}, [&] {
+        const Entity respawned = onlyPlayer(world);
+        return respawned != NULL_ENTITY && !world.has<Dead>(respawned);
+    }));
+
+    body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body != NULL_ENTITY) {
+        CHECK(inSpawnPoint(overworld(h), "dunes", world.get<Transform>(body).position));
+    }
+    flix::testsupport::removeDataDir(dir);
+}
+
+TEST(a_teleporter_carries_a_player_to_another_map) {
+    const std::string dir = twoMapDataDir("pad");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-teleporter", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+
+    const MapElement* pad = nullptr;
+    for (const MapElement& element : overworld(h).elements()) {
+        if (element.kind == MapElementKind::Teleporter && element.targetMap == "warren") {
+            pad = &element;
+        }
+    }
+    CHECK(pad != nullptr);
+    if (pad == nullptr) { flix::testsupport::removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "spelunker", "password7"));
+    client.joinGame(1280, 720, {}, "spelunker");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    World& world = h.server.world();
+    const Entity body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+
+    // Stand on the pad and wait out the dwell. The pad is HELD, not touched:
+    // stepping onto it and straight off again must not fire it.
+    world.get<Transform>(body).position = pad->centre();
+    CHECK(h.stepUntil({&client}, [&] {
+        return world.get<Transform>(body).realm != Realm::Overworld;
+    }, 120));
+
+    const Transform& at = world.get<Transform>(body);
+    bool found = false;
+    const Realm warren = h.server.worldMaps().realmOfId("warren", found);
+    CHECK(found);
+    CHECK(at.realm == warren);
+    const MapData* map = h.server.worldMaps().forRealm(warren);
+    CHECK(map != nullptr);
+    if (map != nullptr) CHECK(inSpawnPoint(*map, pad->targetSpawn, at.position));
+    // The kit came too: nothing of this flower's is left in the overworld.
+    Query<Transform, PetalInstance> petals{world};
+    petals.each([&](Entity, Transform& petal, PetalInstance& owner) {
+        if (owner.owner == body) CHECK(petal.realm == warren);
+    });
+    // And the client followed: it was sent the second map's grid, which is a
+    // DIFFERENT shape from the first's, and drew the arrival there.
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == warren; }));
+    CHECK_EQ(client.terrain().tileCols(warren), h.server.terrain().tileCols(warren));
+    CHECK(h.server.terrain().tileCols(warren) != h.server.terrain().tileCols(Realm::Overworld));
+    flix::testsupport::removeDataDir(dir);
+}
+
+TEST(paired_teleporters_lead_to_each_other_and_do_not_bounce) {
+    using flix::testsupport::fixtureDoor;
+    using flix::testsupport::fixtureLinkedPad;
+    using flix::testsupport::fixtureMap;
+    using flix::testsupport::stageDataDir;
+    const double cell = kTileSize;
+    const Vec2 meadowPad{cell * 12, cell * 12};
+    const Vec2 warrenPad{cell * 8, cell * 8};
+    const std::string dir = stageDataDir(
+        "paired-pads",
+        {{"meadow", fixtureMap(24, 24,
+                               fixtureDoor("meadow", "Meadow", cell * 2, cell * 2, cell * 4,
+                                           cell * 4, true, 0.0),
+                               fixtureLinkedPad(meadowPad.x, meadowPad.y, "meadow_hole",
+                                                "warren_hole"))},
+         {"warren", fixtureMap(16, 16, std::string(),
+                               fixtureLinkedPad(warrenPad.x, warrenPad.y, "warren_hole",
+                                                "meadow_hole"))}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-paired-pads", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+    for (const std::string& warning : h.server.worldMaps().warnings()) {
+        if (warning.find("teleporter") != std::string::npos) {
+            ::testing::reportFailure(__FILE__, __LINE__, warning);
+        }
+    }
+    bool found = false;
+    const Realm warren = h.server.worldMaps().realmOfId("warren", found);
+    CHECK(found);
+
+    NetClient client;
+    CHECK(loginNew(h, client, "pairwalker", "password7"));
+    client.joinGame(1280, 720, {}, "pairwalker");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    World& world = h.server.world();
+    const Entity body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+
+    // Through the meadow's pad, and out of its partner.
+    world.get<Transform>(body).position = meadowPad;
+    CHECK(h.stepUntil({&client}, [&] { return world.get<Transform>(body).realm == warren; }, 120));
+    CHECK(distanceSq(world.get<Transform>(body).position, warrenPad) < 10.0 * 10.0);
+
+    // Left standing on the pad it came out of, well past the cooldown and the
+    // dwell, it stays where it is: the arrival pad does not charge.
+    const int idle = static_cast<int>((kTeleporterCooldownMillis + kTeleporterDwellMillis * 3) /
+                                      net::kTickMillis);
+    h.step(idle, {&client});
+    CHECK(world.get<Transform>(body).realm == warren);
+
+    // Off it and back on, and it is an ordinary pad again.
+    world.get<Transform>(body).position = warrenPad + Vec2{kTeleporterSuctionRadius * 2, 0};
+    h.step(2, {&client});
+    world.get<Transform>(body).position = warrenPad;
+    CHECK(h.stepUntil({&client}, [&] {
+        return world.get<Transform>(body).realm == Realm::Overworld;
+    }, 120));
+    CHECK(distanceSq(world.get<Transform>(body).position, meadowPad) < 10.0 * 10.0);
+    flix::testsupport::removeDataDir(dir);
+}
+
+TEST(a_flower_charging_a_pad_spins_and_its_jump_plays_the_iris) {
+    using flix::testsupport::fixtureDoor;
+    using flix::testsupport::fixtureLinkedPad;
+    using flix::testsupport::fixtureMap;
+    using flix::testsupport::stageDataDir;
+    const double cell = kTileSize;
+    const Vec2 meadowPad{cell * 12, cell * 12};
+    const Vec2 warrenPad{cell * 8, cell * 8};
+    const std::string dir = stageDataDir(
+        "spin-pads",
+        {{"meadow", fixtureMap(24, 24,
+                               fixtureDoor("meadow", "Meadow", cell * 2, cell * 2, cell * 4,
+                                           cell * 4, true, 0.0),
+                               fixtureLinkedPad(meadowPad.x, meadowPad.y, "meadow_hole",
+                                                "warren_hole"))},
+         {"warren", fixtureMap(16, 16, std::string(),
+                               fixtureLinkedPad(warrenPad.x, warrenPad.y, "warren_hole",
+                                                "meadow_hole"))}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-spin-pads", {}, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+    bool found = false;
+    const Realm warren = h.server.worldMaps().realmOfId("warren", found);
+    CHECK(found);
+
+    NetClient client;
+    CHECK(loginNew(h, client, "spinner", "password7"));
+    client.joinGame(1280, 720, {}, "spinner");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    World& world = h.server.world();
+    const Entity body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+
+    // What the client was told about its own flower: the bit its body spins on.
+    const auto charging = [&] {
+        const auto it = client.view().entities().find(client.view().self().netId);
+        return it != client.view().entities().end() &&
+               (it->second.state & net::StatePadCharging) != 0;
+    };
+
+    // Off every pad: nothing charging, nothing to play.
+    h.step(2, {&client});
+    CHECK(!charging());
+    CHECK(!client.takeTeleported());
+
+    // On the meadow's pad it charges, and the jump tells the client -- once.
+    world.get<Transform>(body).position = meadowPad;
+    CHECK(h.stepUntil({&client}, charging, 30));
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == warren; }, 120));
+    CHECK(client.takeTeleported());
+    CHECK(!client.takeTeleported());
+
+    // Out on the pad it came out of, which does not charge, so it does not spin.
+    h.step(10, {&client});
+    CHECK(world.get<Transform>(body).realm == warren);
+    CHECK(!charging());
+    flix::testsupport::removeDataDir(dir);
+}
+
+TEST(a_pads_radius_and_colour_come_from_the_map_and_its_radius_sizes_its_reach) {
+    using flix::testsupport::fixtureDoor;
+    using flix::testsupport::fixtureMap;
+    using flix::testsupport::fixturePad;
+    using flix::testsupport::stageDataDir;
+    const double cell = kTileSize;
+    const Vec2 big{cell * 12, cell * 4};
+    const Vec2 plain{cell * 4, cell * 18};
+    // fixturePad's object with the two florr warp properties added to it, in
+    // the types Tiled writes them as.
+    std::string sized = fixturePad(big.x, big.y, "warren", "warren_gate");
+    sized.replace(sized.rfind("]}"), 2,
+                  ",{ \"name\": \"radius\", \"type\": \"float\", \"value\": 200 },"
+                  "{ \"name\": \"color\", \"type\": \"color\", \"value\": \"#ff3366cc\" }]}");
+    const std::string dir = stageDataDir(
+        "sized-pads",
+        {{"meadow", fixtureMap(24, 24,
+                               fixtureDoor("meadow", "Meadow", cell * 2, cell * 2, cell * 4,
+                                           cell * 4, true, 0.0),
+                               sized + "," + fixturePad(plain.x, plain.y, "warren",
+                                                        "warren_gate"))},
+         {"warren", fixtureMap(16, 16,
+                               fixtureDoor("warren_gate", "Warren", cell * 3, cell * 3, cell * 3,
+                                           cell * 3, false, 0.0),
+                               std::string())}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    const bool loaded = maps.load(dir, &terrain, error);
+    flix::testsupport::removeDataDir(dir);
+    CHECK(loaded);
+    const MapData* meadow = loaded ? maps.forRealm(Realm::Overworld) : nullptr;
+    const MapElement* bigPad = nullptr;
+    const MapElement* plainPad = nullptr;
+    if (meadow != nullptr) {
+        for (const MapElement& element : meadow->elements()) {
+            if (element.kind != MapElementKind::Teleporter) continue;
+            if (distanceSq(element.centre(), big) < 1.0) bigPad = &element;
+            if (distanceSq(element.centre(), plain) < 1.0) plainPad = &element;
+        }
+    }
+    CHECK(bigPad != nullptr && plainPad != nullptr);
+    if (bigPad == nullptr || plainPad == nullptr) return;
+
+    // Tiled's #AARRGGBB, alpha dropped; a pad that gives neither keeps florr's
+    // white at radius 100.
+    CHECK_NEAR(bigPad->padRadius, 200.0, 1e-9);
+    CHECK(bigPad->hasColor);
+    CHECK_EQ(bigPad->color, 0x3366CCu);
+    CHECK_NEAR(plainPad->padRadius, kTeleporterArtRadius, 1e-9);
+    CHECK(!plainPad->hasColor);
+
+    // A flower held still at `at` for longer than the dwell: does a pad take it?
+    const auto fires = [&](Vec2 at) {
+        TeleporterState state;
+        for (double now = 0; now <= kTeleporterDwellMillis + 100.0; now += 50.0) {
+            if (meadow->stepTeleporters(at, 0.05, now, state).fired >= 0) return true;
+        }
+        return false;
+    };
+    // Twice the size, twice the reach: 100 units out is past a plain pad's 60
+    // and inside the big one's 120.
+    CHECK(fires(big + Vec2{100.0, 0.0}));
+    CHECK(!fires(plain + Vec2{100.0, 0.0}));
+    CHECK(fires(plain + Vec2{50.0, 0.0}));
+}
+
+TEST(a_spawn_choice_the_maps_do_not_define_falls_back) {
+    Harness h("spawn-unknown");
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "lost", "password7"));
+    // A spawn point that is not on any map. The join must still succeed, on
+    // the beginner ground, rather than being refused or landing nowhere.
+    client.joinGame(1280, 720, "atlantis");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    const Entity body = onlyPlayer(h.server.world());
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) return;
+    CHECK(inSpawnPoint(overworld(h), "garden", h.server.world().get<Transform>(body).position));
+}
+
+// ---------------------------------------------------------------------------
+// Zone outlines
+// ---------------------------------------------------------------------------
+//
+// Spawn zones are polygons. These are the geometry that decides which tier of
+// mob a point belongs to, so the interesting cases are the ones a rectangle
+// never had: a concave notch, and the boundary itself.
+
+namespace {
+
+/// A 4000-unit square with a 2000-unit bite taken out of its bottom-right --
+/// an L, which is the smallest shape whose bounding box lies about it.
+MapElement lZone() {
+    MapElement zone;
+    zone.kind = MapElementKind::Spawn;
+    zone.polygon = {{0, 0}, {4000, 0}, {4000, 2000}, {2000, 2000}, {2000, 4000}, {0, 4000}};
+    zone.bounds = {0, 0, 4000, 4000};
+    return zone;
+}
+
+} // namespace
+
+TEST(a_zone_outline_excludes_what_its_bounding_box_includes) {
+    const MapElement zone = lZone();
+
+    // Inside both.
+    CHECK(zone.contains({1000, 1000}));
+    CHECK(zone.contains({3000, 1000}));
+    CHECK(zone.contains({1000, 3000}));
+
+    // The bite: inside the bounding box, outside the zone. This is the whole
+    // difference between the two shapes, and the reason the spawner tests the
+    // outline rather than the box it culls with.
+    CHECK(zone.bounds.contains({3000, 3000}));
+    CHECK(!zone.contains({3000, 3000}));
+
+    // Outside both.
+    CHECK(!zone.contains({-1, 1000}));
+    CHECK(!zone.contains({5000, 1000}));
+}
+
+TEST(a_zone_boundary_counts_as_inside) {
+    // The rectangles these replaced were tested inclusively on every edge, so a
+    // mob standing exactly on a border was in that zone. A polygon that dropped
+    // it would move every seam between two tier bands by a hair, silently.
+    const MapElement zone = lZone();
+    for (const Vec2 corner : zone.polygon) CHECK(zone.contains(corner));
+    CHECK(zone.contains({2000, 0}));        // on the top edge
+    CHECK(zone.contains({0, 4000}));        // on a corner
+    CHECK(zone.contains({3000, 2000}));     // on the notch's horizontal edge
+    CHECK(zone.contains({2000, 3000}));     // on the notch's vertical edge
+}
+
+TEST(a_zone_area_is_the_outlines_not_the_boxs) {
+    // A zone's mob target is scaled by this. Sizing an L-shaped band by its
+    // bounding box would pack it at a third again the density of a rectangular
+    // zone next to it.
+    const MapElement zone = lZone();
+    CHECK_EQ(zone.area(), 4000.0 * 4000.0 - 2000.0 * 2000.0);
+    CHECK_EQ(zone.bounds.w * zone.bounds.h, 4000.0 * 4000.0);
+
+    // A zone with no outline is its rectangle, area and all.
+    MapElement rect;
+    rect.kind = MapElementKind::Spawn;
+    rect.bounds = {100, 200, 30, 40};
+    CHECK_EQ(rect.area(), 30.0 * 40.0);
+    CHECK(rect.contains({130, 240}));       // inclusive, as it always was
+    CHECK(!rect.contains({130.5, 240}));
+}
+
+TEST(a_spawn_in_a_polygon_zone_lands_inside_it) {
+    // Placement samples the bounding box and rejects what falls outside the
+    // outline. With an L that is a quarter of the box, so this also says the
+    // rejection loop does not simply give up.
+    Terrain terrain;   // all ground: the outline is the only thing rejecting
+    MapData map;
+    Rng rng(12345);
+    const MapElement zone = lZone();
+
+    int placed = 0;
+    for (int trial = 0; trial < 200; ++trial) {
+        Vec2 at;
+        if (!map.spawnInElement(zone, rng, terrain, at)) continue;
+        ++placed;
+        CHECK(zone.contains(at));
+    }
+    // Not "every attempt succeeded" -- the sampler is allowed to run out of
+    // tries -- but it must work the large majority of the time or a zone like
+    // this would starve.
+    CHECK(placed > 150);
+}
+
+// ---------------------------------------------------------------------------
+// Zone mob distributions
+// ---------------------------------------------------------------------------
+//
+// A zone says WHAT it spawns as weighted rows of section presets and named
+// mobs -- "garden 50% hornet 50%". How DANGEROUS it is, is a separate property
+// -- its `difficulty` -- and that is where the map's progression lives.
+
+TEST(a_distribution_parses_the_authored_syntax) {
+    std::string warning;
+    const std::vector<ZoneMobEntry> rows = parseMobDistribution("garden 50% hornet 50%", &warning);
+    CHECK(warning.empty());
+    CHECK(rows.size() == 2);
+
+    // Names only. Whether "garden" is a group or "hornet" is a mob is the
+    // content's question, answered when the band is built against it: the map
+    // layer must not depend on mobs.json to be readable.
+    CHECK_EQ(rows[0].name, std::string("garden"));
+    CHECK_EQ(rows[0].weight, 50.0);
+    CHECK_EQ(rows[1].name, std::string("hornet"));
+    CHECK_EQ(rows[1].weight, 50.0);
+}
+
+TEST(a_distribution_accepts_the_shapes_an_author_will_type) {
+    // Percent signs, commas and separators are all noise; the weights are
+    // relative, so nothing has to add up to a hundred.
+    const std::vector<ZoneMobEntry> spelled = parseMobDistribution("ocean 20% jellyfish 80%", nullptr);
+    const std::vector<ZoneMobEntry> bare = parseMobDistribution("ocean 20, jellyfish 80", nullptr);
+    const std::vector<ZoneMobEntry> ratio = parseMobDistribution("ocean 1 jellyfish 4", nullptr);
+    for (const auto* rows : {&spelled, &bare, &ratio}) {
+        CHECK(rows->size() == 2);
+        CHECK_EQ((*rows)[0].name, std::string("ocean"));
+        CHECK_EQ((*rows)[1].name, std::string("jellyfish"));
+        CHECK((*rows)[1].weight > (*rows)[0].weight);
+    }
+
+    // A bare name is a zone of nothing but that.
+    const std::vector<ZoneMobEntry> only = parseMobDistribution("hornet", nullptr);
+    CHECK(only.size() == 1);
+    CHECK_EQ(only[0].name, std::string("hornet"));
+    CHECK_EQ(only[0].weight, 1.0);
+
+    // Underscores are part of a name, because "ant_hell" is a group.
+    const std::vector<ZoneMobEntry> ants = parseMobDistribution("ant_hell 100%", nullptr);
+    CHECK(ants.size() == 1);
+    CHECK_EQ(ants[0].name, std::string("ant_hell"));
+}
+
+TEST(a_broken_distribution_is_reported_not_guessed_at) {
+    // Nothing at all: the spawner reads an empty list as "no distribution" and
+    // asks the ground under the band instead.
+    CHECK(parseMobDistribution("", nullptr).empty());
+    CHECK(parseMobDistribution("   ", nullptr).empty());
+
+    // A weight of zero would make its row unreachable, which is a mistake
+    // rather than an intention. Skipped, and said out loud -- a mistyped
+    // distribution is otherwise a zone that silently keeps its old behaviour.
+    std::string warning;
+    const std::vector<ZoneMobEntry> rows = parseMobDistribution("hornet 0 bee 3", &warning);
+    CHECK(!warning.empty());
+    CHECK(rows.size() == 1);
+    CHECK_EQ(rows[0].name, std::string("bee"));
+}
+
+TEST(the_shipped_map_falls_back_to_its_own_mob_group_wherever_nothing_says_otherwise) {
+    // world.tmj carried two hundred bands and nine regions and the spawner was
+    // only ever exercised through them. The shipped maps are an author's art
+    // with a door dropped on and difficulty brushed over it, a roster named on
+    // a band or left to the map -- so the chain that has to hold is the
+    // fallback one: a non-empty default group that the content actually
+    // defines, reached by every band that names no roster of its own. A map
+    // that resolved to an empty group would spawn nothing at all, silently.
+    //
+    // The default group is looked up in the content, which is loaded here
+    // rather than left to whichever harness test happened to run first.
+    std::string contentError;
+    CHECK(loadContent(dataDir(), contentError));
+    MapData map;
+    std::string error;
+    CHECK(map.loadTiled(dataDir() + "/garden.tmj", error));
+    CHECK(error.empty());
+    CHECK(!map.defaultMobGroup().empty());
+    CHECK_EQ(map.defaultMobGroup(), map.biome());
+    CHECK(content().mobGroupIndex(map.defaultMobGroup()) != kInvalidIndex);
+
+    // Every band on the map either says nothing about mobs -- and so reaches
+    // the default group above -- or names rows the content defines. Neither the
+    // number of bands nor their difficulties are pinned here: the author is
+    // still balancing them, and this is a test of the FALLBACK, not of the art.
+    for (const MapElement& element : map.elements()) {
+        if (!element.isSpawnBand() && !element.isMobRegion()) continue;
+        for (const ZoneMobEntry& row : element.mobDistribution) {
+            CHECK(content().mobGroupIndex(row.name) != kInvalidIndex ||
+                  content().mobIndex(row.name) != kInvalidIndex);
+        }
+    }
+}
+
+TEST(an_authored_band_and_region_still_parse) {
+    // The coverage the old world.tmj gave for free, kept alive against a map
+    // written here rather than the shipped ones, which the author rebalances:
+    // a `spawn` object WITH a difficulty is a band that owns a population, one
+    // WITHOUT is a region that only says what grows there.
+    //
+    // The difficulty is authored as an `int`, which is what Tiled's own spinner
+    // writes; a `float` lands in the same place. 40 is rare-ish ground on the
+    // curve -- mostly rare with some epic in it.
+    const std::string objects =
+        R"({ "id": 1, "type": "spawn", "visible": true, "rotation": 0,
+             "x": 600, "y": 600, "width": 3000, "height": 3000, "properties": [
+               { "name": "difficulty", "type": "int", "value": 40 },
+               { "name": "mobs", "type": "string", "value": "hornet 100%" } ] },
+           { "id": 2, "type": "spawn", "visible": true, "rotation": 0,
+             "x": 600, "y": 4200, "width": 3000, "height": 3000, "properties": [
+               { "name": "mobs", "type": "string", "value": "ocean 100%" } ] })";
+    const std::string banded =
+        flix::testsupport::fixtureMap(24, 24, std::string(), std::string(), objects);
+    const std::string dir = flix::testsupport::stageDataDir("bands", {{"banded", banded}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+
+    MapData map;
+    std::string error;
+    CHECK(map.loadTiled(dir + "/banded.tmj", error));
+    int bands = 0;
+    int regions = 0;
+    for (const MapElement& element : map.elements()) {
+        if (element.isSpawnBand()) {
+            ++bands;
+            CHECK_NEAR(element.difficulty, 40.0, 1e-9);
+            CHECK(tierMixForDifficulty(element.difficulty).lower == Rarity::Rare);
+            CHECK_EQ(element.mobDistribution.size(), std::size_t{1});
+            CHECK_EQ(element.mobDistribution[0].name, std::string("hornet"));
+        }
+        if (element.isMobRegion()) {
+            ++regions;
+            CHECK_EQ(element.mobDistribution[0].name, std::string("ocean"));
+        }
+    }
+    CHECK_EQ(bands, 1);
+    CHECK_EQ(regions, 1);
+    flix::testsupport::removeDataDir(dir);
+}
+
+// ---------------------------------------------------------------------------
+// Doors: safe ground, and who may use which
+// ---------------------------------------------------------------------------
+
+TEST(the_pyramid_is_a_biome_of_its_own_the_title_screen_offers) {
+    // The pyramid (2026-10-21): a map and a biome of its own, one door the
+    // picker gives a tab, a prestige twin like every biome, a pad each way to
+    // the desert, and (user) dark inside with its minimap hidden.
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), nullptr, error));
+    const SpawnChoice* door = maps.choice("pyramid");
+    CHECK(door != nullptr);
+    if (door == nullptr) return;
+    CHECK_EQ(door->biome, std::string("pyramid"));
+    CHECK_EQ(door->label, std::string("Pyramid"));
+    CHECK(door->pickable);
+    const MapData* map = maps.forRealm(door->realm);
+    CHECK(map != nullptr && map->id() == "pyramid");
+    if (map == nullptr) return;
+    // Dark inside, in florr's own dark colour, and no minimap: florr's
+    // pyramid is found, not read.
+    CHECK(!map->showsMinimap());
+    CHECK(map->isDark());
+    CHECK_EQ(map->darkColor(), 0x120D00u);
+    bool twin = false;
+    const Realm twinRealm = maps.prestigeRealm(door->realm, twin);
+    CHECK(twin);
+    if (const MapData* prestige = maps.forRealm(twinRealm)) {
+        CHECK(!prestige->showsMinimap());
+        CHECK(prestige->isDark());
+        CHECK_EQ(prestige->darkColor(), map->darkColor());
+    }
+    // Every other map keeps its minimap and its light.
+    for (const MapData& other : maps.maps()) {
+        if (other.templateId() == "pyramid" || other.id() == "prestige_pyramid") continue;
+        CHECK(other.showsMinimap());
+        CHECK(!other.isDark());
+    }
+
+    bool desertToPyramid = false, pyramidToDesert = false;
+    for (const MapData& each : maps.maps()) {
+        if (each.prestige()) continue;
+        for (const MapElement& element : each.elements()) {
+            if (element.kind != MapElementKind::Teleporter) continue;
+            if (each.id() == "desert" && element.targetMap == "pyramid") desertToPyramid = true;
+            if (each.id() == "pyramid" && element.targetMap == "desert") pyramidToDesert = true;
+        }
+    }
+    CHECK(desertToPyramid);
+    CHECK(pyramidToDesert);
+}
+
+TEST(every_pickable_door_stands_on_safe_open_ground) {
+    // The rule the picker relies on: a door the title screen offers puts a
+    // fresh flower down on open ground whose difficulty is below the first one
+    // that can roll a rare at all. Checked over every staged map, so a hand
+    // edit that slides a difficulty-40 band over a door does not ship
+    // unnoticed.
+    //
+    // GRADED ground only -- see onDangerousGradedGround(). A door inside a
+    // random band is the author saying "this is where people arrive" on top of
+    // "this ground is the whole spread", and both are deliberate. The rule is
+    // about a band that CREPT over a door, and a -1 band never creeps: it is
+    // the one difficulty nobody types by accident.
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    if (!maps.load(flix::testsupport::dataDir(), &terrain, error)) {
+        ::testing::reportFailure(__FILE__, __LINE__, "the shipped maps did not load: " + error);
+        return;
+    }
+    int doors = 0;
+    for (const SpawnChoice& choice : maps.spawnChoices()) {
+        CHECK(choice.pickable);
+        const MapData* map = maps.forRealm(choice.realm);
+        if (map == nullptr || choice.element < 0 ||
+            choice.element >= static_cast<int>(map->elements().size())) {
+            ::testing::reportFailure(__FILE__, __LINE__, "door " + choice.id + " has no rectangle");
+            continue;
+        }
+        const MapElement& door = map->elements()[static_cast<std::size_t>(choice.element)];
+        const Vec2 centre = door.centre();
+        ++doors;
+        if (onDangerousGradedGround(*map, centre)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "door " + choice.id + " on " + map->id() +
+                                         " sits under a band of difficulty " +
+                                         std::to_string(kDangerousGroundDifficulty) + " or more");
+        }
+        if (terrain.blocked(centre, choice.realm)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "door " + choice.id + " on " + map->id() +
+                                         " is walled over");
+        }
+        // And a join through it really lands in it. An open centre is not
+        // enough on its own: placement can still refuse every candidate and
+        // fall back to ground outside the door, which is what the sewers'
+        // grate walkway did.
+        Rng rng(0xD0025);
+        for (int i = 0; i < 20; ++i) {
+            Vec2 at{};
+            if (!map->spawnAt(door.spawnId, rng, terrain, at) || !door.contains(at)) {
+                ::testing::reportFailure(__FILE__, __LINE__,
+                                         "door " + choice.id + " on " + map->id() +
+                                             " put a player outside it at " +
+                                             std::to_string(at.x) + "," + std::to_string(at.y));
+                break;
+            }
+        }
+    }
+    CHECK(doors > 0);
+    // Every door, pickable or not, is known by the same ids: a pad arrives at
+    // a sublevel door through door(), never through choice().
+    CHECK(maps.doors().size() >= maps.spawnChoices().size());
+    for (const SpawnChoice& choice : maps.spawnChoices()) {
+        const SpawnChoice* same = maps.door(choice.id);
+        CHECK(same != nullptr);
+        if (same != nullptr) CHECK(same->realm == choice.realm);
+    }
+}
+
+TEST(a_door_on_another_map_joins_into_that_map) {
+    // Naming a door that lives on a SECOND map puts the body in that map's own
+    // coordinate space, and the client is told the shape of the grid it is
+    // about to draw. The door is not pickable, so this also needs an admin --
+    // see the next test for the rule itself.
+    const std::string dir = twoMapDataDir("othermap");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-other-map", seedAdminAccount, dir, 0);
+    if (!h.ready) { CHECK(false); flix::testsupport::removeDataDir(dir); return; }
+    const SpawnChoice* gate = h.server.worldMaps().door("warren_gate");
+    CHECK(gate != nullptr);
+    if (gate == nullptr) { flix::testsupport::removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(flix::testsupport::connectClient(h, client));
+    client.requestLogin("boss", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }));
+    client.joinGame(1280, 720, "warren_gate", "boss");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+
+    World& world = h.server.world();
+    const Entity body = onlyPlayer(world);
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+    const Transform& at = world.get<Transform>(body);
+    CHECK(at.realm == gate->realm);
+    const MapData* warren = h.server.worldMaps().forRealm(gate->realm);
+    CHECK(warren != nullptr);
+    if (warren != nullptr) CHECK(inSpawnPoint(*warren, "warren_gate", at.position));
+    CHECK(h.stepUntil({&client}, [&] { return client.view().realm() == gate->realm; }));
+    CHECK_EQ(client.terrain().tileCols(gate->realm), h.server.terrain().tileCols(gate->realm));
+    CHECK_EQ(client.terrain().tileRows(gate->realm), h.server.terrain().tileRows(gate->realm));
+    // Its own size, not the overworld's and not any historical default.
+    CHECK_EQ(client.terrain().tileCols(gate->realm), 16);
+    CHECK(!h.server.terrain().blocked(at.position, at.realm));
+    flix::testsupport::removeDataDir(dir);
+}
+
+TEST(a_door_that_is_not_pickable_is_joined_only_by_an_admin) {
+    // The rule the picker's two lists exist for. `warren_gate` is marked
+    // `pickable: false`, so it is a door and not a choice: door() finds it, the
+    // title screen never offers it, a player naming it anyway starts at the
+    // default, and an admin naming it arrives there.
+    //
+    // The shipped termite mound has doors like that, but it is the author's
+    // to redraw, so the arrangement is staged here instead.
+    const std::string dir = twoMapDataDir("sublevel");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-sublevel", seedAdminAccount, dir, 0);
+    CHECK(h.ready);
+    if (!h.ready) { flix::testsupport::removeDataDir(dir); return; }
+
+    const WorldMaps& maps = h.server.worldMaps();
+    const SpawnChoice* door = maps.door("warren_gate");
+    CHECK(door != nullptr);
+    if (door == nullptr) { flix::testsupport::removeDataDir(dir); return; }
+    CHECK(!door->pickable);
+    CHECK(maps.choice("warren_gate") == nullptr);
+    for (const SpawnChoice& choice : maps.spawnChoices()) CHECK(choice.pickable);
+    CHECK_EQ(maps.spawnChoices().size(), std::size_t{2});
+    CHECK_EQ(maps.doors().size(), std::size_t{3});
+
+    // A player naming it starts at the default, on the overworld.
+    NetClient player;
+    CHECK(flix::testsupport::connectClient(h, player));
+    player.requestRegister("ratcatcher", "password7");
+    CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::LoggedIn; }));
+    player.joinGame(1280, 720, "warren_gate", "ratcatcher");
+    CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::Playing; }));
+    World& world = h.server.world();
+    const Entity body = bodyNamed(world, "ratcatcher");
+    CHECK(body != NULL_ENTITY);
+    if (body != NULL_ENTITY) {
+        const Transform& at = world.get<Transform>(body);
+        CHECK(at.realm == Realm::Overworld);
+        const MapData* overworldMap = maps.forRealm(Realm::Overworld);
+        CHECK(overworldMap != nullptr && inSpawnPoint(*overworldMap, "meadow", at.position));
+    }
+    CHECK(player.view().realm() == Realm::Overworld);
+
+    // An admin naming it arrives on the second map, at that door.
+    NetClient admin;
+    CHECK(flix::testsupport::connectClient(h, admin));
+    admin.requestLogin("boss", "password7");
+    CHECK(h.stepUntil({&admin}, [&] { return admin.status() == NetClient::Status::LoggedIn; }));
+    admin.joinGame(1280, 720, "warren_gate", "boss");
+    CHECK(h.stepUntil({&player, &admin}, [&] { return admin.status() == NetClient::Status::Playing; }));
+    const Entity bossBody = bodyNamed(world, "boss");
+    CHECK(bossBody != NULL_ENTITY);
+    if (bossBody != NULL_ENTITY) {
+        const Transform& at = world.get<Transform>(bossBody);
+        CHECK(at.realm == door->realm);
+        const MapData* warren = maps.forRealm(door->realm);
+        CHECK(warren != nullptr && inSpawnPoint(*warren, "warren_gate", at.position));
+    }
+    CHECK(h.stepUntil({&player, &admin}, [&] { return admin.view().realm() == door->realm; }));
+    flix::testsupport::removeDataDir(dir);
+}
+
+
+// ---------------------------------------------------------------------------
+// A map that is mostly wall
+// ---------------------------------------------------------------------------
+//
+// Collision is a property of the LAYER now, and the shipped map ticks it on
+// three of its five: about half of garden.tmj's cells collide. That is the
+// author's design, and it moved every placement path from "the map is mostly
+// open, a rejected sample is bad luck" to "a rejected sample is the common
+// case". These run the whole set on a fixture built denser still
+// (denseMapDataDir), with a deliberately badly-placed door on it, because a
+// path that quietly gives up on a dense map does not look like a bug -- it
+// looks like a player standing in a wall.
+
+TEST(a_door_drawn_over_solid_ground_still_lands_a_body_on_open_ground) {
+    // `cellar` is one cell and every point in it is wall. Fifty
+    // rejection samples find nothing, which is the case the fallback exists
+    // for -- and the fallback used to be the rectangle's own CENTRE, i.e. the
+    // middle of that wall. The centre is now where the search STARTS: the
+    // nearest ground a body can actually stand on.
+    const std::string dir = flix::testsupport::denseMapDataDir("solid-door");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dir, &terrain, error));
+    const MapData* world = maps.forRealm(Realm::Overworld);
+    CHECK(world != nullptr);
+    if (world == nullptr) { flix::testsupport::removeDataDir(dir); return; }
+
+    // The fixture really is as solid as the shipped map, or this proves
+    // nothing.
+    int blocked = 0;
+    const int cols = terrain.tileCols(Realm::Overworld);
+    const int rows = terrain.tileRows(Realm::Overworld);
+    for (int ty = 0; ty < rows; ++ty) {
+        for (int tx = 0; tx < cols; ++tx) {
+            if (tileBlocks(terrain.atTile(tx, ty, Realm::Overworld))) ++blocked;
+        }
+    }
+    CHECK(blocked * 2 > cols * rows);
+
+    const MapElement* cellar = world->playerSpawn("cellar");
+    CHECK(cellar != nullptr);
+    if (cellar == nullptr) { flix::testsupport::removeDataDir(dir); return; }
+    CHECK(!cellar->pickable);
+    // Every corner and the centre: the whole rectangle is wall.
+    CHECK(terrain.blocked(cellar->centre(), Realm::Overworld));
+
+    Rng rng(0x5011D);
+    for (int i = 0; i < 50; ++i) {
+        Vec2 at{};
+        CHECK(world->spawnAt("cellar", rng, terrain, at));
+        if (terrain.blocked(at, Realm::Overworld)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "a door over solid ground put a body in a wall at " +
+                                         std::to_string(at.x) + "," + std::to_string(at.y));
+            break;
+        }
+    }
+    // And so does the whole-map default, when the first door in button order
+    // is the walled one. `hollow` is first here, so this is the ordinary path;
+    // the point is that it still answers with open ground on a dense map.
+    for (int i = 0; i < 50; ++i) {
+        const Vec2 at = world->defaultSpawn(rng, terrain);
+        if (terrain.blocked(at, Realm::Overworld)) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "defaultSpawn put a body in a wall at " +
+                                         std::to_string(at.x) + "," + std::to_string(at.y));
+            break;
+        }
+    }
+    flix::testsupport::removeDataDir(dir);
+}
+
+TEST(a_door_on_cells_that_block_only_part_of_themselves_lands_a_body_inside_it) {
+    // The sewers' door sits on a grate walkway, and every cell of that walkway
+    // carries a thin rail along one edge. The coarse grid calls any cell with a
+    // shape in it Wall, and placement used to ask the coarse grid -- so every
+    // candidate in the door was refused and the fallback put the player down
+    // in the sewage beside the walkway, outside the door they picked.
+    //
+    // Reproduced with the fixture's diagonal tile, which blocks the triangle
+    // below its diagonal: a 3x3 block of them, and a door on the open half of
+    // the middle one. Every cell the door's padded interior can reach is
+    // coarse Wall, and every point in that interior is clear of every shape
+    // by more than a flower's radius.
+    const double cell = kTileSize;
+    const double cx = cell * 5;   // cell (5, 5)'s corner
+    const double cy = cell * 5;
+    // Interior (door less kSpawnPadding) spans local x 160..230, y 30..100:
+    // at least 42 units off the diagonal (x - y >= 60), 30 off the cell above
+    // and 26 off the cell to the right -- each more than a flower's radius.
+    const std::string map = flix::testsupport::fixtureMap(
+        12, 12,
+        flix::testsupport::fixtureDoor("rail", "Rail", cx + 110.0, cy - 20.0, 170.0, 170.0),
+        std::string(), std::string(), {}, {},
+        [](int x, int y) { return x >= 4 && x <= 6 && y >= 4 && y <= 6; });
+    const std::string dir = flix::testsupport::stageDataDir("rail-door", {{"rail", map}});
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dir, &terrain, error));
+    const MapData* world = maps.forRealm(Realm::Overworld);
+    const MapElement* door = world != nullptr ? world->playerSpawn("rail") : nullptr;
+    CHECK(door != nullptr);
+    if (door == nullptr) { flix::testsupport::removeDataDir(dir); return; }
+
+    // The premise: the coarse grid says wall under the whole door, the shapes
+    // say its middle is open.
+    for (int ty = 4; ty <= 6; ++ty) {
+        for (int tx = 4; tx <= 6; ++tx) CHECK(tileBlocks(terrain.atTile(tx, ty, Realm::Overworld)));
+    }
+    CHECK(!terrain.blocked(door->centre(), Realm::Overworld));
+
+    Rng rng(0x5E3E5);
+    for (int i = 0; i < 100; ++i) {
+        Vec2 at{};
+        CHECK(world->spawnAt("rail", rng, terrain, at));
+        if (!door->contains(at) || terrain.resolveWall(at, kPlayerBaseRadius,
+                                                       Realm::Overworld).collided) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "spawnAt left the door or touched a shape at " +
+                                         std::to_string(at.x) + "," + std::to_string(at.y));
+            break;
+        }
+    }
+
+    // And the fallback search, which the door drops to when it is crowded:
+    // open ground a body fits on is right there, so it must answer with it
+    // rather than walking out to the nearest cell that has no shape at all.
+    const double reach = 85.0;
+    for (int i = 0; i < 50; ++i) {
+        const Vec2 at = terrain.findOpenSpawn(rng, door->centre(), reach, Realm::Overworld);
+        if (terrain.blocked(at, Realm::Overworld) ||
+            distanceSq(at, door->centre()) > reach * reach) {
+            ::testing::reportFailure(__FILE__, __LINE__,
+                                     "findOpenSpawn fled the door to " + std::to_string(at.x) +
+                                         "," + std::to_string(at.y));
+            break;
+        }
+    }
+    flix::testsupport::removeDataDir(dir);
+}
+
+TEST(every_body_a_dense_map_places_stands_on_open_ground) {
+    // The live server on the same fixture, with its usual bot population: a
+    // joining player, a respawning player, every bot, every mob the density
+    // fill and the bands stood, and every drop. None of them may be inside a
+    // wall, and the population may not have collapsed because the placement
+    // gave up.
+    const std::string dir = flix::testsupport::denseMapDataDir("dense-world");
+    CHECK(!dir.empty());
+    if (dir.empty()) return;
+    Harness h("spawn-dense", {}, dir);   // the server's usual bots, deliberately
+    CHECK(h.ready);
+    if (!h.ready) { flix::testsupport::removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(loginNew(h, client, "spelunker", "password7"));
+    client.joinGame(1280, 720, {}, "spelunker");
+    CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }));
+    h.step(200, {&client});
+
+    World& world = h.server.world();
+    const Terrain& terrain = h.server.terrain();
+    const MapData* map = h.server.worldMaps().forRealm(Realm::Overworld);
+    CHECK(map != nullptr);
+
+    // The join landed in the pickable door, on ground.
+    Entity body = NULL_ENTITY;
+    Query<PlayerTag, Transform, PlayerAccount> flowers{world};
+    flowers.each([&](Entity e, PlayerTag&, Transform&, PlayerAccount& account) {
+        if (account.username == "spelunker") body = e;
+    });
+    CHECK(body != NULL_ENTITY);
+    if (body == NULL_ENTITY) { flix::testsupport::removeDataDir(dir); return; }
+    CHECK(map != nullptr && inSpawnPoint(*map, "hollow", world.get<Transform>(body).position));
+    CHECK(!terrain.blocked(world.get<Transform>(body).position, Realm::Overworld));
+
+    // Every flower in the world, bots included -- and there ARE bots, because
+    // a population that could not be placed would be an empty world that
+    // looked like a passing test.
+    int flowerCount = 0;
+    int inWall = 0;
+    flowers.each([&](Entity, PlayerTag&, Transform& transform, PlayerAccount&) {
+        ++flowerCount;
+        if (terrain.blocked(transform.position, Realm::Overworld)) ++inWall;
+    });
+    CHECK(flowerCount > 4);
+    CHECK_EQ(inWall, 0);
+
+    // Every mob the spawner stood. Water counts as a wall here: it blocks
+    // like one, and a mob standing in the pond is as stuck as one inside a
+    // castle.
+    int mobCount = 0;
+    int mobsInWall = 0;
+    Query<MobTag, Transform> mobs{world};
+    mobs.each([&](Entity, MobTag&, Transform& transform) {
+        if (transform.realm != Realm::Overworld) return;
+        ++mobCount;
+        if (terrain.blocked(transform.position, Realm::Overworld)) ++mobsInWall;
+    });
+    CHECK(mobCount > 0);
+    CHECK_EQ(mobsInWall, 0);
+
+    // And a respawn, which takes the same path a second time with a world full
+    // of bodies to avoid.
+    world.get<Health>(body).current = 0;
+    world.add<Dead>(body, Dead{NULL_ENTITY});
+    // Out of the bots' reach first. A bot carrying yggdrasil revives a corpse
+    // it can get to, and on a map this solid the bots are packed close enough
+    // to the only door that the corpse is back on its feet before the client
+    // is ever told it died. That is the world working; it is not what is being
+    // measured here.
+    {
+        int farTx = 0;
+        int farTy = 0;
+        const Vec2 mapExtent = terrain.realmExtent(Realm::Overworld);
+        CHECK(terrain.nearestOpenTile({mapExtent.x - kTileSize, mapExtent.y - kTileSize}, farTx,
+                                      farTy, Realm::Overworld));
+        world.get<Transform>(body).position = Terrain::tileCenter(farTx, farTy);
+    }
+    CHECK(h.stepUntil({&client}, [&] { return client.dead(); }));
+    client.requestRespawn();
+    CHECK(h.stepUntil({&client}, [&] {
+        Entity reborn = NULL_ENTITY;
+        Query<PlayerTag, Transform, PlayerAccount> again{world};
+        again.each([&](Entity e, PlayerTag&, Transform&, PlayerAccount& account) {
+            if (account.username == "spelunker" && e != body) reborn = e;
+        });
+        return reborn != NULL_ENTITY;
+    }));
+    Entity reborn = NULL_ENTITY;
+    flowers.each([&](Entity e, PlayerTag&, Transform&, PlayerAccount& account) {
+        if (account.username == "spelunker" && e != body) reborn = e;
+    });
+    CHECK(reborn != NULL_ENTITY);
+    if (reborn != NULL_ENTITY) {
+        CHECK(!terrain.blocked(world.get<Transform>(reborn).position, Realm::Overworld));
+        CHECK(map != nullptr && inSpawnPoint(*map, "hollow", world.get<Transform>(reborn).position));
+    }
+
+    // Drops last: they are scattered off a corpse and pushed back out of
+    // whatever they landed in, and on a dense map that push is the only thing
+    // between a drop and a wall nobody can reach into.
+    //
+    // The push is the NEXT tick's (maintainDrops), so a drop from a kill on
+    // the tick that just ran is still where the scatter threw it. Those are
+    // the drops present now; they are judged one tick on, once every one of
+    // them has had its push -- and the ones that tick makes are not counted.
+    std::vector<Entity> scattered;
+    Query<DropTag, Transform> loot{world};
+    loot.each([&](Entity e, DropTag&, Transform& transform) {
+        if (transform.realm == Realm::Overworld) scattered.push_back(e);
+    });
+    h.step(1, {&client});
+    int drops = 0;
+    int dropsInWall = 0;
+    for (const Entity e : scattered) {
+        if (!world.isAlive(e) || !world.has<DropTag>(e)) continue;
+        ++drops;
+        if (terrain.blocked(world.get<Transform>(e).position, Realm::Overworld)) ++dropsInWall;
+    }
+    CHECK_EQ(dropsInWall, 0);
+    (void)drops;   // a pass with no kills in it is legitimate
+
+    flix::testsupport::removeDataDir(dir);
+}
+

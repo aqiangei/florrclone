@@ -1,0 +1,1614 @@
+// The app shell: what starts, what runs every frame, and what is saved on the
+// way out.
+//
+// App is one class behind one header (client/app.h), but it is not one file.
+// Each screen and each in-game surface is big enough to be worth reading on
+// its own, so each has a translation unit of its own:
+//
+//   app_login.cpp     reaching the server, and the auth form
+//   app_lobby.cpp     the title screen: backdrop, spawn picker, daily streak
+//   app_game.cpp      the input frame, dying, and the disconnect banner
+//   app_hud.cpp       the corner HUD, the squad bars and the boss bars
+//   app_minimap.cpp   the world map, the maze map and the arena scoreboard
+//   app_chat.cpp      the transcript, its input line and the slash commands
+//
+// What stays here is the shell those run inside: the window and the socket,
+// the loop that decides which screen gets the frame, and the state that
+// outlives any one of them -- the session on disk, the wipe that covers a
+// scene change, the text selection over whatever painted last, and the stats
+// readout, which is measured off this loop and nowhere else.
+
+#include "client/render/art_cache.h"
+#include "client/app.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <utility>
+
+#include "client/app_internal.h"
+#include "client/ease.h"
+#include "client/interpolation.h"
+#include "client/ui/draw.h"
+#include "client/ui/item_tile.h"
+#include "client/ui/text.h"
+#ifdef __EMSCRIPTEN__
+#include "client/ui/text_atlas.h"
+#endif
+#include "client/ui/text_input.h"
+#include "client/ui/touch_scroll.h"
+#include "client/web/boot.h"
+#include "client/web/reload.h"
+#include "shared/game/config.h"
+#include "shared/game/constants.h"
+
+namespace flix {
+
+using namespace flix::ui;
+
+namespace {
+
+/// The wash over the world while the death card is up: a mid grey rather than
+/// black, so it mutes the colour as much as it darkens.
+///
+/// Fitted to death_ui_screenshot.png, against two colours at once: this grey
+/// at this strength takes the garden's grass (30,167,97) to (52,115,82) and
+/// its walls' 151 grey to 107, where the screenshot has (59,123,78) and 104.
+/// A black dim can match one of the two but not both -- dark enough for the
+/// walls, it leaves the grass saturated. Not gardn's `0x20000000` (black at
+/// 12.5%), and not the browser build's black at 0.65 either; neither is a
+/// parity bug to restore.
+constexpr std::uint32_t kDeathWashColor = 0x464646u;
+constexpr double kDeathWashAlpha = 0.54;
+
+/// The death card's slide and the low-health vignette's depth: a fifth and a
+/// tenth of the way per 60 fps frame, as fixed time constants.
+const double kDeathCardEaseSeconds = easeTimeConstant(0.2);
+const double kLowHealthVignetteEaseSeconds = easeTimeConstant(0.1);
+
+/// JavaScript's `toFixed(2)`, for the stats overlay's frame time.
+std::string twoDecimals(double value) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%.2f", value);
+    return buffer;
+}
+
+std::string oneDecimal(double value) {
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, "%.1f", value);
+    return buffer;
+}
+
+/// The reference's `formatBytes`: whole bytes below a kilobyte, one decimal
+/// above. Used for both the throughput totals and the per-event breakdown.
+std::string formatBytes(double bytes) {
+    char buffer[32];
+    if (bytes < 1024.0) {
+        std::snprintf(buffer, sizeof buffer, "%d B", static_cast<int>(bytes));
+    } else if (bytes < 1024.0 * 1024.0) {
+        std::snprintf(buffer, sizeof buffer, "%.1f KB", bytes / 1024.0);
+    } else {
+        std::snprintf(buffer, sizeof buffer, "%.1f MB", bytes / (1024.0 * 1024.0));
+    }
+    return buffer;
+}
+
+} // namespace
+
+App::App() = default;
+App::~App() = default;
+
+bool App::start(const AppConfig& config, std::string& errorOut) {
+    config_ = config;
+
+    // Without this every text call silently draws nothing, which looks like a
+    // layout bug rather than a missing font.
+    if (!Fonts::init(config.dataDir, errorOut)) {
+        errorOut = "no usable font: " + errorOut;
+        return false;
+    }
+
+    if (!loadContent(config.dataDir, errorOut)) return false;
+    if (!sprites_.build(content(), config.dataDir)) {
+        errorOut = "could not compile sprite artwork";
+        return false;
+    }
+    for (const std::string& warning : sprites_.warnings()) {
+        std::fprintf(stderr, "[sprites] %s\n", warning.c_str());
+    }
+
+
+    // A run that writes its frame to a file is a test, and a window flashing
+    // up over whatever the person is doing for each one is all it would add.
+    // Hidden, the real cursor cannot steer the flower or land a scripted
+    // click somewhere else either. A bare --frames run stays visible: it is
+    // the frame-cost benchmark, and presenting is part of the cost.
+    const bool showWindow = config.screenshotPath.empty();
+    if (!window_.open(config.windowWidth, config.windowHeight, "florr", errorOut, showWindow)) {
+        return false;
+    }
+    // Everything below draws in design units, not pixels. Set before the
+    // first frame, because the camera's viewport and every panel's layout are
+    // read straight off window_.width()/height().
+    window_.setDesignSize(kDesignWidth, kDesignHeight);
+    window_.setInputGuard(config.inputGuard);
+    coarsePointer_ = window_.coarsePointer();
+
+    renderer_.setContent(&content());
+    // So a ring laid out around a moon is smoothed around the moon.
+    net_.view().setContent(&content());
+    renderer_.setSprites(&sprites_);
+    // The published skins, for the flowers wearing them. NetClient owns the
+    // list and replaces it on every SkinCatalog/SkinPublished/SkinDeleted, so
+    // the renderer holds the container and looks a wearer up per frame rather
+    // than caching a resolved pointer that a takedown would dangle.
+    renderer_.setSkinCatalog(&net_.skinCatalog());
+    // What each flower was last heard saying, for the bubbles over their
+    // heads. Owned by NetClient for the same reason the catalog is: the lines
+    // arrive on the socket, and the renderer reads the live list per frame.
+    renderer_.setChatBubbles(&net_.chatBubbles());
+    // The mana bar under the local flower is drawn from the snapshot's self
+    // block, not from a replicated body: mana is the viewer's own and is on
+    // the wire for nobody else. Bound once -- the view owns the state and
+    // outlives every frame that reads it.
+    renderer_.setSelfState(&net_.view().self());
+    // The viewer's talents, so every item tile -- bar, inventory, drop, shop
+    // -- shows the copies the viewer's Duplicator would give a stack. Bound
+    // once for the same reason: each new profile is moved into the same
+    // object, so the address holds.
+    ui::setViewerSkills(&net_.profile().skills);
+    // NetClient keeps this object alive for the entire connection and replaces
+    // its grid with the server's authoritative one when a game is joined.
+    renderer_.setTerrain(&net_.terrain());
+    // Every staged map, by realm: the TILE ART the renderer paints the world
+    // with, plus the annotations -- teleporter pads, the rarity glow's bands.
+    // A pointer to a member that is filled a few lines down: the renderer
+    // reads it per frame, never now.
+    renderer_.setWorldMaps(&worldMaps_);
+    // The same maps the renderer draws from, for their collision shapes: the
+    // wire's grid is the coarse view, the file is the exact geometry. A realm
+    // with no map here falls back to whole-cell collision, which is
+    // conservative -- see NetClient::installLocalCollision.
+    net_.setWorldMaps(&worldMaps_);
+    net_.contentHash = content().contentHash();
+
+    // The client reads the maps for what they MEAN, what they LOOK LIKE, and
+    // the SHAPES their tiles collide with; what is solid is still the server's
+    // answer. The coarse grid arrives over the wire, authoritative, and a
+    // second copy off disk would be a second answer about which cells block --
+    // so no Terrain is passed here, and NetClient installs the shapes for the
+    // realm it is dropped into on top of the grid it was sent (net_.
+    // setWorldMaps above). Maps it cannot read cost the picker its choices, the
+    // world its art and the client its exact edges, not its start.
+    std::string mapWarning;
+    if (!worldMaps_.load(config.dataDir, nullptr, mapWarning)) {
+        std::fprintf(stderr, "[map] %s; the spawn picker will offer the default only\n",
+                     mapWarning.c_str());
+    }
+    // Everything the picker can name: the default, the two realms that have
+    // no map file, and then every player spawn rectangle every staged map
+    // draws -- which is how a second map is reachable without walking to a
+    // teleporter first. pickerTabs() files these under one tab per biome.
+    spawnChoices_.push_back(
+        SpawnChoice{"default", "Default", 0x00BE4Fu, Realm::Overworld, -1, {}, {}});
+    spawnChoices_.push_back(
+        SpawnChoice{kArenaSpawnChoice, "PVP Arena", 0xDC3C3Cu, Realm::Arena, -1, {}, {}});
+    spawnChoices_.push_back(
+        SpawnChoice{kMazeSpawnChoice, "Maze", 0x573D80u, Realm::Maze, -1, {}, {}});
+    for (const SpawnChoice& choice : worldMaps_.spawnChoices()) spawnChoices_.push_back(choice);
+
+    // The backdrop's petals are drawn from every petal a player could actually
+    // own: admin-only art and the runtime egg petals are excluded, exactly as
+    // the browser build's pickPetal filters them.
+    for (std::uint16_t i = 0; i < content().petalCount(); ++i) {
+        const PetalConfig& petal = content().petal(i);
+        if (petal.isAdminPetal) continue;
+        const std::string& id = petal.id;
+        if (id.size() >= 4 && id.compare(id.size() - 4, 4, "_egg") == 0) continue;
+        titlePetalTypes_.push_back(i);
+    }
+
+    // The endpoint the Advanced Settings drawer starts on: where this client
+    // was pointed. The browser seeds the same field with its own origin.
+    serverField_ = config_.host + ":" + std::to_string(config_.port);
+
+    // Seeded from the clock, not a constant: this stream also mints guest
+    // credentials, and a fixed seed would hand two clients started together
+    // the same account name and the same password.
+    titleRng_.reseed(static_cast<std::uint64_t>(wallClockMillis()));
+
+    loadSession();
+    // Whether Settings offers a Grant Admin row at all. A hook is the only way
+    // this client can make anybody an admin, so a build without one -- every
+    // build that dials a real server -- draws no button.
+    menus_.setAdminGrantOffered(static_cast<bool>(config_.grantAdmin));
+    // A missing settings file is a first run, not a failure: the defaults in
+    // ClientSettings are already the shipped configuration.
+    menus_.settings().load(settingsPath());
+    ui::setLanguage(menus_.settings().language);
+    // Where the asset browser starts, and which file it reloads the settings
+    // from when it saves one.
+    menus_.setFilePaths(config.dataDir, settingsPath());
+    // A saved door that no staged map offers any more -- renamed, removed,
+    // or a sublevel door that stopped being pickable -- is dropped here,
+    // once. Kept, it would send a choice the server refuses with a notice
+    // on every join, and show a picker with nothing chosen on it.
+    {
+        const std::string& saved = menus_.settings().spawnChoice;
+        bool offered = saved.empty();
+        for (const SpawnChoice& choice : spawnChoices_) offered |= choice.id == saved;
+        if (!offered) {
+            std::fprintf(stderr, "[spawn] the saved spawn point \"%s\" is not on this build's "
+                                 "maps; starting at the default\n", saved.c_str());
+            menus_.settings().spawnChoice.clear();
+        }
+    }
+    // The picker opens on the tab the saved door is filed under, so the row a
+    // returning player sees is the one their choice is on.
+    pickerTab_ = pickerTabOf(menus_.settings().spawnChoice);
+    // Before the first frame rather than only from frame(): a --frames run
+    // short enough to be one screenshot would otherwise photograph the
+    // default resolution whatever the file says.
+    window_.setRenderScale(menus_.settings().renderScale);
+    window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
+    if (!net_.connect(config.host, config.port)) {
+        errorOut = net_.lastError();
+        return false;
+    }
+
+    // The touch controls own their own contacts, and have to say so the
+    // instant a finger lands rather than on the frame that follows -- see the
+    // touch section of Window's header for why the answer cannot wait.
+    window_.setTouchClaimHandler([this](const TouchPoint& point) {
+        return touchControlsVisible() && mobile_.hits(point.x, point.y);
+    });
+
+    if (config.autoMenu != MenuId::None) menus_.toggle(config.autoMenu);
+
+    // Seeded before the first frame rather than after the join, so a
+    // --frames run short enough to be one screenshot still photographs them.
+    // No author: these stand in for the server's own announcements, which are
+    // the lines that carry markup.
+    for (const std::string& line : config.seedChat) net_.addLocalChat({}, line);
+    for (const AppConfig::ChannelLine& line : config.seedChannelChat) {
+        net_.addLocalChat(line.author, line.text, line.channel);
+    }
+    // A page a boot script started says so on every load, where the player
+    // will read it. The script ran with the page's whole trust before the game
+    // did, and one somebody talked them into keeping must not run unseen.
+    const std::string bootedFrom = web::bootedThrough();
+    if (!bootedFrom.empty()) {
+        net_.addLocalChat("Debug", "This page was started by the boot script " + bootedFrom +
+                                       ". Debug > Assets > Boot changes what runs.");
+    }
+    if (config.autoChatOpen) {
+        chatOpen_ = true;
+        chatDraft_ = config.autoChatDraft;
+        chatField_.focusAtEnd(chatDraft_, 0.0);
+    }
+
+    screen_ = Screen::Connecting;
+    running_ = true;
+    return true;
+}
+
+void App::run() {
+    while (step()) {
+    }
+    shutdown();
+}
+
+void App::persist() {
+    // Written on the way out rather than on every toggle: this is a handful of
+    // switches, and a file write per click would be absurd. The flower's name
+    // is remembered on the same terms.
+    menus_.settings().save(settingsPath());
+    saveSession();
+}
+
+void App::shutdown() {
+    persist();
+}
+
+bool App::step() {
+    if (!running_ || !window_.pump()) return false;
+
+    const double dt = window_.frameDelay(60.0);
+    timeSeconds_ = window_.timeSeconds();
+    frame(dt);
+    // Measured around frame() and not off `dt`: dt includes the sleep that
+    // frameDelay just took, so it reports the cap rather than the cost.
+    const double frameMillis = (window_.timeSeconds() - timeSeconds_) * 1000.0;
+    frameTimeAccum_ += frameMillis;
+    ++frameTimeSamples_;
+    runFrameAccum_ += frameMillis;
+    ++runFrameSamples_;
+    const WorldRenderer::SectionTiming& section = renderer_.sectionTiming();
+    sectionMobs_.accumMillis += section.mobsMillis;
+    sectionItems_.accumMillis += section.itemsMillis;
+    sectionProjectiles_.accumMillis += section.projectilesMillis;
+    sectionMobs_.windowPeakMillis =
+        std::max(sectionMobs_.windowPeakMillis, section.mobsMillis);
+    sectionItems_.windowPeakMillis =
+        std::max(sectionItems_.windowPeakMillis, section.itemsMillis);
+    sectionProjectiles_.windowPeakMillis =
+        std::max(sectionProjectiles_.windowPeakMillis, section.projectilesMillis);
+    sectionItemCount_ = section.itemCount;
+
+    if (config_.screenshotAfterFrames > 0 &&
+        ++framesDrawn_ >= config_.screenshotAfterFrames) {
+        if (!config_.screenshotPath.empty()) {
+            window_.canvas().savePPM(config_.screenshotPath);
+            std::fprintf(stderr, "wrote %s\n", config_.screenshotPath.c_str());
+        }
+        // The cost of the work, with the 60Hz sleep excluded -- see
+        // runFrameAccum_. This is the number to compare between two builds.
+        if (runFrameSamples_ > 0) {
+            const double avg = runFrameAccum_ / runFrameSamples_;
+            std::fprintf(stderr, "frames=%d avg=%.2fms/frame (%.1f fps uncapped)\n",
+                         runFrameSamples_, avg, avg > 0 ? 1000.0 / avg : 0.0);
+        }
+        running_ = false;
+    }
+
+    return running_;
+}
+
+void App::pollNetwork() {
+    // Zero timeout: the frame loop sets the cadence, and blocking here would
+    // couple frame rate to packet arrival.
+    net_.poll(0);
+
+    // The server is serving a build this one is not. Nothing here can talk to
+    // it, and the bytes that could are on the server: on the web that is a
+    // page load away, so take it. A native client has no such move and falls
+    // through to the refusal message the handshake already left in lastError().
+    if (net_.staleBuild) {
+        net_.staleBuild = false;
+        web::reloadForStaleBuild();
+    }
+
+    // The socket came back -- see onReconnected for why that is not simply
+    // carrying on where the drop happened.
+    if (net_.reconnected) {
+        net_.reconnected = false;
+        onReconnected();
+    }
+
+    // A first connection that failed and then landed on a redial. That
+    // handshake is not a RE-connection -- there was never a session to put
+    // back -- so onReconnected does not run, and nothing else would ever take
+    // the Disconnected screen down again. Back through Connecting, which
+    // resumes a stored token exactly as a first connection that worked does.
+    if (screen_ == Screen::Disconnected && net_.status() == NetClient::Status::Ready) {
+        screen_ = Screen::Connecting;
+    }
+
+    // The account signed in somewhere else. Before the drop test below: this
+    // socket is down too, but on purpose, and it is not coming back on its own.
+    if (net_.sessionReplaced) {
+        net_.sessionReplaced = false;
+        showSessionReplaced();
+    }
+    // The server sent the body home itself (a talent reset in a prestige
+    // biome): the same screen a Continue leads to, minus the LeaveGame.
+    if (net_.leftWorld) {
+        net_.leftWorld = false;
+        if (screen_ == Screen::Playing || screen_ == Screen::Dead) returnToTitle();
+    }
+    // A drop does NOT take the screen away while a redial is coming. In a
+    // game the world, the HUD and the panels keep drawing; on the title screen
+    // the form or the lobby does; and a banner over either says what happened
+    // -- a server restart is seconds of that, not a trip to a blank screen.
+    // Only a failure nothing is going to repair replaces what is showing: the
+    // first connection never landing, or a handshake the server refused.
+    const bool titleKeepsScreen = (screen_ == Screen::Login || screen_ == Screen::Lobby) &&
+                                  net_.reconnecting();
+    if (net_.status() == NetClient::Status::Failed && screen_ != Screen::Disconnected &&
+        screen_ != Screen::Replaced && screen_ != Screen::Playing && screen_ != Screen::Dead &&
+        !titleKeepsScreen) {
+        screen_ = Screen::Disconnected;
+    }
+    // The account was logged out from another connection. Before the auth
+    // answer below, which is what puts the server's reason on the form this
+    // opens -- showLoggedOut() would blank it again if it ran second.
+    if (net_.signedOutElsewhere) {
+        net_.signedOutElsewhere = false;
+        showLoggedOut();
+    }
+    if (net_.authAnswered) {
+        net_.authAnswered = false;
+        autoAuthSentAt_ = -1;
+        loginMessage_ = net_.authMessage;
+        if (net_.authStatus == net::AuthStatus::Ok) {
+            passwordField_.clear();
+            confirmPasswordField_.clear();
+            loginMessage_.clear();
+            autoLogin_ = AutoLogin::Done;
+            focusedField_ = -1;
+            saveSession();
+            // A sign-in from the Account panel in the middle of a run: the
+            // server has already taken the body out (leaveWorld) and the
+            // client has dropped its world (NetClient::handleAuthResult), so
+            // the screen follows them home the way a Continue would.
+            if (screen_ == Screen::Playing || screen_ == Screen::Dead) {
+                deathCardVisible_ = false;
+                returnToTitle();
+            }
+            screen_ = Screen::Lobby;
+        } else if (screen_ == Screen::Lobby) {
+            // A reconnection's resume, refused -- the token was revoked while
+            // the socket was down. onReconnected put the lobby up on the
+            // strength of that token; without it this is the form's screen.
+            screen_ = Screen::Login;
+        }
+    }
+    if (net_.sessionTokenRenewed) {
+        // A password change reissued this session's token. Written out now
+        // rather than at shutdown: the old one is already dead server-side, so
+        // a crash between here and the exit would cost a login the player has
+        // no way to connect to what they just did.
+        net_.sessionTokenRenewed = false;
+        saveSession();
+    }
+    if (net_.dead() && screen_ == Screen::Playing) {
+        // Nothing is closed on death. An open panel and the icon strip keep
+        // rendering behind the card, exactly as they do in the reference.
+        deathCardVisible_ = true;
+        screen_ = Screen::Dead;
+    }
+    // A yggdrasil put the body back on its feet. Read as a one-shot flag
+    // rather than as `!net_.dead()`, because --dead raises the card on a
+    // client the server never told anything, and the symmetric test would
+    // take it straight back down.
+    if (net_.revived) {
+        net_.revived = false;
+        if (screen_ == Screen::Dead) {
+            // The card goes with the death it was announcing; the world under
+            // it never stopped drawing, so there is nothing else to restore.
+            deathCardVisible_ = false;
+            screen_ = Screen::Playing;
+        }
+    }
+}
+
+void App::markPhaseOps(OpPhase phase) {
+#ifdef __EMSCRIPTEN__
+    const int now = canvasOpsEmitted();
+    canvasPhaseAccum_[static_cast<std::size_t>(phase)] += now - canvasPhaseMark_;
+    canvasPhaseMark_ = now;
+#else
+    (void)phase;
+#endif
+}
+
+void App::frame(double dt) {
+    // Every ease this frame steps by the smoothed frame period, not by `dt`:
+    // see client/ease.h. Advanced first so nothing eases on last frame's.
+    const double easeStep = framePeriod().advance(dt);
+
+    pollNetwork();
+
+    // Before anything is updated OR painted: the auth form registers its
+    // focused field from the update phase and the panels record their text
+    // from the draw phase, and both belong to the frame that is starting.
+    ui::TextSelect::instance().beginFrame();
+    // Same reason, and the same one-frame contract: a field records its box as
+    // it is hit-tested, and the window is handed the set at the end of the
+    // frame so a touch can raise the keyboard from inside its own gesture.
+    ui::TextFieldRegions::instance().beginFrame();
+    // And the lists a finger can drag, on the same contract: a list records
+    // itself as it lays out, and the window holds the set for the touches that
+    // land before the next frame.
+    ui::TouchScrollRegions::instance().beginFrame();
+
+    // The pointer starts every frame as an arrow and whatever is under it says
+    // otherwise, which is how the reference works: `canvas.style.cursor` is
+    // reassigned on each move and falls back to the sheet's `cursor: default`.
+    // Without the reset a panel that closed under a hand cursor would leave it.
+    window_.setCursorShape(CursorShape::Arrow);
+
+    // A once-a-second frame count, which is what the counters report -- an
+    // instantaneous 1/dt jitters too much to read.
+    ++frameCounter_;
+    if (timeSeconds_ - fpsWindowStart_ >= 1.0) {
+        framesPerSecond_ = frameCounter_;
+        frameCounter_ = 0;
+        fpsWindowStart_ = timeSeconds_;
+        // Rolled over with the frame count, as the reference rolls its own
+        // (src/game.ts:1252-1265): one number a second, not sixty.
+        frameTimeAvgMs_ = frameTimeSamples_ > 0 ? frameTimeAccum_ / frameTimeSamples_ : 0.0;
+        // The per-layer figures roll on the same boundary and over the same
+        // sample count, so "Render avg/peak" always adds up against the frame
+        // time printed beside it.
+        for (std::size_t i = 0; i < canvasPhaseOps_.size(); ++i) {
+            canvasPhaseOps_[i] =
+                frameTimeSamples_ > 0 ? canvasPhaseAccum_[i] / frameTimeSamples_ : 0;
+            canvasPhaseAccum_[i] = 0;
+        }
+        for (std::size_t i = 0; i < canvasTypeAccum_.size(); ++i) {
+            profiling_.byType[i] =
+                frameTimeSamples_ > 0 ? canvasTypeAccum_[i] / frameTimeSamples_ : 0;
+            canvasTypeAccum_[i] = 0;
+        }
+        menuStripOps_ = frameTimeSamples_ > 0 ? menuStripAccum_ / frameTimeSamples_ : 0;
+        menuBarOps_ = frameTimeSamples_ > 0 ? menuBarAccum_ / frameTimeSamples_ : 0;
+        menuPanelOps_ = frameTimeSamples_ > 0 ? menuPanelAccum_ / frameTimeSamples_ : 0;
+        menuStripAccum_ = menuBarAccum_ = menuPanelAccum_ = 0;
+        canvasOpsPerFrame_ = frameTimeSamples_ > 0 ? canvasOpAccum_ / frameTimeSamples_ : 0;
+        canvasBatchesPerFrame_ = frameTimeSamples_ > 0 ? canvasBatchAccum_ / frameTimeSamples_ : 0;
+        canvasOpAccum_ = 0;
+        canvasBatchAccum_ = 0;
+        for (SectionStats* section :
+             {&sectionMobs_, &sectionItems_, &sectionProjectiles_, &sectionCanvas_}) {
+            section->avgMillis =
+                frameTimeSamples_ > 0 ? section->accumMillis / frameTimeSamples_ : 0.0;
+            section->peakMillis = section->windowPeakMillis;
+            section->accumMillis = 0;
+            section->windowPeakMillis = 0;
+        }
+        frameTimeAccum_ = 0;
+        frameTimeSamples_ = 0;
+        // Counters are drained here and nowhere else, which is what makes the
+        // figures bytes per SECOND rather than bytes since some other event.
+        net_.takeWireStats(incomingBytesPerSecond_, outgoingBytesPerSecond_, topWireEvents_);
+    }
+
+#ifdef __EMSCRIPTEN__
+    // Published every frame, from figures that only move once a second, so the
+    // panel reads a steady number whenever it happens to be open.
+    profiling_.available = true;
+    profiling_.opsPerFrame = canvasOpsPerFrame_;
+    profiling_.batches = canvasBatchesPerFrame_;
+    profiling_.browserAvgMillis = sectionCanvas_.avgMillis;
+    profiling_.browserPeakMillis = sectionCanvas_.peakMillis;
+    profiling_.frameMillis = frameTimeAvgMs_;
+    profiling_.world = canvasPhaseOps_[static_cast<std::size_t>(OpPhase::World)];
+    profiling_.hud = canvasPhaseOps_[static_cast<std::size_t>(OpPhase::Hud)];
+    profiling_.panels = canvasPhaseOps_[static_cast<std::size_t>(OpPhase::Panels)];
+    profiling_.other = canvasPhaseOps_[static_cast<std::size_t>(OpPhase::Other)];
+    profiling_.menuBar = menuBarOps_;
+    profiling_.menuStrip = menuStripOps_;
+    profiling_.menuPanel = menuPanelOps_;
+    artCacheStats(profiling_.bakedEntries, profiling_.bakedBytes);
+    {
+        const ui::TextAtlasStats atlas = ui::textAtlasStats();
+        profiling_.textRuns = atlas.runs;
+        profiling_.textBaked = atlas.bakedLastFrame;
+    }
+    menus_.setProfiling(&profiling_);
+#endif
+
+    // The render-resolution setting reaches the window here rather than from
+    // the settings panel, for the same reason the renderer's switches do
+    // below: one place copies the settings out, and the panel never reaches
+    // into anything. setRenderScale ignores a value it already has, so this
+    // costs nothing on the frames where nothing moved. setDesynchronized
+    // likewise, and it may rebuild the canvas too, so it also goes before the
+    // frame takes hold of it.
+    window_.setRenderScale(menus_.settings().renderScale);
+    window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
+
+#ifdef __EMSCRIPTEN__
+    // Before anything is drawn: the text atlas may only be drawn into while
+    // nothing this frame has read from it yet. See text_atlas.h.
+    ui::prepareTextAtlas();
+#endif
+    Canvas& canvas = window_.canvas();
+    // The frame's base transform: design units -> canvas pixels. Every draw
+    // call below is in design units, and this is the only place that knows
+    // how big a design unit is. resetTransform first because the canvas
+    // persists across frames and a save() a screen forgot to balance would
+    // otherwise compound frame after frame.
+    canvas.resetTransform();
+    const float uiScale = static_cast<float>(window_.uiScale());
+    canvas.scale(uiScale, uiScale);
+    camera_.setViewport(window_.width(), window_.height());
+    // Laid out every frame and before any screen runs: a phone that turns on
+    // its side changes the viewport between one frame and the next, and the
+    // claim handler is asked about a contact using whatever the last frame
+    // placed.
+    mobile_.layout(window_.width(), window_.height(),
+                   inGameLoadoutBarHeight(menus_.settings().classicLoadoutBar,
+                                          window_.width()));
+    // This frame's contacts, before any screen reads them. Here rather than in
+    // updatePlaying because the frames the controls are NOT up for are the
+    // ones that matter: dying, or a panel opening over a deflected stick, has
+    // to drop what it was holding, and neither of those runs updatePlaying at
+    // all -- a button left held would still be firing on the next game.
+    if (touchControlsVisible()) mobile_.update(window_.touchEvents(), timeSeconds_);
+    else mobile_.reset();
+
+    // Before any screen sees this frame's click. The browser's tutorial box is
+    // a DOM element over the canvas: it takes the press first and the game
+    // never hears about it, which is what the capturesMouse() guards below
+    // stand in for.
+    if (screen_ == Screen::Playing || screen_ == Screen::Dead) {
+        ui::Tutorial::Gestures gestures;
+        ui::MobileControls::Stick stick;
+        gestures.moved = touchControlsVisible() && mobile_.stick(stick);
+        gestures.extended = touchControlsVisible() && mobile_.attackPressed();
+        gestures.inventoryOpen = menus_.open() == MenuId::Inventory;
+        gestures.craftingOpen = menus_.open() == MenuId::Crafting;
+        tutorial_.noteGestures(gestures);
+        tutorial_.update(window_, menus_.settings(), net_.profile(), timeSeconds_);
+    }
+
+    // Taken on every screen, so a jump no world screen was up to see cannot
+    // play its iris over the next join.
+    const bool teleported = net_.takeTeleported();
+    // Every drawn position advances here, BEFORE the screens see the frame.
+    // The cursor control law measures from the flower's drawn position and the
+    // camera pins to it, so easing after them would steer and frame the world
+    // from a position one frame stale.
+    if (screen_ == Screen::Playing || screen_ == Screen::Dead) {
+        // Before anything paints, so the iris holds up the frame from before
+        // the jump.
+        if (teleported) beginTeleportIris();
+        net_.view().easeTimeConstantSeconds = easeTimeConstant(menus_.settings().interpolation);
+        // renderClockMillis(), not the window's clock: snapshot arrivals are
+        // stamped against this one, and mob playback has to be measured on
+        // the same timeline it is stamped on.
+        net_.view().interpolate(renderClockMillis(), easeStep);
+        // A teleporter that led to another map: the body is in a different
+        // coordinate space now, and easing the flower or the camera from
+        // where it WAS would sweep the view across a world it is not in.
+        // Snapped exactly as the join does, then the stream takes over.
+        Vec2 arrival;
+        if (net_.takeRealmChange(arrival)) {
+            net_.view().snapAll();
+            camera_.snapTo(arrival);
+        }
+    }
+
+    // The death card eases in from above and back out again, the way the
+    // reference's container animation does: a fifth of the remaining distance
+    // per 60Hz frame, stated as a fixed time constant. Advanced here rather
+    // than in updateDead, because the frames it slides back OUT on are frames
+    // the player is alive for.
+    {
+        const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
+        const double target = (screen_ == Screen::Dead && deathCardVisible_) ? 1.0 : 0.0;
+        // Snapped rather than eased when there is nothing to animate over:
+        // leaving the world takes the card with it, and a scripted capture
+        // wants the card where it comes to rest rather than wherever the
+        // requested frame happens to catch it.
+        if (!inWorld || config_.screenshotAfterFrames > 0) deathCardSlide_ = target;
+        else easeToward(deathCardSlide_, target, kDeathCardEaseSeconds);
+
+        // The low-health vignette eases more slowly -- a tenth of the way per
+        // 60Hz frame -- so a bite deepens it and a heal lifts it rather than
+        // either one switching it. Snapped on the same terms as the card.
+        const double dark = lowHealthTarget();
+        if (!inWorld || config_.screenshotAfterFrames > 0) lowHealthVignette_ = dark;
+        else easeToward(lowHealthVignette_, dark, kLowHealthVignetteEaseSeconds);
+    }
+
+    switch (screen_) {
+        case Screen::Connecting:   updateConnecting(); break;
+        case Screen::Login:        updateLogin(dt); break;
+        case Screen::Lobby:        updateLobby(); break;
+        case Screen::Playing:      updatePlaying(dt); break;
+        case Screen::Dead:         updateDead(dt); break;
+        case Screen::Disconnected: break;
+        case Screen::Replaced:     updateSessionReplaced(); break;
+    }
+    // The chat's channel strip has been read for this frame's presses; the
+    // draw puts it back only if it paints it again. A frame that hides the
+    // chat must not leave its tabs live under whatever covers them.
+    chatTabs_.fill(Rect{});
+    chatTabChecks_.fill(Rect{});
+
+    // The bag and bar the menus draw, checked against the server's copy. A
+    // count edited in memory, or a Profile that never landed, gets the real
+    // one sent back; agreeing costs four bytes and no answer.
+    if (net_.haveSession() && timeSeconds_ >= nextProfileCheckSeconds_) {
+        net_.sendProfileCheck();
+        nextProfileCheckSeconds_ = timeSeconds_ + net::kProfileCheckMillis / 1000.0;
+    }
+
+    // Every frame, on every screen, open or not: the debug panel's graphs are
+    // meant to already hold history when it is opened. See
+    // DebugPanel::recordFrame.
+    menus_.recordDebugSample(dt, net_);
+
+    // The renderer's switches live in the settings menu, so they are copied
+    // across every frame rather than the menu reaching into the renderer.
+    renderer_.options = menus_.settings().render;
+    // ALT is a latch (default off): exact HUD numbers, spawn bands, rarity
+    // glow. Skip while typing so chat / fields keep Alt as a modifier.
+    if (!chatOpen_ && !menus_.wantsText() &&
+        (window_.keyPressed(Key::LeftAlt) || window_.keyPressed(Key::RightAlt))) {
+        altMode_ = !altMode_;
+    }
+    // The copy above resets it every frame, so it has to be put back after it.
+    renderer_.options.rarityGlow = altMode_;
+    menus_.setAltMode(altMode_);
+    camera_.userZoom = menus_.settings().zoom;
+    // The petals' share of the zoom, read off the account's own loadout. It is
+    // not on the wire, as in the browser: the server works the same figure
+    // out only to bound the viewport a client may claim (claimableViewport).
+    // It rides into the viewport the next input frame reports, so the server
+    // widens what it streams as soon as an observer goes on.
+    camera_.loadoutZoom = loadoutCameraZoom(net_.profile(), content());
+    const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
+    menus_.setInGame(inWorld);
+    // Re-measured every frame, so the craft panel turns into the oracle's (or
+    // the trader's) as the flower walks up and back into the forge as it walks
+    // off. Only a living, placed flower is standing anywhere: the corpse on the
+    // death screen and the frames before the first snapshot get the forge.
+    //
+    // Nor is a STEERED flower standing anywhere, for this account. While an
+    // admin controls another player's flower the snapshot's self block is
+    // that flower, so measuring from it offered the card of the NPC beside
+    // it -- but the oracle, the trader and the titan measure the requester's
+    // OWN body, parked wherever the control began, and refused every craft
+    // the card offered. The forge, which asks no location, is what control
+    // gets, the way the loadout bar and the run loot opt out of the self
+    // block for the length of it.
+    const bool standingSomewhere =
+        screen_ == Screen::Playing && net_.selfPlaced() && !net_.controllingFlower();
+    menus_.setNearbyNpc(standingSomewhere ? nearbyNpc(net_.view().selfDrawnPosition())
+                                          : NearbyNpc{});
+    if (menus_.takeExitRequest() && inWorld) leaveToTitle();
+    // No inWorld guard: Settings' Log Out is offered on the title screen too,
+    // and it is the one action that has to work from either of them.
+    if (menus_.takeLogoutRequest()) logout();
+    // Nor here: the offline page's Grant Admin row is drawn wherever the panel
+    // is, and a signed-in session is all the grant needs. Nothing is sent --
+    // the hook hands this client's session token to the server object in this
+    // same process, which resolves the account from it (never from a name),
+    // and the server answers by resending the catalog that carries the flag.
+    if (menus_.takeAdminGrantRequest() && config_.grantAdmin) {
+        config_.grantAdmin(net_.sessionToken());
+    }
+
+    // What this frame's update sent -- the input frame, a ping, a click's
+    // request -- leaves before the draw, not at the next frame's poll: that
+    // wait was a whole frame on every round trip (34 ms loopback ping at
+    // 60 fps, 17 with this).
+    net_.flush();
+
+    // --- draw -------------------------------------------------------------
+    // Forgotten before the draw, and set again by whoever paints it. Both the
+    // chat's hit tests read the box the LAST frame painted, so a screen that
+    // stops painting it -- the settings switch off, a panel covering it, the
+    // title screen's own layout -- has to leave nothing behind to press.
+    chatBox_ = {};
+#ifdef __EMSCRIPTEN__
+    canvasPhaseMark_ = canvasOpsEmitted();
+#endif
+    if (inWorld) {
+        tallyRunLoot();
+        renderer_.ingestEvents(net_.view());
+        renderer_.update(dt);
+        // Bubbles expire on the frame clock, like every other timed visual
+        // here, and only while there is a world for them to float over --
+        // leaving the game clears them outright.
+        net_.ageChatBubbles(dt);
+        // Pinned, not eased: the reference keeps the flower exactly on the
+        // screen centre, which is what the cursor-relative control law reads.
+        // The EASE is on the flower itself, earlier in this same frame -- see
+        // the interpolate() call above.
+        //
+        // Until a snapshot has placed the body -- the frames right after a
+        // join or a realm change -- the view's self is a zeroed default, and
+        // pinning to it draws the map's top-left corner with no flower in it.
+        // The arrival the server sent is the honest position for those frames.
+        const Vec2 selfDrawn =
+            net_.selfPlaced() ? net_.view().selfDrawnPosition() : net_.arrival();
+        camera_.snapTo(selfDrawn);
+        prepareDarkness(selfDrawn);
+        renderer_.draw(canvas, net_.view(), camera_, selfDrawn, timeSeconds_);
+        // Aim assist over the world (and under darkness / HUD), like AshFlor.
+        drawMovementHelper(canvas);
+        // A dark map's dark, over the world only, like the wash below.
+        drawDarkness(canvas);
+        // Dead: the WORLD goes dim, and only the world. The reference's wash
+        // goes between `render_game()` and its game UI window, so the HUD, the
+        // minimap, the loadout bar and the card itself all stay at full
+        // brightness over it; this sits in the same seam, at this build's own
+        // tone (see kDeathWashColor). Switched on, not faded -- in the reference
+        // it appears on the frame `alive()` goes false. Close takes it away
+        // with the card, though, fading in step with the slide: the dim is the
+        // death screen as much as the card is, and leaving it up behind a
+        // dismissed card left Close only half done.
+        if (screen_ == Screen::Dead) {
+            const double dim = deathCardVisible_ ? 1.0 : deathCardSlide_;
+            if (dim > 0.01) {
+                setFill(canvas, kDeathWashColor, kDeathWashAlpha * dim);
+                canvas.fillRect(0, 0, static_cast<float>(canvas.width()),
+                                static_cast<float>(canvas.height()));
+            }
+        }
+        // In the same seam and over the wash: the screenshot's corners are
+        // near black, which they could not be with a grey wash on top.
+        drawLowHealthVignette(canvas);
+        markPhaseOps(OpPhase::World);
+        drawHud(canvas, timeSeconds_);
+        markPhaseOps(OpPhase::Hud);
+        // The reference hides the whole chat box while one of the two
+        // petal-handling panels -- the inventory, the crafting card -- is up,
+        // rather than letting it poke out beside the card.
+        const MenuId open = menus_.open();
+        const bool panelHidesChat = open == MenuId::Inventory || open == MenuId::Crafting;
+        if (menus_.settings().showChat && !panelHidesChat) drawChat(canvas, timeSeconds_);
+        // Panels and the icon strip keep drawing while dead, undimmed, with
+        // the card over both -- but UNDER the loadout bar, which the reference paints
+        // after the death screen: the card is the first child of its game UI
+        // window and the loadout the fourth. Handing the card to the menus as
+        // their between-strip-and-bar slot is the only way to land it there.
+        // Only the paint moves: the card's button is still answered by
+        // updateDead, before any of this.
+        menus_.render(canvas, window_, net_, sprites_, renderer_, timeSeconds_, dt, [&] {
+            // The slide, not the flag: the card keeps painting on its way back
+            // down after a yggdrasil has put the body on its feet.
+            if (deathCardSlide_ > 0.01) {
+                drawDeathCard(canvas, timeSeconds_);
+                drawRunLoot(canvas, timeSeconds_);
+            }
+        });
+        if (connectionLost()) drawDisconnectBanner(canvas);
+        // Ping and the rest live here and nowhere else: the reference has no
+        // always-on latency readout, only this opt-in corner.
+        if (statsVisible()) drawStatsCounters(canvas, false);
+        // Over every other layer but the wipe: the tutorial box is z-index
+        // 9999, above the panels, the strip, the loadout bar and the death
+        // card. Its one anchored step rings the crafting panel, which is the
+        // only element in the reference that `.tutorial-highlight` can ever
+        // find -- see the note in Tutorial::draw.
+        tutorial_.draw(canvas,
+                       menus_.open() != MenuId::Crafting
+                           ? Rect{}
+                           : menus_.craftPanelBounds(window_.width(), window_.height()));
+    } else {
+        drawTitleBackground(canvas, timeSeconds_);
+        if (screen_ == Screen::Login) {
+            drawLogin(canvas, timeSeconds_);
+            // The strip paints OVER the form, after it, exactly as
+            // canvasButtons.draw runs after authForm.render. Only the strip:
+            // the browser hides the loadout bar for as long as the auth form
+            // is up, and there is nothing logged in yet for a panel to show.
+            menus_.renderStripOnly(canvas, window_, timeSeconds_);
+        }
+        else if (screen_ == Screen::Lobby && net_.joinPending()) {
+            // Ready has gone out. Nothing on the lobby can be used until the
+            // server answers (updateLobby), so none of it is shown -- the
+            // panels and the strip included; they are back with the world.
+            drawLoading(canvas, timeSeconds_);
+        }
+        else if (screen_ == Screen::Lobby) {
+            drawLobby(canvas, timeSeconds_);
+            // Under the panels, as the game's HUD puts it: a player picking a
+            // door is still somebody an announcement is for.
+            drawAdminAnnouncement(canvas);
+            // The same menus, on the title screen. The panels read the account
+            // rather than the world, so there is nothing for them to miss here.
+            menus_.render(canvas, window_, net_, sprites_, renderer_, timeSeconds_, dt);
+            // Over the panels, as the reference's own always-on-top widget is.
+            drawDailyStreak(canvas, timeSeconds_);
+        }
+        else if (screen_ == Screen::Replaced) drawSessionReplaced(canvas, timeSeconds_);
+        else drawConnectionState(canvas, timeSeconds_);
+        // The strip a live game gets, over the form or the lobby the drop left
+        // standing. See pollNetwork for why the screen itself stays.
+        if ((screen_ == Screen::Login || screen_ == Screen::Lobby) && connectionLost()) {
+            drawDisconnectBanner(canvas);
+        }
+    }
+
+    // After every panel and the chat have painted, so the runs a selection is
+    // resolved against are this frame's, and over them, so the highlight is
+    // not covered by what drew it.
+    markPhaseOps(OpPhase::Panels);
+    updateTextSelection(canvas);
+
+    // Over the HUD and every panel, as the reference's iris is drawn on top
+    // of everything; only a scene change goes over it.
+    drawTeleportIris(canvas);
+    // Last of all, over every other layer: the wipe is what hides the seam
+    // between two scenes, so nothing may paint on top of it.
+    drawSceneWipe(canvas);
+    // After every field has been hit-tested, which is the only point at which
+    // the set is complete.
+    publishKeyboardRegions();
+    window_.present();
+
+    // One heartbeat a second while the socket is up, as the reference's own
+    // interval does. It is what makes the ping readout a number.
+    // Every status the socket can be in once the handshake has passed: Ready
+    // is only the gap before login, and a heartbeat that stopped there would
+    // leave the readout on "--" for the whole session -- which is exactly what
+    // it did.
+    //
+    // Last in the frame, after the draw: in a page, a reply cannot be taken
+    // off the socket while a frame is still running, so a ping sent earlier
+    // would time the rest of the frame along with the round trip.
+    const NetClient::Status status = net_.status();
+    const bool socketUp = status == NetClient::Status::Ready ||
+                          status == NetClient::Status::LoggedIn ||
+                          status == NetClient::Status::Playing;
+    if (socketUp && timeSeconds_ >= nextPingSeconds_) {
+        net_.sendPing();
+        nextPingSeconds_ = timeSeconds_ + 1.0;
+    }
+#ifdef __EMSCRIPTEN__
+    // After present(), because present() is what hands the op stream over.
+    // These are the previous frame's figures by the time the counters draw
+    // them, which is what every other number on that panel already is.
+    markPhaseOps(OpPhase::Other);
+    const MenuSystem::OpCounts menuOps = menus_.takeOpCounts();
+    menuStripAccum_ += menuOps.strip;
+    menuBarAccum_ += menuOps.bar;
+    menuPanelAccum_ += menuOps.panel;
+    {
+        const int* byType = canvasOpTypeCounts();
+        for (std::size_t i = 0; i < canvasTypeAccum_.size(); ++i) {
+            canvasTypeAccum_[i] += byType[i];
+        }
+    }
+    const CanvasFrameStats stream = canvasTakeFrameStats();
+    sectionCanvas_.accumMillis += stream.flushMillis;
+    if (stream.flushMillis > sectionCanvas_.windowPeakMillis) {
+        sectionCanvas_.windowPeakMillis = stream.flushMillis;
+    }
+    canvasOpAccum_ += stream.ops;
+    canvasBatchAccum_ += stream.batches;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Text entry, and what may take the keyboard
+// ---------------------------------------------------------------------------
+
+bool App::touchControlsVisible() const {
+    // Playing only. There is nothing on the title screen, and nothing on the
+    // death card, a thumb cannot already reach through the mirrored pointer --
+    // and a stick over a dead flower steers nothing.
+    if (screen_ != Screen::Playing) return false;
+    // A panel standing over the controls takes the whole screen back: its own
+    // buttons and its drag-and-drop are what the finger is there for, and a
+    // stick underneath would swallow presses meant for it.
+    if (menus_.anyOpen()) return false;
+    // --mobile. A desktop window reports a mouse and would never show these,
+    // which makes this the only way a scripted run can photograph them.
+    if (config_.forceTouchControls) return true;
+    // `touchSeen` is the honest half of the test and `coarsePointer` the
+    // early one: a browser that calls itself a desktop until something is
+    // actually touched -- which is every tablet in "request desktop site" --
+    // answers the query with a mouse and the touch with a finger.
+    return menus_.settings().touchControlsWanted(coarsePointer_ || window_.touchSeen());
+}
+
+void App::publishKeyboardRegions() {
+    const std::vector<Rect>& boxes = ui::TextFieldRegions::instance().boxes();
+    std::vector<WindowRect> regions;
+    regions.reserve(boxes.size());
+    for (const Rect& box : boxes) {
+        regions.push_back(WindowRect{static_cast<float>(box.x), static_cast<float>(box.y),
+                                     static_cast<float>(box.w), static_cast<float>(box.h)});
+    }
+    window_.setSoftKeyboardRegions(std::move(regions));
+    // Keep the hidden <input> focused while something owns the caret -- chat
+    // opened by Enter never taps a field, so without ensureSoftKeyboard the
+    // canvas holds focus and IME language switches mostly fail.
+    // And take it away when nothing holds the caret any more. The page's own
+    // handler only dismisses on a touch that lands outside every field, which
+    // a line closed by Enter -- or by the panel it lived in shutting -- never
+    // gets, and the keyboard would stay up over a game nobody is typing into.
+    if (keyboardCaptured()) window_.ensureSoftKeyboard();
+    else window_.dismissSoftKeyboard();
+
+    // The lists a finger can drag, for the same reason the fields are handed
+    // over here: the window decides what a touch is as it lands.
+    std::vector<WindowRect> lists;
+    for (const Rect& box : ui::TouchScrollRegions::instance().boxes()) {
+        lists.push_back(WindowRect{static_cast<float>(box.x), static_cast<float>(box.y),
+                                   static_cast<float>(box.w), static_cast<float>(box.h)});
+    }
+    window_.setTouchScrollRegions(std::move(lists));
+}
+
+bool App::keyboardCaptured() const {
+    // The three things that can hold the caret, in the order updateLobby and
+    // updatePlaying resolve them: a panel's field, the chat line, and the
+    // lobby's name / auth fields.
+    return menus_.wantsText() || chatOpen_ || nameField_.focused || focusedField_ >= 0;
+}
+
+void App::editText(std::string& target, std::size_t maxLength, ui::TextFieldState& state,
+                   bool masked) {
+    if (masked) state.selection.collapse(target.size());
+    ui::TextEditOptions typing;
+    typing.maxBytes = maxLength;
+    typing.copyable = !masked;
+    ui::editText(window_, target, state, timeSeconds_, typing);
+    if (masked) state.selection.collapse(target.size());
+}
+
+void App::updateTextSelection(Canvas& canvas) {
+    ui::TextSelect& selectable = ui::TextSelect::instance();
+    const Vec2 mouse{window_.mouseX(), window_.mouseY()};
+
+    // The menu owns the pointer while it is up, so a click on one of its rows
+    // does not also start a drag through the text behind it.
+    selectable.trackMouse(window_, contextMenu_.contains(mouse));
+    selectable.paint(canvas);
+    // The I-beam is the only sign that a label can be dragged across, and the
+    // bands are tight around the glyphs, so it lands on text and nothing else.
+    if (!contextMenu_.isOpen() && selectable.overText(mouse)) {
+        window_.setCursorShape(CursorShape::Text);
+    }
+
+    const ui::FocusedField field = selectable.focusedField();
+    const bool overField = field.valid() && field.box.w > 0 && field.box.contains(mouse);
+
+    // Ctrl/Cmd+C over a page selection. A focused field has already had its
+    // own go at the keystroke -- and now only takes it when IT has something
+    // selected -- so this is what is left, and it is the only way to copy a
+    // label or a chat line without going through the menu.
+    if (window_.ctrlHeld() && window_.keyPressed(Key::C) && selectable.hasSelection() &&
+        !(field.valid() && !field.state->selection.empty())) {
+        const std::string text = selectable.selectedText();
+        if (!text.empty()) window_.setClipboardText(text);
+    }
+    // Select All belongs to a focused field first -- editText has already
+    // answered for that -- and to the page only when there is none.
+    if (window_.ctrlHeld() && window_.keyPressed(Key::A) && !field.valid()) {
+        selectable.selectAll();
+    }
+
+    if (window_.mousePressed(MouseButton::Right) && !contextMenu_.isOpen()) {
+        // Only over something this client owns. Over the world the right
+        // button is the defend control, and a card there would eat it.
+        const bool overOwnUi = overField || menus_.capturesMouse(mouse) ||
+                               selectable.overText(mouse) ||
+                               (chatOpen_ && chatBox_.contains(mouse));
+        if (overOwnUi) {
+            const bool editable = field.valid();
+            const bool fieldHasSelection = editable && !field.state->selection.empty();
+            const bool canCopy = (fieldHasSelection && field.options.copyable) ||
+                                 selectable.hasSelection();
+
+            std::vector<ui::ContextMenu::Item> items;
+            if (editable) {
+                items.push_back({ui::ContextAction::Cut, "Cut",
+                                 fieldHasSelection && field.options.copyable});
+            }
+            items.push_back({ui::ContextAction::Copy, "Copy", canCopy});
+            if (editable) {
+                items.push_back({ui::ContextAction::Paste, "Paste",
+                                 !window_.clipboardText().empty()});
+            }
+            items.push_back({ui::ContextAction::SelectAll, "Select All", true});
+            contextMenu_.open(mouse, std::move(items), window_.width(), window_.height());
+        }
+    }
+
+    switch (contextMenu_.update(canvas, window_)) {
+        case ui::ContextAction::Copy: {
+            const std::string text =
+                field.valid() && !field.state->selection.empty() && field.options.copyable
+                    ? field.state->selection.of(*field.value)
+                    : selectable.selectedText();
+            if (!text.empty()) window_.setClipboardText(text);
+            break;
+        }
+        case ui::ContextAction::Cut: {
+            if (!field.valid() || !field.options.copyable) break;
+            const std::string text = field.state->selection.of(*field.value);
+            if (text.empty()) break;
+            window_.setClipboardText(text);
+            const std::size_t at = field.state->selection.begin();
+            field.value->erase(at, field.state->selection.end() - at);
+            field.state->selection.collapse(at);
+            field.state->caretSeconds = timeSeconds_;
+            break;
+        }
+        case ui::ContextAction::Paste: {
+            // Whatever `clipboardText` can answer for. On the desktop that is
+            // the system clipboard; in a browser it is the last thing pasted
+            // INTO the page, because a page may not read the clipboard on a
+            // click without a permission prompt -- see Window::pastedText.
+            if (!field.valid()) break;
+            ui::TextEditFrame paste;
+            paste.pasted = window_.clipboardText();
+            if (paste.pasted.empty()) break;
+            ui::editText(paste, *field.value, field.state->selection, field.options);
+            field.state->caretSeconds = timeSeconds_;
+            break;
+        }
+        case ui::ContextAction::SelectAll:
+            if (field.valid()) field.state->selection.selectAll(*field.value);
+            else selectable.selectAll();
+            break;
+        case ui::ContextAction::None:
+            break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Coming back, and leaving
+// ---------------------------------------------------------------------------
+
+void App::onReconnected() {
+    // Whatever this client was holding about the last session is about a
+    // process that no longer exists. The death card especially: it is a card
+    // about a body that is not coming back.
+    deathCardVisible_ = false;
+    loginMessage_.clear();
+
+    // The account outlives the socket, so it is presented again rather than
+    // asked for -- and the lobby goes up on the strength of it, rather than
+    // the login form flashing for the round trip the resume takes. A token the
+    // new server refuses moves the screen on to the form (see pollNetwork).
+    const std::string token =
+        net_.sessionToken().empty() ? storedToken_ : net_.sessionToken();
+    screen_ = token.empty() ? Screen::Login : Screen::Lobby;
+    if (!token.empty()) {
+        net_.resumeSession(token);
+        net_.addSystemMessage("Reconnected to the server.");
+    } else {
+        net_.addSystemMessage("Reconnected to the server. Please log in again.");
+    }
+    storedToken_.clear();
+}
+
+void App::leaveToTitle() {
+    net_.leaveGame();
+    returnToTitle();
+}
+
+void App::returnToTitle() {
+    menus_.close();
+    // Not finished, just gone: the browser destroys the Tutorial with the Game
+    // that owns it, and an unfinished one comes back on the next join.
+    tutorial_.endGame();
+    beginSceneWipe(false);
+    // A deliberate return cancels any scripted join still armed (e.g. local
+    // --user admin): otherwise the lobby's autoJoin fires and the player
+    // cannot stay on the title.
+    config_.autoJoin = false;
+    screen_ = Screen::Lobby;
+}
+
+void App::logout() {
+    // Not leaveToTitle(): that lands on the lobby, which is the one screen a
+    // logged-out client must not be on. The body itself is NetClient's to take
+    // off the server -- it leaves the game before it sends the logout, because
+    // the account a flower would be saved into goes away with the session.
+    net_.logout();
+    showLoggedOut();
+}
+
+void App::showLoggedOut() {
+    const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
+    if (inWorld) tutorial_.endGame();
+    menus_.close();
+
+    // Forget the token on disk as well as in memory: a logout a restart undoes
+    // is not a logout. The file is emptied rather than left alone because
+    // saveSession() declines to write at all once there is nothing to save,
+    // which would leave the old token sitting there. The name is not part of
+    // the account, so it is written straight back if there is one.
+    //
+    // Emptied, not removed: an empty session file reads back as no session at
+    // all, and on the browser build the file is the mount point for the
+    // storage behind it -- deleting it would take the persistence with it.
+    // See client/web/persist.cpp.
+    storedToken_.clear();
+    // A temporary, so the stream is closed again before saveSession() opens
+    // the same path.
+    std::ofstream(config_.sessionFile, std::ios::trunc);
+    saveSession();
+
+    // The form opens the way it does on a first run: blank, unfocused, and
+    // with no message left over from the session that just ended.
+    usernameField_.clear();
+    passwordField_.clear();
+    confirmPasswordField_.clear();
+    loginMessage_.clear();
+    focusedField_ = -1;
+    registering_ = false;
+    advancedOpen_ = false;
+    pressedControl_.clear();
+    pendingAuth_.clear();
+    // Out of Registering, so a late UsernameTaken answer cannot send the
+    // scripted login after a deliberate logout: Registering is the only state
+    // anything tests (updateLogin).
+    autoLogin_ = AutoLogin::Done;
+
+    deathCardVisible_ = false;
+    chatOpen_ = false;
+    chatDraft_.clear();
+    chatSuggestion_ = -1;
+    chatField_.blur();
+    nameField_.blur();
+
+    // Only worth a wipe when there is a world to hide: lobby and login are the
+    // same scene with a different card on it, and wiping between them would
+    // read as a stutter rather than a transition.
+    if (inWorld) beginSceneWipe(false);
+    screen_ = Screen::Login;
+}
+
+void App::showSessionReplaced() {
+    const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
+    if (inWorld) tutorial_.endGame();
+    menus_.close();
+
+    // Whatever was half-done on the old screen is over: nothing typed here is
+    // going anywhere, and the form a resume might land on opens blank.
+    deathCardVisible_ = false;
+    chatOpen_ = false;
+    chatDraft_.clear();
+    chatSuggestion_ = -1;
+    chatField_.blur();
+    nameField_.blur();
+    focusedField_ = -1;
+    pressedControl_.clear();
+    pendingAuth_.clear();
+    loginMessage_.clear();
+
+    if (inWorld) beginSceneWipe(false);
+    screen_ = Screen::Replaced;
+}
+
+// ---------------------------------------------------------------------------
+// Scene wipe
+// ---------------------------------------------------------------------------
+
+std::unique_ptr<Canvas> App::snapshotWindow() {
+    Canvas& canvas = window_.canvas();
+    // PIXELS, not design units: this is a copy of the backing store, and
+    // asking for a design-sized rectangle of it would photograph the top-left
+    // corner of the screen and stretch that over the whole wipe. It is drawn
+    // back at design size by the wipe, which is where the two spaces meet.
+    // Copy canvas-to-canvas rather than reading its pixels through C++: under
+    // Emscripten that stays entirely inside the browser's Canvas2D backend
+    // instead of moving a full frame into and back out of Wasm.
+    const int width = canvas.pixelWidth();
+    const int height = canvas.pixelHeight();
+    if (width <= 0 || height <= 0) return nullptr;
+    auto snapshot = std::make_unique<Canvas>(Canvas::createVirtual(width, height));
+    snapshot->drawCanvas(canvas, 0, 0, static_cast<float>(width), static_cast<float>(height));
+    return snapshot;
+}
+
+void App::beginSceneWipe(bool toGame) {
+    // Snapshot BEFORE the scene commits. Nothing has painted yet this frame, so
+    // the window still holds the outgoing scene whole -- which is exactly the
+    // still the wipe has to hold up while the incoming one builds itself.
+    wipe_.snapshot = snapshotWindow();
+    wipe_.holeGrows = toGame;
+    wipe_.phase = SceneWipe::Phase::Covered;
+    wipe_.phaseStartSeconds = timeSeconds_;
+}
+
+bool App::wipeReadyToReveal() const {
+    // Going back to the title there is nothing to wait for. Going into a game
+    // the hold lasts until the player's own body has actually arrived, so the
+    // reveal never opens on an empty world.
+    if (!wipe_.holeGrows) return true;
+    return (screen_ == Screen::Playing || screen_ == Screen::Dead) &&
+           net_.view().self().netId != 0;
+}
+
+void App::drawSceneWipe(Canvas& canvas) {
+    if (wipe_.phase == SceneWipe::Phase::Idle) return;
+    // A scripted capture wants the finished scene, not the eight hundred
+    // milliseconds of transition on the way into it. Skipped rather than
+    // shortened, so a run that lands mid-wipe still photographs the screen the
+    // flags asked for.
+    if (config_.screenshotAfterFrames > 0) {
+        wipe_.phase = SceneWipe::Phase::Idle;
+        wipe_.snapshot.reset();
+        return;
+    }
+
+    /// Long enough to read as a deliberate transition, short enough not to be
+    /// in the way. The reference's IRIS_DURATION_MS.
+    constexpr double kWipeSeconds = 0.8;
+    /// A stall must not leave the screen covered forever, so the hold gives up.
+    constexpr double kCoveredTimeoutSeconds = 8.0;
+
+    const double elapsed = timeSeconds_ - wipe_.phaseStartSeconds;
+    double progress = 0;
+    if (wipe_.phase == SceneWipe::Phase::Covered) {
+        if (wipeReadyToReveal() || elapsed > kCoveredTimeoutSeconds) {
+            wipe_.phase = SceneWipe::Phase::Wiping;
+            wipe_.phaseStartSeconds = timeSeconds_;
+        }
+    } else {
+        progress = std::min(elapsed / kWipeSeconds, 1.0);
+    }
+
+    const double centreX = canvas.width() * 0.5;
+    const double centreY = canvas.height() * 0.5;
+    // The circle circumscribes the viewport, so a fully open hole clears the
+    // corners rather than leaving four dark wedges.
+    const double maxRadius = std::sqrt(centreX * centreX + centreY * centreY);
+    const double inverse = 1.0 - progress;
+    const double eased =
+        wipe_.holeGrows ? 1.0 - inverse * inverse * inverse : inverse * inverse * inverse;
+    const double radius = std::max(0.0, eased * maxRadius);
+
+    canvas.save();
+    canvas.beginPath();
+    if (wipe_.holeGrows) {
+        // Everything OUTSIDE the growing hole keeps the outgoing still. The
+        // counter-clockwise arc punches the hole out of the rectangle by
+        // winding against it.
+        //
+        // The angles run kTau -> 0, not 0 -> kTau. A reversed arc's sweep is
+        // normalised with fmod unless it is already a whole turn NEGATIVE, so
+        // asking for (0, +kTau) counter-clockwise degenerates to a zero-length
+        // arc and the hole never appears.
+        canvas.rect(0, 0, static_cast<float>(canvas.width()), static_cast<float>(canvas.height()));
+        canvas.arc(static_cast<float>(centreX), static_cast<float>(centreY),
+                   static_cast<float>(radius), static_cast<float>(kTau), 0.0f, true);
+    } else {
+        canvas.arc(static_cast<float>(centreX), static_cast<float>(centreY),
+                   static_cast<float>(radius), 0, static_cast<float>(kTau));
+    }
+    canvas.clip();
+    if (wipe_.snapshot) {
+        canvas.drawCanvas(*wipe_.snapshot, 0, 0, static_cast<float>(canvas.width()),
+                          static_cast<float>(canvas.height()));
+    } else {
+        // No still to hold up, so the wipe falls through black instead.
+        setFill(canvas, kInk);
+        canvas.fillRect(0, 0, static_cast<float>(canvas.width()),
+                        static_cast<float>(canvas.height()));
+    }
+    canvas.restore();
+
+    if (radius > 0) {
+        canvas.save();
+        setStroke(canvas, kInk);
+        canvas.setLineWidth(6.0f);
+        canvas.strokeCircle(static_cast<float>(centreX), static_cast<float>(centreY),
+                            static_cast<float>(radius));
+        canvas.restore();
+    }
+
+    if (wipe_.phase == SceneWipe::Phase::Wiping && progress >= 1.0) {
+        wipe_.phase = SceneWipe::Phase::Idle;
+        wipe_.snapshot.reset();
+    }
+}
+
+void App::beginTeleportIris() {
+    // Before anything has painted this frame: the window still holds the last
+    // frame from before the jump, which is what the iris closes over.
+    teleportIris_.snapshot = snapshotWindow();
+    teleportIris_.phase = TeleportIris::Phase::Closing;
+    teleportIris_.phaseStartSeconds = timeSeconds_;
+}
+
+void App::drawTeleportIris(Canvas& canvas) {
+    if (teleportIris_.phase == TeleportIris::Phase::Idle) return;
+    // An iris still running when the world goes away would close over the
+    // title screen, and a scripted capture wants the world rather than the
+    // transition, as the scene wipe's does.
+    const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
+    if (!inWorld || config_.screenshotAfterFrames > 0) {
+        teleportIris_.phase = TeleportIris::Phase::Idle;
+        teleportIris_.snapshot.reset();
+        return;
+    }
+
+    /// Each way. The reference's IRIS_TRANSITION_DURATION.
+    constexpr double kIrisSeconds = 0.8;
+    const double progress =
+        std::min((timeSeconds_ - teleportIris_.phaseStartSeconds) / kIrisSeconds, 1.0);
+    const bool closing = teleportIris_.phase == TeleportIris::Phase::Closing;
+
+    const float width = static_cast<float>(canvas.width());
+    const float height = static_cast<float>(canvas.height());
+    const double centreX = width * 0.5;
+    const double centreY = height * 0.5;
+    const double maxRadius = std::sqrt(centreX * centreX + centreY * centreY);
+    // Closing eases in, from the whole screen down to nothing; opening eases
+    // out, from nothing to the whole screen.
+    const double inverse = 1.0 - progress;
+    const double eased = closing ? inverse * inverse * inverse : 1.0 - inverse * inverse * inverse;
+    const double radius = std::max(0.0, eased * maxRadius);
+
+    canvas.save();
+    canvas.beginPath();
+    if (closing && teleportIris_.snapshot) {
+        // Black everywhere, and the frame from before the jump inside the
+        // shrinking circle. Whatever the world has done since is behind both.
+        setFill(canvas, kInk);
+        canvas.fillRect(0, 0, width, height);
+        canvas.arc(static_cast<float>(centreX), static_cast<float>(centreY),
+                   static_cast<float>(radius), 0, static_cast<float>(kTau));
+        canvas.clip();
+        canvas.drawCanvas(*teleportIris_.snapshot, 0, 0, width, height);
+    } else {
+        // Black outside the circle and the live world inside it. The arc winds
+        // against the rectangle to punch the hole, and runs kTau -> 0 for the
+        // reason drawSceneWipe gives.
+        canvas.rect(0, 0, width, height);
+        canvas.arc(static_cast<float>(centreX), static_cast<float>(centreY),
+                   static_cast<float>(radius), static_cast<float>(kTau), 0.0f, true);
+        canvas.clip();
+        setFill(canvas, kInk);
+        canvas.fillRect(0, 0, width, height);
+    }
+    canvas.restore();
+
+    if (radius > 0) {
+        canvas.save();
+        setStroke(canvas, kInk);
+        canvas.setLineWidth(6.0f);
+        canvas.strokeCircle(static_cast<float>(centreX), static_cast<float>(centreY),
+                            static_cast<float>(radius));
+        canvas.restore();
+    }
+
+    if (progress >= 1.0) {
+        // Shut: the next frame starts opening on the far end of the jump.
+        if (closing) {
+            teleportIris_.phase = TeleportIris::Phase::Opening;
+            teleportIris_.phaseStartSeconds = timeSeconds_;
+            teleportIris_.snapshot.reset();
+        } else {
+            teleportIris_.phase = TeleportIris::Phase::Idle;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session persistence
+// ---------------------------------------------------------------------------
+
+void App::loadSession() {
+    std::ifstream in(config_.sessionFile);
+    if (!in) return;
+    // Two lines: the session token, then the flower's name. Only a token is
+    // ever stored -- never the password -- so a stolen or shared machine leaks
+    // at most one revocable, expiring handle. A file written by an older build
+    // has only the first line, which reads back as an empty name.
+    std::getline(in, storedToken_);
+    std::getline(in, playerName_);
+}
+
+void App::saveSession() const {
+    if (net_.sessionToken().empty() && playerName_.empty()) return;
+    std::ofstream out(config_.sessionFile, std::ios::trunc);
+    if (out) out << net_.sessionToken() << "\n" << playerName_ << "\n";
+}
+
+std::string App::settingsPath() const {
+    // Beside the session file, so one config directory holds both and a
+    // portable install stays portable.
+    return config_.sessionFile + "-settings";
+}
+
+// ---------------------------------------------------------------------------
+// The stats readout
+// ---------------------------------------------------------------------------
+
+bool App::statsVisible() const {
+    return config_.showStats || menus_.settings().showStats;
+}
+
+void App::drawStatsCounters(Canvas& canvas, bool titleScreen) {
+    TextStyle style;
+    style.size = 11.0;
+    style.align = Align::Right;
+    style.baseline = Baseline::Bottom;
+
+    struct Line { std::string text; std::uint32_t fill; };
+    std::vector<Line> lines;
+
+    if (titleScreen) {
+        // The title screen's overlay is the frame counter alone. There is no
+        // world behind this screen to report on. The reference's
+        // renderStatsCounters (src/title_screen/index.ts:1228-1232, in git
+        // history at d47055a7) printed four placeholder lines above it --
+        // "Pos: --, --", "Ping: --", "Players: 0", "Mobs: 0" -- and this
+        // client leaves them off.
+        lines = {
+            {"FPS: " + std::to_string(framesPerSecond_) + " | Memory: 0.00 MB", 0x00FF00u},
+        };
+    } else {
+        int players = 0;
+        int mobs = 0;
+        for (const auto& entry : net_.view().entities()) {
+            if (entry.second.kind == net::EntityKind::Player) ++players;
+            else if (entry.second.kind == net::EntityKind::Mob) ++mobs;
+        }
+
+        // Bottom-up, in the reference's order, so the frame counter is near the
+        // corner and the render breakdown is the top line.
+
+        // Position is omitted, not zeroed, until the world has placed this
+        // flower -- the reference pushes the line only when it can resolve its
+        // own socket's entity.
+        if (net_.view().self().netId != 0) {
+            const Vec2 me = net_.view().selfDrawnPosition();
+            lines.push_back({"Pos: " + std::to_string(static_cast<long>(std::lround(me.x))) +
+                                 ", " + std::to_string(static_cast<long>(std::lround(me.y))),
+                             0xFFD700u});
+        }
+
+        // Before the first Pong there is no round trip to report, and the
+        // reference prints "--" rather than a confident 0ms.
+        const double ping = net_.averagePingMillis();
+        const std::string pingText =
+            ping > 0 ? std::to_string(static_cast<int>(std::lround(ping))) + "ms" : "--";
+        lines.push_back({"Ping: " + pingText + " (" + net_.connectionQuality() + ")" +
+                             " | In: " + formatBytes(incomingBytesPerSecond_) + "/s" +
+                             " | Out: " + formatBytes(outgoingBytesPerSecond_) + "/s",
+                         0xA78BFAu});
+
+        // The heaviest opcodes of the last second, incoming first by size.
+        // The arrow is the direction, as in the reference.
+        if (!topWireEvents_.empty()) {
+            std::string top = "Top: ";
+            for (std::size_t i = 0; i < topWireEvents_.size(); ++i) {
+                const NetClient::WireEvent& event = topWireEvents_[i];
+                if (i > 0) top += " | ";
+                // The reference draws these as U+2190/U+2192. The two Ubuntu
+                // faces this client pins have no glyph for either -- the
+                // browser only gets them from a system fallback -- so they
+                // would come out as .notdef boxes. These say the same thing in
+                // characters the face actually has.
+                top += event.incoming ? "< " : "> ";
+                top += event.name;
+                top += " " + formatBytes(event.bytes) + "/s";
+            }
+            lines.push_back({top, 0xA78BFAu});
+        }
+
+        lines.push_back({"Players: " + std::to_string(players), 0x4ECDC4u});
+        lines.push_back({"Mobs: " + std::to_string(mobs), 0xFF6B6Bu});
+
+        // The work cost of a frame, which is the number that says whether the
+        // frame rate is a budget problem or just the 60Hz cap.
+        const std::string frameText =
+            frameTimeAvgMs_ > 0 ? twoDecimals(frameTimeAvgMs_) + "ms" : "--";
+        // Memory is the browser's offscreen-canvas tally, and that renderer
+        // keeps none -- getOffscreenCanvasMemoryMB returns a hard 0, so the
+        // reference prints this exact literal too. It is not a stub here.
+        lines.push_back({"FPS: " + std::to_string(framesPerSecond_) + " (" + frameText +
+                             "/frame) | Memory: 0.00 MB",
+                         0x00FF00u});
+
+        const auto section = [](const SectionStats& stats) {
+            return twoDecimals(stats.avgMillis) + "/" + oneDecimal(stats.peakMillis) + "ms";
+        };
+        lines.push_back({"Render avg/peak: items " + section(sectionItems_) + " (" +
+                             std::to_string(sectionItemCount_) + ") | mobs " +
+                             section(sectionMobs_) + " | proj " + section(sectionProjectiles_),
+                         0xFACC15u});
+
+#ifdef __EMSCRIPTEN__
+        // The half of the frame the layer timings above cannot see. `ops` is
+        // how many drawing calls the frame produced and `browser` is what the
+        // page charged to consume them; frame time minus that is the client's
+        // own arithmetic. A frame that is slow with a low op count and a small
+        // browser figure is slow in neither -- look at the network or the
+        // simulation instead.
+        // One line, as a pointer to the rest: the full breakdown is the debug
+        // panel's Profiling tab, which has room to sort and to name things.
+        // The counters overlay is meant to be readable while playing.
+        lines.push_back({"Canvas: " + std::to_string(canvasOpsPerFrame_) + " ops | browser " +
+                             section(sectionCanvas_) + "  (J -> Profiling for the breakdown)",
+                         0x60A5FAu});
+#endif
+    }
+
+    double y = canvas.height() - 8.0;
+    for (const Line& line : lines) {
+        style.fill = line.fill;
+        text(canvas, line.text, canvas.width() - 8.0, y, style);
+        y -= 15.0;
+    }
+}
+
+} // namespace flix

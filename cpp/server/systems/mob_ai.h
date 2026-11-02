@@ -1,0 +1,1091 @@
+#pragma once
+// Mob intent: what every wild mob and every summoned pet decides to do this
+// tick.
+//
+// The system belongs to the INTENT phase and writes the mob's velocity for
+// this tick (Motion::velocity) and where it points (Transform::angle).
+// Positions belong to the movement phase, which integrates that velocity as it
+// stands, applies knockback and pushes the body out of walls. The few this
+// file writes directly -- a sandstorm's drag on a flower, a volley's recoil, a
+// pet popped back to its owner, a chain's trailing segments and a ring's seeds
+// -- are each explained where they happen.
+//
+// The velocity is published RAW rather than eased toward, because the
+// reference server has no acceleration model for a mob: a chase is a fixed
+// step at the mob's speed, and an idle mob runs the gardn stop-and-go machine,
+// which carries its own friction, its own clamp and its own drift store
+// (PassiveMotion::velocity). Easing either of those a second time is an
+// invented acceleration that shortens every hop and every pursuit. A mob whose
+// config opts into gardn's motion (`gardn_ai`, see "gardn motion" below) is
+// the exception by design: it carries its velocity between ticks under gardn's
+// friction, because that inertia is the feel being asked for. There is one
+// other deliberate exception, at placeFollower(): a centipede's trailing segment
+// has no motion of its own, its place is a CONSTRAINT on the segment ahead of
+// it, and expressing a constraint as a velocity leaves the chain permanently a
+// tick behind and visibly elastic.
+//
+// Damage is not this file's business either. A mob that reaches its target
+// stamps MobAi::lastAttackMillis; the combat system reads the overlap and
+// applies ContactDamage. Two systems that can both hurt the same player in one
+// tick is how a mob ends up dealing double damage on the tick it arrives. A
+// volley is the exception and belongs here, because WHEN a mob shoots is a
+// decision and the shot is aimed along the pre-move bearing to the target.
+// Damage is READ, though: what turns a neutral mob on a player is its damage
+// ledger growing, since over there every source funnels through one credit
+// call, while the hurt flash is lit by direct hits alone and is otherwise
+// purely something to look at.
+//
+// What shapes the rest is the cost model. A 60000-unit world holds thousands
+// of mobs and a few dozen players, so the two gates below are not tuning, they
+// are the reason the tick fits its budget:
+//
+//   LOD      a mob further than kMobActiveRadius from every active player
+//            thinks once every kMobFarStride ticks instead of every tick, and
+//            holds still on the ticks in between. It is not frozen: it
+//            simulates at a fifth of the rate, which is what stops the far
+//            world draining into wall lines while nobody is looking at it. The
+//            one thing that keeps full rate out there is the idle drift, which
+//            carries no gate in the reference either. The caller supplies the
+//            player positions, so a region with nobody in it costs one
+//            distance test per mob.
+//   CADENCE  every mob near a player runs its whole brain every tick,
+//            acquisition included -- that is what the reference pays, and a
+//            mob that scans on a timer ignores a player who walked into its
+//            range for as long as the timer says. LOD, not a clock, is what
+//            bounds the cost. The one genuinely periodic heading left, a
+//            sandstorm's, keeps a clock of its own rather than a shared one:
+//            it re-rolls three times a second, which is far faster than
+//            anything else here would want to re-decide.
+//
+// Pets get their own pass rather than being fed through the wild-mob one. A
+// summon idles and chases exactly as its wild counterpart does -- the same
+// idle machine, the same pursuit (pursueTarget) -- but its prey is the wild
+// mob nearest its OWNER, and off the owner's screen it drops everything and
+// walks back. A wall in the way leaves it stuck; one trapped in plain sight
+// is flagged for the petal system to retire. A sandstorm keeps its own leash.
+
+#include <algorithm>
+#include <cstdint>
+#include <functional>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "shared/core/types.h"
+#include "shared/core/world.h"
+#include "shared/game/components.h"
+#include "shared/game/spatial.h"
+#include "shared/game/terrain.h"
+
+namespace flix {
+
+/// A mob's petal ring, as mobs.json declares it (shared/game/config.h). Named
+/// rather than included: this header is included by half the server and
+/// config.h is not otherwise needed here. NOT the PetalRing component of the
+/// same family in components.h -- that one is a flower's.
+struct PetalRingSpec;
+
+// ---------------------------------------------------------------------------
+// Tunables
+// ---------------------------------------------------------------------------
+
+/// Added to the two bodies' radii before a mob counts as in contact, so an
+/// attack lands when the sprites touch rather than when the centres do.
+inline constexpr double kMobContactSlack = 4.0;
+
+/// Line-of-sight rays one acquisition may spend. Candidates are tested
+/// nearest-first, so the cap costs only the pathological case of eight players
+/// stacked behind the same wall.
+inline constexpr int kTargetLosRayCap = 8;
+
+// -- the idle drift machine --------------------------------------------------
+//
+// Every idle mob that is not a chain head, a wild digger or a bee-style cruiser
+// runs gardn's two-state hop:
+// stand still for a second, pick a heading, coast half a second on friction
+// alone, then accelerate through a two-second parabolic ramp and stop. It is
+// what gives the field its characteristic pulse -- a mob that instead cruises
+// on a heading at a fraction of its speed reads as gliding, however close the
+// average distance travelled comes out.
+//
+// No idle mover here scales with the mob's SIZE -- not the hop, not the bee
+// cruise, not the walk to a point. A mythic covers the ground its common does;
+// only the authored speed (or, for `gardn_ai`, nothing at all) sets the pace.
+// All three were once stated per body, so an apex hopped at several times a
+// flower's top speed, and that was taken out on purpose.
+
+/// Fraction of the drift velocity lost per TICK. Calibrated per tick and not
+/// per second, exactly as in the reference: it is gardn's 1/3 at 20 TPS
+/// restated for this server's 30.
+inline constexpr double kPassiveFriction = 0.25;
+
+/// The hop's acceleration, as a fraction of the mob's speed, before the ramp.
+/// Distance per hop is the sum of the accelerations divided by the friction,
+/// so scaling this is what scales the hop. The TypeScript server's figure, to
+/// the unit: `speed * ENEMY_SPEED_MULTIPLIER * 0.25` per tick.
+inline constexpr double kPassiveAccelScale = 0.25;
+
+/// The two-state clock, in milliseconds: a second idle, then a Moving phase
+/// that coasts for the first half-second and ramps over the two after it.
+inline constexpr double kPassiveIdleMillis = 1000.0;
+inline constexpr double kPassiveCoastMillis = 500.0;
+inline constexpr double kPassiveRampMillis = 2000.0;
+inline constexpr double kPassiveMoveMillis = kPassiveCoastMillis + kPassiveRampMillis;
+
+/// Ceiling on any idle drift, in units a second: a flower's top speed, the
+/// reference's own 300/30 units per tick. Flat, like everything else in the
+/// drift. It binds only on a mob authored faster than a flower runs, so an idle
+/// one never outpaces the players walking past it.
+inline constexpr double kMaxWanderSpeed = kPlayerMaxSpeed;
+
+// -- gardn motion --------------------------------------------------------------
+//
+// A mob whose config sets `gardn_ai` moves the way ~/gardn's walkers do
+// (Server/Process/Ai.cc + Motion.cc). Everything above publishes a velocity
+// RAW, so a chase is at full speed on the tick it starts and turns on a dime,
+// and the idle hop's thrust is the mob's authored `speed` -- which leaves a
+// ladybug authored at 30 u/s hopping about twelve units a cycle. gardn has one
+// integrator for every mob, `v = v * (1 - 1/3) + a` once per 20 Hz tick, and
+// its AI only ever sets `a`:
+//
+//   idle    the same stop-and-go clock as the hop above, but the ramp is
+//           2 * PLAYER_ACCELERATION * (r - r^2) whatever the mob -- neither
+//           its speed nor its size plays any part, so every walker at every
+//           tier covers the same 200 units per hop.
+//   chase   PLAYER_ACCELERATION * factor toward the target. The velocity
+//           builds into that over a few ticks and keeps its momentum through
+//           a turn, which is what makes a pursuit arc and overshoot.
+//   touch   a flower knocks the mob back (Collision.cc _deal_knockback), so
+//           a pursuer bumps and re-closes rather than burrowing into the
+//           flower's centre.
+//
+// Restated for this server as a terminal velocity: `a` against gardn's
+// friction settles at a / (1/3) units a tick, 20 ticks a second -- the chase's
+// 0.95 of player acceleration is 285 u/s, the same number mobs.json `speed`
+// states as 0.95. See gardnStep().
+
+/// gardn's mob friction, lost per gardn tick, and how many of those ticks run
+/// in a second. The pair defines the decay; this server's own 30 Hz tick never
+/// enters into it.
+inline constexpr double kGardnFriction = 1.0 / 3.0;
+inline constexpr double kGardnTicksPerSecond = 20.0;
+
+/// The top of gardn's idle hop, units a second: its ramp peaks at
+/// 2 * 5 * 1/4 units a tick squared, which against 1/3 friction is 7.5 units a
+/// tick. Over the two-second ramp that carries a mob 200 units, whatever its
+/// size.
+inline constexpr double kGardnHopPeakSpeed = 150.0;
+
+/// One step of gardn's integrator: `velocity` decays toward `terminal` -- the
+/// velocity the mob's current acceleration settles at, in units a second --
+/// with gardn's time constant, whatever `dt` is. Exactly gardn's per-tick
+/// update at a 1/20 s step.
+Vec2 gardnStep(Vec2 velocity, Vec2 terminal, double dt);
+
+// -- the crab ----------------------------------------------------------------
+//
+// gardn's tick_crab_aggro. With a target the crab sidles: it walks sideways
+// relative to the flower, flipping direction each segment (left, right, left),
+// while a radial term holds it near a ring. After the third segment it locks
+// its heading onto the flower and charges straight along it, never re-aiming
+// mid-charge, then drops back into the sidle. The strafe runs at the mob's
+// chase speed (`chase_speed`, gardn's 1.25), the charge at kCrabChargeScale
+// times that, so a slow reaches both.
+
+/// The ring the crab holds, as the gap from its own skin to the target's
+/// centre: gardn holds 250 from the centre of a 30-unit crab. Measured off the
+/// skin here so a bigger tier keeps the same clearance rather than standing
+/// with the flower inside its body.
+inline constexpr double kCrabStrafeGap = 250.0 - 30.0;
+/// How far off the ring the radial term reaches full strength, and its cap:
+/// clamped so the sideways walk always survives near the ring.
+inline constexpr double kCrabRadialEase = 120.0;
+inline constexpr double kCrabRadialClamp = 1.5;
+/// One sideways leg, the three of them, and the charge.
+inline constexpr double kCrabSegmentMillis = 800.0;
+inline constexpr double kCrabStrafeMillis = 3.0 * kCrabSegmentMillis;
+inline constexpr double kCrabChargeMillis = 1500.0;
+/// gardn's charge 2.2 over its strafe 1.25.
+inline constexpr double kCrabChargeScale = 2.2 / 1.25;
+
+/// One tick of the crab's fight against a target `toTarget` away. Advances the
+/// phase clock in `ai`, returns the velocity the crab wants and writes where it
+/// faces into `facing`: the flower while sidling, the locked heading while
+/// charging.
+Vec2 steerCrab(MobAi& ai, Vec2 toTarget, double ownRadius, double strafeSpeed, double nowMillis,
+               Vec2& facing);
+
+// -- the jumper --------------------------------------------------------------
+//
+// A mob with a `jump` block (the shell) holds perfectly still off a target: it
+// neither hops nor turns. On one it jumps its `distance` straight at it on a
+// heading locked at take-off, lands, sits out `pauseMs` turned toward it, and
+// jumps again. The jump is an ease-out -- off the ground at twice its average
+// speed, slowing to land -- and is booked by the distance still to cover, so
+// it lands exactly `distance` away in open ground whatever the tick did. A web
+// shortens it in proportion. Velocity is published raw: gardn's integrator
+// would smear a 50-unit jump into a glide.
+
+/// How long one jump is in the air.
+inline constexpr double kMobJumpMillis = 250.0;
+
+/// One tick of a jumper's fight against a target `toTarget` away. Takes off
+/// once the last jump has landed and `pauseMillis` has passed, returns the
+/// velocity it wants and writes where it faces into `facing`: the locked
+/// heading in the air, the target on the ground.
+Vec2 steerJump(MobAi& ai, Vec2 toTarget, double distance, double pauseMillis, double slow,
+               double nowMillis, double dt, Vec2& facing);
+
+/// The velocity that carries a jump in the air through this tick, booking it
+/// off `ai.jumpRemaining`; zero on the ground. `slow` scales it.
+Vec2 jumpFlight(MobAi& ai, double distance, double slow, double nowMillis, double dt);
+
+// -- the centipede crawl -----------------------------------------------------
+//
+// gardn's tick_centipede_passive. A chain head with `centipede_ai` never stops
+// while it has nothing to chase: it walks on its own facing, which bends at a
+// steady rate one way, flips to bending the other way at random moments --
+// five seconds apart on average -- and so draws long S-curves the body can
+// trace. It walks at the stroll a chain head always has (kMobWanderSpeedScale
+// of its speed); gardn's own crawl rates are content, not behaviour.
+//
+// What it does with a target is the mob's `ai_type`, as in gardn: the plain
+// centipede ignores everything (tick_centipede_passive), the desert one turns
+// on what hurt it (tick_centipede_neutral), the evil one hunts
+// (tick_centipede_aggro).
+
+/// How fast the crawl bends, radians a second: gardn's 0.2 / TPS a tick.
+inline constexpr double kCentipedeTurnRate = 0.2;
+/// The mean time between two flips of the bend, seconds: gardn flips with a
+/// chance of 1 / (5 * TPS) every tick, which is memoryless with this mean.
+inline constexpr double kCentipedeFlipSeconds = 5.0;
+
+// -- the digger --------------------------------------------------------------
+//
+// gardn's tick_digger. Off a target it picks a heading and holds it for five
+// seconds, pushing along it at its full `speed` the whole time, then picks
+// another: it roams rather than hops. With a target it chases like any hostile
+// mob until its health is down to a tenth, and from then on runs straight away
+// from that target at its chase speed instead.
+
+/// How long one roaming heading holds.
+inline constexpr double kDiggerRoamMillis = 5000.0;
+/// At or below this fraction of its health a digger runs rather than fights:
+/// gardn attacks while `health / max_health > 0.1`.
+inline constexpr double kDiggerFleeBelow = 0.1;
+
+// -- the hornet --------------------------------------------------------------
+//
+// gardn's tick_hornet_aggro. Inside its standoff a `hornet_ai` shooter does not
+// hang still: it pushes sideways across its bearing at a fifth of its chase
+// speed, always the same way round, so it circles the flower it is shooting at
+// while keeping its range. The radial part of the hold is unchanged -- it
+// still closes from outside and never gives ground -- so the circling only
+// replaces the dead stop.
+
+/// The sideways push, as a fraction of the chase speed: gardn's 0.2.
+inline constexpr double kHornetStrafeScale = 0.2;
+
+// -- walls -------------------------------------------------------------------
+
+/// How far ahead of an idle walker on a held heading (a crawling centipede, a
+/// roaming digger) the AI looks for a wall to turn off. gardn reflects both
+/// headings off the arena's edge the moment a mob touches it; a walker that
+/// held its heading into a wall here would grind along it for seconds, since
+/// neither of these re-picks often enough to get itself out.
+inline constexpr double kWallProbeDistance = 24.0;
+
+/// `heading` turned off whatever wall lies kWallProbeDistance ahead of `at`,
+/// mirror-fashion: the part of it into the wall is turned round, the part
+/// along it kept. Unchanged when nothing is ahead or it already points away.
+double turnOffWalls(const Terrain& terrain, Vec2 at, Realm realm, double heading);
+
+// -- the bee cruise ----------------------------------------------------------
+//
+// Bees do not hop. They cruise continuously along a heading that sways
+// sinusoidally -- the wavy flight line -- re-picking a base heading every five
+// seconds and pulsing their speed once per one-and-a-half.
+
+inline constexpr double kBeeHeadingMillis = 5000.0;
+inline constexpr double kBeeCruiseAccelScale = 3.0;
+/// Peak angular sway rate, radians per second.
+inline constexpr double kBeeWobbleRate = 1.5;
+/// How far, radians, a `bee_ai: "always"` mob's heading swings off its bearing
+/// while it chases: the integral of the cruise's kBeeWobbleRate * sin(2t)
+/// sway, so the chase weaves exactly as wide as the cruise at any speed.
+///
+/// An ANGLE and not a sideways speed. The TypeScript server added a flat 100
+/// u/s across the pursuit, which is a +-35 degree swing on a fly at 144 u/s
+/// and a +-18 degree one on a bee at 300 -- the faster the mob, the straighter
+/// it flew, until the wobble was gone.
+///
+/// And the sideways part is ADDED across the full-speed pursuit rather than
+/// rotating it, for the reason the TypeScript server did: a rotation cuts the
+/// closing rate by cos(sway), and a flower fleeing straight at the bee's own
+/// speed would slowly escape something meant to be impossible to outrun.
+inline constexpr double kBeeChaseWeave = kBeeWobbleRate / 2.0;
+inline constexpr double kBeePulsePeriodMillis = 1500.0;
+inline constexpr double kBeePulseMillis = 500.0;
+inline constexpr double kBeePulseScale = 0.5;
+
+/// What a cruise tops out at, in units a second, whatever the cruiser's size.
+///
+/// The cruise is SUSTAINED where the hop is pulsed, so the same acceleration
+/// carries a cruising mob some six times as fast as a hopping one. That went
+/// unnoticed while the machine was the bee's alone, but the flag is on the mob
+/// TYPE, and a hornet authored at 120 would cruise at 360: faster than it
+/// chases, and faster than most things it would be cruising past.
+///
+/// The number is gardn's own cruise, which is flat: 1.5 units of acceleration
+/// against 1/3 friction a tick at 20 ticks a second, for every mob that runs
+/// the bee machine whatever its stated speed or size. A common bee, authored
+/// at 30 u/s, cruises at exactly this.
+inline constexpr double kBeeCruiseSpeed = 90.0;
+
+/// Where a cruise's thrust settles, per unit of the speed it is driven with:
+/// the pulse-free push (speed x kPassiveAccelScale x kBeeCruiseAccelScale a
+/// tick) over the per-tick friction. A bee driven at its authored 30 u/s
+/// settles at exactly kBeeCruiseSpeed.
+inline constexpr double kBeeCruiseTerminalPerSpeed =
+    kPassiveAccelScale * kBeeCruiseAccelScale / kPassiveFriction;
+
+/// What a cruiser flies on: the speed its thrust is driven with, and the
+/// ceiling that clamps it.
+struct BeeCruiseDrive {
+    double thrust = 0;
+    double ceiling = kBeeCruiseSpeed;
+};
+
+/// Resolves a cruiser's drive from its authored `speed` and its stated
+/// `cruiseSpeed` (both units a second; zero when unstated). Unstated is every
+/// cruiser's shared rule: the authored speed pushes, under the flat
+/// kBeeCruiseSpeed. Stated, the cruise flies STEADILY at that speed -- capped
+/// at a flower's top speed like any idle move -- on a thrust whose pulsed dip
+/// still settles at the ceiling, so the beat never shows. The beat kept at a
+/// stated speed (thrust settling exactly at the ceiling) was a 2:1 surge and
+/// sag every one and a half seconds, and at twice a bee's speed it read as
+/// the mob lurching rather than cruising.
+BeeCruiseDrive beeCruiseDrive(double speed, double cruiseSpeed);
+
+/// One fixed step of the bee cruise, for any cruiser: the base heading is
+/// re-picked every kBeeHeadingMillis, swings on the weave, and is pushed along
+/// with a pulsed thrust against per-tick friction under the cruise's ceiling.
+/// `speed` and `ceiling` are a BeeCruiseDrive's, in units a second; the
+/// cruiser's size plays no part. Returns the new velocity, which is also left
+/// in the cruise.
+///
+/// The ONE implementation: a bee's idle drift (MobAiSystem::driftPassive)
+/// and an NPC's cruise (NpcSystem) both step through here, so an oracle and a
+/// bee cannot come to fly differently.
+Vec2 stepBeeCruise(BeeCruise& cruise, double speed, double ceiling, double nowMillis, double dt,
+                   Rng& rng);
+
+// -- walking to a point ------------------------------------------------------
+//
+// Chain heads without `centipede_ai` (the leech) and ownerless pets wander to a
+// POINT rather than on a heading, which keeps a chain's turns long and smooth
+// instead of hopping like the animals behind it. A centipede crawls instead;
+// see crawl().
+
+/// How far from where it stands a walker picks its next point, whatever its
+/// size.
+inline constexpr double kEnemyWanderRange = 200.0;
+
+/// How long a wander destination stands before a fresh one is picked.
+inline constexpr double kWanderRepickMillis = 3000.0;
+
+/// Inside this the destination counts as reached and the mob stops, rather
+/// than jittering across the last unit of it.
+inline constexpr double kWanderArriveDistance = 5.0;
+
+/// Walking to a point is a stroll, not a charge.
+inline constexpr double kMobWanderSpeedScale = 0.5;
+
+// -- sandstorms --------------------------------------------------------------
+//
+// A storm walks to a point like a centipede head does, but on its own clock
+// and at its full speed: it re-rolls a completely fresh heading three times a
+// second, so it doubles back on itself constantly and churns across a small
+// patch rather than sweeping the map. Nudging the old heading instead -- which
+// is what a drift would be -- reads as a cloud on a course, and moves the storm
+// several times further per second than the reference's does.
+
+/// How long one of a storm's headings stands.
+inline constexpr double kSandstormHeadingMillis = 300.0;
+
+/// How far ahead the storm sets the point it is blowing toward. Fixed rather
+/// than scaled by its body, and re-picked long before it is ever reached, so
+/// this is a heading with an arrival test rather than a destination.
+inline constexpr double kSandstormWanderRange = kEnemyWanderRange * 2.0;
+
+/// From this tier up a sandstorm drags players toward its centre. Below it a
+/// storm is only something to walk around.
+inline constexpr Rarity kSandstormSuckRarity = Rarity::Super;
+
+/// How close a player has to be to feel the drag, and how hard it pulls at the
+/// storm's own centre -- falling linearly to nothing at the edge of the range.
+///
+/// The pull is a rate in units per second: the reference states it as 1.5 units
+/// per 30Hz tick, and stating it per second instead keeps a player dragged the
+/// same distance however long the tick is.
+inline constexpr double kSandstormSuckRange = 400.0;
+inline constexpr double kSandstormSuckSpeed = 45.0;
+
+// -- volleys -----------------------------------------------------------------
+
+/// Shot speed for a projectile block that omits one, units per second.
+inline constexpr double kDefaultProjectileSpeed = 200.0;
+
+/// Reach for a shed ring petal whose config states no `shotDistance`, on the
+/// same scale a volley's authored `distance` is (kProjectileReachReferenceScale
+/// below): what a COMMON shooter gets, in world units.
+inline constexpr double kDefaultRingShotDistance = 400.0;
+
+/// How many of its own gaps a burst may go quiet for before it counts as
+/// abandoned rather than in progress. Two: one gap is the shot being due, and
+/// anything past a second one is a mob that stopped firing.
+///
+/// This is the ONLY thing in the burst path that is not the authored number.
+/// It is a liveness rule rather than a rate -- it decides whether a burst is
+/// still happening, never how fast one fires -- which is what keeps it clear
+/// of the trap that a cap, a ramp and a floor all fell into: an engine firing
+/// a gap the author never asked for and cannot see.
+inline constexpr double kBurstStaleFactor = 2.0;
+
+/// The tier a mob's authored projectile `distance` is stated AGAINST.
+///
+/// Reach is `distance * SIZE_SCALING[tier] / this`, so with common's own scale
+/// here the number in mobs.json is literally the reach a COMMON shooter gets,
+/// and every higher tier reaches proportionally further up the same body-size
+/// ladder its missiles grow on.
+///
+/// The reference divides by a flat 9 instead, which is 1/6 at common and 4.8x
+/// at apex -- a 29x spread that made `distance` mean nothing you could reason
+/// about. It also made the shipped hornet unable to shoot: 500 authored came
+/// out as 83 units of reach against a 300-unit aggro range, so it fired
+/// missiles that expired well before the flower it had locked onto. Only the
+/// units changed here; every authored number was rescaled to match, so no
+/// mob's actual reach moved.
+inline constexpr double kProjectileReachReferenceScale = kMobSizeScale[0];
+
+/// How far outside its own skin a mob with a projectile tries to keep whatever
+/// it is shooting at, in world units.
+///
+/// gardn's shooters -- hornet, wasp, mantis -- close to 300 units and then
+/// stop accelerating, and a flower's top speed is the same 300 units a second
+/// on both sides, so the number carries over unchanged. Measured skin to skin
+/// rather than centre to centre because a body grows nearly thirty times
+/// across the ladder: a flat centre distance would leave an apex mantis
+/// standing with the flower inside its own sprite.
+inline constexpr double kShooterStandoffGap = 300.0;
+
+/// The most of its shot's reach a shooter will spend on standing off.
+///
+/// The standoff above is a FEEL number and the reach is a CONTENT one, and
+/// nothing makes them agree: a common hornet's missile crosses 333 units, so
+/// held at a flat 300-from-the-skin it would sit out at 359 and fire volleys
+/// that expired in the air in front of the flower -- a mob that keeps its
+/// distance and can no longer fight. Clamping the standoff to a fraction of
+/// what the weapon can actually cross is what keeps "hold a gap" and "shoot
+/// the thing" the same behaviour at every tier. Short of 1 so the flower has
+/// to walk INTO the shot rather than out of a miss.
+inline constexpr double kShooterStandoffReachFraction = 0.8;
+
+/// The last stretch of the approach, over which a shooter eases onto its
+/// standoff instead of arriving at full speed, in world units.
+///
+/// A mob's velocity here is PUBLISHED, not integrated from an acceleration the
+/// way the reference's is, so "travel at 120 u/s until the gap closes, then
+/// stop" is a step function: a flower hovering on the ring makes the mob
+/// alternate between full speed and a dead stop from one tick to the next, and
+/// the client -- which eases positions -- draws that as a stutter rather than
+/// as a mob holding station. A band the width of a petal ring is enough to
+/// turn the arrival into a settle, and it costs nothing anywhere else: outside
+/// it the mob still closes at its full chase speed.
+inline constexpr double kShooterStandoffEase = 60.0;
+
+/// How fast a stinger shooter turns, radians a second. ONE rate: the swing
+/// onto the target and the swing back off it are the same manoeuvre played
+/// twice, so a half turn takes a quarter of a second either way.
+///
+/// Uncapped (the kPi every other mob turns at) the server would be facing
+/// backwards on the same tick it decided to, and the missile would leave
+/// before the client had drawn any of the turn.
+///
+/// This IS faster than the client's ease can follow, and that is a deliberate
+/// trade rather than an oversight. The client closes 15% of the facing gap per
+/// frame at 60 fps -- about 9.8 rad/s -- so a 13 rad/s swing is drawn trailing
+/// the server: the mob reads as turning some 110 degrees onto the flower
+/// rather than the full 180 the server holds. What is bought with that is a
+/// snappy turn in both directions and a wasp that still gets a clear rest at
+/// nose-forward inside its 1 s cadence. Slowing this down tightens the drawn
+/// angle; a short hold at the top of the swing would too, at the cost of a
+/// beat in the cycle.
+inline constexpr double kStingerTurnRate = 13.0;
+
+/// How long a swing takes: half a turn at the rate above, in milliseconds.
+///
+/// A stinger shooter starts its wind-up this far -- plus kStingerAimHoldMillis
+/// -- before its volley comes off cooldown, so it is round and settled by the
+/// moment it is allowed to fire. Begun on the expiry instead, every mob of the
+/// family would shoot a wind-up later than its config asks -- a hornet on 2 s
+/// would really fire every 2.24 -- and the flag would be a silent nerf to
+/// every mob that carries it.
+inline constexpr double kStingerWindupMillis = 1000.0 * kPi / kStingerTurnRate;
+
+/// How long a stinger shooter holds the pose, tail already on the flower,
+/// before its volley is due. The wind-up starts this much earlier again.
+///
+/// Without it the mob fires on the tick the SERVER comes round, and the server
+/// is not what the player watches. The client eases a mob's facing at about
+/// 9.8 rad/s and the swing above is 13, so at the end of the swing the drawn
+/// mob is still 70 degrees short of tail-on -- the missile leaves a mob that
+/// is visibly side-on, which is the whole flag failing in the only place it
+/// matters. The gap decays with the client's own time constant once the server
+/// stops moving, so a quarter second of holding still brings it to 6 degrees.
+///
+/// This is LEAD, not delay: the mob starts turning earlier, and the volley
+/// still goes at the moment the config cooldown says, so nothing about any
+/// mob's rate of fire moves. A mob whose whole cooldown is shorter than the
+/// swing plus this simply never leaves the pose, which is the right answer for
+/// something that shoots faster than it can turn.
+inline constexpr double kStingerAimHoldMillis = 250.0;
+
+/// How wound a stinger shooter has to be before a fresh swing keeps the side
+/// it is already on, radians.
+///
+/// A mob "at rest" is never exactly nose-on -- it trails a moving flower by a
+/// tick's worth of bearing, which at any orbit the game allows is under five
+/// degrees, and the SIGN of that trail is just the direction the player
+/// happens to be circling. Inside this the swing always goes the same way, so
+/// a player jinking cannot make consecutive volleys swing opposite ways.
+/// Outside it the mob is genuinely part wound and the wind is KEPT: the step
+/// works from the offset's magnitude, so flipping the side under a real offset
+/// would throw the mob across the bearing rather than turn it.
+inline constexpr double kStingerSideDeadzone = 0.15;
+
+/// How close the tail has to be to the bearing before the volley goes.
+///
+/// One tick of the turn above is 0.43 rad, which is WIDER than this: the swing
+/// is clamped to a half turn, so its last step lands exactly rear-on and the
+/// gate is normally met dead on. What the tolerance buys is the moving case --
+/// a flower that strafes while the mob is coming round leaves a small residual
+/// every tick, and without some slack the mob would spend a tick chasing it
+/// instead of shooting.
+inline constexpr double kStingerAimTolerance = 0.3;
+
+// -- pets --------------------------------------------------------------------
+
+/// A pet sees exactly what its owner's screen shows: its target scan is
+/// clipped to this rectangle around the owner rather than to its own aggro
+/// range, and a pet that leaves it walks back to its owner.
+inline constexpr double kPetViewHalfWidth = kViewportWidth * 0.5;
+inline constexpr double kPetViewHalfHeight = kViewportHeight * 0.5;
+
+/// A pet a worn cursor is walking to the pointer comes in at full pace until
+/// it is this close, then slows in proportion, so it settles on the pointer
+/// rather than circling it.
+inline constexpr double kPetPointerSlowDistance = 60.0;
+
+// -- chains and nests --------------------------------------------------------
+
+/// How far past its parent's RIM a nest's child may be drawn before it gives
+/// up whatever it was chasing and marches home.
+///
+/// This is the whole reason a hole cannot be stripped of its defenders: with
+/// no leash a player leads the brood away one escort at a time and the nest is
+/// left permanently undefended, which is also how a swarm accumulates
+/// permanent pursuers.
+///
+/// From the rim rather than the centre because nests grow with their tier: an
+/// ultra server is wider than this whole distance, and a leash measured from
+/// its middle kept every escort inside its body.
+inline constexpr double kSummonRetreatRadius = 600.0;
+
+/// Within this of the parent's rim the child counts as home and goes back to
+/// idling. Well short of the retreat radius so an escort does not oscillate
+/// across the boundary.
+inline constexpr double kSummonArriveDistance = 100.0;
+
+// ---------------------------------------------------------------------------
+// Facing
+// ---------------------------------------------------------------------------
+
+/// The angle a mob holds this tick, given how it is trying to travel.
+///
+/// Free-standing and pure because it carries a per-config exception on each
+/// side -- `hideRotation` mobs are drawn upright and `reversed` art points
+/// backwards along the travel -- and those are the two things here that fail
+/// silently and only ever look like an art bug.
+///
+/// `maxTurn` is the turn allowed this step, i.e. a rate multiplied by dt. A
+/// travel vector of no length holds the current angle rather than snapping to
+/// zero, which is what keeps a stopped mob facing where it was going.
+double steerFacing(double current, Vec2 travel, bool hideRotation, bool reversed, double maxTurn);
+
+// ---------------------------------------------------------------------------
+// Standoff
+// ---------------------------------------------------------------------------
+
+/// How far from its target a mob with a projectile wants to sit, centre to
+/// centre, given how far one of its shots travels and the two bodies involved.
+///
+/// Free-standing and pure because it is the whole of a behaviour that is
+/// otherwise invisible in a diff: a shooter closes to this and then STOPS --
+/// it never backs away, and it has no separate "too close" branch. That
+/// asymmetry is deliberate and is the reason the reference's shooters are
+/// dangerous without being untouchable: a flower that walks in reaches them,
+/// because the mob holding its ground is the whole of the rule.
+double shooterStandoff(double shotReach, double ownRadius, double targetRadius);
+
+/// Whether a shot fired now could still reach `gap` away: the shot has only to
+/// cross to the target's SKIN, not to its centre.
+///
+/// A target is held for five viewports, far past the aggro range it was
+/// acquired inside and so far past the weapon, and firing anyway is a mob
+/// visibly shooting at something it cannot hit, on a cadence that is then
+/// unavailable for the shot it could.
+bool shotCanReach(double gap, double shotReach, double targetRadius);
+
+// ---------------------------------------------------------------------------
+// MobAiSystem
+// ---------------------------------------------------------------------------
+
+class MobAiSystem {
+public:
+    /// Queries are built once against `world` and reused every tick; run() must
+    /// be handed that same World. `seed` fixes the AI's own rolls -- the
+    /// wanders, a storm's headings, a web's angle -- so a test gets the same
+    /// walk twice.
+    explicit MobAiSystem(World& world, std::uint64_t seed = 0xA1B2C3D4E5F60717ull);
+
+    /// Mints the wire id a projectile is broadcast under. Unset, a volley still
+    /// flies and still hurts, but no client ever sees it -- replication carries
+    /// only entities that own a NetId.
+    std::function<std::uint32_t()> allocateNetId;
+
+    /// One tick of mob intent.
+    ///
+    /// `grid` must already hold this tick's players -- it is the only way a mob
+    /// finds one. `activePlayers` are the positions LOD is measured against; an
+    /// EMPTY list means EVERYTHING is active, exactly as it does in the
+    /// reference: with nobody connected there is no one to save the work for,
+    /// and a test or a bench that forgets to pass players sees unmodified
+    /// behaviour rather than a world running at a fifth speed. Pets are steered
+    /// regardless: they belong to a player who is by definition present. `dt`
+    /// is in seconds.
+    ///
+    /// A volley, a web and a dropped shot all land as deferred commands:
+    /// nothing this pass creates exists until `commands` is flushed.
+    void run(World& world, const Terrain& terrain, const SpatialGrid& grid,
+             const std::vector<RealmPoint>& activePlayers,
+             double nowMillis, double dt, CommandBuffer& commands);
+
+    /// Carries a mob's ring seeds on their seats, retires the ones that have
+    /// been broken, and pays off the seeds it owes.
+    ///
+    /// The hit that knocks a petal off is booked by combat (see
+    /// MobPetalRing::pending) rather than fired there, because a shot is a
+    /// create() and the damage path is walked by every system that deals any.
+    /// This is where the bill is settled.
+    ///
+    /// Deliberately NOT LOD-gated: the seeds are real bodies that a flower can
+    /// be standing in whether or not their mob is taking a turn in the stride,
+    /// and a ring left un-carried would be a hitbox sitting where the mob used
+    /// to be.
+    void tickPetalRings(World& world, CommandBuffer& commands);
+
+    /// Pulls every chain segment back to its spacing behind the one ahead of
+    /// it, turned to face it. Run AFTER movement, where gardn places its
+    /// segments (Simulation.cc: collide, move, then tick_segment_behavior):
+    /// whatever pushed a segment this tick -- a flower, a petal's knockback,
+    /// another bead of its own centipede -- has already moved it, so the
+    /// placement keeps the direction the push left it in and the body swings
+    /// about its joints. Placed before the head moved instead, the first
+    /// segment trailed a tick of the head's travel behind its spacing.
+    ///
+    /// Reads the chains run() repaired this tick, so it belongs to the same
+    /// tick as that run(). `activePlayers` is the LOD list run() was given.
+    void placeChains(World& world, const Terrain& terrain,
+                     const std::vector<RealmPoint>& activePlayers);
+
+
+    /// Per-run counters. Reset at the top of every run(), so they describe the
+    /// last tick and nothing else. `targetScans` is the one that matters: it is
+    /// the number of broadphase queries the AI spent, and it is what tells a
+    /// test that target caching is actually caching.
+    struct Stats {
+        std::uint64_t considered = 0;    ///< mobs the query produced
+        std::uint64_t skipped = 0;       ///< mobs the far stride held back
+        std::uint64_t targetScans = 0;   ///< broadphase acquisitions run
+        std::uint64_t attacks = 0;       ///< contact attacks intended
+        std::uint64_t promotions = 0;    ///< segments promoted to chain heads
+    };
+    const Stats& stats() const { return stats_; }
+
+private:
+    /// The per-tier numbers the AI needs, flattened out of the content tables.
+    ///
+    /// Memoised by (config, rarity): mobStats() is a dozen multiplies and two
+    /// table lookups, and running it for every mob every tick is pure repeat
+    /// work over data that cannot change while the server is up.
+    struct Drive {
+        double speed = 0;
+        /// What the mob moves at while PURSUING: gardn's chase factor, which
+        /// has nothing to do with the speed it wanders at. See
+        /// MobConfig::chaseSpeed.
+        double chaseSpeed = 0;
+        double attackCooldownMillis = 0;
+        /// The behaviour the CONFIG asks for. Read for pets, whose MobAi::kind
+        /// is set by whoever summoned them.
+        AiKind ai = AiKind::Neutral;
+        bool hideRotation = false;
+        bool reversed = false;
+        /// Cruises with a sinusoidal sway instead of hopping.
+        bool beeFlight = false;
+        /// The cruise's thrust and ceiling. See beeCruiseDrive().
+        BeeCruiseDrive cruise;
+        /// Flies that sway about its bearing while chasing, too.
+        bool beeChaseWeave = false;
+        /// Fights by sidestepping and charging. See steerCrab().
+        bool crabStrafe = false;
+        /// A chain head that crawls on a bending heading. See crawl().
+        bool centipedeCrawl = false;
+        /// Roams on held headings, and runs below kDiggerFleeBelow of its
+        /// health. See roam().
+        bool diggerAi = false;
+        /// Circles its target inside its standoff. See pursueTarget().
+        bool hornetStrafe = false;
+        /// Holds still off a target and jumps at one. See steerJump(); the
+        /// two figures are JumpSpec's own.
+        bool jumps = false;
+        double jumpDistance = 0;
+        double jumpPauseMillis = 0;
+        /// Carries its velocity under gardn's friction and hops gardn's
+        /// stride. See MobStats::gardnMotion.
+        bool gardnMotion = false;
+        /// Has a projectile block, so the volley path is worth entering.
+        bool shoots = false;
+        /// How far one of this mob's shots travels at this tier, world units.
+        /// Computed here rather than in fireVolley so the standoff and the
+        /// volley cannot disagree about how far the weapon reaches.
+        double shotReach = 0;
+        /// Shoots over its TAIL: keeps its rear on the target and holds the
+        /// volley until it has come round. See MobConfig::stingerShooter.
+        bool stingerShooter = false;
+        /// Leaves a web behind it on a clock: the config has a web and this
+        /// tier is at or above its `minRarity`. See WebSpec.
+        bool laysWeb = false;
+        /// Drops a petal behind it on a clock. See DropProjectileSpec.
+        bool dropsProjectile = false;
+        /// Mends itself below a health line, and runs while it does. See
+        /// RecoverSpec; the two figures are the spec's own.
+        bool recovers = false;
+        double recoverBelow = 0;
+        double recoverMillis = 0;
+        bool valid = false;
+    };
+
+    struct Candidate {
+        Entity entity = NULL_ENTITY;
+        Vec2 position;
+        double score = 0;   ///< distance past the player's notice circle; <= 0 is seen
+        Realm realm = Realm::Overworld;
+    };
+
+    Drive driveFor(std::uint16_t configIndex, Rarity rarity);
+
+    /// Adds the behaviour components this mob's TYPE calls for and it was not
+    /// born with. Structural, so it runs before any component pointer is taken.
+    void equipBehaviour(World& world, Entity self, const Drive& drive, double nowMillis);
+
+    /// Lays a web where the mob stands when its WebClock is due. The web is a
+    /// create(), so it lands as a deferred command like a volley. Called after
+    /// the mob has steered, from both the wild and the pet pass, so it lays
+    /// from where this tick's movement decision was made.
+    void layWeb(World& world, Entity self, double nowMillis, CommandBuffer& commands);
+
+    /// Drops the mob's `dropProjectile` petal at its tail when its DropClock
+    /// is due: a shot born at a standstill that lies where it fell for the
+    /// spec's lifetime. Called beside layWeb, for the same reasons.
+    void dropProjectile(World& world, Entity self, double nowMillis, CommandBuffer& commands);
+
+    /// A `recover` mob's mending: starts it once health falls under the line,
+    /// lands this tick's share through the heal gate, and ends it at full.
+    /// Every tick, LOD stride or not -- a heal that ran at a fifth of its rate
+    /// whenever the mob was far from a flower would take as long as the stride
+    /// says rather than as long as the config does.
+    void recover(World& world, Entity self, const Drive& drive, double nowMillis, double dt);
+
+    /// Whether this mob runs its brain on this tick.
+    ///
+    /// Always, within the active radius. Beyond it, one tick in kMobFarStride,
+    /// offset by the mob's own slot so the far world does not decide in
+    /// lockstep -- a shared stride would move the spike rather than remove it.
+    ///
+    /// A BOSS is the exception and thinks wherever it stands. There are a
+    /// handful of them in the world at once, the server announced every one of
+    /// them by name and sent the bots at it, and a boss that stutters at a
+    /// fifth speed until somebody gets within five thousand units is a boss
+    /// that is visibly asleep in front of the raid walking up to it.
+    bool stepsThisTick(Entity self, Vec2 position, Realm realm, Rarity rarity,
+                       const std::vector<RealmPoint>& activePlayers) const;
+
+    /// What a far mob does on a tick it did not think.
+    ///
+    /// The reference has no mob velocity integrator -- its AI writes position
+    /// directly -- so a mob whose step is skipped simply does not advance.
+    /// Here the movement phase integrates Motion::velocity whatever the AI
+    /// did, so the velocity has to be dropped, or a mob that went out of range
+    /// mid-chase keeps flying on that heading at five times the reference's
+    /// travel until something stops it. The exception is the idle drift: the
+    /// reference's passive integrator carries no distance gate at all, so a
+    /// mob left idling keeps hopping at full rate however far away it is.
+    void driftUnwatched(World& world, const Terrain& terrain, Entity self, double nowMillis,
+                        double dt);
+
+    void steerMob(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                  Entity self, Transform& transform, Motion& motion, const Body& body,
+                  const MobType& type, MobAi& ai, const Drive& drive,
+                  double nowMillis, double dt, CommandBuffer& commands);
+
+    /// The idle branch. Writes the velocity itself -- the drift machine owns
+    /// its own store and its own friction -- and returns the heading facing
+    /// should follow. `slow` is what a web or a pincer leaves of the mob's
+    /// speed this tick.
+    Vec2 steerIdle(World& world, const Terrain& terrain, Entity self, const Transform& transform,
+                   Motion& motion, MobAi& ai, const Drive& drive, double slow, double nowMillis,
+                   double dt);
+    void driftPassive(World& world, Entity self, Motion& motion, MobAi& ai, const Drive& drive,
+                      double slow, double nowMillis, double dt);
+    Vec2 wanderToPoint(WanderTarget& wander, Vec2 from, double speed, double nowMillis);
+    /// One tick of a `centipede_ai` head's crawl at `speed` (already slowed).
+    /// Bends the heading, turns it off a wall ahead, and returns the velocity;
+    /// the heading is left in `ai.wanderAngle`.
+    Vec2 crawl(const Terrain& terrain, const Transform& transform, MobAi& ai, const Drive& drive,
+               double speed, double dt);
+    /// One tick of a `digger_ai` mob's roam at `speed` (already slowed):
+    /// re-picks the heading on its clock, turns it off a wall ahead, and
+    /// writes the velocity -- through gardn's integrator for a gardn mover.
+    /// The heading is left in `ai.wanderAngle`.
+    void roam(const Terrain& terrain, const Transform& transform, Motion& motion, MobAi& ai,
+              const Drive& drive, double speed, double nowMillis, double dt);
+    /// Whether a `digger_ai` mob is low enough to run rather than fight.
+    static bool runsLow(World& world, Entity self, const Drive& drive);
+
+    /// Weather. Blows toward a point re-picked on its own fast clock, and from
+    /// kSandstormSuckRarity up drags the players around it in as it goes.
+    Vec2 steerSandstorm(World& world, const SpatialGrid& grid, Entity self, const MobType& type,
+                        const Transform& transform, MobAi& ai, double speed, double nowMillis,
+                        double dt);
+    /// Drags every player within kSandstormSuckRange toward `from`, which is
+    /// where the storm ends this tick rather than where it started it.
+    void suckPlayers(World& world, const SpatialGrid& grid, Vec2 from, Realm realm, double dt);
+    /// True when the mob spent this tick walking back to whatever spawned it,
+    /// with `desired` holding that walk. Crossing the retreat radius is also
+    /// what makes it drop the target it was dragged out on.
+    bool walkHome(World& world, Entity self, const Transform& transform, MobAi& ai,
+                  double chaseSpeed, double nowMillis, Vec2& desired, CommandBuffer& commands);
+    /// True when the mob has something to chase, with `desired` holding this
+    /// tick's pursuit velocity. Lets the mob's volley go on the way in.
+    ///
+    /// `facing` comes back as where to POINT, which is `desired` again for
+    /// every mob but a stinger shooter -- that one turns its back on its
+    /// target to shoot, and retraces the swing afterwards. It arrives already
+    /// stepped for this tick, which is why this branch needs `dt`.
+    bool steerAggressive(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                         Entity self, const MobType& type, const Transform& transform,
+                         const Body& body, MobAi& ai, const Drive& drive, double chaseSpeed,
+                         double nowMillis, double dt, Vec2& desired, Vec2& facing,
+                         CommandBuffer& commands);
+    /// A mending mob's answer to `ai.target`: straight away from it at
+    /// `chaseSpeed`, with no attack. Reports `desired` as steerAggressive does;
+    /// false when the target has no position, with the target cleared.
+    bool fleeTarget(World& world, const Transform& transform, MobAi& ai, double chaseSpeed,
+                    Vec2& desired);
+    /// The chase itself, once `ai.target` is settled: closes on it at
+    /// `chaseSpeed` (crab, bee weave, shooter standoff and volley included)
+    /// and reports `desired` and `facing` as steerAggressive does. False when
+    /// the target has no position, with the target cleared. Shared by the wild
+    /// mob and the pet, which differ only in how they pick what to chase.
+    bool pursueTarget(World& world, Entity self, const MobType& type, const Transform& transform,
+                      const Body& body, MobAi& ai, const Drive& drive, double chaseSpeed,
+                      double nowMillis, double dt, Vec2& desired, Vec2& facing,
+                      CommandBuffer& commands);
+    /// One tick of a stinger shooter's wind-up cycle against a target on
+    /// `bearing`, wild or on a leash: winds the rear round while a volley is
+    /// due, fires once it has come round, and recovers otherwise. Returns
+    /// where to point this tick. `travel` is what fireVolley hands the shot.
+    Vec2 stingerVolley(World& world, Entity self, const MobType& type, MobAi& ai,
+                       const Drive& drive, const Transform& transform, double bearing,
+                       Vec2 travel, double nowMillis, double dt, CommandBuffer& commands);
+
+    /// `range` is measured from the mob's centre -- the point it meets the
+    /// world with -- and a flower's poo shrinks all of it. `raisedOnly` is a
+    /// neutral mob's scan: it sees only flowers whose aggro is raised (a bulb).
+    Entity acquireTarget(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                         Entity self, Vec2 from, Realm realm, double range,
+                         bool raisedOnly = false);
+    /// The PET a wild mob settles for when no flower is to be had. Distinct
+    /// from acquirePetPrey() below, which is the wild mob a pet goes after.
+    ///
+    /// Walked off this tick's pet snapshot rather than queried out of the
+    /// broadphase: a player fields one or two summons, so the list is shorter
+    /// than a single grid cell, and a world with no pets in it must not cost a
+    /// query per hostile mob per tick.
+    Entity acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, Realm realm,
+                            double range);
+    /// The nearest contributor on `self`'s bounty ledger standing in `realm`
+    /// within `radius` of `from`. The ledger outlives a teleport, so a
+    /// contributor who left for another map is skipped however close its
+    /// numbers look.
+    Entity nearestAttacker(World& world, Entity self, Vec2 from, Realm realm,
+                           double radius) const;
+    /// Whether `ai.target` is still worth chasing: gardn's lose clause. A
+    /// NEUTRAL mob keeps what it has until it dies (or walks five viewports
+    /// off); a HOSTILE one lets go past kMobTargetLeashScale times the circle
+    /// it noticed the target in, or after kMobSightGraceMillis behind a wall.
+    /// Writes the wall clock into `ai`, hence not const on it.
+    bool holdTarget(World& world, const Terrain& terrain, Vec2 from, Realm realm, MobAi& ai,
+                    double range, double nowMillis) const;
+
+    /// The player a mob turns on this tick, or NULL_ENTITY. Neutral and
+    /// hostile alike, as gardn's damage handler provokes both.
+    ///
+    /// Provocation hangs off the damage LEDGER over there, not off the hurt
+    /// flash: every source of damage funnels through one credit call, so a
+    /// poison tick, a radiation cloud or a pollen puff rounds a mob on its
+    /// attacker exactly as a petal swing does, while the flash is lit by
+    /// direct hits alone and is otherwise purely cosmetic. What a ledger
+    /// cannot say is WHEN, so the growth in it since this mob last thought is
+    /// what stands in for the call.
+    Entity freshProvoker(World& world, Entity self, Vec2 from, Realm realm);
+
+    /// `self` and, when it heads a chain, every segment behind it: hurting any
+    /// part of a centipede provokes the whole animal, so the whole animal's
+    /// damage is one ledger.
+    void collectChain(World& world, Entity self, std::vector<Entity>& out) const;
+    void stampAttack(World& world, Entity self, MobAi& ai, double nowMillis, const Drive& drive);
+    /// `shooterVelocity` is the velocity the shooter is about to travel at,
+    /// not the one it is still carrying. The wild-mob path computes its
+    /// `desired` vector and only writes it to Motion after this returns, so
+    /// reading Motion here would inherit the PREVIOUS tick's travel -- and on
+    /// the tick a mob acquires a target and fires, that is zero.
+    void fireVolley(World& world, Entity shooter, const MobType& type, MobAi& ai,
+                    const Drive& drive, Vec2 from, double aimAngle, Vec2 shooterVelocity,
+                    double nowMillis, CommandBuffer& commands);
+
+    // -- pets ---------------------------------------------------------------
+
+    void steerPets(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                   double nowMillis, double dt, CommandBuffer& commands);
+    /// A sandstorm pet's leash: shadows the owner and comes home past
+    /// kSandstormPetLeash. Its own rules, apart from every other pet's.
+    Vec2 steerSandstormPet(World& world, const Terrain& terrain, Transform& transform,
+                           MobAi& ai, Entity owner, Vec2 ownerPosition, double speed,
+                           double slow);
+    /// True while a pet is off its owner's screen and walking back, with
+    /// `desired` holding the walk. Also where a trapped pet is flagged.
+    bool walkToOwner(World& world, const Terrain& terrain, Entity self,
+                     const Transform& transform, MobAi& ai, Vec2 ownerPosition,
+                     double returnSpeed, double nowMillis, Vec2& desired);
+    /// A pet's volley at `ai.target` from where it stands, without closing on
+    /// it: the ownerless pet's and the cursor-driven one's. Returns where a
+    /// stinger shooter has to point this tick, or zero to face its travel.
+    Vec2 volleyInPlace(World& world, Entity self, const MobType& type, MobAi& ai,
+                       const Drive& drive, const Transform& transform, Vec2 travel,
+                       double nowMillis, double dt, CommandBuffer& commands);
+    void steerPet(World& world, const Terrain& terrain, const SpatialGrid& grid, Entity self,
+                  Transform& transform, Motion& motion, const Body& body, const MobType& type,
+                  MobAi& ai, Entity owner, bool ownerAlive, const Drive& drive,
+                  double nowMillis, double dt, CommandBuffer& commands);
+    /// The wild mob a pet is fighting: of those on the OWNER's screen and in
+    /// the pet's sight, the one nearest the owner -- the one it holds winning
+    /// ties within kPetRetargetMargin. Ownerless, the nearest to the pet
+    /// within `range`.
+    Entity acquirePetPrey(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                          Entity self, Vec2 from, Realm realm, MobAi& ai, bool hasOwner,
+                          Vec2 ownerPosition, double range);
+    /// Pops a sandstorm pet onto a clear, visible ring position around its
+    /// owner. False when nothing was clear and the pet stayed where it was.
+    bool teleportPetToOwner(const Terrain& terrain, Transform& transform, Vec2 ownerPosition);
+
+    void repairChains(World& world);
+    void followChains(World& world, const Terrain& terrain,
+                      const std::vector<RealmPoint>& activePlayers);
+    void placeFollower(World& world, const Terrain& terrain, Entity self, Entity ahead);
+    /// Keeps every nest's brood list (Spawner::children) to the escorts still
+    /// standing, and releases a dying nest's. Spawning them is not this
+    /// system's: SpawnSystem::runNests does it, later in the tick.
+    void pruneBroods(World& world);
+
+    /// One seed, launched from the seat at `aim` and at the size it was
+    /// sitting there: `orbit` and `seedRadius` come off the mob's own
+    /// MobPetalRing, which is where the ring's world geometry is resolved.
+    ///
+    /// Split out of the walk above so that the shot is assembled where the
+    /// registry lookup already is and the walk stays a bookkeeping loop.
+    void fireRingPetal(World& world, Entity self, const PetalRingSpec& spec, const MobType& type,
+                       Vec2 from, double orbit, double seedRadius, Realm realm, double aim,
+                       CommandBuffer& commands);
+
+    Query<Transform, Motion, Body, MobType, MobAi> mobs_;
+    Query<Pet, Transform, Motion, Body, MobType, MobAi> pets_;
+    Query<BodySegment, Transform> segments_;
+    /// Pieces of summoned chains that lost what was ahead of them this tick.
+    std::vector<Entity> severedPets_;
+    Query<Spawner, Transform, MobType> nests_;
+    /// Mobs whose petal ring is ammunition. Corpses are kept out: a dead
+    /// dandelion owes nothing, and its debt is cleared rather than fired.
+    Query<MobPetalRing, Transform, MobType, Body> rings_;
+    /// Every ring seed in the world, so an orphan can be found from its own
+    /// side. The query above cannot do it: a mob that died is excluded from
+    /// it, and a mob that despawned is not there to be walked at all.
+    Query<MobRingPetal> seeds_;
+    Query<PlayerTag, PlayerModifiers> playerModifiers_;
+
+    Rng rng_;
+    Stats stats_;
+
+    /// Ticks run, which is the phase the far stride is measured against.
+    std::uint64_t tick_ = 0;
+
+    /// The widest aggro bonus any live player carries, recomputed once per
+    /// tick. The bonus is per-player but the broadphase radius is per-query, so
+    /// without it a mob would query its bare range and miss exactly the player
+    /// whose petals were meant to draw attention.
+    double maxAggroBonus_ = 0;
+    /// The widest aggro-range multiplier any live player carries, floored at
+    /// 1, for the same reason: a range scaled past 1 reaches beyond the bare
+    /// query a mob would otherwise make.
+    double maxAggroScale_ = 1.0;
+    /// Whether any live player's aggro is raised this tick -- the gate on a
+    /// neutral mob's scan, which can only ever find such a player.
+    bool anyAggroRaised_ = false;
+
+    std::vector<Drive> drives_;
+    std::uint32_t drivesHash_ = 0;
+
+    /// Damage recorded against each animal the last time it thought, keyed by
+    /// the entity that steers it. Provocation is a CHANGE in this rather than
+    /// a value of it, so a mob that dropped a target does not silently pick it
+    /// back up off damage it took minutes ago.
+    std::unordered_map<Entity, double> ledgerSeen_;
+
+    // Scratch, reused so that a steady-state tick allocates nothing.
+    std::vector<Entity> stepList_;
+    std::vector<Entity> seedList_;
+    std::vector<Entity> gridScratch_;
+    std::vector<Candidate> candidates_;
+    /// This tick's pets, snapshotted before anything moves -- which is where
+    /// the reference builds it, so a pet is hunted from where it stood at the
+    /// top of the tick rather than from wherever the pet pass has since
+    /// carried it.
+    std::vector<Candidate> petList_;
+    std::vector<Entity> chainScratch_;
+    std::vector<Entity> chainHeads_;
+    std::unordered_map<Entity, Entity> followerOf_;
+    std::unordered_set<Entity> visited_;
+};
+
+} // namespace flix

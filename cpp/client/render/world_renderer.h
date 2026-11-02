@@ -1,0 +1,870 @@
+#pragma once
+// Draws the world: terrain, entities, and the effects layered over them.
+//
+// Reads only from the WorldView -- it never simulates. Anything that needs to
+// persist between frames (a floating damage number, an explosion, a mob still
+// playing its death animation) lives in a pool here, seeded from the events
+// the server sent.
+
+#include <array>
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
+#include "canvas.h"
+
+#include "client/camera.h"
+#include "client/chat_bubbles.h"
+#include "client/render/darkness.h"
+#include "client/render/sprites.h"
+#include "client/world_view.h"
+#include "shared/core/types.h"
+#include "shared/game/constants.h"
+#include "shared/game/skin_format.h"
+// TileOrientation and tileOrientation(): the map format owns that transform
+// now, because the collision shapes are turned by the same one.
+#include "shared/game/tiled_map.h"
+
+namespace flix {
+
+class ContentRegistry;
+class MapData;
+class Terrain;
+class WorldMaps;
+struct MobConfig;
+
+/// The "Summon" under a pet's bar: florr's own colour for it, the Text the
+/// plate painter (0x10078cb60) builds for UI/Mob/Summon.
+inline constexpr std::uint32_t kPetLabelColor = 0xD2EB34u;
+
+/// Spawn-shield yellow: what a flower's health bar turns while respawn
+/// protection holds, and what an NPC's bar always is. One value for every bar
+/// that wears it -- the plates in the world and the HUD's own bars alike.
+inline constexpr std::uint32_t kInvulnerableHealth = 0xFAFFC9u;
+/// How long a health bar takes to bleed from kInvulnerableHealth back to
+/// ui::kHealth once the shield drops.
+inline constexpr double kInvulnerableFadeSeconds = 0.5;
+
+/// A health bar's colour `secondsSinceShield` after a spawn shield dropped: a
+/// straight per-channel lerp from kInvulnerableHealth to ui::kHealth over
+/// kInvulnerableFadeSeconds, and ui::kHealth from then on. The world's plates
+/// and the HUD's corner bar both fade through this one function -- the HUD
+/// once kept a copy of its own, which went on fading toward the green
+/// ui::kHealth used to be and then jumped to the one it is.
+std::uint32_t invulnerableFadeColor(double secondsSinceShield);
+
+/// One piece of an explosion's debris, one petal glint or one grain of a
+/// drop's glitter. Velocity and life are per second here; the browser build
+/// counts both per frame at 60 Hz.
+struct EffectParticle {
+    Vec2 position;
+    Vec2 velocity;
+    double lifeSeconds = 0;
+    double maxLifeSeconds = 1;
+    /// A disc's radius (debris, glint); a drop grain's side.
+    double size = 1;
+    /// Radians a drop grain is turned by. A disc looks the same at every
+    /// angle, so the others leave it at zero.
+    double rotation = 0;
+    std::uint32_t color = 0xFFFFFFu;
+};
+
+/// A short-lived visual with no gameplay meaning.
+struct Effect {
+    /// `Sparkle` is the particle-only kind: the high-rarity glint around a
+    /// petal, a burst of disc-shaped grains. It has no body of its own -- only
+    /// its particles are drawn. A drop's glitter is not one of these: its
+    /// grains live in WorldRenderer::dropSparkles_.
+    enum class Kind : std::uint8_t { DamageNumber, Explosion, Sparkle };
+    Kind kind = Kind::DamageNumber;
+    Vec2 position;
+    Vec2 drift;
+    double value = 0;
+    double radius = 0;
+    /// World-unit type size for the number kinds: a flower reports its damage
+    /// larger than a mob does.
+    double textSize = 16.0;
+    std::uint32_t color = 0xFFFFFFu;
+    double ageSeconds = 0;
+    double lifeSeconds = 1.0;
+    std::vector<EffectParticle> particles;
+};
+
+/// One arm of a lightning strike: the jagged run from where the strike landed
+/// to one of the mobs it hit.
+///
+/// The jitter is rolled ONCE, when the strike arrives, and the polyline is
+/// kept. Re-rolling it per frame makes the arc crawl and shimmer instead of
+/// flashing; the style reference seeds its own jitter off entity ids to get the
+/// same fixed shape, which a stored path gives for free.
+///
+/// A bolt rather than a strike is the unit here because each arm is jittered on
+/// its own. The arms of one strike are born in the same frame and so fade
+/// together without having to be grouped.
+struct LightningBolt {
+    std::vector<Vec2> points;
+    double ageSeconds = 0;
+};
+
+/// The flourish a drop plays as it lands: it slides in from a random offset
+/// and unwinds a random spin over 400 ms.
+struct DropSpawn {
+    double angle = 0;
+    double distance = 0;
+    double rotation = 0;
+    double ageSeconds = 0;
+};
+
+/// A drop the snapshot has already removed, kept alive locally for the 150 ms
+/// its pickup flight or the 300 ms its despawn spin runs. Everything the plate
+/// needs is copied: the entity record is gone by the time the removal is seen.
+struct DyingDrop {
+    std::uint32_t netId = 0;
+    Vec2 position;
+    std::uint16_t typeIndex = 0;
+    Rarity rarity = Rarity::Common;
+    /// Who is collecting it. Zero means nobody did: the drop timed out, and
+    /// the spin-and-fade despawn plays instead of the flight.
+    std::uint32_t takerNetId = 0;
+    /// Only meaningful in the live table: a flower OTHER than the viewer has
+    /// claimed this drop, and the flight to them is owed the moment the
+    /// snapshot stops carrying it. A shared drop pays out one copy per
+    /// eligible flower and survives until the last of them has taken it, so
+    /// somebody else's pickup is not by itself the end of the item -- see the
+    /// PickedUp case in ingestEvents().
+    std::uint32_t pendingTakerNetId = 0;
+    double ageSeconds = 0;
+    /// Only meaningful in the live table: cleared every frame so a drop that
+    /// stopped being sent can be told apart from one that is still there.
+    bool seenThisFrame = false;
+};
+
+/// A mob the server has already destroyed, kept alive locally for the 200 ms
+/// its death animation runs. Only the handful of fields the body needs are
+/// copied: the snapshot record is gone by the time the event arrives.
+struct DyingMob {
+    std::uint32_t netId = 0;
+    Vec2 position;
+    double angle = 0;
+    double radius = 10;
+    std::uint16_t typeIndex = 0;
+    Rarity rarity = Rarity::Common;
+    /// A summon dies in the colours it lived in.
+    bool pet = false;
+    double ageSeconds = 0;
+};
+
+/// A petal or shot the server has already destroyed, fading out as gardn
+/// fades every entity it deletes. The whole record, so it is drawn by the
+/// same code as the live ones.
+struct DyingPetal {
+    RemoteEntity entity;
+    double ageSeconds = 0;
+};
+
+class WorldRenderer {
+public:
+    void setContent(const ContentRegistry* content) { content_ = content; }
+    /// A dark map's lights (client/render/darkness.h), or null on a lit map.
+    /// While set, nothing over the ground is drawn outside their outer discs:
+    /// florr's first dark stage. Held, not copied -- the caller keeps the
+    /// vector alive across draw().
+    void setLightClip(const std::vector<LightDisc>* discs) { lightClip_ = discs; }
+    void setSprites(const SpriteCache* sprites) { sprites_ = sprites; }
+
+    /// Turns this frame's server events into effects. Drains `view.events()`.
+    void ingestEvents(WorldView& view);
+
+    /// Ages effects and retires expired ones.
+    void update(double dt);
+
+    /// The hit flash `netId` wears right now, premultiplied, for
+    /// Canvas::setColorTint; alpha zero when it wears none. florr's: every
+    /// frame's Damage events lay 150 ms of colour over the body, white for its
+    /// first tenth and red after, fading linearly from an intensity set by the
+    /// share of max health they took (share^0.5 -- florr's is steeper), and
+    /// the flashes in flight are composited over one another oldest first,
+    /// never past half strength (kHitFlashMaxAlpha).
+    Color hitTint(std::uint32_t netId) const;
+
+    /// The same flash on the tile for the viewer's own loadout slot `slot`,
+    /// struck whenever the petal in it is (see net::DamageFlashOnly) --
+    /// including the blow that breaks it, which the petal itself is not left
+    /// to show. Alpha zero for a slot nothing has hit, or out of range.
+    Color slotHitTint(int slot) const;
+
+    /// How far, in screen (design) units, the world is pushed this frame by
+    /// hits on the viewer's own flower; zero with screenShake off. A screen
+    /// distance, so the shake is the same size however far the camera is
+    /// zoomed out -- see shakenCamera(). florr's: every hit adds
+    /// its share of max health to a pool that decays (tau 325 ms), a second
+    /// level rises toward 1 while the last hit is under 200 ms old (tau 75 ms),
+    /// and the push is (cos 0.01t, sin 0.01t) * 5 sin(0.05t) * level *
+    /// min(1, 50 * pool), t in ms. Applied to the camera the world is DRAWN
+    /// through only -- the camera the cursor steers by stays pinned.
+    ///
+    /// A sacrifice ritual on screen feeds the same pool, as florr's ritual
+    /// does: from when it starts until its mob is out, a push every 100 ms of
+    /// half the share of the ritual traced so far.
+    Vec2 shakeOffset() const { return shakeOffset_; }
+
+    /// `camera` pushed by this frame's shake: shakeOffset() turned into world
+    /// units at the camera's zoom. What the world is drawn through.
+    Camera shakenCamera(const Camera& camera) const;
+
+    /// What the renderer actually needs: a set of entities to draw.
+    using EntityMap = std::unordered_map<std::uint32_t, RemoteEntity>;
+
+    /// Draws the whole world. `selfDrawn` is where the viewer's own flower is
+    /// being drawn this frame -- the same eased position the camera is pinned
+    /// to, passed in rather than looked up so the body and the camera cannot
+    /// disagree.
+    void draw(Canvas&, const EntityMap&, const Camera&, Vec2 selfDrawn,
+              double timeSeconds) const;
+
+    /// The same, reading the entities out of a live view. Taking the map
+    /// separately as well is what lets a tool or a replay render a scene it
+    /// assembled itself, with no socket behind it.
+    void draw(Canvas&, const WorldView&, const Camera&, Vec2 selfDrawn,
+              double timeSeconds) const;
+
+    /// Draws just the flower body, in the artwork's own local space (radius
+    /// 25, centred on the origin, no rotation). Public for the HUD avatar
+    /// (App::drawHudFlower), which draws the very same body the world does --
+    /// a second, HUD-only copy of each skin is exactly how the two would drift.
+    void drawFlowerBody(Canvas&, const RemoteEntity&, double timeSeconds) const;
+
+    /// A corpse's body in the same art space: dead eyes, the default colour,
+    /// no skin, wearing `equipFlags`. `mouth` is the face's curve control --
+    /// 15 smiles, 5 frowns. Public for the death card's flower and the HUD
+    /// avatar of a dead flower, which are the corpse drawn somewhere else.
+    void drawDeadFlower(Canvas&, std::uint16_t equipFlags, double mouth,
+                        double timeSeconds) const;
+
+    /// What every flower on screen has been heard saying, borrowed from
+    /// NetClient. Optional: without it -- a tool, a test, a preview -- nobody
+    /// speaks and no bubble is drawn.
+    void setChatBubbles(const ChatBubbles* bubbles) { chatBubbles_ = bubbles; }
+
+    /// The viewer's own authoritative state, for the one piece of furniture
+    /// under a flower that is drawn from the snapshot's self block rather than
+    /// from a replicated body: the mana bar. Optional -- a tool, a replay or a
+    /// preview has no self and draws no bar.
+    void setSelfState(const SelfState* self) { selfState_ = self; }
+
+    /// The published skin catalog a wearer's id is resolved against, borrowed
+    /// from NetClient. Optional: without it -- a tool, a test, a replay -- a
+    /// flower wearing a custom skin falls back to the default body, which is
+    /// also what a wearer of a skin that was taken down since draws.
+    void setSkinCatalog(const std::vector<CustomSkin>* catalog) { skinCatalog_ = catalog; }
+
+    /// Terrain is optional: a client that has not yet been sent the map draws a
+    /// plain biome ground rather than nothing.
+    void setTerrain(const Terrain* terrain) { terrain_ = terrain; }
+
+    /// Every world map's art and annotations: the tile layers the world is
+    /// PAINTED from, the teleporters, and the spawn zones the rarity glow
+    /// tints. The renderer picks the map of whichever realm the view is in,
+    /// frame by frame. Optional in the same way the terrain is: without it
+    /// there is nothing to paint and the realm draws as void.
+    void setWorldMaps(const WorldMaps* maps) { worldMaps_ = maps; }
+
+    /// What the settings menu switches off. Presentation only: nothing here
+    /// changes what the client sends or is told.
+    struct Options {
+        bool names = true;
+        bool healthBars = true;
+        bool damageNumbers = true;
+        /// Draws every body's collision circle. A debugging view, and the one
+        /// honest way to see how generous a petal's reach really is.
+        bool hitboxes = false;
+        /// Rings every petal in its tier's colour. Held down rather than
+        /// toggled: the App sets it each frame from ALT, not from the settings
+        /// menu.
+        bool rarityGlow = false;
+        /// Leaves out every other player's petals and the shots they fire,
+        /// and every other player's pets and theirs. The server marks what is
+        /// somebody else's (net::SpawnForeign); these only decide whether to
+        /// draw it. Hidden things still collide and still hurt -- this is a
+        /// view of the world, not a change to it.
+        bool hideOtherPetals = false;
+        bool hideOtherPets = false;
+        /// Shakes the world when the viewer's own flower is hit (florr's
+        /// "Screen Shake", on by default as florr has it).
+        bool screenShake = true;
+    };
+    Options options;
+
+    /// Whether `options` leaves this entity out of the picture: its body, its
+    /// plate, its hitbox, its shimmer and the numbers hits on it throw.
+    bool hiddenByOptions(const RemoteEntity& entity) const;
+
+    /// Cap on live effects. A crowded fight can generate hundreds of damage
+    /// numbers a second, and past a point they are noise that costs frame time.
+    std::size_t maxEffects = 256;
+
+    /// What the last draw() spent in each layer, in milliseconds, for the
+    /// stats overlay's "Render avg/peak" line. The TypeScript client timed the
+    /// same three sections inside drawGameObjects, and these are the same
+    /// cuts: `mobs` runs from the top of the entity passes through the flowers
+    /// and their petals (so it carries the ground-effect layer too, as the
+    /// browser's did), `items` is the loot lying on the ground, and
+    /// `projectiles` is the last pass. Terrain is outside all three, as it was
+    /// there.
+    ///
+    /// Mutable because draw() is const -- it reports what it cost, it does not
+    /// change what it draws. `itemCount` is how many drops survived culling,
+    /// which is the number beside the items figure in the readout.
+    struct SectionTiming {
+        double mobsMillis = 0;
+        double itemsMillis = 0;
+        double projectilesMillis = 0;
+        int itemCount = 0;
+    };
+    const SectionTiming& sectionTiming() const { return timing_; }
+
+    /// Drawing calls the world made, split the same way the timings are.
+    ///
+    /// The timings above only see the client's own arithmetic; what the frame
+    /// actually costs is very nearly the op count times what the browser
+    /// charges per op, so this is the half that says WHERE a heavy frame is
+    /// heavy. Taken and zeroed by the caller once a frame.
+    struct SectionOps {
+        int terrain = 0;
+        int flowers = 0;
+        int mobs = 0;
+        int petals = 0;
+        int items = 0;
+        int projectiles = 0;
+        int labels = 0;
+        int effects = 0;
+        int bubbles = 0;
+    };
+    const SectionOps& sectionOps() const { return ops_; }
+
+    /// Whether the terrain goes through the chunk cache (drawTerrainChunks).
+    /// On in the web build and off natively, for the reason art_cache.h gives:
+    /// in a browser the tile paths are what cost and a blit is a texture
+    /// copy, and in the software rasterizer it is the other way round. Tests
+    /// switch it on natively to hold the cache to the direct path's picture.
+    void setTerrainCache(bool on) {
+        terrainCache_ = on;
+        if (!on) terrainChunks_ = TerrainChunks{};
+    }
+    /// Chunks the terrain cache holds, and the bytes their bitmaps occupy.
+    void terrainCacheStats(std::size_t& chunks, std::size_t& bytes) const;
+
+private:
+    /// A world realm, painted from its map's tile LAYERS: the bottom layer
+    /// across every visible cell, then the one above it, and so on, each
+    /// cell's artwork fitted to its kTileSize square and turned by the flip
+    /// bits Tiled gave it. A layer at a time rather than a cell at a time,
+    /// and on whole device pixels, because the tiles are painted oversized --
+    /// see kTileOverlap and the two seams that oversize leaves if either of
+    /// those is given up. Nothing here reads the collision grid -- what a cell
+    /// looks like and what it blocks are two answers to two questions, and the
+    /// picture is the map file's. Outside the map, and in a cell every layer
+    /// left empty, there is the black the frame was cleared to.
+    void drawTerrain(Canvas&, const Camera&, Realm realm) const;
+    /// The visible cells [x0..x1] x [y0..y1] of `map`, through the chunk
+    /// cache: the browser build's static-map-cache.ts, done at device
+    /// resolution. The map is cut into square chunks of cells fixed to the
+    /// world, each painted once into a bitmap and blitted every frame after,
+    /// so a frame's terrain is a few dozen drawImage calls however many tiles
+    /// are on screen -- where painting them straight is every path of every
+    /// tile, every frame, and at the antennae's zoom tens of thousands of
+    /// calls. False, having drawn nothing, when the canvas transform is not
+    /// one the chunks can be blitted through texel for pixel.
+    bool drawTerrainChunks(Canvas&, const Camera&, const MapData& map,
+                           const std::vector<const SvgDocument*>& art, int x0, int y0, int x1,
+                           int y1) const;
+    /// The annotations of a realm: its entry in the catalogue. Null for the
+    /// arena, the maze, any realm nothing was staged for, and every realm
+    /// while no catalogue is set.
+    const MapData* mapFor(Realm realm) const;
+    /// Resolves `map`'s art file names to compiled documents, once per map.
+    /// Returns an empty span when there is nothing to paint with.
+    const std::vector<const SvgDocument*>& artFor(const MapData& map) const;
+    /// The maze realm: its biome's flat ground colour under rrolf-style walls,
+    /// every corridor junction rounded by a quarter-circle fillet, and the
+    /// void beyond its square left black. The maze has no map file and so no
+    /// artwork of its own -- terrain.h's kBiomes is its whole palette.
+    void drawMaze(Canvas&, const Camera&) const;
+    /// The arena realm: a grey gridded floor inside the ring, dark void
+    /// outside it, and the red boundary the server clamps bodies to.
+    void drawArena(Canvas&, const Camera&) const;
+    /// Teleporters, off the realm's own map.
+    void drawMapElements(Canvas&, const Camera&, Realm realm, double timeSeconds) const;
+    void drawEntity(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
+    void drawFlower(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
+    void drawDefaultFlower(Canvas&, const RemoteEntity&, double timeSeconds) const;
+    void drawPumpkin(Canvas&, const RemoteEntity&) const;
+    void drawRobot(Canvas&, const RemoteEntity&) const;
+    void drawHitbox(Canvas&, const RemoteEntity&, const Camera&, Vec2 at) const;
+    void drawEffects(Canvas&, const Camera&) const;
+    void drawLightning(Canvas&, const Camera&) const;
+    /// Every sacrifice ritual in view: its star turns what lies under it grey,
+    /// and its legendary-red pentagram, a fifth of the star's size, is traced
+    /// over it. Run after the mob bodies and before the flowers and the mob
+    /// the sacrifice summoned (net::SpawnSacrificed), so everything under the
+    /// star but those is grey.
+    void drawSacrificeRituals(Canvas&, const EntityMap&, const Camera&) const;
+
+    /// One loot drop: the shadow backdrop, the rarity plate, the petal and the
+    /// item's name, all in world units. `rotation`, `scale` and `alpha` are
+    /// the spawn/pickup/despawn animation's; a drop that is just lying there
+    /// still carries its resting tilt, seeded on its net id, and the shared
+    /// idle pulse `timeSeconds` drives. The petal artwork itself stays frozen
+    /// at frame zero, as the reference bakes it: only the plate breathes.
+    void drawDrop(Canvas&, const Camera&, Vec2 at, std::uint16_t typeIndex, Rarity,
+                  double rotation, double scale, double alpha, double timeSeconds) const;
+
+    /// Everything one mob body needs that does not come from its config. The
+    /// death animation replays a mob the snapshot has already dropped, so this
+    /// is deliberately a value rather than a reference into the view.
+    struct MobDraw {
+        std::uint32_t netId = 0;
+        Vec2 position;
+        double angle = 0;
+        /// Collision radius in world units, i.e. half the undecorated body.
+        double radius = 10;
+        std::uint16_t typeIndex = 0;
+        Rarity rarity = Rarity::Common;
+        double healthFraction = 1.0;
+        /// What the plate draws, eased as florr eases it
+        /// (RemoteEntity::plate): the green, the red under it, the white
+        /// over it and the whole plate's opacity.
+        double barHealth = 1.0;
+        double barLag = 1.0;
+        double barShield = 0.0;
+        double plateOpacity = 1.0;
+        /// Locked on to a player. A neutral or hostile mob animates at double
+        /// speed while it is.
+        bool chasing = false;
+        /// Somebody's summon rather than a wild mob. Its plate says so, and
+        /// its body wears the flower yellow (kPetBodyColor).
+        bool pet = false;
+        /// An NPC wearing this mob's config, not a mob at all: its plate is
+        /// the mob's, with the bar in its invulnerable state.
+        bool npc = false;
+        /// Negative for a live mob; 0..1 while the death animation runs.
+        double deathProgress = -1.0;
+        /// A stinger mob whose missile has just left (net::StateUnloaded): its
+        /// sting is growing back and is drawn part way out, or not at all.
+        bool unloaded = false;
+    };
+
+    /// `clockSeconds` is the frame clock; a chasing mob's artwork is advanced
+    /// at twice that rate, which is where the two names differ.
+    void drawMobBody(Canvas&, const Camera&, const MobDraw&, double clockSeconds) const;
+    /// The plate under a mob: florr's (0x10078cb60) -- the name above its bar,
+    /// the tier below it, and (for a dummy) DPS under that. A pet's tier row
+    /// also says "Summon"; an NPC's bar is its invulnerable one; a chain's
+    /// body bead wears the bar alone.
+    void drawMobLabel(Canvas&, const Camera&, const MobDraw&) const;
+    /// The digger: a grey flower carrying a spinning cutter, never its SVG.
+    void drawDiggerMob(Canvas&, const MobDraw&, double radius, double timeSeconds) const;
+    /// A mob that carries an orbiting ring of petals: the glitch flower, whose
+    /// ring is decoration, and the dandelion, whose ring is ammunition.
+    ///
+    /// `rotation` and `mirrored` are the ones drawMobBody resolved for the
+    /// ordinary artwork path, passed in rather than re-derived: a mob drawn
+    /// here has to face the way the same mob would if it had no ring.
+    /// `bodyShift` is the resolved `visualOffsetX/Y`, and moves the body only.
+    void drawPetalRingMob(Canvas&, const MobConfig&, const MobDraw&, double radius,
+                          double rotation, bool mirrored, Vec2 bodyShift,
+                          double timeSeconds, const MobMotion* motion = nullptr) const;
+    /// How drawMobBody will pose a mob this frame: its animation clock, drawn
+    /// size and fade after any death pop, facing, mirroring and art offset.
+    /// False when there is nothing to draw. Shared with the web build's glitch
+    /// atlas, which has to paint a glitch flower exactly as the entity pass
+    /// then places it.
+    struct MobPose {
+        double timeSeconds = 0;
+        double diameter = 0;
+        double alpha = 1.0;
+        double rotation = 0;
+        bool mirrored = false;
+        Vec2 bodyShift;
+    };
+    bool poseMob(const MobDraw&, const MobConfig*, double zoom, double clockSeconds,
+                 MobPose&) const;
+    /// The radius a glitch flower's tear has to cover: the ring, not just the
+    /// body.
+    double glitchFlowerReach(const MobConfig&, const MobPose&) const;
+    /// The garbage mob, whose artwork in mobs.json is an empty document: a
+    /// deterministic pile of petals seeded on where it stands.
+    void drawGarbagePile(Canvas&, Vec2 at, double baseSize, double timeSeconds) const;
+    /// The eased eye offset a flower-shaped mob looks along. Keyed by netId so
+    /// each mob eases on its own.
+    ///
+    /// A mob that turns is read straight off its facing. One drawn upright has
+    /// none to read: the server pins `hideRotation` mobs at angle zero (see
+    /// steerFacing), so its eyes would sit staring east forever. For those the
+    /// look direction is recovered from how the BODY is travelling, which is
+    /// the same heading the facing would have carried.
+    Vec2 mobEye(const MobDraw& mob) const;
+    /// The same idea for a PAINTED eye that looks in any direction -- the
+    /// oracle's: a unit-ish vector in world space, eased toward the mob's
+    /// facing with the flower eye's own time constant, so the pupil swings
+    /// across the socket the way a flower's does rather than snapping. Kept
+    /// on the MobEye beside the flower-face offset, which it never shares.
+    Vec2 mobGaze(const MobDraw& mob) const;
+    /// The mob's clock, the ground it has covered and how worked up it is,
+    /// advanced to `clockSeconds` -- once a frame however often it is asked,
+    /// like mobEye(). What a florr-ported painter animates from.
+    MobMotion mobMotion(const MobDraw& mob, double clockSeconds) const;
+    /// How far a stinger mob's loaded missile is out of its tail, 0 (just
+    /// fired, nothing to draw) to 1 (loaded). Read off the MobPace that
+    /// mobMotion() advanced this frame.
+    double stingLoad(const MobDraw& mob, const MobConfig& config) const;
+    /// A stinger mob's LOADED missile: the ammunition's own artwork at the
+    /// size the server will fire it, on the tail where the shot leaves from.
+    /// Drawn under the body, which is what makes it read as coming out of it.
+    /// `grown` is the death pop's scale, 1 for a live mob.
+    void drawLoadedSting(Canvas&, const MobConfig&, const MobDraw&, Vec2 screen,
+                         double rotation, double grown, double zoom,
+                         double clockSeconds) const;
+    /// The petal types a garbage pile may be built from: the same rule the
+    /// server's drop roll uses, so both clients pick the same artwork.
+    const std::vector<std::uint16_t>& droppablePetals() const;
+
+    /// The spinning saw a worn cutter puts on the flower, in the caller's
+    /// radius-25 art space. Drawn before the body so it reads as carried
+    /// behind, and never as an orbiting petal -- a cutter takes no ring place.
+    void drawCutterBlade(Canvas&, std::uint16_t equipFlags, double timeSeconds) const;
+    /// An Undead flower's bandage, wrapped over the body in its radius-25 art
+    /// space: the petal's own picture, upright, at florr's worn-centre scale.
+    void drawUndeadWrap(Canvas&, double timeSeconds) const;
+
+    /// The face, at an explicit mouth curve. A corpse is the one caller that
+    /// needs a mouth the live attack/defend bits would never produce, and the
+    /// digger the one that needs a body that is not flower yellow.
+    void drawFace(Canvas&, std::uint8_t faceFlags, std::uint16_t equipFlags, double eyeX,
+                  double eyeY, double mouth, double timeSeconds,
+                  std::uint32_t bodyColor = 0xFFE763u) const;
+
+    /// Draws `body` (centred on the origin of the canvas it is handed) through
+    /// the scanline tear. Shared by the Glitch cosmetic and the glitch flower.
+    void drawGlitched(Canvas&, Vec2 screen, double radius, std::uint32_t seed, double timeSeconds,
+                      const std::function<void(Canvas&)>& body) const;
+
+    /// Name, health bar and level, all below the flower. Drawn BEFORE the body
+    /// so a grown flower paints over its own plate rather than under it.
+    void drawPlayerPlate(Canvas&, const RemoteEntity&, const Camera&, Vec2 at,
+                         double timeSeconds) const;
+    /// The mana bar, in the slot the viewer's own health bar used to occupy.
+    ///
+    /// Only the viewer's own flower has one, because mana is not replicated
+    /// for anybody else, and only that flower has the slot free: every other
+    /// flower still wears its plate there.
+    void drawSelfManaBar(Canvas&, const RemoteEntity&, const Camera&, Vec2 at) const;
+    void drawCorpse(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
+    /// Name only on a downed body (no bar / level). Amber so a revive target
+    /// reads apart from the living white plates. Skips the viewer's own corpse.
+    void drawCorpseName(Canvas&, const RemoteEntity&, const Camera&, Vec2 at) const;
+    /// Every live bubble, over the flower that said it. Drawn last of all, on
+    /// top of the whole world: a line somebody is saying must not end up
+    /// behind a mob that happens to be standing in front of them.
+    void drawChatBubbles(Canvas&, const EntityMap&, const Camera&, Vec2 selfDrawn) const;
+    void drawPetalSprite(Canvas&, const RemoteEntity&, const Camera&, Vec2 at,
+                         double timeSeconds) const;
+    /// The soft disc under an emissive petal. cpp_canvas has no radial
+    /// gradient, so this is the same three-stop ramp painted as nested discs.
+    /// `bands` buys smoothness with one filled disc each, which is why a glow
+    /// the size of the screen asks for fewer of them.
+    void drawPetalGlow(Canvas&, double radius, std::uint32_t rgb, int bands = 16) const;
+
+    /// Green, or the invulnerability yellow fading back to green over the
+    /// 500 ms after a spawn shield drops.
+    std::uint32_t healthBarColor(const RemoteEntity&, double timeSeconds) const;
+
+    /// How much bigger than the 25-unit artwork this flower draws. Petal size
+    /// modifiers are the only thing that moves it, and the server folds them
+    /// into the replicated body radius, so it is recovered by dividing that
+    /// back out by what the flower's level alone would have asked for.
+    double playerSizeMultiplier(const RemoteEntity&) const;
+
+    /// The skin a flower is wearing, or null when it wears none, its id is
+    /// unknown to this client, or no catalog is set.
+    const CustomSkin* wornSkin(const RemoteEntity&) const;
+
+    const ContentRegistry* content_ = nullptr;
+    const std::vector<LightDisc>* lightClip_ = nullptr;
+    const SpriteCache* sprites_ = nullptr;
+    const std::vector<CustomSkin>* skinCatalog_ = nullptr;
+    const ChatBubbles* chatBubbles_ = nullptr;
+    const SelfState* selfState_ = nullptr;
+    const Terrain* terrain_ = nullptr;
+    const WorldMaps* worldMaps_ = nullptr;
+    /// The last map artFor() resolved, and its art in artFiles() order. One
+    /// entry is enough: a frame draws one realm, and a realm change is rare.
+    /// Null entries are files the data directory does not hold, which draw
+    /// nothing.
+    mutable const MapData* artMap_ = nullptr;
+    mutable std::vector<const SvgDocument*> art_;
+    std::vector<Effect> effects_;
+
+    /// Lightning arms still flashing, kept apart from the effect pool for the
+    /// same reason the drop shimmer is: one strike lands two dozen of them at
+    /// once and would evict every damage number on screen.
+    std::vector<LightningBolt> bolts_;
+
+    /// Every grain a drop throws -- the steady shimmer and the burst it lands
+    /// with -- kept apart from the effect pool. The grains have no shared
+    /// birth, no shared death, and nothing to group them by: one flat pool of
+    /// independent particles is what that is. Putting them in `effects_` also
+    /// starved them twice over -- a single drop keeps roughly a hundred grains
+    /// alive against a 256-effect pool for the whole screen, and the landing
+    /// burst arrives in the same tick as a dying mob's damage numbers, which
+    /// is exactly when that pool is fullest.
+    ///
+    /// Drawn at the head of the drop layer, not with the effects: they belong
+    /// under the loot they come off.
+    std::vector<EffectParticle> dropSparkles_;
+
+    /// The drops on screen, by net id, and what each was last seen holding. A
+    /// removal arrives as an absence rather than an event, so the outgoing
+    /// animation has nowhere else to read the drop's plate from.
+    std::unordered_map<std::uint32_t, DyingDrop> knownDrops_;
+    /// Drops still sliding in, and drops the snapshot has already dropped but
+    /// that are still flying to their taker or spinning out.
+    std::unordered_map<std::uint32_t, DropSpawn> dropSpawns_;
+    std::vector<DyingDrop> dyingDrops_;
+
+    /// Mobs the server has destroyed, still playing their 200 ms death
+    /// animation. Bounded: past the cap the oldest simply stops animating,
+    /// which is invisible in the crowd that produced it.
+    std::vector<DyingMob> dying_;
+    /// Petals and shots the server has destroyed, the same way.
+    std::vector<DyingPetal> dyingPetals_;
+
+    /// The last state each visible mob was drawn in. A Killed event arrives
+    /// AFTER the snapshot has already erased the entity, so the death
+    /// animation has nowhere else to read the mob's size and artwork from.
+    mutable std::unordered_map<std::uint32_t, MobDraw> mobShadows_;
+
+    /// What each flower-shaped mob's eyes are doing, keyed by netId.
+    struct MobEye {
+        /// The eased pupil offset itself, in the flower's radius=25 space.
+        Vec2 offset;
+        /// Where the body was DRAWN last frame, and the smoothed step between
+        /// frames. Only an upright mob needs them -- it has no facing to look
+        /// along, so its travel is where the direction comes from.
+        Vec2 lastPosition;
+        Vec2 step;
+        /// The last direction worth looking along. Held while the mob stands
+        /// still, so stopping does not roll the eyes back east.
+        double heading = 0;
+        /// mobGaze()'s eased look, and whether it has been seeded yet --
+        /// separately from `offset`, because the entry may already exist for
+        /// another reason by the first frame this is asked.
+        Vec2 gaze;
+        bool gazeLive = false;
+        /// The frame `offset` was last eased in. mobEye() eases once a frame
+        /// and answers the same again if asked twice -- a glitched ring mob
+        /// is painted into the web glitch atlas and then again in its place.
+        std::uint64_t easedFrame = 0;
+    };
+    mutable std::unordered_map<std::uint32_t, MobEye> mobEyes_;
+
+    /// What each mob's painter animates from (MobMotion), keyed by netId and
+    /// advanced once a frame by mobMotion(). florr keeps these numbers on the
+    /// mob object it draws, so they start when this client first draws the
+    /// mob and live as long as it keeps drawing it.
+    struct MobPace {
+        double clockMs = 0;
+        double distance = 0;
+        double speed = 0;
+        double aggro = 0;
+        double aggroMs = 0;
+        /// The frame clock and the drawn position at the last advance.
+        double lastSeconds = 0;
+        Vec2 lastPosition;
+        std::uint64_t advancedFrame = 0;
+        /// A stinger's reload as this client saw it: whether the server says
+        /// the missile is out, and how long since it went.
+        bool unloaded = false;
+        double unloadedMs = 0;
+    };
+    mutable std::unordered_map<std::uint32_t, MobPace> mobPaces_;
+
+    /// The hits each body is still flashing from, oldest first: when the
+    /// Damage event was ingested and the intensity it flashes at. Stamped
+    /// with the clock of the frame that first DRAWS it (see update()), so the
+    /// white first tenth is on screen rather than spent before the frame.
+    /// `share` is the total of the hits it stands for: every Damage event
+    /// ingested before that frame folds into the one unstamped flash.
+    struct HitFlash {
+        double atSeconds = -1.0;
+        double share = 0.0;
+        float intensity = 0.0f;
+    };
+    std::unordered_map<std::uint32_t, std::vector<HitFlash>> hitFlashes_;
+    /// The viewer's own loadout tiles, by slot, flashed the same way.
+    std::array<std::vector<HitFlash>, kLoadoutActiveSlots> slotFlashes_;
+
+    /// Folds a hit for `share` of the bar into the flash `hits` is yet to
+    /// draw, or starts one.
+    static void foldHit(std::vector<HitFlash>& hits, double share);
+    /// Stamps the flashes no frame has drawn yet with this one's clock, and
+    /// drops the ones that have run out.
+    void ageFlashes(std::vector<HitFlash>& hits) const;
+    /// What `hits` composite to now: see hitTint().
+    Color compositeFlashes(const std::vector<HitFlash>& hits) const;
+
+    /// The screen shake (see shakeOffset()): the decaying pool of hits on the
+    /// viewer's flower, the level eased toward "hit recently", when the last
+    /// hit landed and whether it is still being held, and this frame's push.
+    double shakePool_ = 0.0;
+    double shakeLevel_ = 0.0;
+    double shakeHitSeconds_ = 0.0;
+    bool shakeHeld_ = false;
+    Vec2 shakeOffset_;
+
+    /// Damage landed on each target dummy over the last ten seconds, which is
+    /// the window the TypeScript server reported DPS over.
+    mutable std::unordered_map<std::uint32_t, std::deque<std::pair<double, double>>> dummyDamage_;
+
+    /// Built on first use from the content registry; the registry is immutable
+    /// after load, so one pass is enough.
+    mutable std::vector<std::uint16_t> droppablePetals_;
+
+    /// The mobs drawn this frame, drained into the label pass afterwards. In
+    /// the browser build every bar is drawn after every body, so a mob drawn
+    /// later can never cover an earlier one's name.
+    mutable std::vector<MobDraw> mobLabels_;
+
+    /// Advanced by update(), so the parts of the draw and ingest paths that
+    /// need a clock (the invulnerability fade, the damage-number throttle) do
+    /// not each invent one.
+    double nowSeconds_ = 0;
+    /// When each sacrifice ritual in view was first drawn, by net id: the
+    /// pentagram is traced over kSacrificeRitualMillis from then. A ritual
+    /// first seen already complete (StateRitualComplete) is drawn whole.
+    mutable std::unordered_map<std::uint32_t, double> ritualSeen_;
+    /// The rituals the last draw had on screen still tracing, and how far each
+    /// has got -- the draw is where "on screen" is known, and the next update
+    /// turns them into shake (see shakeOffset()).
+    mutable std::vector<std::pair<std::uint32_t, double>> ritualsTracing_;
+    /// Per ritual, the clock its next shake push is due at.
+    std::unordered_map<std::uint32_t, double> ritualNextPush_;
+    /// The clock at the previous ingest: the drops emit the grains due between
+    /// it and now (see grainsDue), and the petals' glint roll is scaled by it.
+    double lastIngestSeconds_ = 0;
+
+    /// netId -> the moment invulnerability ended, or -1 while it still holds.
+    mutable std::unordered_map<std::uint32_t, double> invulnFade_;
+
+    /// Which realm the view being drawn is in; decides what goes under the
+    /// entities. Taken from the WorldView on each draw.
+    mutable Realm realm_ = Realm::Overworld;
+
+    mutable SectionTiming timing_;
+    mutable SectionOps ops_;
+    /// The op count at the last boundary, so each phase gets the difference.
+    mutable int opMark_ = 0;
+    static int canvasOps();
+    void chargeOps(int& bucket) const;
+
+    /// Mob damage numbers accumulate for 100 ms before one number is emitted,
+    /// so a ring of petals landing in the same tick reads as one hit and not
+    /// as a column of tiny ones. Keyed by net id with a poison bit above it:
+    /// one shared bucket would let a poison tick land inside a petal hit's
+    /// window and repaint the whole total purple.
+    std::unordered_map<std::uint64_t, double> damageTextAt_;
+    std::unordered_map<std::uint64_t, double> damagePending_;
+
+#ifdef __EMSCRIPTEN__
+    // The web build's glitch buffers: ONE atlas holding every body that is
+    // bursting this frame, and one tint surface holding its red and cyan
+    // copies side by side. Both are drawn once, before the entity pass, and
+    // only ever read from after it -- each glitched body then blits its bands
+    // and its fringe out of them in its own place in the draw order.
+    //
+    // Why not a scratch buffer per burst, as native has: in a browser every
+    // offscreen canvas that is redrawn in a frame is a GPU raster flush of its
+    // own, and redrawing one the page has already drawn from that frame also
+    // forces a whole-surface copy first. Per burst that was the body buffer
+    // plus a tint surface built twice -- six legendary glitch flowers traced
+    // at 9.7 flushes a frame and a crowd of twenty at 41, against 1 for any
+    // number of hornets -- and a buffer that only ever grew made each copy
+    // the size of the largest glitched body seen all session (92% GPU on an
+    // M2 after one 8x flower). The atlas adds two flushes to a frame, however
+    // many bodies are glitching: both of those scenes trace at 3. Native
+    // writes pixels in place and has neither cost, so it keeps its single
+    // buffer below.
+    struct GlitchCell {
+        int x = 0;
+        int y = 0;
+        /// The body square it holds, in canvas units -- drawGlitched's `side`
+        /// -- and the atlas pixels per unit it was laid down at.
+        int side = 0;
+        double scale = 1.0;
+    };
+    struct GlitchAtlas {
+        std::unique_ptr<Canvas> bodies;  ///< size x size
+        std::unique_ptr<Canvas> tints;   ///< 2*size x size: red copies, then cyan
+        int size = 0;
+        bool overflowed = false;         ///< ran out of room last frame: grow
+        std::uint64_t usedFrame = 0;
+    };
+    /// Lays down this frame's bursting bodies and their tints. `onScreen` is
+    /// the entity pass's own cull, so only what will be drawn takes a cell.
+    void prepareGlitchAtlas(const EntityMap&, const Camera&, Vec2 selfDrawn,
+                            double timeSeconds,
+                            const std::function<bool(Vec2, double)>& onScreen) const;
+    /// Shelf-packs one body into the atlas and paints it there. False when the
+    /// atlas is full, and the body then draws without the effect this frame.
+    bool placeGlitchBody(std::uint32_t seed, int side,
+                         const std::function<void(Canvas&)>& body) const;
+    mutable GlitchAtlas glitchAtlas_;
+    /// This frame's cells, by the seed drawGlitched is called with.
+    mutable std::unordered_map<std::uint32_t, GlitchCell> glitchCells_;
+    mutable int glitchShelfX_ = 0;
+    mutable int glitchShelfY_ = 0;
+    mutable int glitchShelfRow_ = 0;
+    mutable int glitchShelfWidth_ = 0;
+#else
+    // A single transparent buffer is reused one flower at a time for the
+    // Glitch flag. It grows with the largest on-screen flower and never needs
+    // to survive a frame, so sharing avoids a canvas allocation per player.
+    // Natively the chromatic fringe is folded into a tinted blit, so there is
+    // no second surface. The web build's atlas above explains why it cannot
+    // work this way.
+    mutable std::unique_ptr<Canvas> glitchBody_;
+    mutable int glitchSide_ = 0;
+#endif
+    /// Advanced once per draw(). What mobEye's once-a-frame easing counts by.
+    mutable std::uint64_t frame_ = 0;
+
+    /// The terrain chunk cache. Every chunk in it was baked for one map at one
+    /// scale and one chunk size; a frame that wants any other empties it.
+    struct TerrainChunk {
+        Canvas bitmap;
+        std::size_t bytes = 0;
+        /// The frame it was last blitted in, for eviction.
+        std::uint64_t usedFrame = 0;
+    };
+    struct TerrainChunks {
+        const MapData* map = nullptr;
+        /// Device pixels per world unit.
+        double scale = 0.0;
+        /// Cells along a chunk's side.
+        int cells = 0;
+        /// By (row << 32 | column) of the chunk.
+        std::unordered_map<std::uint64_t, TerrainChunk> chunks;
+        std::size_t bytes = 0;
+    };
+    mutable TerrainChunks terrainChunks_;
+#ifdef __EMSCRIPTEN__
+    bool terrainCache_ = true;
+#else
+    bool terrainCache_ = false;
+#endif
+};
+
+} // namespace flix
