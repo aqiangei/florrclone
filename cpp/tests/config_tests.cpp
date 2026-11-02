@@ -1869,3 +1869,16 @@ TEST(admin_golden_leaf_stacks_cannot_erase_reload_times) {
         return EquippedPetal{leaf, Rarity::Admin, Rarity::Admin};
     }), 0.5, 1e-9);
 }
+
+TEST(petal_invulnerable_flag_preserves_authored_health_without_allowing_breakage) {
+    ContentRegistry registry;
+    std::string error;
+    CHECK(test::loadFixtureContent(registry, tempDir(),
+        R"({"test_mob":{"health":10,"damage":1,"size":1,"speed":0}})",
+        R"({"protected":{"health":1,"damage":0,"size":1,"invulnerable":true},"ordinary":{"health":1,"damage":1,"size":1}})", error));
+    const auto protectedStats = registry.petalStats(registry.petalIndex("protected"), Rarity::Common);
+    const auto ordinaryStats = registry.petalStats(registry.petalIndex("ordinary"), Rarity::Common);
+    CHECK(!protectedStats.breakable);
+    CHECK(ordinaryStats.breakable);
+    CHECK_NEAR(protectedStats.health, 1.0, 1e-9);
+}

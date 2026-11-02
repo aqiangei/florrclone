@@ -236,7 +236,7 @@ Rect drawSlotSwitch(Canvas& canvas, const SlotCardLayout& layout, std::uint32_t 
     const Rect hit{rect.x - rim, rect.y - rim, rect.w + kSwitchBorder, rect.h + kSwitchBorder};
     const bool over = hit.contains(mouse);
     drawFlorrButton(canvas, rect, face, kSwitchBorder, kSwitchRadius, over, over && held);
-    outlinedText(canvas, "Switch", rect.x + rect.w * 0.5, rowMiddle,
+    outlinedText(canvas, language() == Language::Zh ? "切换" : "Switch", rect.x + rect.w * 0.5, rowMiddle,
                  panelLabel(kSwitchLabelSize, Align::Centre, Baseline::Middle), 1.0);
     return hit;
 }

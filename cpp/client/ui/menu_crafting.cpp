@@ -444,18 +444,29 @@ bool CraftingPanel::render(MenuContext& ctx) {
     // --- odds and the lines (buttons drawn after the grid, for hover tint) ---
     // A valid craft always has a chance above zero, even if it is a quarter of
     // a percent; a zero means nothing is staged, which reads as "?%".
-    std::string odds = "?% success chance";
+    std::string odds = language() == Language::Zh ? "成功率：?%" : "?% success chance";
     if (stagedPetal_ != kNoPetal) {
         const double percent = std::min(100.0, craftSuccessChance(stagedRarity_) * 100.0 +
                                                    cloverBonus(profile, stagedRarity_));
-        odds = percentText(percent) + " success chance";
+        odds = language() == Language::Zh ? "成功率：" + percentText(percent) : percentText(percent) + " success chance";
     }
     drawSlotChance(canvas, card, odds);
+    auto attemptCard = card;
+    attemptCard.chanceY += 20.0;
+    drawSlotChance(canvas, attemptCard, std::string(language() == Language::Zh ?
+        "合成尝试次数：" : "Craft attempts: ") + std::to_string(ctx.net.craftAttemptCount()));
 
-    drawSlotLine(canvas, card, "Combine 5 of the same petal to craft an upgrade");
+    if (outcome.attempts > 0) {
+        const bool chinese = language() == Language::Zh;
+        drawSlotLine(canvas, card, std::string(chinese ? "本次合成 ×" : "Crafted x") +
+            std::to_string(outcome.crafted) + (chinese ? "，消耗 ×" : ", consumed x") +
+            std::to_string(outcome.consumed));
+    } else {
+        drawSlotLine(canvas, card, language() == Language::Zh ? "使用5个相同花瓣合成更高稀有度" : "Combine 5 of the same petal to craft an upgrade");
+    }
     // The warning only once there is something to lose.
     if (stagedPetal_ != kNoPetal) {
-        drawSlotLine(canvas, card, "Failure will destroy 1-4 petals", std::nullopt, true);
+        drawSlotLine(canvas, card, language() == Language::Zh ? "失败会消耗1至4个花瓣" : "Failure will destroy 1-4 petals", std::nullopt, true);
     }
 
     // --- the grid ----------------------------------------------------------

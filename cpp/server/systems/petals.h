@@ -210,6 +210,7 @@ enum class PetalTrigger : std::uint8_t { Spawn, Collision, Interval, Break };
 /// and when they come back.
 class PetalSystem {
 public:
+    void onKill(World&, const ContentRegistry&, Entity player, double nowMillis);
     /// One tick. Phase 4: after movement, so the ring orbits where the flower
     /// ended up; before combat, so a petal hits from its final position.
     ///

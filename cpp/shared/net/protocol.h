@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 69;
+inline constexpr std::uint16_t kProtocolVersion = 72;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -261,7 +261,7 @@ enum class ServerMessage : std::uint8_t {
     Notice,             ///< u8 severity, str text
     Died,               ///< str killerName, u32 xpLost, u32 survivedTicks
     CraftResult,        ///< u8 success, u16 itemType, u8 rarity, u32 crafted,
-                        ///< u8 petalsReturned, str reason. `crafted` is how
+                        ///< u8 petalsReturned, str reason, u32 attempts, u32 consumed (v71). `crafted` is how
                         ///< many upgrades the pool produced and
                         ///< `petalsReturned` the sub-batch tail (0-4) handed
                         ///< back, which is what the ring's surviving slots
@@ -678,6 +678,7 @@ enum SelfFields : std::uint8_t {
 };
 
 /// What a networked entity is, which decides how the client draws it.
+// Version 72: Profile and ProfileDelta append u32 migration TP credit after stars.
 enum class EntityKind : std::uint8_t {
     Player = 0,
     Mob,
@@ -811,8 +812,10 @@ inline double readHealthFraction(ByteReader& in, bool wide) {
 ///
 /// The mask exists because most entities change one or two of these per tick:
 /// a drifting mob moves, a full-health petal does not, and a corpse changes
-/// nothing at all. Sending the mask costs a byte and saves the rest.
-enum UpdateFields : std::uint8_t {
+/// nothing at all. Sending the mask costs two bytes and saves the rest.
+// Version 70: Drop spawns append u32 quantity after state; update masks are u16.
+enum UpdateFields : std::uint16_t {
+    FieldDropQuantity = 1 << 8, ///< u32 stack quantity, only when changed
     /// f32 x, f32 y -- or, with FieldPositionDelta, the move from the last
     /// position sent.
     FieldPosition = 1 << 0,

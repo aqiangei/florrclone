@@ -326,8 +326,8 @@ inline int petalCopies(int copies, const SkillSet* skills) {
     return skills != nullptr ? skills->petalCopies(copies) : copies;
 }
 
-inline int availableTalentPoints(int level, const SkillSet& skills) {
-    const int free = level - skills.spent();
+inline int availableTalentPoints(int level, const SkillSet& skills, int migrationBonus = 0) {
+    const int free = level + migrationBonus - skills.spent();
     return free > 0 ? free : 0;
 }
 

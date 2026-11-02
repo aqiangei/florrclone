@@ -594,7 +594,7 @@ TEST(the_viewers_own_figures_ride_only_when_they_change) {
     // (a one-byte id gap, the mask, the u16 fraction).
     f.world.get<Health>(f.viewer).current = 60;
     const std::size_t hurt = f.tick(client, 3, 1080);
-    CHECK_EQ(hurt, idle + 8 + 4);
+    CHECK_EQ(hurt, idle + 8 + 5);
     CHECK_NEAR(client.self().health, 60.0, 1e-3);
     CHECK_NEAR(client.self().maxHealth, 100.0, 1e-3);
     CHECK_EQ(client.self().level, 5);
@@ -1710,4 +1710,55 @@ TEST(a_pets_shot_still_files_with_the_pets_after_the_pet_is_gone) {
 
     CHECK(foreign(client, f.world, shot));
     CHECK(petFlagged(client, f.world, shot));
+}
+TEST(drop_stack_quantity_round_trips_without_corrupting_following_entities) {
+    Fixture f;
+    const Entity drop=f.world.create();
+    f.world.add<Transform>(drop,Transform{{1100,1000},0});
+    f.world.add<NetId>(drop,NetId{f.ids.next()});
+    f.world.add<DropItem>(drop);f.world.get<DropItem>(drop).quantity=300;
+    f.world.add<Replicated>(drop,Replicated{net::EntityKind::Drop,0,2,Rarity::Super,0});
+    const Entity mob=f.addMob({1200,1000});WorldView client;
+    f.tick(client,1,1000);
+    CHECK_EQ(client.entities().at(netIdOf(f.world,drop)).dropQuantity,std::uint32_t(300));
+    CHECK_EQ(client.entities().at(netIdOf(f.world,mob)).typeIndex,std::uint16_t(7));
+    f.world.get<DropItem>(drop).quantity=600;
+    f.tick(client,2,1050);
+    CHECK_EQ(client.entities().at(netIdOf(f.world,drop)).dropQuantity,std::uint32_t(600));
+}
+#include "client/net_client.h"
+TEST(current_squad_updates_do_not_dismiss_another_squads_invite) {
+    NetClient client;net::Connection connection(-1,1,"test");
+    const auto deliver=[&](ByteWriter& w){ByteReader r(w.data(),w.size());client.onMessage(connection,r);CHECK(r.ok());};
+    ByteWriter auth;auth.u8(static_cast<std::uint8_t>(net::ServerMessage::AuthResult));
+    auth.u8(static_cast<std::uint8_t>(net::AuthStatus::Ok));auth.str("test-token");auth.str("player");auth.str("");deliver(auth);
+    const auto squad=[&](const char* id){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::SquadUpdate));w.boolean(true);w.str(id);w.boolean(false);w.u8(0);deliver(w);};
+    squad("old");
+    ByteWriter invite;invite.u8(static_cast<std::uint8_t>(net::ServerMessage::SquadInviteReceived));invite.str("new-member");invite.u8(0);deliver(invite);
+    CHECK(client.squadInvite().waiting);CHECK(client.squadInvite().justArrived);
+    squad("old");CHECK(client.squadInvite().waiting);
+    squad("new");CHECK(!client.squadInvite().waiting);
+}
+#include "client/ui/content_i18n.h"
+#include "client/ui/i18n.h"
+TEST(craft_attempts_and_material_cost_decode_and_accumulate) {
+    NetClient client;net::Connection connection(-1,1,"test");
+    const auto deliver=[&](ByteWriter& w){ByteReader r(w.data(),w.size());client.onMessage(connection,r);CHECK(r.ok());};
+    ByteWriter auth;auth.u8(static_cast<std::uint8_t>(net::ServerMessage::AuthResult));auth.u8(0);auth.str("test-token");auth.str("player");auth.str("");deliver(auth);
+    const auto craft=[&](std::uint32_t tries,std::uint32_t spent){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::CraftResult));w.boolean(true);w.u16(2);w.u8(7);w.u32(2);w.u8(3);w.str("");w.u32(tries);w.u32(spent);deliver(w);};
+    craft(13,37);CHECK_EQ(client.craftOutcome().crafted,2);CHECK_EQ(client.craftOutcome().consumed,std::uint32_t(37));CHECK_EQ(client.craftAttemptCount(),std::uint64_t(13));
+    craft(7,20);CHECK_EQ(client.craftAttemptCount(),std::uint64_t(20));
+}
+TEST(ported_petal_names_are_translated_in_inventory) {
+    const auto old=ui::language();ui::setLanguage(ui::Language::Zh);
+    CHECK_EQ(std::string(ui::petalNameTr("domino","Domino")),std::string("多米诺骨牌"));
+    CHECK_EQ(std::string(ui::petalNameTr("nazar_amulet","Nazar Amulet")),std::string("纳扎尔护符"));
+    ui::setLanguage(old);
+}
+#include "client/ui/chat_i18n.h"
+TEST(craft_quantity_and_cost_are_translated_in_replayed_system_messages) {
+    const auto old=ui::language();ui::setLanguage(ui::Language::Zh);
+    const auto text=ui::localizeChatText("<b style=\"color: #2bffa3;\">A Super Rose has been crafted by <b style=\"color: #00ff00;\">@smith</b> [<b style=\"color: yellow;\">smith</b>]</b> (crafted x85, consumed x19996)");
+    CHECK(text.find("crafted")==std::string::npos);CHECK(text.find("合成 ×85")!=std::string::npos);CHECK(text.find("消耗 ×19996")!=std::string::npos);
+    ui::setLanguage(old);
 }

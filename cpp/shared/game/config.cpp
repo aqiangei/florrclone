@@ -1241,7 +1241,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         ctx.warn(std::string("health is ") + typeName(src["health"]) +
                  "; treating the petal as unbreakable");
     }
-    p.breakable = hasHealthPool;
+    p.breakable = hasHealthPool && !ctx.boolean(src, "invulnerable");
     p.health = hasHealthPool ? ctx.range(src, "health", 1.0, 0.0, kMaxBaseStat) : 0.0;
 
     p.size = ctx.range(src, "size", 1.0, kMinSize, kMaxSize);
@@ -1892,6 +1892,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // every tier. See PetalConfig::noHealDurationMillis.
     s.noHealDurationMillis = c.noHealDurationMillis;
     s.heal = c.burstHeal * heal;
+    if (c.id == "totem") s.totemHealPerSecond = heal;
     s.healChargeMillis = c.burstHealChargeMillis;
     s.passiveHealPerSecond = c.passiveHeal * heal;
     // One ladder for the whole resource, doubling per tier -- see
@@ -2016,24 +2017,19 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
             1.1, 1.2, 1.3, 1.4, 1.6, 1.8, 2.1, 2.7, 3.5, 4.5,
         };
         s.modifiers.rotationSpeed = values[ti];
+    } else if (c.id == "mysterious_powder") {
+        s.modifiers.speed = 1.25; // original powder bonus; stacks additively per equipped slot
     } else if (c.id == "powder") {
         static constexpr std::array<double, kLadderRarityCount> values = {
             1.1, 1.1, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8,
         };
         s.modifiers.speed = values[ti];
     } else if (c.id == "soil") {
-        static constexpr std::array<double, kLadderRarityCount> health = {
-            1.1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9,
-        };
-        static constexpr std::array<double, kLadderRarityCount> speed = {
-            0.95, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.6,
-        };
-        static constexpr std::array<double, kLadderRarityCount> radius = {
-            1.05, 1.05, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8,
-        };
-        s.modifiers.maxHealth = health[ti];
-        s.modifiers.speed = speed[ti];
-        s.modifiers.playerRadius = radius[ti];
+        s.flowerHealthBonus = 50.0 * stat;
+        s.flowerRadiusBonus = 10.0;
+        s.modifiers.maxHealth = 1.0;
+        s.modifiers.playerRadius = 1.0;
+        s.modifiers.speed = 0.9;
     } else if (c.id == "air") {
         static constexpr std::array<double, kLadderRarityCount> values = {
             1.1, 1.2, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8, 3.0,

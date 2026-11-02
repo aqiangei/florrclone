@@ -17,6 +17,41 @@ struct Pair {
 };
 
 constexpr Pair kNameTr[] = {
+    {"Stick", "神秘木棍"},
+    {"Mana Orb", "法力宝珠"},
+    {"Magic Cotton", "魔法棉花"},
+    {"Magic Eye", "魔眼"},
+    {"Fragment", "碎片"},
+    {"Mecha Missile", "机甲导弹"},
+    {"Mark", "暗黑印记"},
+    {"Blood Sacrifice", "血祭"},
+    {"Heavy", "重物"},
+    {"Bean", "豆子"},
+    {"Dice", "骰子"},
+    {"Laser", "激光"},
+    {"Talisman of Evasion", "闪避护符"},
+    {"Mjolnir", "雷神之锤"},
+    {"Broccoli", "西兰花"},
+    {"Clay", "黏土"},
+    {"Electric Web", "电网"},
+    {"Mysterious Powder", "神秘粉末"},
+    {"Poker Chip", "筹码"},
+    {"Blood Stinger", "血刺"},
+    {"Ankh", "生命之符"},
+    {"Dead Leaf", "枯叶"},
+    {"Privet Berry", "女贞果"},
+    {"Moon Rock", "月岩"},
+    {"Totem", "图腾"},
+    {"Monstera", "龟背竹"},
+    {"Cogwheel", "齿轮"},
+    {"Shovel", "铲子"},
+    {"Domino", "多米诺骨牌"},
+    {"Card", "扑克牌"},
+    {"Mysterious Relic", "神秘遗物"},
+    {"Paranormal Goggles", "灵异护目镜"},
+    {"Pharaoh's Crown", "法老王冠"},
+    {"Corruption", "腐化"},
+    {"Nazar Amulet", "纳扎尔护符"},
     {"Action Test", "动作测试花瓣"},
     {"Action Test Petal", "动作测试花瓣"},
     {"Air", "空气"},
@@ -573,6 +608,13 @@ std::string localizeMarkupAware(std::string text) {
 
 std::string localizeChatText(std::string text) {
     if (!zh() || text.empty()) return text;
+    for (const auto& pair : {Pair{"crafted x", "合成 ×"}, Pair{"consumed x", "消耗 ×"}}) {
+        std::size_t at = 0;
+        while ((at = text.find(pair.en, at)) != std::string::npos) {
+            text.replace(at, std::char_traits<char>::length(pair.en), pair.zh);
+            at += std::char_traits<char>::length(pair.zh);
+        }
+    }
     return localizeMarkupAware(std::move(text));
 }
 

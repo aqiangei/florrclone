@@ -1375,7 +1375,13 @@ inline bool claimed(const std::vector<LootClaim>& claims, Entity body,
     return false;
 }
 
+struct TotemRegeneration {
+    struct Stack { double expiresAtMillis = 0; double perSecond = 0; };
+    std::vector<Stack> stacks;
+};
+
 struct DropItem {
+    std::uint32_t quantity = 1;
     std::uint16_t configIndex = 0;
     Rarity rarity = Rarity::Common;
     /// Only these players may pick it up. Each eligible player receives one
@@ -1488,6 +1494,13 @@ struct LightningClock {
 /// stay exactly what the burst already had. All it wants is a different colour
 /// on the number.
 struct LightningBurst {};
+
+struct WebFlight {
+    Vec2 from; Vec2 to;
+    double elapsed = 0;
+    double duration = 0.35;
+    double radius = 0;
+};
 
 struct GroundEffect {
     GroundEffectKind kind = GroundEffectKind::Poison;
@@ -1627,6 +1640,8 @@ FLIX_COMPONENT(flix::WebClock);
 FLIX_COMPONENT(flix::DropClock);
 FLIX_COMPONENT(flix::NetId);
 FLIX_COMPONENT(flix::Replicated);
+FLIX_COMPONENT(flix::TotemRegeneration);
+FLIX_COMPONENT(flix::WebFlight);
 
 namespace flix {
 

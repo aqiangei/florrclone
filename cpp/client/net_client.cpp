@@ -320,6 +320,7 @@ void NetClient::forgetAccount() {
     guildInvite_ = GuildInvite{};
     squadInvite_ = SquadInvite{};
     craftOutcome_ = CraftOutcome{};
+    craftAttemptCount_ = 0;
     oracleOutcome_ = OracleOutcome{};
     oracleReadyAtMillis_ = 0;
     tradeOutcome_ = TradeOutcome{};
@@ -1314,6 +1315,7 @@ void NetClient::handleProfile(ByteReader& reader) {
     next.totalXp = reader.f64();
     next.level = reader.u16();
     next.stars = reader.f64();
+    next.talentPointBonus = static_cast<int>(reader.u32());
 
     const std::uint16_t stackCount = reader.u16();
     next.inventory.reserve(stackCount);
@@ -1385,6 +1387,7 @@ void NetClient::handleProfileDelta(ByteReader& reader) {
     const double totalXp = reader.f64();
     const int level = reader.u16();
     const double stars = reader.f64();
+    const auto talentPointBonus = reader.u32();
 
     struct Group {
         std::uint16_t petalIndex;
@@ -1416,6 +1419,7 @@ void NetClient::handleProfileDelta(ByteReader& reader) {
     profile_.totalXp = totalXp;
     profile_.level = level;
     profile_.stars = stars;
+    profile_.talentPointBonus = static_cast<int>(talentPointBonus);
     std::vector<Profile::Stack>& bag = profile_.inventory;
     for (const Group& group : groups) {
         // The group's stacks become exactly the ones listed. Overwritten in
@@ -1456,7 +1460,10 @@ void NetClient::handleCraftResult(ByteReader& reader) {
         std::min<std::uint32_t>(reader.u32(), static_cast<std::uint32_t>(kMaxStackCount)));
     outcome.petalsReturned = reader.u8();
     outcome.reason = reader.str();
+    outcome.attempts = reader.u32();
+    outcome.consumed = reader.u32();
     if (!reader.ok()) return;
+    craftAttemptCount_ += outcome.attempts;
     outcome.pending = true;
     craftOutcome_ = std::move(outcome);
 }
@@ -1666,9 +1673,10 @@ void NetClient::handleSquadUpdate(ByteReader& reader) {
         }
     }
     if (!reader.ok()) return;
+    const bool changedSquad = squad_.id != next.id;
     squad_ = std::move(next);
-    // Joining answers the outstanding invite the same way a guild update does.
-    if (squad_.inSquad) squadInvite_ = {};
+    // A refresh of the current party must not dismiss another party's invitation.
+    if (changedSquad && squad_.inSquad) squadInvite_ = {};
 }
 
 void NetClient::handleGuildUpdate(ByteReader& reader) {
@@ -1965,6 +1973,9 @@ void NetClient::handleChatHistory(ByteReader& reader) {
         line.channel = static_cast<net::ChatChannel>(reader.u8());
         line.author = reader.str();
         line.text = reader.str();
+        if (line.channel == net::ChatChannel::System || line.channel == net::ChatChannel::Squad ||
+            line.author.empty() || line.author == "System")
+            line.text = ui::localizeChatText(std::move(line.text));
         // Stamped with when it was SAID. No bubble and no speaker: whoever
         // said it may have left, and a net id from then may be somebody else
         // now.

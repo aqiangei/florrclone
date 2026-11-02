@@ -950,7 +950,8 @@ TEST(a_super_craft_is_announced_in_chat_and_written_to_the_feed) {
     CHECK_EQ(client.notifications().size(), static_cast<std::size_t>(1));
     const NotificationEntry& notice = client.notifications().front();
     CHECK_EQ(static_cast<int>(notice.kind), static_cast<int>(net::NotificationKind::SuperCraft));
-    CHECK_EQ(notice.message, std::string("A Super Rose has been crafted by @smith [smith]"));
+    CHECK(notice.message.find("A Super Rose has been crafted by @smith [smith] (crafted x" + std::to_string(client.craftOutcome().crafted)) == 0);
+    CHECK(notice.message.find(", consumed x" + std::to_string(20000 - client.craftOutcome().petalsReturned)) != std::string::npos);
     CHECK(notice.message.find('<') == std::string::npos);
 }
 

@@ -316,8 +316,17 @@ void App::drawHud(Canvas& canvas, double time) {
                    : std::string("Flower"));
     text(canvas, plate, kHudBarX + kHudBarWidth * 0.5, kHudHealthY + kHudBarHeight * 0.5, label);
 
+    const double manaOffset = self.maxMana > 0.0 ? 20.0 : 0.0;
+    if (self.maxMana > 0.0) {
+        const double y = kHudHealthY + kHudBarHeight + 10.0;
+        hudBar(canvas, kHudXpX, y, kHudXpWidth, kHudXpHeight,
+               clamp(self.mana / self.maxMana, 0.0, 1.0) * kHudXpWidth, kMana, kHudXpPad);
+        auto manaLabel = label;manaLabel.size = kHudLevelSize;
+        text(canvas, formatNumber(self.mana, true) + "/" + formatNumber(self.maxMana, true),
+             kHudXpX + kHudXpWidth * 0.5, y + kHudXpHeight * 0.5, manaLabel);
+    }
     const LevelProgress progress = levelFromTotalXp(self.totalXp);
-    hudBar(canvas, kHudXpX, kHudXpY, kHudXpWidth, kHudXpHeight,
+    hudBar(canvas, kHudXpX, kHudXpY + manaOffset, kHudXpWidth, kHudXpHeight,
            progress.xpForNext > 0 ? progress.xpIntoLevel / progress.xpForNext * kHudXpWidth : 0.0,
            kXpBar, kHudXpPad);
     TextStyle levelLabel = label;
@@ -327,7 +336,7 @@ void App::drawHud(Canvas& canvas, double time) {
                        formatNumber(progress.xpIntoLevel, true) + "/" +
                        formatNumber(progress.xpForNext, true)
                  : "Lvl " + std::to_string(progress.level),
-         kHudXpX + kHudXpWidth * 0.5, kHudXpY + kHudXpHeight * 0.5, levelLabel);
+         kHudXpX + kHudXpWidth * 0.5, kHudXpY + manaOffset + kHudXpHeight * 0.5, levelLabel);
 
     // The flower goes down LAST, so it covers the rounded left cap of the
     // health bar. Drawing it first would leave a black stub poking out of it.
@@ -424,7 +433,8 @@ void App::drawSquadHud(Canvas& canvas, double time) {
     // Where the main HUD actually ends: the XP bar's plate, or the bottom of
     // the avatar, whichever hangs further down.
     const double hudBottom =
-        std::max(kHudXpY + kHudXpHeight + kHudXpPad, kFlowerCentreY + kHudFlowerBody);
+        std::max(kHudXpY + (net_.view().self().maxMana > 0.0 ? 20.0 : 0.0) +
+                     kHudXpHeight + kHudXpPad, kFlowerCentreY + kHudFlowerBody);
     double centreY = hudBottom + 78.0 * kScale;
 
     const Vec2 eye = net_.view().self().position;

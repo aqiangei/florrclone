@@ -1,0 +1,12 @@
+{
+  "sourceAccounts": 549,
+  "savedUsers": 549,
+  "savedPlayers": 549,
+  "missingAccounts": 0,
+  "unexpectedAuthChanges": 0,
+  "accountsWithFewerItems": 0,
+  "invalidXPRecords": 0,
+  "originalPasswordLoginPassed": true,
+  "wrongPasswordRejected": true,
+  "restartLoginPassed": true
+}

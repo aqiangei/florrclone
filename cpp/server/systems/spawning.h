@@ -51,6 +51,7 @@
 // populates each one whole, with live entities. Nothing in this file stocks
 // them, and nothing in them is ever latent.
 
+#include "shared/game/super_population.h"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -804,7 +805,8 @@ private:
     /// the slot.
     bool stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                    SpawnZone& zone, std::uint16_t zoneIndex, const std::vector<Viewer>& viewers,
-                   Rng& rng, double nowMillis, Slot slot = Slot::TopUp, Vec2 lostAt = Vec2{});
+                   Rng& rng, double nowMillis, Slot slot = Slot::TopUp, Vec2 lostAt = Vec2{},
+                   bool fixedSuper = false);
 
     /// Gives each band back the population that died in it, where it died.
     ///
@@ -1040,6 +1042,10 @@ private:
         Entity entity = NULL_ENTITY;
     };
     std::vector<TopBoss> topBosses_;
+    struct SuperMapState { Realm realm; SuperPopulation population; };
+    std::vector<SuperMapState> superPopulations_;
+    void stockSupers(World&, const Terrain&, const ContentRegistry&,
+                     const std::vector<Viewer>&, Rng&, double);
     std::vector<Entity> culled_;
     const WorldMaps* zoneMaps_ = nullptr;
     std::uint32_t zoneContentHash_ = 0;

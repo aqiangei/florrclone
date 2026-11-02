@@ -989,6 +989,9 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
             out(splitRefusal);
             return;
         }
+        // An invitation is the entry point; no separate create step is needed.
+        Squad* inviting = squadOrCreate(session, connection);
+        if (inviting == nullptr) { out("Failed to create a squad."); return; }
         if (target.bot()) {
             // A bot has nobody to answer an invitation, so it joins outright.
             // Any squadmate may pull one in (same rule as invite()).

@@ -1,0 +1,263 @@
+{
+  "clients": 32,
+  "durationSeconds": 30,
+  "movingWithAttackInput": true,
+  "results": [
+    {
+      "client": 0,
+      "snapshots": 601,
+      "bytes": 212683,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 1,
+      "snapshots": 601,
+      "bytes": 200379,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 2,
+      "snapshots": 601,
+      "bytes": 181477,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 3,
+      "snapshots": 601,
+      "bytes": 163590,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 4,
+      "snapshots": 601,
+      "bytes": 212765,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 5,
+      "snapshots": 601,
+      "bytes": 184585,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 6,
+      "snapshots": 601,
+      "bytes": 206838,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 7,
+      "snapshots": 601,
+      "bytes": 198784,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 8,
+      "snapshots": 601,
+      "bytes": 196618,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 9,
+      "snapshots": 601,
+      "bytes": 181978,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 10,
+      "snapshots": 601,
+      "bytes": 212621,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 11,
+      "snapshots": 601,
+      "bytes": 212934,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 12,
+      "snapshots": 601,
+      "bytes": 210759,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 13,
+      "snapshots": 601,
+      "bytes": 179122,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 14,
+      "snapshots": 601,
+      "bytes": 197095,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 15,
+      "snapshots": 601,
+      "bytes": 181702,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 16,
+      "snapshots": 601,
+      "bytes": 181585,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 17,
+      "snapshots": 601,
+      "bytes": 179356,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 18,
+      "snapshots": 601,
+      "bytes": 180035,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 19,
+      "snapshots": 601,
+      "bytes": 176584,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 20,
+      "snapshots": 601,
+      "bytes": 171551,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 21,
+      "snapshots": 601,
+      "bytes": 205844,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 22,
+      "snapshots": 601,
+      "bytes": 191869,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 23,
+      "snapshots": 601,
+      "bytes": 207401,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 24,
+      "snapshots": 601,
+      "bytes": 204218,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 25,
+      "snapshots": 601,
+      "bytes": 185989,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 26,
+      "snapshots": 601,
+      "bytes": 180566,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 27,
+      "snapshots": 601,
+      "bytes": 177733,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 28,
+      "snapshots": 601,
+      "bytes": 202649,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 29,
+      "snapshots": 601,
+      "bytes": 124981,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 30,
+      "snapshots": 601,
+      "bytes": 130924,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    },
+    {
+      "client": 31,
+      "snapshots": 600,
+      "bytes": 176922,
+      "p95ServerGapMs": 67.28898900000786,
+      "maxServerGapMs": 68.46529899998859,
+      "closed": false
+    }
+  ]
+}

@@ -1120,6 +1120,9 @@ struct PetalStats {
     double healChargeMillis = 0;
     double passiveHealPerSecond = 0;
     /// Mana added to the wearer's pool while this petal is worn, this tier.
+    double totemHealPerSecond = 0;
+    double flowerHealthBonus = 0;
+    double flowerRadiusBonus = 0;
     double maxMana = 0;
     double mana = 0;                    ///< burst mana per charge
     double manaChargeMillis = 0;

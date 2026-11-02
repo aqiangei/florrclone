@@ -1,0 +1,20 @@
+上线迁移记录（2026-11-02）
+目标：http://154.219.105.161:8088/
+已于北京时间约23:44完成切换。先停止旧服务，使最终快照不再变化，再转换并启动C++ WASM服务。
+最终迁移：960个账号、960份玩家存档、6个公会。保留原账号盐和密码哈希，旧会话不迁移，玩家使用原账号密码重新登录。
+源快照：服务器 /var/lib/florrclone/cutover-backups/cpp-20261102T153000Z/original-inventory.json（私有权限）；本地 migrate/latest-final.json（git忽略）。
+当前版本目录：/opt/florrclone/releases/cpp-20261102T153000Z
+当前数据库：/var/lib/florrclone/cpp-state/inventory.json
+旧数据库保持原位：/var/lib/florrclone/inventory.json
+备份目录保存原systemd单元、Nginx配置、原版本路径、完整原始存档，以及rollback.cjs。
+回滚命令（服务器root）：/opt/florrclone/runtime/bin/node /var/lib/florrclone/cutover-backups/cpp-20261102T153000Z/rollback.cjs
+回滚会恢复旧程序及旧数据库路径；切换后新产生的进度仍留在C++数据库，回滚前须注意两份进度差异。
+验证：
+- 960个账号密码哈希及盐逐一核对；背包数量、装备和备用槽数量、经验值、公会数量校验通过。
+- 新服务首次保存后逐一核对960份数据：经验值及背包加装备总数未减少。
+- 通过线上Nginx 8088 WebSocket验证aqa旧密码成功，错误密码拒绝；经验639391、背包291条目与最终快照一致。
+- 公网首页200、WASM资源200、健康检查正常；后端仅监听127.0.0.1:8788。
+- systemd自动重启次数0，启动后内存约346MiB；隔离测试服务已停止。
+- 旧数据库和新数据库、管理密钥均未纳入Git。
+限制：本次证明迁移和启动链路正常，不等于所有玩法和长时间多人压力验收全部通过。旧游戏与新游戏的等级曲线不同，经验总量保留，但同一经验显示等级可能不同（aqa原96级，新106级）。旧版特有状态保留于迁移元数据或完整原始备份，不保证所有旧特有机制由新引擎使用。
+部署附加工具：scripts/deploy-runtime.cjs绑定环回地址并提供健康检查；不引入npm运行依赖。

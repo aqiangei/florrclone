@@ -584,6 +584,12 @@ bool AccountPanel::render(MenuContext& ctx) {
                  bodyStyle(13.0, kGuestBadge));
         }
         p.cy += 30.0;
+        p.note(trEnZh("Previous site: http://154.219.105.161:8088/",
+                      "旧站：http://154.219.105.161:8088/"), kGuestBadge);
+        p.note(trEnZh("Returning players: log in below with your previous username and password.",
+                      "旧站玩家请用原账号和密码登录。"), kGuestBadge);
+        p.note(trEnZh("No need to register again. See Log In to Another Account below.",
+                      "无需重新注册，请使用下方“登录其他账户”。"), kGuestBadge);
 
         // --- username -----------------------------------------------------------
         p.heading(trEnZh("Username", "用户名"));
@@ -634,6 +640,8 @@ bool AccountPanel::render(MenuContext& ctx) {
 
         // --- another account ------------------------------------------------------
         p.heading(trEnZh("Log In to Another Account", "登录其他账户"));
+        p.note(trEnZh("Old-site account? Use your original username and password here.",
+                      "已有旧站账号？请在这里输入原账号和密码。"), kGuestBadge);
         if (!profile.hasPassword) {
             p.note(trEnZh("Set a password first, or this account is lost when you switch.",
                           "请先设置密码，否则切换账户后将无法找回。"),

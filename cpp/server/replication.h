@@ -61,6 +61,7 @@ public:
         /// bar sat still through the whole fight.
         double healthFraction = -1;
         double radius = -1;
+        std::uint32_t dropQuantity = 1;
         std::uint8_t state = 0xFF;    ///< 0xFF is not a valid state, forcing a first send
         std::uint8_t faceFlags = 0xFF;
         std::uint16_t equipFlags = 0xFFFF;

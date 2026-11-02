@@ -1899,6 +1899,57 @@ std::uint16_t SpawnSystem::chooseZoneMobType(const ContentRegistry& content,
 // Stocking the map
 // ---------------------------------------------------------------------------
 
+void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
+                              const ContentRegistry& content, const std::vector<Viewer>& viewers,
+                              Rng& rng, double nowMillis) {
+    for (const SpawnZone& zone : zones_) {
+        if (zone.prestige) continue;
+        const auto found = std::find_if(superPopulations_.begin(), superPopulations_.end(),
+            [&](const SuperMapState& state) { return state.realm == zone.realm; });
+        if (found == superPopulations_.end()) superPopulations_.push_back({zone.realm, {}});
+    }
+    for (SuperMapState& state : superPopulations_) {
+        int living = 0;
+        ambient_->each([&](Entity e, MobTag&, Transform& transform, Body&, MobType& type, AmbientMob&) {
+            if (transform.realm == state.realm && type.rarity == Rarity::Super && isWholeAnimal(world, e)) ++living;
+        });
+        state.population.observe(living, nowMillis);
+        std::vector<std::uint16_t> candidates;
+        for (std::size_t i = 0; i < zones_.size(); ++i)
+            if (zones_[i].realm == state.realm && !zones_[i].prestige && !zones_[i].singular)
+                candidates.push_back(static_cast<std::uint16_t>(i));
+        std::sort(candidates.begin(), candidates.end(), [&](auto a, auto b) {
+            return zones_[a].difficulty > zones_[b].difficulty;
+        });
+        // Every authored habitat can host a Super; choosing only the highest
+        // threat bands excluded the jungle's non-termite species.
+        for (int attempt = 0; attempt < 80 && state.population.ready(nowMillis) && !candidates.empty(); ++attempt) {
+            // Weight habitats by their actual area, not annotation count:
+            // a dozen tiny termite plots must not outweigh the jungle floor.
+            double totalArea = 0;std::vector<double> areas;
+            for (auto candidate : candidates) {
+                const auto& zone = zones_[candidate];
+                double area = zone.bounds.w * zone.bounds.h;
+                if (zone.polygon.size() >= 3) {
+                    area = 0;
+                    for (std::size_t i = 0; i < zone.polygon.size(); ++i) {
+                        const auto a = zone.polygon[i];
+                        const auto b = zone.polygon[(i + 1) % zone.polygon.size()];
+                        area += a.x * b.y - b.x * a.y;
+                    }
+                    area = std::fabs(area) * 0.5;
+                }
+                areas.push_back(std::max(1.0, area));totalArea += areas.back();
+            }
+            double roll = rng.unit() * totalArea;std::size_t chosen = 0;
+            while (chosen + 1 < areas.size() && roll >= areas[chosen]) roll -= areas[chosen++];
+            const auto index = candidates[chosen];
+            if (stockZone(world, terrain, content, zones_[index], index, viewers, rng, nowMillis,
+                          Slot::TopUp, {}, true)) state.population.spawned();
+        }
+    }
+}
+
 void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
                                   const ContentRegistry& content,
                                   const std::vector<Viewer>& viewers, Rng& rng,
@@ -1906,6 +1957,7 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
     // No band anywhere means no ambient mob anywhere. There is no second pass
     // behind this one that would cover the ground the author left unbanded.
     if (zones_.empty()) return;
+    stockSupers(world, terrain, content, viewers, rng, nowMillis);
 
     for (std::size_t index = 0; index < zones_.size(); ++index) {
         SpawnZone& zone = zones_[index];
@@ -1935,7 +1987,7 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
 bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                             SpawnZone& zone, std::uint16_t zoneIndex,
                             const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
-                            Slot slot, Vec2 lostAt) {
+                            Slot slot, Vec2 lostAt, bool fixedSuper) {
     // Everything about this happens in the band's OWN realm: the map it is
     // drawn on has its own size, its own walls and its own population, and the
     // same numbers on the overworld describe somewhere else entirely.
@@ -2010,6 +2062,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     Rarity rarity = forcedTier >= 0 ? clampLadderRarity(forcedTier)
                                    : rollSpawnRarity(zone.difficulty, luck, rng);
     if (rarityIndex(rarity) > rarityIndex(Rarity::Super)) rarity = Rarity::Super;
+    if (fixedSuper) rarity = Rarity::Super;
     // A prestige twin's band grows what the plain band would, a tier up --
     // and still never past super (shared/game/prestige.h).
     if (zone.prestige) rarity = prestigeRarity(rarity);
@@ -2031,6 +2084,8 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // super square can come out the biome's unique like any other super.
     type = rollStandIn(content, type, rarity, rng);
 
+    if (fixedSuper && content.mob(type).neverAmbient) return false;
+
     // A super may come out a unique or an apex instead, if its biome's clock
     // for that tier has run down. After the type roll, which is safe because a
     // mob that is ambient at super is ambient at every tier above it; and never
@@ -2038,8 +2093,20 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // in a prestige twin, which has no clocks.
     bool upgraded = false;
     if (rarity == Rarity::Super && !zone.prestige && !content.mob(type).neverAmbient) {
-        rarity = rollBossUpgrade(world, zone, nowMillis);
+        if (!fixedSuper) rarity = rollBossUpgrade(world, zone, nowMillis);
         upgraded = rarity != Rarity::Super;
+        if (!fixedSuper && !upgraded) rarity = Rarity::Ultra;
+    }
+
+    // Only the Super leafbug family gets the requested 50/50 variant roll.
+    // Do this after boss upgrades so other rarities retain their authored weights.
+    if (rarity == Rarity::Super) {
+        const auto leafbug = content.mobIndex("leafbug");
+        const auto golden = content.mobIndex("golden_leafbug");
+        if (leafbug != kInvalidIndex && golden != kInvalidIndex &&
+            (type == leafbug || type == golden)) {
+            type = rng.unit() < 0.5 ? leafbug : golden;
+        }
     }
 
     if (!alwaysAwake(content, type, rarity, zone.prestige)) {

@@ -1002,7 +1002,7 @@ void App::drawDailyStreak(Canvas& canvas, double time) {
     status.baseline = Baseline::Top;
     status.fill = claimed ? kPaper : kWarning;
     text(canvas,
-         claimed ? ("Claimed · Day " + std::to_string(streak.streak)) : "Ready to claim!",
+         claimed ? ((language() == Language::Zh ? "已领取 · 第" : "Claimed · Day ") + std::to_string(streak.streak) + (language() == Language::Zh ? "天" : "")) : (language() == Language::Zh ? "可以领取！" : "Ready to claim!"),
          card.x + card.w * 0.5, card.y + 74.0, status);
 
     TextStyle countdown;
@@ -1010,7 +1010,7 @@ void App::drawDailyStreak(Canvas& canvas, double time) {
     countdown.align = Align::Left;
     countdown.baseline = Baseline::Top;
     text(canvas,
-         claimed ? ("Next: " + formatDuration(streak.nextClaimAtMillis - now)) : "Next: now",
+         claimed ? ((language() == Language::Zh ? "下次领取：" : "Next: ") + formatDuration(streak.nextClaimAtMillis - now)) : (language() == Language::Zh ? "现在可领取" : "Next: now"),
          card.x + 12.0, card.y + 100.0, countdown);
     text(canvas, std::string(tr(Msg::Resets)) + formatDuration(streak.streakExpiresAtMillis - now),
          card.x + 12.0, card.y + 120.0, countdown);

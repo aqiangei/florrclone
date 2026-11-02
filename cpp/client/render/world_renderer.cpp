@@ -1080,6 +1080,7 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         record.position = entity.position;
         record.typeIndex = entity.typeIndex;
         record.rarity = entity.rarity;
+        record.quantity = entity.dropQuantity;
         record.seenThisFrame = true;
         if (!firstSight) continue;
 
@@ -4006,7 +4007,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                 rotation += spawn->second.rotation * (1.0 - eased);
             }
             drawDrop(canvas, camera, where, entity.typeIndex, entity.rarity, rotation, 1.0, 1.0,
-                     timeSeconds);
+                     timeSeconds, entity.dropQuantity);
             break;
         }
 
@@ -4091,7 +4092,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
 
 void WorldRenderer::drawDrop(Canvas& canvas, const Camera& camera, Vec2 at,
                              std::uint16_t typeIndex, Rarity rarity, double rotation,
-                             double scale, double alpha, double timeSeconds) const {
+                             double scale, double alpha, double timeSeconds, std::uint32_t quantity) const {
     // The pulse rides on top of whatever the animations asked for, so a drop
     // flying to its taker or spinning out keeps breathing as it goes.
     scale *= 1.0 + std::sin(timeSeconds * kDropPulseRate) * kDropPulseAmount;
@@ -4111,6 +4112,7 @@ void WorldRenderer::drawDrop(Canvas& canvas, const Camera& camera, Vec2 at,
     if (rotation != 0) canvas.rotate(static_cast<float>(rotation));
 
     ui::ItemTile tile;
+    if (quantity > 1) tile.badge = "x" + std::to_string(quantity);
     tile.petalIndex = typeIndex;
     tile.rarity = rarity;
     tile.shadow = true;
@@ -4634,7 +4636,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                 if (!onScreen(where, kDropBackdropSide)) continue;
                 ++timing_.itemCount;
                 drawDrop(canvas, camera, where, drop.typeIndex, drop.rarity, rotation, scale,
-                         alpha, timeSeconds);
+                         alpha, timeSeconds, drop.quantity);
             }
         }
 

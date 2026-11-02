@@ -124,7 +124,9 @@ for (const acct of picked) {
   const level = Math.max(1, Number(save.level) || 1);
   const xpInto = Number(save.xp) || 0;
   const inventory = convertInventory(save.inventory);
-  const loadout = convertLoadout(save.loadout);
+  const active = [...(save.loadout || [])];
+  while (active.length < 10) active.push(null);
+  const loadout = convertLoadout([...active.slice(0, 10), ...(save.reserve || []).slice(0, 10)]);
   const skills = convertTalents(save.talents);
   const stars = Number(save.shop && save.shop.stars) || 0;
 
@@ -151,6 +153,16 @@ for (const acct of picked) {
     inventory,
     loadout,
     skills,
+    loadoutPresets: Object.fromEntries((acct.loadoutPresets || []).map((preset, i) => {
+      if (!preset) return null;
+      const slots = [...(preset.loadout || [])];
+      while (slots.length < 10) slots.push(null);
+      return [`preset_${i + 1}`, convertLoadout([...slots.slice(0, 10), ...(preset.reserve || []).slice(0, 10)])];
+    }).filter(Boolean)),
+    legacyFlorrcloneSave: Object.fromEntries(Object.entries(save).filter(([key]) =>
+      !['inventory', 'loadout', 'reserve', 'talents', 'mobKills', 'level', 'xp'].includes(key))),
+    legacyFlorrcloneAccount: Object.fromEntries(Object.entries(acct).filter(([key]) =>
+      !['id', 'username', 'salt', 'passwordHash', 'save', 'loadoutPresets', 'activeRun'].includes(key))),
     mobKills: convertMobKills(save.mobKills),
   };
   report.accounts++;
@@ -171,7 +183,21 @@ for (const acct of picked) {
   }
 }
 
-const out = {ipSalt: 'migrate', customSkins: {}, players, users, sessions: {}};
+const usernamesById = new Map(picked.map(a => [String(a.id || a.username), String(a.username || '').trim()]));
+const guilds = {};
+for (const guild of Object.values(src.guilds || {})) {
+  if (onlyUser) continue;
+  const members = (guild.members || []).map(id => usernamesById.get(String(id))).filter(Boolean);
+  const leader = usernamesById.get(String(guild.leader));
+  if (!leader || !members.includes(leader)) throw new Error('Guild leader/member migration is incomplete');
+  const name = String(guild.name || guild.id);
+  if (guilds[name]) throw new Error('Duplicate guild name during migration');
+  guilds[name] = {name, displayName: name, description: '', leaderUsername: leader,
+    memberUsernames: members, createdAt: Date.now(), legacyFlorrcloneGuild: guild};
+}
+const out = {ipSalt: 'migrate', customSkins: {}, players, users, sessions: {}, guilds,
+  legacyFlorrcloneRoot: Object.fromEntries(Object.entries(src).filter(([key]) =>
+    !['accounts', 'sessions'].includes(key)))};
 fs.mkdirSync(path.dirname(outPath), {recursive: true});
 fs.writeFileSync(outPath, JSON.stringify(out));
 console.log(JSON.stringify({outPath, ...report}, null, 2));

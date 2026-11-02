@@ -122,6 +122,7 @@ struct DropSpawn {
 /// its pickup flight or the 300 ms its despawn spin runs. Everything the plate
 /// needs is copied: the entity record is gone by the time the removal is seen.
 struct DyingDrop {
+    std::uint32_t quantity = 1;
     std::uint32_t netId = 0;
     Vec2 position;
     std::uint16_t typeIndex = 0;
@@ -420,7 +421,8 @@ private:
     /// idle pulse `timeSeconds` drives. The petal artwork itself stays frozen
     /// at frame zero, as the reference bakes it: only the plate breathes.
     void drawDrop(Canvas&, const Camera&, Vec2 at, std::uint16_t typeIndex, Rarity,
-                  double rotation, double scale, double alpha, double timeSeconds) const;
+                  double rotation, double scale, double alpha, double timeSeconds,
+                  std::uint32_t quantity = 1) const;
 
     /// Everything one mob body needs that does not come from its config. The
     /// death animation replays a mob the snapshot has already dropped, so this

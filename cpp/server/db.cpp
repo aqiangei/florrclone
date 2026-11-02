@@ -189,6 +189,7 @@ PlayerRecord playerFromJson(const Json& value) {
     if (!value.isObject()) return record;
 
     record.totalXp = value["totalXP"].asDouble(0);
+    record.talentPointBonus = std::max(0, value["talentPointBonus"].asInt(0));
     record.stars = value["stars"].asDouble(0);
     record.dailyStreak = value["dailyStreak"].asInt(0);
     record.lastStreakDate = value["lastStreakDate"].asString();
@@ -261,13 +262,14 @@ PlayerRecord playerFromJson(const Json& value) {
 
     collectExtras(value, {"totalXP", "stars", "dailyStreak", "lastStreakDate", "renderFlags",
                           "equippedSkinId", "inventory", "mobKills", "loadout",
-                          "loadoutInInventory", "loadoutPresets", "skills", "tp", "mazeTotalXP", "mazeSkills", "mazeTp"},
+                          "loadoutInInventory", "loadoutPresets", "skills", "tp", "talentPointBonus", "mazeTotalXP", "mazeSkills", "mazeTp"},
                   record.extra);
     return record;
 }
 
 Json playerToJson(const PlayerRecord& record) {
     Json out = Json::object();
+    if (record.talentPointBonus > 0) out["talentPointBonus"] = record.talentPointBonus;
     out["totalXP"] = record.totalXp;
     // Live, an equipped petal is out of the bag. Stored, it is still in it,
     // and the loadout only names which ones are worn: a loadout that is lost
@@ -526,7 +528,7 @@ void PlayerRecord::recordKill(const std::string& mobType, Rarity rarity) {
 }
 
 int PlayerRecord::talentPoints() const {
-    return availableTalentPoints(levelFromTotalXp(totalXp).level, skills);
+    return availableTalentPoints(levelFromTotalXp(totalXp).level, skills, talentPointBonus);
 }
 
 int PlayerRecord::mazeTalentPoints() const {

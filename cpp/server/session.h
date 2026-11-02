@@ -149,6 +149,9 @@ struct Session {
     /// The coordinate space the body is in while Playing (realm.h). Overworld
     /// between bodies, so a title-screen session reads as ordinary ground.
     Realm realm = Realm::Overworld;
+    bool hasDeathSite = false;
+    Realm deathRealm = Realm::Overworld;
+    Vec2 deathPosition{};
 
     /// The arena run's account, while there is one.
     ///

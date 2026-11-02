@@ -63,6 +63,7 @@ struct StoredItem {
 /// an account never has to move its progress.
 struct PlayerRecord {
     double totalXp = 0;
+    int talentPointBonus = 0; // fixed migration reconciliation, never inferred from a username
     double stars = 0;   ///< see PlayerProgress::stars for why it is not an int
     int dailyStreak = 0;
     /// "YYYY-MM-DD" in UTC. A date string rather than a timestamp because the

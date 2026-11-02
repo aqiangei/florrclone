@@ -191,6 +191,9 @@ if (drops.rock && api.mobs.Rock?.drops) {
 
 fs.writeFileSync(petalsPath, JSON.stringify(petals, null, 2) + '\n');
 fs.writeFileSync(mobsPath, JSON.stringify(mobs, null, 2) + '\n');
+// The hand-authored Ant Egg is egg; generated soldier_ant_egg no longer exists.
+for (const table of Object.values(drops)) for (const row of table.drops || [])
+  if (row.itemType === 'soldier_ant_egg') row.itemType = 'egg';
 fs.writeFileSync(dropsPath, JSON.stringify(drops, null, 2) + '\n');
 
 const report = {

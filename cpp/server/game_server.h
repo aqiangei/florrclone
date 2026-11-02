@@ -569,7 +569,8 @@ private:
     /// and a universal forged at a titan. Silent for every tier below, which
     /// is where the reference draws the line too -- an ultra is crafted often
     /// enough to be noise.
-    void announceRareCraft(const Session&, std::uint16_t petalIndex, Rarity made);
+    void announceRareCraft(const Session&, std::uint16_t petalIndex, Rarity made,
+                           std::uint32_t quantity = 1, std::uint32_t consumed = 0);
     /// How long `userId` has left to wait for the oracle, 0 when it may craft.
     /// A lapsed wait is forgotten on the way.
     double oracleWaitMillis(const std::string& userId);

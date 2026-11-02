@@ -239,7 +239,7 @@ function parseAuth(msgs) {
       at += 1;
       const xp = m.readDoubleLE(at); at += 8;
       const level = m.readUInt16LE(at); at += 2;
-      at += 8;
+      at += 8 + 4; // stars and migration TP credit (v72)
       const stacks = m.readUInt16LE(at);
       profile = { username: username.value, xp, level, stacks };
     } else {

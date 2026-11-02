@@ -3699,3 +3699,32 @@ TEST(give_all_invalid_exclusions_refuse_the_entire_grant) {
         }
     }
 }
+TEST(inviting_auto_creates_and_members_can_invite_players_from_other_squads) {
+    Harness h("cmd-squad-direct",[](const std::string& path){
+        for(const char* name:{"lead","mate","other","visitor"})seedUser(path,name,"password7");
+    });
+    if(!h.ready){CHECK(false);return;}
+    NetClient lead,mate,other,visitor;
+    CHECK(loginAs(h,lead,"lead","password7"));CHECK(loginAs(h,mate,"mate","password7"));
+    CHECK(loginAs(h,other,"other","password7"));CHECK(loginAs(h,visitor,"visitor","password7"));
+    CHECK(say(h,lead,"/squad-invite mate"));
+    CHECK(h.stepUntil({&lead,&mate},[&]{return mate.squadInvite().waiting;}));
+    CHECK(lead.squad().inSquad);CHECK(mate.squadInvite().justArrived);
+    CHECK(say(h,mate,"/squad-accept"));h.step(3,{&lead,&mate});
+    CHECK(say(h,other,"/squad-invite visitor"));
+    CHECK(h.stepUntil({&other,&visitor},[&]{return visitor.squadInvite().waiting;}));
+    CHECK(say(h,visitor,"/squad-accept"));h.step(3,{&other,&visitor});
+    const std::string previous=visitor.squad().id;
+    CHECK(say(h,mate,"/squad-invite visitor"));
+    CHECK(h.stepUntil({&mate,&visitor},[&]{return visitor.squadInvite().waiting;}));
+    CHECK_EQ(visitor.squadInvite().fromUsername,std::string("mate"));
+    CHECK(say(h,other,"/squad-public"));h.step(3,{&other,&visitor});
+    CHECK(visitor.squadInvite().waiting);CHECK_EQ(visitor.squad().id,previous);
+    CHECK(say(h,visitor,"/squad-decline"));visitor.clearSquadInvite();
+    CHECK_EQ(visitor.squad().id,previous);
+    CHECK(say(h,mate,"/squad-invite visitor"));
+    CHECK(h.stepUntil({&mate,&visitor},[&]{return visitor.squadInvite().waiting;}));
+    CHECK(say(h,visitor,"/squad-accept"));h.step(3,{&lead,&mate,&other,&visitor});
+    CHECK_EQ(visitor.squad().id,lead.squad().id);CHECK_EQ(lead.squad().members.size(),std::size_t(3));
+    CHECK_EQ(other.squad().members.size(),std::size_t(1));CHECK(!visitor.squadInvite().waiting);
+}

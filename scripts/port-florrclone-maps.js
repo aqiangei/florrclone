@@ -432,6 +432,7 @@ function buildTmj(biomeName, geom, portals, spawnZones) {
       ? (normalizeMobsString(rawMobs) || mobDistribution(biomeName))
       : (rawMobs.trim() || mobDistribution(biomeName));
     if (mobs === (groupOf[biomeName] || 'garden')) mobs = mobDistribution(biomeName);
+    if (biomeName === 'Factory') mobs = mobs.replace(/\bgambler\b/g, 'mecha_flower');
     const props = [{ name: 'mobs', type: 'string', value: mobs }];
     if (hasDifficulty) props.push({ name: 'difficulty', type: 'float', value: Number(z.difficulty) });
     if (z.forceRarity != null) props.push({ name: 'forceRarity', type: 'int', value: Number(z.forceRarity) });
@@ -640,7 +641,7 @@ for (const biomeName of ['Pyramid', 'dps test', 'Swarm', 'Super']) {
 }
 
 // Drop reference-only maps we no longer want as active content
-for (const stale of ['termite_mound.tmj']) {
+for (const stale of []) {
   const p = path.join(mapsDir, stale);
   if (fs.existsSync(p)) {
     fs.renameSync(p, path.join(backupDir, stale));
@@ -666,6 +667,7 @@ const mapsJson = {
     { file: 'swarm.tmj' },
     { file: 'super.tmj' },
     { file: 'dps_test.tmj' },
+    { file: 'termite_mound.tmj', copies: 8 },
   ],
 };
 fs.writeFileSync(path.join(mapsDir, 'maps.json'), JSON.stringify(mapsJson, null, 2) + '\n');
@@ -677,3 +679,6 @@ console.log(JSON.stringify(report, null, 2));
 // Rebuild authoritative collision after map art and annotations are imported.
 require("node:child_process").execFileSync(process.env.PYTHON || "python",
   [path.join(__dirname, "sync-map-collision.py")], {cwd: root, stdio: "inherit"});
+
+// Fixed practice targets are NPCs, never part of ambient mob distribution.
+require('./restore-jungle-dps');

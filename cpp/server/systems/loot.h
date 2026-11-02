@@ -174,6 +174,7 @@ public:
     /// One petal that changed hands this tick. Applying it to the account is
     /// the runtime's job -- this system owns the world, not the database.
     struct Pickup {
+        std::uint32_t quantity = 1;
         Entity player = NULL_ENTITY;
         std::uint16_t petalIndex = kNoPetal;
         Rarity rarity = Rarity::Common;

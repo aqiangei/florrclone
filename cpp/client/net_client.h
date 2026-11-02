@@ -40,6 +40,7 @@ struct Profile {
     /// no current one (net::kAccountNoPassword).
     bool hasPassword = true;
     double totalXp = 0;
+    int talentPointBonus = 0;
     int level = 1;
     double stars = 0;   ///< see PlayerProgress::stars
 
@@ -94,7 +95,7 @@ struct Profile {
 
     /// Unspent talent points. Derived from the level exactly as the server
     /// derives it, so the panel never shows a balance the server would refuse.
-    int talentPoints() const { return availableTalentPoints(level, skills); }
+    int talentPoints() const { return availableTalentPoints(level, skills, talentPointBonus); }
 
     /// How many of one petal at one tier the account holds.
     std::uint32_t stackCount(std::uint16_t petalIndex, Rarity rarity) const {
@@ -223,6 +224,8 @@ struct CraftOutcome {
     /// The sub-batch tail the pool could not spend, 0-4. The ring keeps this
     /// many slots filled when nothing was crafted.
     int petalsReturned = 0;
+    std::uint32_t attempts = 0;
+    std::uint32_t consumed = 0;
     std::string reason;
 };
 
@@ -961,6 +964,7 @@ public:
     /// The last craft result. The panel clears `pending` once it has started
     /// the animation for it.
     CraftOutcome& craftOutcome() { return craftOutcome_; }
+    std::uint64_t craftAttemptCount() const { return craftAttemptCount_; }
     /// The last oracle result, read and cleared the same way.
     OracleOutcome& oracleOutcome() { return oracleOutcome_; }
     /// The last trade result, read and cleared the same way.
@@ -1173,6 +1177,7 @@ private:
     GuildInvite guildInvite_;
     SquadInvite squadInvite_;
     CraftOutcome craftOutcome_;
+    std::uint64_t craftAttemptCount_ = 0;
     OracleOutcome oracleOutcome_;
     /// When, on this client's steady clock, the oracle wait the last profile
     /// reported runs out.

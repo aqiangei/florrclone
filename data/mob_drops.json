@@ -133,7 +133,7 @@
       },
       {
         "type": "petal",
-        "itemType": "soldier_ant_egg",
+        "itemType": "egg",
         "rarity": "common",
         "probability": 0.4,
         "minQuantity": 1,
@@ -1229,7 +1229,7 @@
     "drops": [
       {
         "type": "petal",
-        "itemType": "soldier_ant_egg",
+        "itemType": "egg",
         "rarity": "common",
         "probability": 0.25,
         "minQuantity": 1,
@@ -1242,7 +1242,7 @@
     "drops": [
       {
         "type": "petal",
-        "itemType": "soldier_ant_egg",
+        "itemType": "egg",
         "rarity": "common",
         "probability": 0.25,
         "minQuantity": 1,
@@ -1255,7 +1255,7 @@
     "drops": [
       {
         "type": "petal",
-        "itemType": "soldier_ant_egg",
+        "itemType": "egg",
         "rarity": "common",
         "probability": 0.25,
         "minQuantity": 1,

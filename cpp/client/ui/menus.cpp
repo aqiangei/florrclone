@@ -123,18 +123,18 @@ void openAshflorQqGroup() {
 }
 
 #ifdef __EMSCRIPTEN__
-EM_JS(void, flix_open_ashflor_feedback, (const char* boardBase), {
+EM_JS(void, flix_open_ashflor_feedback, (const char* boardBase, const char* username), {
     const base = UTF8ToString(boardBase);
-    const from = encodeURIComponent(location.origin || "");
+    const from = encodeURIComponent(location.href || "");
     const sep = base.indexOf("?") >= 0 ? "&" : "?";
-    const opened = window.open(base + sep + "from=" + from, "_blank");
+    const opened = window.open(base + sep + "from=" + from + "&name=" + encodeURIComponent(UTF8ToString(username)), "_blank");
     if (opened) opened.opener = null;
 });
 #endif
 
-void openAshflorFeedbackBoard() {
+void openAshflorFeedbackBoard(const std::string& username) {
 #ifdef __EMSCRIPTEN__
-    flix_open_ashflor_feedback(kAshflorFeedbackBoard);
+    flix_open_ashflor_feedback(kAshflorFeedbackBoard, username.c_str());
 #else
     openExternalLink(std::string(kAshflorFeedbackBoard) + "&from=native");
 #endif
@@ -1261,7 +1261,7 @@ void MenuSystem::activateStripSlot(int index) {
     const StripSlot& slot = strip()[static_cast<std::size_t>(index)];
     switch (slot.action) {
         case StripAction::Exit: exitRequested_ = true; return;
-        case StripAction::Feedback: openAshflorFeedbackBoard(); return;
+        case StripAction::Feedback: openAshflorFeedbackBoard(feedbackUsername_); return;
         case StripAction::Discord: openExternalLink(kDiscordInvite); return;
         case StripAction::Qq: openAshflorQqGroup(); return;
         case StripAction::OpenMenu: break;
@@ -2043,6 +2043,11 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         const LoadoutTileAnim& anim = loadoutTiles_[at];
         ItemTile tile;
         tile.petalIndex = anim.petalIndex;
+        if (entry.slot < kLoadoutActiveSlots &&
+            anim.petalIndex != kNoPetal && petalMimicsLeft(content().petal(anim.petalIndex))) {
+            const auto copied = net.profile().equipped(content(), entry.slot);
+            if (!copied.empty()) tile.petalIndex = copied.configIndex;
+        }
         tile.rarity = anim.rarity;
         tile.timeSeconds = timeSeconds;
         // An outranked petal wears the wedge whole, as a petal that has just
@@ -2053,6 +2058,10 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                           : slotReloadProgress(net, entry.slot);
         tile.health = slotHealthFraction(net, entry.slot);
         tile.counter = slotCounterLabel(net, entry.slot);
+        if (inGame_ && entry.slot < kLoadoutActiveSlots) {
+            const double left = net.view().self().slotReloadRemainingMillis[static_cast<std::size_t>(entry.slot)];
+            if (left > 0) tile.counter = std::to_string(static_cast<int>(std::ceil(left / 1000.0))) + "s";
+        }
         // The petal in the slot being struck, on the field. Only in game: on
         // the title screen nothing is out there to be hit.
         if (inGame_) tile.flash = renderer.slotHitTint(entry.slot);
@@ -2933,11 +2942,15 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     // account to ask: the strip draws the admin button off it.
     adminSlotShown_ = net.haveSession() && net.isSkinAdmin();
     accountSlotShown_ = net.haveSession();
+    feedbackUsername_ = net.haveSession() ? net.profile().username : "";
 
     // Guild / squad invites raise the top-left Accept/Decline toast instead of
     // forcing a panel open. Consume the edge so a later frame does not re-fire.
     if (net.guildInvite().justArrived) net.guildInvite().justArrived = false;
-    if (net.squadInvite().justArrived) net.squadInvite().justArrived = false;
+    if (net.squadInvite().justArrived) {
+        net.squadInvite().justArrived = false;
+        close(); // Reveal the Accept/Decline invitation above the game.
+    }
     // `/admin db` is answered with an Open, which raises the editor the same
     // way: once per answer, over whatever was open.
     if (net.adminDb().openRequested) {
@@ -3236,6 +3249,7 @@ void MenuSystem::drawReleaseChip(Canvas& canvas, Window& window, NetClient& net)
 }
 
 void MenuSystem::renderStripOnly(Canvas& canvas, Window& window, double timeSeconds) {
+    feedbackUsername_.clear();
     // The login screen has the strip and nothing else. Whatever the last
     // screen left in the panel and bar state is cleared rather than carried
     // over, or a card nobody is painting would still be swallowing clicks.

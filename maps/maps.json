@@ -52,6 +52,10 @@
     },
     {
       "file": "dps_test.tmj"
+    },
+    {
+      "file": "termite_mound.tmj",
+      "copies": 8
     }
   ]
 }

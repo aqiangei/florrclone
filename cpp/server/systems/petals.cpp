@@ -398,7 +398,9 @@ double actionIntervalMillis(const PetalConfig& config, const PetalStats& stats) 
         interval = std::max(interval, stats.healChargeMillis);
     }
     if (config.radiation.present) interval = std::max(interval, config.radiation.intervalMillis);
-    if (config.petMobIndex != kInvalidIndex) interval = std::max(interval, stats.reloadMillis);
+    if (config.petMobIndex != kInvalidIndex)
+        interval = std::max(interval, (config.id == "egg" || config.id == "beetle_egg")
+                                      ? 1000.0 : stats.reloadMillis);
     interval = std::max(interval, behaviourOf(config.id).intervalMillis);
     return std::max(interval, net::kTickMillis);
 }
@@ -568,6 +570,17 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
     bindTo(world);
     events_ = events;
     terrain_ = terrain;
+    std::vector<Entity> landedWebs;
+    Query<WebFlight, Transform, GroundEffect, Body> flyingWebs{world};
+    flyingWebs.each([&](Entity e, WebFlight& flight, Transform& at, GroundEffect& field, Body& body) {
+        flight.elapsed += dt;
+        const double t = clamp(flight.elapsed / flight.duration, 0.0, 1.0);
+        at.position = flight.from + (flight.to - flight.from) * t;
+        at.angle += dt * kTau;
+        body.radius = flight.radius * (0.2 + 0.8 * t);
+        if (t >= 1.0) { field.radius = flight.radius; landedWebs.push_back(e); }
+    });
+    for (Entity e : landedWebs) world.remove<WebFlight>(e);
     // A snapshot of handles, not a live query: everything this system does --
     // spawning a petal, breaking one, firing a volley -- is structural, and
     // none of it may happen while a query holds column pointers. Taking the
@@ -885,10 +898,13 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
             // swaps to reload (2026-10-04), so this deliberately departs from
             // it. The slot-level flag stays down: for a clump it is derived
             // from the grains further on.
+            const double naturalEquipReload = config.id == "egg" || config.id == "beetle_egg"
+                                                  ? std::min(reload, 1000.0) : reload;
+            const double equipReload = std::max(naturalEquipReload, 2500.0 * reloadScale);
             slotState.instanceReadyAtMillis.assign(
-                static_cast<std::size_t>(count), slotState.independent ? nowMillis + reload : 0.0);
+                static_cast<std::size_t>(count), slotState.independent ? nowMillis + equipReload : 0.0);
             slot.broken = !slotState.independent;
-            slot.reloadReadyAtMillis = slot.broken ? nowMillis + reload : 0.0;
+            slot.reloadReadyAtMillis = slot.broken ? nowMillis + equipReload : 0.0;
         }
 
         // Pure modifiers and emitters have no health pool at all, so neither
@@ -1480,6 +1496,9 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         input != nullptr && input->current.defending() && !input->current.attacking();
     // The strongest worn poo and the strongest worn bulb; see the aggro pair
     // in the loop below.
+    double flowerHealthBonus = 0.0;
+    double flowerRadiusBonus = 0.0;
+    double powderBonus = 0.0;
     double aggroCut = 1.0;
     double aggroBoost = 1.0;
     // Every worn basil's bonus, folded harmonically after the loop.
@@ -1509,8 +1528,12 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // ONE contribution per SLOT. A four-grain clump of sand is one
             // equipped petal, not four; summing per instance would make `count`
             // the strongest stat in the game.
+            flowerHealthBonus += stats.flowerHealthBonus;
+            flowerRadiusBonus += stats.flowerRadiusBonus;
             aggregate.modifiers.maxHealthScale *= mods.maxHealth;
-            aggregate.modifiers.speedScale *= mods.speed;
+            if (registry.petal(equipped.configIndex).id == "mysterious_powder")
+                powderBonus += mods.speed - 1.0;
+            else aggregate.modifiers.speedScale *= mods.speed;
             aggregate.modifiers.damageScale *= mods.damage;
             aggregate.modifiers.sizeScale *= mods.playerRadius;
             // Not summed: gardn sets its third eye's reach rather than
@@ -1642,6 +1665,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             }
         }
     }
+    aggregate.modifiers.speedScale *= 1.0 + powderBonus;
     aggregate.modifiers.aggroRangeScale = aggroCut * aggroBoost;
     // Basils stack harmonically (user's rule): best first, and the n-th best
     // adds 1/n of its bonus -- so each one more is worth having, and a bar
@@ -1687,7 +1711,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     if (!(sizeScale > 0.0) || !std::isfinite(sizeScale)) sizeScale = 1.0;
     sizeScale = std::min(sizeScale, kMaxPlayerSizeScale);
     if (Body* body = world.tryGet<Body>(player)) {
-        body->radius = playerRadiusForLevel(level) * sizeScale;
+        body->radius = playerRadiusForLevel(level) * sizeScale + flowerRadiusBonus;
     }
     if (Health* health = world.tryGet<Health>(player)) {
         // In the ring the pool is flat and no petal or talent moves it
@@ -1697,7 +1721,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         const bool arena = at != nullptr && at->realm == Realm::Arena;
         const double newMax = arena ? kArenaMaxHealth
                                     : std::round(maxHealthForLevel(level) *
-                                                 aggregate.modifiers.maxHealthScale);
+                                                 aggregate.modifiers.maxHealthScale + flowerHealthBonus);
         if (newMax > 0.0 && newMax != health->max) {
             const double fraction = health->max > 0.0 ? health->current / health->max : 1.0;
             health->max = newMax;
@@ -1753,12 +1777,37 @@ void PetalSystem::tickArmorStacks(World& world, Entity player, const Aggregate& 
     if (state.stacks < kMaxArmorStacks) ++state.stacks;
 }
 
+void PetalSystem::onKill(World& world, const ContentRegistry& registry, Entity player, double nowMillis) {
+    const auto* loadout = world.tryGet<Loadout>(player);
+    if (!loadout) return;
+    std::vector<double> rates;
+    for (int i = 0; i < kLoadoutActiveSlots; ++i) {
+        if (loadout->slots[i].broken) continue;
+        const auto slot = equippedPetal(registry, *loadout, i);
+        if (slot.empty()) continue;
+        const auto stats = equippedPetalStats(registry, slot);
+        if (stats.totemHealPerSecond > 0) rates.push_back(stats.totemHealPerSecond);
+    }
+    if (rates.empty()) return;
+    auto& regen = world.ensure<TotemRegeneration>(player);
+    const auto* tree = world.tryGet<PlayerSkillTree>(player);
+    const double medic = tree ? tree->skills.effectScale(SkillId::Medic) : 1.0;
+    for (double rate : rates) regen.stacks.push_back({nowMillis + 10000.0, rate * medic});
+}
+
 void PetalSystem::applyPassiveHeal(World& world, Entity player, const Aggregate& aggregate,
                                    double nowMillis, double dt) {
     // Applied here, once per player, rather than per petal: the aggregate has
     // already summed every slot's contribution, and healing again per instance
     // would pay a clump its bonus `count` times.
-    healPlayer(world, player, aggregate.modifiers.passiveHealPerSecond * dt, nowMillis);
+    double healing = aggregate.modifiers.passiveHealPerSecond;
+    if (auto* regen = world.tryGet<TotemRegeneration>(player)) {
+        auto& stacks = regen->stacks;
+        stacks.erase(std::remove_if(stacks.begin(), stacks.end(),
+            [&](const auto& s) { return nowMillis >= s.expiresAtMillis; }), stacks.end());
+        for (const auto& stack : stacks) healing += stack.perSecond;
+    }
+    healPlayer(world, player, healing * dt, nowMillis);
 }
 
 void PetalSystem::updateManaPool(World& world, Entity player, const Aggregate& aggregate,
@@ -2255,9 +2304,15 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             if (stats.webRadius > 0.0) {
                 Vec2 at = transform->position;
                 if (attacking) at += Vec2::fromAngle(transform->angle, kWebThrowDistance);
-                emitGroundEffect(world, player, at, GroundEffectKind::Web,
-                                 stats.webRadius, 0.0, 0.5, instance->rarity,
-                                 kWebLifetimeSeconds);
+                const Vec2 launch = transform->position;
+                const Entity web = emitGroundEffect(world, player, attacking ? launch : at,
+                                 GroundEffectKind::Web, stats.webRadius, 0.0, 0.5,
+                                 instance->rarity, kWebLifetimeSeconds);
+                if (attacking && web != NULL_ENTITY) {
+                    world.add<WebFlight>(web, WebFlight{launch, at, 0.0, 0.35, stats.webRadius});
+                    world.get<GroundEffect>(web).radius = 0.0;
+                    world.add<Body>(web, Body{stats.webRadius * 0.2, 1.0});
+                }
                 world.add<Dead>(petal, Dead{player});
                 continue;
             }

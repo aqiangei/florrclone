@@ -433,6 +433,67 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(line);
     }
 
+    // Report the same effective numbers the server uses, including passive
+    // effects that do not belong to the petal's contact damage or HP.
+    const bool chinese = language() == Language::Zh;
+    const auto special = [&](const char* zhLabel, const char* enLabel, double value,
+                             const std::string& suffix = "") {
+        TooltipLine line{std::string(chinese ? zhLabel : enLabel) + exactNumber(value) + suffix, 12.0};
+        line.alpha = 0.72;line.labelColor = kStatGeneric;lines.push_back(line);
+    };
+    if (stats.flowerHealthBonus > 0) special("增加花朵生命：+", "Flower health: +", stats.flowerHealthBonus);
+    if (stats.flowerRadiusBonus > 0) special("增加花朵半径：+", "Flower radius: +", stats.flowerRadiusBonus);
+    if (!petalSharesFlowerDamage(config) && stats.modifiers.maxHealth != 1.0)
+        special("最大生命：", "Max health: ", (stats.modifiers.maxHealth - 1.0) * 100.0, "%");
+    if (stats.modifiers.speed != 1.0)
+        special("移速变化：", "Movement speed: ", (stats.modifiers.speed - 1.0) * 100.0, "%");
+    if (stats.modifiers.playerRadius != 1.0)
+        special("花朵半径变化：", "Flower radius: ", (stats.modifiers.playerRadius - 1.0) * 100.0, "%");
+    if (stats.modifiers.rotationSpeed != 1.0)
+        special("旋转速度变化：", "Rotation speed: ", (stats.modifiers.rotationSpeed - 1.0) * 100.0, "%");
+    if (stats.modifiers.attackRange > 0) special("攻击范围：+", "Attack range: +", stats.modifiers.attackRange);
+    if (stats.modifiers.magnetism > 0) special("拾取范围：+", "Pickup range: +", stats.modifiers.magnetism);
+    if (config.petMobIndex != kInvalidIndex) {
+        TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
+            mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
+            " x" + std::to_string(config.petCount),12.0};lines.push_back(pet);
+        if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
+        if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
+    }
+    if (stats.webRadius > 0) special("蛛网半径：", "Web radius: ", stats.webRadius);
+    if (stats.slowFactor < 1.0) {
+        special("减速比例：", "Slow: ", (1.0 - stats.slowFactor) * 100.0, "%");
+        if (stats.slowDurationMillis > 0) special("减速持续：", "Slow duration: ", stats.slowDurationMillis / 1000.0, "s");
+    }
+    if (stats.spongeDamageDurationMillis > 0)
+        special("伤害分摊时间：", "Damage spread duration: ", stats.spongeDamageDurationMillis / 1000.0, "s");
+    if (stats.cameraZoom != 1.0) special("视野缩放倍率：", "Camera zoom: ", stats.cameraZoom);
+    if (stats.modifiers.luck != 1.0) special("幸运变化：", "Luck: ", (stats.modifiers.luck - 1.0) * 100.0, "%");
+    if (stats.modifiers.aggroRange != 1.0)
+        special("怪物警觉范围变化：", "Mob detection range: ", (stats.modifiers.aggroRange - 1.0) * 100.0, "%");
+    if (stats.modifiers.poisonArmor > 0) special("毒抗：", "Poison armor: ", stats.modifiers.poisonArmor);
+    if (config.projectile.present) {
+        special("每轮弹数：", "Projectiles per volley: ", config.projectile.count);
+        special("弹速：", "Projectile speed: ", config.projectile.speed);
+        special("射程：", "Projectile range: ", config.projectile.distance);
+        if (config.projectile.seekRange > 0) special("索敌范围：", "Seeking range: ", config.projectile.seekRange);
+    }
+    if (config.radiation.present) {
+        special("辐射半径：", "Radiation radius: ", config.radiation.radius);
+        special("辐射间隔：", "Radiation interval: ", config.radiation.intervalMillis / 1000.0, "s");
+        if (config.radiation.selfPoisonScale > 0)
+            special("自身中毒倍率：", "Self-poison multiplier: ", config.radiation.selfPoisonScale);
+    }
+    if (stats.totemHealPerSecond > 0) {
+        special("每次击杀增加回血：", "Heal per kill: ", stats.totemHealPerSecond * healTalent * kPlayerHealMultiplier,
+                chinese ? "/秒，持续10秒，可叠加" : "/s for 10s, stacking");
+    }
+    if (config.id == "lightning") {
+        special("闪电伤害：", "Lightning damage: ",
+                (stats.damage > 0 ? stats.damage : 25.0 * petalStrengthScale(rarity)));
+        special("闪电范围：", "Lightning radius: ", 1000.0);
+    }
+
     // Relic. The whole petal is this one number.
     if (petalSharesFlowerDamage(config)) {
         TooltipLine bonus{std::string(tipFlowerHealth()) + "+" +

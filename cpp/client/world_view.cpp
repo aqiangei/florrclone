@@ -224,6 +224,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
     // rather than half-applied.
     struct Spawn {
         std::uint32_t netId;
+        std::uint32_t dropQuantity = 1;
         net::EntityKind kind;
         std::uint16_t typeIndex;
         Rarity rarity;
@@ -262,6 +263,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         s.radius = reader.f32();
         s.healthFraction = net::readHealthFraction(reader, (s.flags & net::SpawnHealthWide) != 0);
         s.state = reader.u8();
+        if (s.kind == net::EntityKind::Drop) s.dropQuantity = reader.u32();
         s.level = 1;
         s.bestRarity = Rarity::Common;
         if (s.kind == net::EntityKind::Player) {
@@ -283,7 +285,8 @@ bool WorldView::applySnapshot(ByteReader& reader) {
 
     struct Update {
         std::uint32_t netId;
-        std::uint8_t mask;
+        std::uint16_t mask;
+        std::uint32_t dropQuantity;
         Vec2 position;
         /// FieldPositionDelta's raw steps, added to the entity's target
         /// position at commit, after this snapshot's spawns are in.
@@ -308,13 +311,14 @@ bool WorldView::applySnapshot(ByteReader& reader) {
     for (std::uint16_t i = 0; i < updateCount; ++i) {
         Update u{};
         u.netId = previousId += reader.varU32();
-        u.mask = reader.u8();
+        u.mask = reader.u16();
         if (u.mask & net::FieldPositionDelta) {
             u.deltaX = reader.i16();
             u.deltaY = reader.i16();
         } else if (u.mask & net::FieldPosition) {
             u.position = reader.position();
         }
+        if (u.mask & net::FieldDropQuantity) u.dropQuantity = reader.u32();
         if (u.mask & net::FieldAngle) u.angle = reader.angle();
         if (u.mask & net::FieldHealth) {
             u.healthFraction =
@@ -407,6 +411,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         e.radius = s.radius;
         e.healthFraction = s.healthFraction;
         e.state = s.state;
+        e.dropQuantity = s.dropQuantity;
         e.faceFlags = s.faceFlags;
         e.equipFlags = s.equipFlags;
         e.renderFlags = s.renderFlags;
@@ -460,6 +465,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         }
         if (u.mask & net::FieldAngle) e.targetAngle = u.angle;
         if (isBuffered(e.kind)) pushSample(e, sampleMillis);
+        if (u.mask & net::FieldDropQuantity) e.dropQuantity = u.dropQuantity;
         if (u.mask & net::FieldHealth) e.healthFraction = u.healthFraction;
         if (u.mask & net::FieldState) e.state = u.state;
         if (u.mask & net::FieldSize) e.radius = u.radius;

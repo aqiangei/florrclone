@@ -507,7 +507,7 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Re
     if (drop->humansOnly && owner == 0) return;
     if (!mayPickUp(*drop, player, owner)) return;
 
-    const Pickup pickup{player, drop->configIndex, drop->rarity};
+    const Pickup pickup{drop->quantity, player, drop->configIndex, drop->rarity};
     pickups_.push_back(pickup);
     if (onPickup) onPickup(pickup);
 
@@ -530,6 +530,38 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Re
 
 void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& rng) {
     fresh_.clear();
+    // Merge nearby unclaimed stacks only. Once anybody has collected a
+    // share, the remaining players keep that exact original entitlement.
+    std::vector<Entity> stackable;
+    Query<DropTag, DropItem, Transform> stackQuery{world};
+    stackQuery.each([&](Entity e, DropTag&, DropItem& item, Transform&) {
+        const auto* life = world.tryGet<Lifetime>(e);
+        if (!item.singleCopy && !item.humansOnly && item.pickedUpBy.empty() &&
+            life && life->remainingSeconds > 0) stackable.push_back(e);
+    });
+    const auto stackDrop = [&](std::uint16_t petal, Rarity rarity, Vec2 at, Realm realm,
+                               const std::vector<Entity>& eligible) {
+        for (Entity e : stackable) {
+            auto& item = world.get<DropItem>(e);
+            const auto& position = world.get<Transform>(e);
+            if (item.configIndex != petal || item.rarity != rarity || position.realm != realm ||
+                distanceSq(position.position, at) > 150.0 * 150.0 ||
+                item.eligible.size() != eligible.size()) continue;
+            bool same = true;
+            for (Entity player : eligible) {
+                const auto* account = world.tryGet<PlayerAccount>(player);
+                if (!claimed(item.eligible, player, account ? account->connection : 0)) same = false;
+            }
+            if (!same) continue;
+            ++item.quantity;
+            world.get<Lifetime>(e).remainingSeconds =
+                kDropLifetimeByRarity[static_cast<std::size_t>(rarityIndex(rarity))];
+            if (std::find(fresh_.begin(), fresh_.end(), e) == fresh_.end()) fresh_.push_back(e);
+            return;
+        }
+        const Entity e = spawnDrop(world, petal, rarity, at, realm, eligible);
+        if (e != NULL_ENTITY) { fresh_.push_back(e); stackable.push_back(e); }
+    };
     // Once for the tick, not once per corpse: the conversion below asks for it
     // on every drop of every kill.
     const std::uint16_t magicOrb = content.petalIndex("magic_orb");
@@ -619,41 +651,21 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             anyOrb = anyOrb || tier != kRarityCount;
         }
 
-        selected_.clear();
-        rollTable(table, mobRarity, rng);
-
-        // Which of the rows is the mob's REAL drop.
-        //
-        // Above unusual a kill used to hand out exactly one item, picked out
-        // of the table by a probability-weighted draw. It still is, and that
-        // item is still graded by the same pipeline it always was -- the rate
-        // at which a mob of a given rarity leaves an item of that rarity is
-        // what it was before the table started paying out in full. What
-        // changed is everything ELSE the mob has: those rows drop too now,
-        // flat at two tiers below the mob. More loot per kill, at the bottom
-        // of the mob's band, where it cannot move progression.
-        //
-        // A common or unusual mob grades every row it hands out, which is
-        // what both have always done -- neither has a weighted draw to
-        // reproduce.
-        const bool gradeEveryRow = rarityIndex(mobRarity) <= rarityIndex(Rarity::Uncommon);
-        const std::size_t featured = gradeEveryRow ? 0 : pickFeatured(rng);
-
-        // Requested reward rate: 20 copies at every mob rarity.
-        const int copies =
-            kLootFeelCopies *
+        // Independent complete trials, including table probability,
+        // featured row selection, base rarity and all later upgrade rolls.
+        const int trials = kLootFeelCopies *
             (rarityIndex(mobRarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);
-        for (std::size_t row = 0; row < selected_.size(); ++row) {
-            const DropTables::Entry* entry = selected_[row];
-            const bool graded = gradeEveryRow || row == featured;
-            // The mob's tier scale is rolled ONCE per graded row, upstream of
-            // the copies: an apex batch shares one base rarity and its ten
-            // items differ only by their own upgrade rolls.
-            const Rarity base = graded
-                                    ? scaleDropRarity(clampRarity(entry->rarityOffset), mobRarity,
-                                                      rng)
-                                    : chaffDropRarity(mobRarity);
-            for (int i = 0; i < copies; ++i) {
+        for (int trial = 0; trial < trials; ++trial) {
+            selected_.clear();
+            rollTable(table, mobRarity, rng);
+            const bool gradeEveryRow = rarityIndex(mobRarity) <= rarityIndex(Rarity::Uncommon);
+            const std::size_t featured = gradeEveryRow ? 0 : pickFeatured(rng);
+            for (std::size_t row = 0; row < selected_.size(); ++row) {
+                const DropTables::Entry* entry = selected_[row];
+                const bool graded = gradeEveryRow || row == featured;
+                const Rarity base = graded
+                    ? scaleDropRarity(clampRarity(entry->rarityOffset), mobRarity, rng)
+                    : chaffDropRarity(mobRarity);
                 Rarity rarity = graded ? finishDropRarity(base, mobRarity, rng) : base;
                 // The Random sentinel resolves per COPY, not per row.
                 std::uint16_t petalIndex = entry->kind == DropTables::Kind::RandomPetal
@@ -671,9 +683,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 // so the sweep below tests the scattered position, as the
                 // reference's same-step pickup does.
                 if (magic == kInvalidIndex) {
-                    const Entity dropped =
-                        spawnDrop(world, petalIndex, rarity, at + scatter, realm, eligible_);
-                    if (dropped != NULL_ENTITY) fresh_.push_back(dropped);
+                    stackDrop(petalIndex, rarity, at + scatter, realm, eligible_);
                     continue;
                 }
                 for (std::size_t first = 0; first < eligible_.size(); ++first) {
@@ -698,9 +708,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                         // odds -- it caps what those odds can produce.
                         if (rarityIndex(groupRarity) > tier) groupRarity = clampRarity(tier);
                     }
-                    const Entity dropped =
-                        spawnDrop(world, groupPetal, groupRarity, at + scatter, realm, orbGroup_);
-                    if (dropped != NULL_ENTITY) fresh_.push_back(dropped);
+                    stackDrop(groupPetal, groupRarity, at + scatter, realm, orbGroup_);
                 }
             }
         }

@@ -538,8 +538,8 @@ void App::drawLogin(Canvas& canvas, double time) {
     TextStyle migrationHint;
     migrationHint.size = 16;
     migrationHint.align = Align::Centre;
-    text(canvas, ui::trEnZh("Your save from 154.219.105.161:8088 is preserved.",
-                              "旧站 154.219.105.161:8088 的存档已保留。"),
+    text(canvas, ui::trEnZh("Previous site: http://154.219.105.161:8088/",
+                              "旧站：http://154.219.105.161:8088/"),
          centreX, layout.headingY - 60.0, migrationHint);
     text(canvas, ui::trEnZh("Please log in with your previous username and password.",
                               "请使用之前的账号和密码登录，无需重新注册。"),

@@ -120,7 +120,7 @@ inline constexpr double kPlayerBaseDamage = 5.0;
 ///
 /// Ashflor starts from florrclone feel (750) then applies a further 1.5×
 /// house buff → 1125. This affects players only.
-inline constexpr double kPlayerMaxSpeed = 1125.0;
+inline constexpr double kPlayerMaxSpeed = 843.75; // player-only reduction of 25%
 
 /// Original reference movement scale for mobs, independent of player buffs.
 inline constexpr double kMobBaseSpeed = 300.0;
@@ -392,8 +392,8 @@ inline constexpr double kPetalHitIntervalMillis = 1000.0 / 20.0;
 inline constexpr double kPetalReloadFeelScale = 0.5;
 
 /// How many ground copies a kill leaves, before apex/orb extras.
-/// Requested rate: 20 copies for every mob tier.
-inline constexpr int kLootFeelCopies = 20;
+/// Requested rate: 30 independent loot trials for every mob tier.
+inline constexpr int kLootFeelCopies = 30;
 inline constexpr int kLootFeelSuperMultiplier = 1;
 
 // -- ring physics ------------------------------------------------------------

@@ -36,7 +36,8 @@
         "rarityFills": {
           "super": "#8AFF69"
         },
-        "zh": "Square"
+        "zh": "Square",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -156,7 +157,8 @@
         "minRarity": "epic",
         "petMobType": "sandstorm",
         "petMobRarity": "common",
-        "petCount": 2
+        "petCount": 2,
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -299,7 +301,8 @@
         "description": "Magic Cotton",
         "color": "#90EE90",
         "count": 1,
-        "florrclonePort": true
+        "florrclonePort": true,
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -373,7 +376,8 @@
         "count": 1,
         "florrclonePort": true,
         "minRarity": "mythic",
-        "noPhysics": true
+        "noPhysics": true,
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -499,7 +503,8 @@
         "requiredMana": 5,
         "defendOnly": true,
         "isAdminPetal": false,
-        "zh": "Magic Bubble"
+        "zh": "Magic Bubble",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -532,7 +537,8 @@
         "description": "Copies the petal to the left of this, with the same rarity as this.",
         "color": "#FFA500",
         "count": 1,
-        "zh": "Mimic"
+        "zh": "Mimic",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -644,7 +650,8 @@
         "noPhysics": true,
         "isAdminPetal": false,
         "cameraZoom": 0.85,
-        "zh": "Mecha Antennae"
+        "zh": "Mecha Antennae",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -715,7 +722,8 @@
         "color": "#90EE90",
         "count": 1,
         "florrclonePort": true,
-        "minRarity": "super"
+        "minRarity": "super",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -1294,7 +1302,8 @@
           "magnetism": 50
         },
         "cameraZoom": 0.98,
-        "zh": "触角"
+        "zh": "触角",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -2302,7 +2311,8 @@
         "playerModifiers": {
           "attackRange": 40
         },
-        "zh": "第三只眼"
+        "zh": "第三只眼",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -2821,7 +2831,8 @@
         "equipFlags": "Cutter",
         "noPhysics": true,
         "isAdminPetal": false,
-        "zh": "切割者"
+        "zh": "切割者",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -2861,7 +2872,8 @@
         "count": 0,
         "equipFlags": "Disc",
         "noPhysics": true,
-        "zh": "圆盘"
+        "zh": "圆盘",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -2968,7 +2980,8 @@
         "count": 1,
         "damageCooldown": 1001,
         "isAdminPetal": true,
-        "zh": "玻璃"
+        "zh": "玻璃",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -3081,7 +3094,8 @@
           "poisonArmor": 14
         },
         "isAdminPetal": false,
-        "zh": "莲花"
+        "zh": "莲花",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -3188,7 +3202,8 @@
         "defendOnly": true,
         "visual_scale": 1.87,
         "isAdminPetal": false,
-        "zh": "根"
+        "zh": "根",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -3228,7 +3243,8 @@
         "spongeDamageDuration": 1000,
         "defendOnly": true,
         "isAdminPetal": false,
-        "zh": "海绵"
+        "zh": "海绵",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -3376,7 +3392,8 @@
         "color": "#90EE90",
         "count": 1,
         "noPhysics": false,
-        "florrclonePort": true
+        "florrclonePort": true,
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -3416,7 +3433,8 @@
         },
         "isAdminPetal": false,
         "tradable": false,
-        "zh": "空气"
+        "zh": "空气",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -3454,7 +3472,8 @@
         "defendOnly": true,
         "ignoresMobs": true,
         "minRarity": "mythic",
-        "zh": "罗勒"
+        "zh": "罗勒",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -3799,7 +3818,8 @@
         "color": "#90EE90",
         "count": 1,
         "florrclonePort": true,
-        "minRarity": "unusual"
+        "minRarity": "unusual",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -3905,7 +3925,8 @@
         "description": "准备后防御可潜地2秒，地下Worm和Desert Centipede仍能命中。",
         "color": "#90EE90",
         "count": 1,
-        "florrclonePort": true
+        "florrclonePort": true,
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -4058,7 +4079,8 @@
         "count": 1,
         "defendOnly": true,
         "isAdminPetal": false,
-        "zh": "电池"
+        "zh": "电池",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -4136,7 +4158,8 @@
         "count": 0,
         "noPhysics": true,
         "equipFlags": "Bandage",
-        "zh": "绷带"
+        "zh": "绷带",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -4175,7 +4198,8 @@
         "count": 1,
         "florrclonePort": true,
         "minRarity": "unusual",
-        "noPhysics": true
+        "noPhysics": true,
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -4212,7 +4236,8 @@
         "color": "#90EE90",
         "count": 1,
         "florrclonePort": true,
-        "noPhysics": true
+        "noPhysics": true,
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -4253,7 +4278,8 @@
         "count": 0,
         "equipFlags": "Crown",
         "noPhysics": true,
-        "zh": "冠军之冠"
+        "zh": "冠军之冠",
+        "invulnerable": true
       },
       "art": {
         "present": true,
@@ -4264,7 +4290,7 @@
     },
     {
       "name": "Pharaoh's Crown",
-      "id": "pharaoh_crown",
+      "id": "pharaoh_s_crown",
       "source": {
         "name": "Pharaoh's Crown",
         "zh": "法老之冠",
@@ -4281,8 +4307,27 @@
         "wearable": true,
         "invulnerable": true
       },
-      "current": null,
-      "art": null,
+      "current": {
+        "name": "Pharaoh's Crown",
+        "zh": "法老之冠",
+        "damage": 0,
+        "health": null,
+        "size": 1,
+        "cooldown": 0,
+        "price": 10,
+        "description": "每秒召唤一只 Mythic 亡灵绷带甲虫，持续 6 秒；重复佩戴不叠加。",
+        "color": "#90EE90",
+        "count": 1,
+        "florrclonePort": true,
+        "minRarity": "unique",
+        "noPhysics": true,
+        "invulnerable": true
+      },
+      "art": {
+        "present": true,
+        "embeddedRaster": true,
+        "placeholder": false
+      },
       "mechanismStatus": "requires behavior verification"
     },
     {
@@ -4315,7 +4360,8 @@
         "count": 1,
         "florrclonePort": true,
         "minRarity": "ultra",
-        "noPhysics": true
+        "noPhysics": true,
+        "invulnerable": true
       },
       "art": {
         "present": true,

@@ -83,6 +83,7 @@ inline constexpr double kPadSpinRadiansPerSecond = 8.0;
 
 /// One entity as the client knows it.
 struct RemoteEntity {
+    std::uint32_t dropQuantity = 1;
     std::uint32_t netId = 0;
     net::EntityKind kind = net::EntityKind::Mob;
     std::uint16_t typeIndex = 0;

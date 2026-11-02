@@ -1184,7 +1184,7 @@ void GameServer::bankPickups() {
 
         // Into the bag the body is playing with: an arena pickup is the run's,
         // not the account's, until the run ends.
-        giveToInventory(liveRecord(*session), pickup.petalIndex, pickup.rarity, 1);
+        giveToInventory(liveRecord(*session), pickup.petalIndex, pickup.rarity, pickup.quantity);
         database_.markDirty();
 
         // Owed, not sent: see sendDueProfiles.
@@ -1236,6 +1236,11 @@ void GameServer::reapDead() {
         if (isPlayer) {
             if (session != nullptr) {
                 session->deathReported = true;
+                if (const auto* at = world_.tryGet<Transform>(e)) {
+                    session->hasDeathSite = true;
+                    session->deathRealm = at->realm;
+                    session->deathPosition = at->position;
+                }
                 // In the ring a death hands the run over to the killer before
                 // anything is written down.
                 if (session->arena) settleArenaDeath(*session, world_.get<Dead>(e).killer);
@@ -2085,6 +2090,7 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
     w.f64(trackXp);
     w.u16(static_cast<std::uint16_t>(levelFromTotalXp(trackXp).level));
     w.f64(std::max(0.0, record.stars));
+    w.u32(onMazeTrack ? 0 : static_cast<std::uint32_t>(record.talentPointBonus));
 
     const std::size_t stackCountAt = w.reserveU16();
     std::uint16_t stackCount = 0;
@@ -2195,6 +2201,7 @@ void GameServer::sendProfileDelta(Session& session, net::Connection& connection)
     w.f64(trackXp);
     w.u16(static_cast<std::uint16_t>(levelFromTotalXp(trackXp).level));
     w.f64(std::max(0.0, record.stars));
+    w.u32(onMazeTrack ? 0 : static_cast<std::uint32_t>(record.talentPointBonus));
 
     w.u16(static_cast<std::uint16_t>(session.stacksDue.size()));
     std::vector<std::uint32_t> counts;
@@ -2917,6 +2924,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
         w.u32(0);
         w.u8(0);
         w.str("Not enough petals to craft.");
+        w.u32(0); w.u32(0);
         connection.send(w);
         resyncProfile(session, connection);
         return;
@@ -2961,8 +2969,10 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     // tick thread, was seconds of frozen server.
     std::int64_t pool = count;
     std::int64_t crafted = 0;
+    std::uint32_t attemptCount = 0;
     while (pool >= kCraftBatch) {
         const std::int64_t attempts = pool / kCraftBatch;
+        attemptCount += static_cast<std::uint32_t>(attempts);
         const std::int64_t wins = countSuccesses(rng_, attempts, chance);
         const std::int64_t losses = attempts - wins;
         const std::int64_t lost = losses + 2 * countSuccesses(rng_, losses, 0.5) +
@@ -2979,7 +2989,8 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     if (upgrades > 0) giveToInventory(record, petalIndex, upgradeRarity(rarity), upgrades);
     database_.markDirty();
 
-    if (upgrades > 0) announceRareCraft(session, petalIndex, upgradeRarity(rarity));
+    if (upgrades > 0) announceRareCraft(session, petalIndex, upgradeRarity(rarity),
+                                           upgrades, count - petalsReturned);
 
     w.boolean(upgrades > 0);
     w.u16(petalIndex);
@@ -2987,6 +2998,8 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     w.u32(static_cast<std::uint32_t>(upgrades));
     w.u8(static_cast<std::uint8_t>(petalsReturned));
     w.str(upgrades > 0 ? "" : "The craft failed.");
+    w.u32(attemptCount);
+    w.u32(count - petalsReturned);
     connection.send(w);
     sendProfile(session, connection);
 }
@@ -3055,7 +3068,7 @@ void GameServer::handleOracleCraft(Session& session, net::Connection& connection
 
     // A super bought is announced exactly as a super rolled is: the line is
     // about what exists now, not about how lucky anyone got.
-    announceRareCraft(session, petalIndex, made);
+    announceRareCraft(session, petalIndex, made, 1, cost);
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::OracleResult));
@@ -3247,7 +3260,11 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     // The profile carries the new stacks, which is what refills the window's
     // seats and greys whatever is now short.
     sendProfile(session, connection);
-    announceRareCraft(session, recipe.outputs.front().petal, rarity);
+    std::uint32_t consumed = 0;
+    for (const auto& input : recipe.inputs) consumed += static_cast<std::uint32_t>(input.count * count);
+    for (const auto& output : recipe.outputs)
+        announceRareCraft(session, output.petal, rarity,
+                          static_cast<std::uint32_t>(output.count * count), consumed);
 }
 
 void GameServer::handleAbsorb(Session& session, net::Connection& connection,
@@ -3549,7 +3566,7 @@ int GameServer::takeUniversals(std::uint16_t petalIndex, const std::string& keep
 }
 
 void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIndex,
-                                   Rarity made) {
+                                   Rarity made, std::uint32_t quantity, std::uint32_t consumed) {
     // The top three tiers only, and ONE line however many the batch produced:
     // the reference announces the craft, not each petal it yielded. A
     // universal is never crafted -- it is forged at a titan, one at a time --
@@ -3578,13 +3595,15 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // Two renderings of one sentence: chat gets the marked-up one, and the
     // feed stores the flat one, because the panel draws glyph outlines and has
     // no parser to hand a tag to.
+    const std::string details = " (crafted x" + std::to_string(quantity) +
+        (consumed ? ", consumed x" + std::to_string(consumed) : "") + ")";
     const std::string plain = article + " " + tier + " " + petal + verb + "@" +
-                              session.username + " [" + playerName + "]";
+                              session.username + " [" + playerName + "]" + details;
     broadcastChat(net::ChatChannel::System, "",
                   std::string("<b style=\"color: ") + tierColor + ";\">" + article + " " + tier +
                       " " + petal + verb + "<b style=\"color: #00ff00;\">@" +
                       session.username + "</b> [<b style=\"color: yellow;\">" + playerName +
-                      "</b>]</b>");
+                      "</b>]</b>" + details);
 
     addNotification(forged                   ? "universal_craft"
                     : made == Rarity::Apex   ? "apex_craft"
@@ -3667,6 +3686,7 @@ void GameServer::bankKills() {
                 continue;
             }
             paidAccounts.push_back(session->connection);
+            petals_->onKill(world_, content(), share.player, clockMillis_);
 
             PlayerRecord& record = database_.progress(session->userId);
             record.recordKill(mobId, type->rarity);
@@ -5835,9 +5855,9 @@ void GameServer::handleRespawn(Session& session) {
     // Continue stands near the corpse (ashflor-style in-place respawn), not
     // back at the title-screen door. Capture the death site before the body
     // is removed.
-    bool corpseKnown = false;
-    Realm corpseRealm = Realm::Overworld;
-    Vec2 corpsePos{};
+    bool corpseKnown = session.hasDeathSite;
+    Realm corpseRealm = session.deathRealm;
+    Vec2 corpsePos = session.deathPosition;
     if (session.playing() && world_.isAlive(session.entity)) {
         Health* health = world_.tryGet<Health>(session.entity);
         if (health && health->alive()) return;   // not actually dead
@@ -5856,7 +5876,7 @@ void GameServer::handleRespawn(Session& session) {
     // way a pad does.
     if (reborn != NULL_ENTITY) {
         const Transform* transform = world_.tryGet<Transform>(reborn);
-        if (transform != nullptr && (!corpseKnown || transform->realm != corpseRealm)) {
+        if (transform != nullptr) {
             sendRealmChange(session, transform->position);
         }
     }
@@ -6001,16 +6021,10 @@ Entity GameServer::spawnPlayerNear(Session& session, Realm realm, Vec2 around) {
         endSplit(session, clockMillis_, false);
     }
 
-    // Arena / maze keep their fixed entries; everywhere else stands on open
-    // floor near the death site (findOpenSpawn falls back to nearest open).
-    Vec2 spawn;
-    if (realm == Realm::Arena) {
-        spawn = kArenaSpawn;
-    } else if (realm == Realm::Maze) {
-        spawn = terrain_->findOpenSpawn(rng_, around, kMazeCellSize * 0.5, realm);
-    } else {
+    // Keep the exact death position whenever it is open, correcting walls only.
+    Vec2 spawn = terrain_->resolveCircle(around, kPlayerBaseRadius, realm);
+    if (terrain_->blocked(spawn, realm))
         spawn = terrain_->findOpenSpawn(rng_, around, 200.0, realm);
-    }
     return finishPlayerSpawn(session, realm, spawn);
 }
 
@@ -6034,6 +6048,7 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     session.stage = SessionStage::Playing;
     // A fresh body has a death of its own still to announce.
     session.deathReported = false;
+    session.hasDeathSite = false;
     // And a fresh life owes nothing to the last one's losses: a splitter on
     // the bar cuts this body in two on the next tick.
     session.splitReadyAtMillis = 0;

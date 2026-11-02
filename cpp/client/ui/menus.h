@@ -1812,6 +1812,7 @@ private:
     /// Whether the Account button is on the strip: only while there is an
     /// account to show. The login screen paints the strip and no panels.
     bool accountSlotShown_ = false;
+    std::string feedbackUsername_;
     /// The Release chip as last painted, for capturesMouse(). Empty while no
     /// control is running.
     Rect releaseRect_{};

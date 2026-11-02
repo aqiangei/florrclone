@@ -505,6 +505,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         const double spawnFraction = spawnHealth ? spawnHealth->fraction() : 1.0;
         const double spawnSent = net::writeHealthFraction(out, spawnFraction, spawnWide);
         out.u8(computeEntityState(world, candidate.entity, frame.nowMillis));
+        if (info.kind == net::EntityKind::Drop)
+            out.u32(world.get<DropItem>(candidate.entity).quantity);
         const PlayerVisualState visuals =
             computePlayerVisuals(world, candidate.entity, frame.nowMillis);
         if (info.kind == net::EntityKind::Player) {
@@ -549,6 +551,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         tracked.position = wirePosition(transform.position);
         tracked.angle = angle;
         tracked.radius = radius;
+        if (const auto* drop = world.tryGet<DropItem>(candidate.entity)) tracked.dropQuantity = drop->quantity;
         tracked.seenThisTick = true;
         tracked.healthFraction = spawnSent;
         tracked.state = computeEntityState(world, candidate.entity, frame.nowMillis);
@@ -597,7 +600,9 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         const PlayerVisualState visuals =
             computePlayerVisuals(world, candidate.entity, frame.nowMillis);
 
-        std::uint8_t mask = 0;
+        std::uint16_t mask = 0;
+        const auto* stack = world.tryGet<DropItem>(candidate.entity);
+        if (stack && stack->quantity != tracked.dropQuantity) mask |= net::FieldDropQuantity;
         if (distanceSq(transform.position, tracked.position) >
             tolerances.position * tolerances.position) {
             mask |= net::FieldPosition;
@@ -649,7 +654,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
 
         out.varU32(candidate.netId - previousUpdateId);
         previousUpdateId = candidate.netId;
-        out.u8(mask);
+        out.u16(mask);
         if (mask & net::FieldPositionDelta) {
             out.i16(static_cast<std::int16_t>(deltaX));
             out.i16(static_cast<std::int16_t>(deltaY));
@@ -658,6 +663,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         } else if (mask & net::FieldPosition) {
             out.position(transform.position);
             tracked.position = wirePosition(transform.position);
+        }
+        if (mask & net::FieldDropQuantity) {
+            out.u32(stack->quantity);
+            tracked.dropQuantity = stack->quantity;
         }
         if (mask & net::FieldAngle) {
             out.angle(angle);

@@ -765,6 +765,9 @@ inline Entity onlyPlayer(World& world) {
 /// Defined here and nowhere else, so every test file that includes this one
 /// shares the one definition.
 struct GameServerPeer {
+    // Drive the production death reporter without a transport poll.
+    static void reportDeaths(GameServer& server) { server.reapDead(); }
+    static void flushCommands(GameServer& server) { server.commands_.flush(); }
     /// Sets when Hel's next sacrifice appears, on the server's clock -- zero
     /// is "on the next tick that simulates". The sacrifice on the ground, if any.
     static void windSacrificeClock(GameServer& server, double readyMillis) {

@@ -5625,3 +5625,252 @@ TEST(a_neverambient_mob_never_comes_from_a_group_roll_however_hard_the_ground) {
         }
     }
 }
+TEST(super_quota_keeps_survivors_and_refills_only_after_thirty_seconds) {
+    const Rect band{kCentre.x + 10000.0, kCentre.y + 10000.0, 4000.0, 4000.0};
+    WorldMaps maps;makeBandedWorld(maps, {band}, "bee 100%", 200.0);
+    Sim sim;sim.spawner.worldMaps=&maps;
+    const std::vector<Vec2> players{{5000.0,5000.0}};
+    for(int i=0;i<40;++i)sim.tick(players);
+    auto supers=[&](){std::vector<Entity> out;Query<MobTag,MobType> q{sim.world};q.without<Dead>();
+        q.each([&](Entity e,MobTag&,MobType& t){if(t.rarity==Rarity::Super)out.push_back(e);});return out;};
+    const auto original=supers();CHECK_EQ(original.size(),std::size_t(5));if(original.size()!=5)return;
+    Health& health=sim.world.get<Health>(original[0]);health.current*=0.5;const double damaged=health.current;
+    sim.jump(20000.0,players);CHECK_EQ(supers().size(),std::size_t(5));
+    CHECK_NEAR(sim.world.get<Health>(original[0]).current,damaged,1e-9);
+    sim.world.add<Dead>(original[0]);sim.jump(600.0,players);CHECK_EQ(supers().size(),std::size_t(4));
+    sim.jump(29000.0,players);CHECK_EQ(supers().size(),std::size_t(4));
+    sim.jump(1500.0,players);CHECK_EQ(supers().size(),std::size_t(5));
+    for(std::size_t i=1;i<original.size();++i){CHECK(sim.world.isAlive(original[i]));CHECK(!sim.world.has<Dead>(original[i]));}
+}
+TEST(shipped_combat_maps_keep_five_super_animals_with_real_terrain) {
+    Sim sim;WorldMaps maps;std::string error;
+    CHECK(maps.load(testsupport::dataDir(),&sim.terrain,error));if(!error.empty())return;
+    sim.spawner.worldMaps=&maps;for(int i=0;i<40;++i)sim.tick({{5000,5000}});
+    std::map<Realm,int> counts;Query<MobTag,MobType,Transform> q{sim.world};q.without<Dead>();
+    q.each([&](Entity e,MobTag&,MobType& type,Transform& at){
+        const auto* segment=sim.world.tryGet<BodySegment>(e);
+        if(type.rarity==Rarity::Super&&(!segment||segment->chainHead==e))++counts[at.realm];
+    });
+    for(const MapData& map:maps.maps()){
+        if(map.prestige()||map.id()=="dps_test"||map.templateId()=="termite_mound")continue;
+        std::printf("  super population %s: %d\n",map.id().c_str(),counts[map.realm()]);
+        CHECK_EQ(counts[map.realm()],5);
+    }
+}
+
+TEST(super_leafbug_variants_are_half_golden_without_changing_other_species) {
+    const Rect band{kCentre.x+10000,kCentre.y+10000,4000,4000};
+    WorldMaps maps;makeBandedWorld(maps,{band},"leafbug 100%",200.0);
+    int golden=0,ordinary=0;
+    for(unsigned seed=1;seed<=120;++seed){
+        Sim sim;sim.rng=Rng{seed};sim.spawner.worldMaps=&maps;
+        for(int tick=0;tick<20;++tick)sim.tick({{5000,5000}});
+        Query<MobTag,MobType> mobs{sim.world};mobs.without<Dead>();
+        mobs.each([&](Entity,MobTag&,MobType& mob){if(mob.rarity!=Rarity::Super)return;
+            const auto& id=shipped().mob(mob.configIndex).id;
+            if(id=="golden_leafbug")++golden;else if(id=="leafbug")++ordinary;else CHECK(false);
+        });
+    }
+    CHECK_EQ(golden+ordinary,600);CHECK(golden>240);CHECK(golden<360);
+    std::printf("  Super leafbugs: golden=%d ordinary=%d\n",golden,ordinary);
+}
+
+TEST(drop_multiplier_trials_roll_probability_independently_instead_of_cloning_a_roll) {
+    World world;CommandBuffer commands{world};SpatialGrid grid;EventQueue events;LootSystem loot;Rng rng{20261102};
+    const std::string path=testsupport::tempDir("independent-loot")+"/drops.json";
+    CHECK(testsupport::writeText(path,R"({"bee":{"drops":[{"type":"petal","itemType":"stinger","rarity":"common","probability":0.5}]}})"));
+    std::string error;CHECK(loot.loadTables(shipped(),path,error));
+    const Entity player=makePlayer(world,kCentre+Vec2{5000,0});
+    int mixed=0,total=0;
+    for(int i=0;i<200;++i){
+        makeCorpse(world,shipped().mobIndex("bee"),Rarity::Common,kCentre,player,{player});
+        loot.run(world,grid,shipped(),rng,0,net::kTickSeconds,commands,events);commands.flush();
+        int count=0;for(Entity drop:liveDrops(world)){
+            if(world.get<DropItem>(drop).configIndex==shipped().petalIndex("stinger"))count+=world.get<DropItem>(drop).quantity;
+            world.destroy(drop);
+        }
+        CHECK(count>=0&&count<=kLootFeelCopies);if(count>0&&count<kLootFeelCopies)++mixed;total+=count;
+    }
+    CHECK(mixed>190);CHECK(total>200*kLootFeelCopies*0.45&&total<200*kLootFeelCopies*0.55);
+    std::printf("  independent trials: mixed kills=%d/200 stinger drops=%d/%d\n",mixed,total,200*kLootFeelCopies);
+}
+TEST(stacked_drops_preserve_independent_rolls_and_each_players_full_share) {
+    World world;CommandBuffer commands{world};SpatialGrid grid;EventQueue events;LootSystem loot;Rng rng{44};
+    const std::string path=testsupport::tempDir("stacked-loot")+"/drops.json";
+    CHECK(testsupport::writeText(path,R"({"bee":{"drops":[{"type":"petal","itemType":"stinger","rarity":"common","probability":1}]}})"));
+    std::string error;CHECK(loot.loadTables(shipped(),path,error));
+    const Entity first=makePlayer(world,kCentre+Vec2{5000,0},10);
+    const Entity second=makePlayer(world,kCentre+Vec2{5000,0},10);
+    const Entity stranger=makePlayer(world,kCentre+Vec2{5000,0});
+    makeCorpse(world,shipped().mobIndex("bee"),Rarity::Rare,kCentre,first,{first,second});
+    loot.run(world,grid,shipped(),rng,0,0,commands,events);commands.flush();
+    std::uint32_t total=0;std::size_t stacks=0;
+    for(Entity e:liveDrops(world)){const auto& item=world.get<DropItem>(e);
+        if(item.configIndex==shipped().petalIndex("stinger")){total+=item.quantity;++stacks;}}
+    CHECK_EQ(total,std::uint32_t(kLootFeelCopies));CHECK(stacks<total);
+    const auto initialStacks=liveDrops(world).size();
+    makeCorpse(world,shipped().mobIndex("bee"),Rarity::Rare,kCentre,first,{first,second});
+    loot.run(world,grid,shipped(),rng,0,0,commands,events);commands.flush();
+    total=0;for(Entity e:liveDrops(world))if(world.get<DropItem>(e).configIndex==shipped().petalIndex("stinger"))total+=world.get<DropItem>(e).quantity;
+    CHECK_EQ(total,std::uint32_t(kLootFeelCopies*2));
+    CHECK(liveDrops(world).size()<initialStacks*2);
+    world.get<Transform>(stranger).position=kCentre;rebuildGrid(world,grid);
+    loot.run(world,grid,shipped(),rng,1,0,commands,events);commands.flush();CHECK(loot.pickups().empty());
+    for(Entity player:{first,second}){
+        world.get<Transform>(player).position=kCentre;rebuildGrid(world,grid);
+        loot.run(world,grid,shipped(),rng,2,0,commands,events);commands.flush();
+        std::uint32_t awarded=0;for(const auto& pickup:loot.pickups())if(pickup.player==player&&pickup.petalIndex==shipped().petalIndex("stinger"))awarded+=pickup.quantity;
+        CHECK_EQ(awarded,total);
+        rebuildGrid(world,grid);loot.run(world,grid,shipped(),rng,3,0,commands,events);commands.flush();CHECK(loot.pickups().empty());
+    }
+    CHECK(liveDrops(world).empty());
+}
+#include "server/systems/npcs.h"
+TEST(jungle_practice_row_is_fixed_and_reachable_at_every_rarity) {
+    WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    NpcSystem npcs;std::vector<std::string> warnings;npcs.loadSites(maps,shipped(),warnings);
+    Realm jungle=Realm::Overworld;for(const auto& map:maps.maps())if(map.id()=="jungle")jungle=map.realm();
+    std::set<int> tiers;World world;npcs.placeMissing(world,terrain,shipped(),0);
+    for(const auto& site:npcs.sites())if(site.realm==jungle&&site.mobIndex==shipped().mobIndex("target_dummy")){
+        tiers.insert(rarityIndex(site.rarity));
+        const auto at=terrain.resolveCircle(site.position,0.0,jungle);
+        std::printf("  jungle dummy tier=%d drawn=(%.1f,%.1f) placed=(%.1f,%.1f)\n",rarityIndex(site.rarity),site.position.x,site.position.y,at.x,at.y);
+        CHECK(!terrain.blocked(at,jungle));CHECK(!terrain.inWater(at,jungle));
+        CHECK(distanceSq(at,site.position)<256.0*256.0);
+    }
+    CHECK_EQ(tiers.size(),std::size_t(kLadderRarityCount));
+}
+#include "server/systems/petals.h"
+TEST(imported_ant_egg_hatches_and_mimic_copies_it_with_mana_available) {
+    World w;CommandBuffer commands{w};PetalSystem petals;EventQueue events;
+    const Entity player=makePlayer(w,kCentre);
+    w.add<Motion>(player);w.add<PlayerInput>(player);w.add<PlayerProgress>(player);
+    w.add<Faction>(player,Faction{Team::Players,false});w.add<Loadout>(player);w.add<PetalRing>(player);
+    w.add<Afflictions>(player);w.add<HitCooldowns>(player);
+    for(const auto [slot,id]:std::vector<std::pair<int,const char*>>{{0,"egg"},{1,"mimic"},{2,"mana_orb"}}){
+        auto& s=w.get<Loadout>(player).slots[slot];s.configIndex=shipped().petalIndex(id);s.rarity=Rarity::Common;
+    }
+    CHECK_EQ(equippedPetal(shipped(),w.get<Loadout>(player),1).configIndex,shipped().petalIndex("egg"));
+    for(int i=0;i<150;++i){petals.run(w,shipped(),1000+i*net::kTickMillis,net::kTickSeconds,commands,nullptr,&events);commands.flush();}
+    Query<Pet,MobType> pets{w};int count=0;
+    pets.each([&](Entity,Pet&,MobType& type){if(type.configIndex==shipped().mobIndex("soldier_ant"))++count;});
+    CHECK_EQ(count,8);const auto* mana=w.tryGet<ManaPool>(player);CHECK(mana!=nullptr);
+    if(mana){CHECK(mana->max>0);CHECK(mana->current>0);}
+}
+#include "server/systems/dungeons.h"
+TEST(restored_termite_mound_map_allows_entry_and_returns_to_its_entrance) {
+    WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    const auto copies=maps.copiesOf("termite_mound");CHECK_EQ(copies.size(),std::size_t(8));
+    Realm home=Realm::Overworld;Vec2 at{};Rng rng{19};for(const auto& map:maps.maps())if(map.id()=="jungle"){home=map.realm();at=map.defaultSpawn(rng,terrain);}
+    World w;CommandBuffer commands{w};SpawnSystem spawn;CombatSystem combat;DungeonSystem dungeons;dungeons.worldMaps=&maps;
+    const Entity player=makePlayer(w,at);w.get<Transform>(player).realm=home;
+    const Entity mound=spawn.spawnMob(w,terrain,shipped(),shipped().mobIndex("termite_mound"),Rarity::Uncommon,at,home,0,rng);
+    CHECK(mound!=NULL_ENTITY);if(mound==NULL_ENTITY)return;w.get<Transform>(player).position=w.get<Transform>(mound).position;
+    dungeons.moveToRealm=[&](Entity e,Realm realm,Vec2 position){auto& t=w.get<Transform>(e);t.realm=realm;t.position=position;};
+    dungeons.run(w,terrain,shipped(),spawn,combat,rng,1000,commands);commands.flush();
+    dungeons.run(w,terrain,shipped(),spawn,combat,rng,1700,commands);commands.flush();
+    const Realm inside=w.get<Transform>(player).realm;CHECK(inside!=home);CHECK(dungeons.isInstance(inside));
+    Realm outside;Vec2 exit;CHECK(dungeons.exitFor(inside,rng,kPlayerBaseRadius,outside,exit));CHECK(outside==home);
+    CHECK(distanceSq(exit,w.get<Transform>(mound).position)<1000.0*1000.0);
+}
+TEST(imported_powder_bonuses_stack_additively_and_do_not_change_mob_speed) {
+    World w;CommandBuffer commands{w};PetalSystem petals;const Entity p=makePlayer(w,kCentre);
+    w.add<Loadout>(p);w.add<PetalRing>(p);w.add<PlayerInput>(p);w.add<PlayerProgress>(p);
+    for(int i=0;i<2;++i){auto& slot=w.get<Loadout>(p).slots[i];slot.configIndex=shipped().petalIndex("mysterious_powder");slot.rarity=Rarity::Rare;}
+    petals.run(w,shipped(),1000,net::kTickSeconds,commands);commands.flush();
+    CHECK_NEAR(w.get<PlayerModifiers>(p).speedScale,1.5,1e-9);
+    CHECK_NEAR(kPlayerMaxSpeed,843.75,1e-9);CHECK_NEAR(kMobBaseSpeed,300,1e-9);
+}
+TEST(soil_wiki_bonus_and_totem_kill_regeneration_match_runtime) {
+    CHECK_NEAR(shipped().petalStats(shipped().petalIndex("soil"),Rarity::Common).flowerHealthBonus,50,1e-9);
+    CHECK_NEAR(shipped().petalStats(shipped().petalIndex("soil"),Rarity::Super).flowerHealthBonus,109350,1e-9);
+    World w;CommandBuffer commands{w};PetalSystem petals;const Entity p=makePlayer(w,kCentre);
+    w.add<Loadout>(p);w.add<PetalRing>(p);w.add<PlayerInput>(p);w.add<PlayerProgress>(p);
+    auto& soil=w.get<Loadout>(p).slots[0];soil.configIndex=shipped().petalIndex("soil");soil.rarity=Rarity::Super;
+    auto& totem=w.get<Loadout>(p).slots[1];totem.configIndex=shipped().petalIndex("totem");totem.rarity=Rarity::Uncommon;
+    for(int i=0;i<100;++i){petals.run(w,shipped(),1000+i*net::kTickMillis,net::kTickSeconds,commands);commands.flush();}
+    CHECK_NEAR(w.get<Health>(p).max,maxHealthForLevel(1)+109350,1e-9);
+    w.get<Health>(p).current=100;petals.onKill(w,shipped(),p,5000);CHECK(w.has<TotemRegeneration>(p));
+    const double before=w.get<Health>(p).current;
+    for(int i=0;i<30;++i){petals.run(w,shipped(),5000+i*net::kTickMillis,net::kTickSeconds,commands);commands.flush();}
+    CHECK(w.get<Health>(p).current>before+3.0);
+    petals.run(w,shipped(),16000,net::kTickSeconds,commands);commands.flush();
+    CHECK(w.get<TotemRegeneration>(p).stacks.empty());
+}
+TEST(migration_tp_credit_preserves_one_point_for_each_new_level) {
+    SkillSet skills;skills.set(SkillId::Loadout,4);skills.set(SkillId::Reload,6);
+    const int baseline=100;const int credit=std::max(0,skills.spent()-baseline);
+    CHECK_EQ(availableTalentPoints(baseline,skills,credit),0);
+    CHECK_EQ(availableTalentPoints(baseline+1,skills,credit),1);
+    CHECK_EQ(availableTalentPoints(baseline+10,skills,credit),10);
+}
+TEST(ant_egg_loot_uses_the_real_imported_ant_egg_item) {
+    World w;CommandBuffer commands{w};SpatialGrid grid;EventQueue events;ShippedLoot loot;Rng rng{42};
+    const Entity player=makePlayer(w,kCentre+Vec2{5000,0});
+    makeCorpse(w,shipped().mobIndex("ant_egg"),Rarity::Rare,kCentre,player,{player});
+    loot.run(w,grid,shipped(),rng,0,0,commands,events);commands.flush();
+    int quantity=0;for(Entity e:liveDrops(w))if(w.get<DropItem>(e).configIndex==shipped().petalIndex("egg"))quantity+=w.get<DropItem>(e).quantity;
+    CHECK_EQ(quantity,kLootFeelCopies);
+}
+TEST(desert_authored_habitats_really_spawn_sandstorms) {
+    WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    std::vector<RealmPoint> viewers;Realm desert=Realm::Overworld;
+    for(const auto& map:maps.maps())if(map.id()=="desert"){
+        desert=map.realm();for(const auto& e:map.elements())if(e.isSpawnBand())
+            viewers.push_back({{e.bounds.x+e.bounds.w*0.5,e.bounds.y+e.bounds.h*0.5},desert});
+    }
+    World w;CommandBuffer commands{w};SpawnSystem spawn;spawn.worldMaps=&maps;Rng rng{9384};
+    for(int i=0;i<100;++i){spawn.run(w,terrain,shipped(),viewers,rng,i*net::kTickMillis,net::kTickSeconds,commands);commands.flush();}
+    int storms=0,total=0;Query<MobTag,MobType,Transform> mobs{w};
+    mobs.each([&](Entity,MobTag&,MobType& type,Transform& at){if(at.realm==desert){++total;if(type.configIndex==shipped().mobIndex("sandstorm"))++storms;}});
+    std::printf("  desert: %d sandstorms / %d live mobs\n",storms,total);CHECK(storms>0);
+}
+TEST(thrown_web_has_a_visible_flight_and_only_slows_after_landing) {
+    World w;CommandBuffer commands{w};PetalSystem petals;const Entity p=makePlayer(w,kCentre);
+    w.add<Loadout>(p);w.add<PetalRing>(p);w.add<PlayerInput>(p);w.add<PlayerProgress>(p);
+    w.get<PlayerInput>(p).current.flags=net::InputAttack;
+    w.get<Loadout>(p).slots[0].configIndex=shipped().petalIndex("web");
+    Entity web=NULL_ENTITY;double now=1000;
+    for(int i=0;i<400&&web==NULL_ENTITY;++i){
+        petals.run(w,shipped(),now,net::kTickSeconds,commands);commands.flush();now+=net::kTickMillis;
+        Query<WebFlight> q{w};const auto list=q.collect();if(!list.empty())web=list.front();
+    }
+    CHECK(web!=NULL_ENTITY);if(web==NULL_ENTITY)return;
+    const auto flight=w.get<WebFlight>(web);CHECK_NEAR(w.get<GroundEffect>(web).radius,0,1e-9);
+    for(int i=0;i<20;++i){petals.run(w,shipped(),now,net::kTickSeconds,commands);commands.flush();now+=net::kTickMillis;}
+    CHECK(!w.has<WebFlight>(web));CHECK(w.get<GroundEffect>(web).radius>0);
+    CHECK_NEAR(distanceSq(w.get<Transform>(web).position,flight.to),0,0.01);
+    CHECK(distanceSq(flight.from,flight.to)>100.0*100.0);
+}
+TEST(newly_equipped_petals_observe_the_server_equip_cooldown) {
+    World w;CommandBuffer commands{w};PetalSystem petals;const Entity p=makePlayer(w,kCentre);
+    w.add<Loadout>(p);w.add<PetalRing>(p);w.add<PlayerInput>(p);w.add<PlayerProgress>(p);
+    w.get<Loadout>(p).slots[0].configIndex=shipped().petalIndex("basic");
+    petals.run(w,shipped(),1000,net::kTickSeconds,commands);commands.flush();
+    CHECK(w.get<Loadout>(p).spawned.empty());CHECK(w.get<Loadout>(p).slots[0].broken);
+    petals.run(w,shipped(),2000,net::kTickSeconds,commands);commands.flush();CHECK(w.get<Loadout>(p).spawned.empty());
+    petals.run(w,shipped(),4000,net::kTickSeconds,commands);commands.flush();CHECK(!w.get<Loadout>(p).spawned.empty());
+}
+TEST(factory_spawn_regions_use_mecha_flower_instead_of_gambler) {
+    WorldMaps maps;std::string error;CHECK(maps.load(testsupport::dataDir(),nullptr,error));
+    int flowers=0;for(const auto& map:maps.maps())if(map.id()=="computer")
+        for(const auto& element:map.elements())for(const auto& row:element.mobDistribution){
+            CHECK(row.name!="gambler");if(row.name=="mecha_flower")++flowers;
+        }
+    CHECK(flowers>=7);
+}
+TEST(jungle_super_population_includes_the_jungle_habitats_not_only_termite_plots) {
+    WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    Realm jungle=Realm::Overworld;for(const auto& map:maps.maps())if(map.id()=="jungle")jungle=map.realm();
+    int nonTermites=0,total=0;std::map<std::string,int> types;
+    for(unsigned seed=1;seed<=6;++seed){World w;CommandBuffer commands{w};SpawnSystem spawn;spawn.worldMaps=&maps;Rng rng{seed};
+        for(int i=0;i<40;++i){spawn.run(w,terrain,shipped(),{},rng,i*net::kTickMillis,net::kTickSeconds,commands);commands.flush();}
+        Query<MobTag,MobType,Transform> mobs{w};mobs.each([&](Entity e,MobTag&,MobType& type,Transform& at){
+            if(at.realm!=jungle||type.rarity!=Rarity::Super)return;
+            if(const auto* segment=w.tryGet<BodySegment>(e);segment&&segment->chainHead!=e)return;
+            const auto& id=shipped().mob(type.configIndex).id;++types[id];++total;if(id.find("termite")==std::string::npos)++nonTermites;
+        });
+    }
+    for(const auto& [id,n]:types)std::printf("  jungle Super %s: %d\n",id.c_str(),n);
+    CHECK_EQ(total,30);CHECK(nonTermites>=5);
+}
