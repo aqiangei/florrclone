@@ -468,7 +468,9 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (stats.spongeDamageDurationMillis > 0)
         special("伤害分摊时间：", "Damage spread duration: ", stats.spongeDamageDurationMillis / 1000.0, "s");
     if (stats.cameraZoom != 1.0) special("视野缩放倍率：", "Camera zoom: ", stats.cameraZoom);
-    if (stats.modifiers.luck != 1.0) special("幸运变化：", "Luck: ", (stats.modifiers.luck - 1.0) * 100.0, "%");
+    if (stats.modifiers.luck != 0.0)
+        special(stats.modifiers.luck > 0 ? "幸运加成：+" : "幸运变化：",
+                stats.modifiers.luck > 0 ? "Luck: +" : "Luck: ", stats.modifiers.luck * 100.0, "%");
     if (stats.modifiers.aggroRange != 1.0)
         special("怪物警觉范围变化：", "Mob detection range: ", (stats.modifiers.aggroRange - 1.0) * 100.0, "%");
     if (stats.modifiers.poisonArmor > 0) special("毒抗：", "Poison armor: ", stats.modifiers.poisonArmor);

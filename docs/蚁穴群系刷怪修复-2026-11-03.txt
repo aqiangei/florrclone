@@ -30,3 +30,7 @@
 - 发布目录：/opt/florrclone/releases/cpp-20261103-ant-habitats；发布包SHA256：7e231b6b42d21747d894de6293213665705ac8c5f47e304a2f02f70c0596aed7。
 - 最新969账号停服存档已备份至D:/ashflor/backups/florrclone/20261102T183152Z/inventory.json，本地/服务器SHA256一致：914e678f5cf71327d99c3c4dc14d2c9460780dc83b98dd7b11cbcb6293112f36。TP核对0账号/0点，未重复补点或覆盖后续进度；存档和备份不进入Git。
 - 更新期间小游戏等待页正常生效，验收后开放入口。本地localhost:3003已同步新版本，原本地存档另行备份保留。
+
+花瓣信息幸运项修复：幸运是默认0的加法属性，之前误按默认1的倍率显示，导致所有普通花瓣显示-100%。现默认0不显示，有真实加成时直接显示加成百分比，例如普通四叶草+8%。仅修正信息展示，不修改任何实际幸运数值。
+
+幸运展示最终验收：干净b49d281检出构建成功，直接调用真实petalTooltipLines核对1190个花瓣/稀有度组合，默认0幸运项全部隐藏，普通四叶草准确显示+8%。仅客户端bundle.wasm及压缩副本变化，服务端与游戏数据未改。发布cpp-20261103-luck-tooltip已成功，公网客户端SHA256=b0a671285aa857b5a5f1722715af6b5367dd98dfb2f18007efbe89769e033a95与本地一致。969账号最新停服存档本地备份D:/ashflor/backups/florrclone/20261102T183757Z/inventory.json，SHA256=914e678f5cf71327d99c3c4dc14d2c9460780dc83b98dd7b11cbcb6293112f36；无额外TP补偿。维护小游戏及恢复入口验证通过。发布包SHA256=b736adcf22f2a7f4d45d8319eb726c625b9cec2cf9daf73a22924b0912793811。
