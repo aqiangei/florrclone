@@ -260,6 +260,7 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
 
     for (const auto& [player, nest] : entering) {
         if (!world.isAlive(nest) || !world.isAlive(player)) continue;
+        if(world.get<Transform>(player).realm!=world.get<Transform>(nest).realm)continue;
         const MobType* type = world.tryGet<MobType>(nest);
         const DungeonEntrance* door = world.tryGet<DungeonEntrance>(nest);
         if (type == nullptr || door == nullptr) continue;

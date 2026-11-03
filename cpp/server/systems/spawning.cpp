@@ -798,7 +798,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     }
 
     if (depth < kMaxNestDepth) {
-        if (config.periodicSpawn.present) {
+        if (!config.dungeon.present && config.periodicSpawn.present) {
             Spawner spawner;
             spawner.childConfigIndex = config.periodicSpawn.mobIndex;
             spawner.rarityOffset = config.periodicSpawn.rarityOffset;
@@ -811,7 +811,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
             spawner.maxAlive = config.periodicSpawn.maxAlive;
             world.add<Spawner>(e, std::move(spawner));
         }
-        if (!config.spawnWaves.empty()) {
+        if (!config.dungeon.present && !config.spawnWaves.empty()) {
             NestWaves waves;
             waves.mobIndex = mobIndex;
             // Seeded full: the first band fires on the first damage the hole
@@ -820,7 +820,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
             world.add<NestWaves>(e, std::move(waves));
         }
         // Armed, with nothing out: the brood waits for a flower (runNests).
-        if (config.ambush.present) world.add<AmbushNest>(e);
+        if (!config.dungeon.present && config.ambush.present) world.add<AmbushNest>(e);
         // Unclaimed: the dungeon is built the first time a flower walks in
         // (DungeonSystem).
         if (config.dungeon.present) world.add<DungeonEntrance>(e);

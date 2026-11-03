@@ -97,6 +97,7 @@ TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {
         World w;CommandBuffer commands{w};SpawnSystem spawn;CombatSystem combat;DungeonSystem dungeon;dungeon.worldMaps=&maps;
         const auto at=maps.forRealm(home)->defaultSpawn(rng,terrain);
         const auto nest=spawn.spawnMob(w,terrain,content(),content().mobIndex("termite_mound"),tier,at,home,0,rng);CHECK(nest!=NULL_ENTITY);if(nest==NULL_ENTITY)continue;
+        CHECK(!w.has<Spawner>(nest));CHECK(!w.has<NestWaves>(nest));CHECK(!w.has<AmbushNest>(nest));
         const auto entrance=w.get<Transform>(nest).position;const auto player=w.create();
         w.add<PlayerTag>(player);w.add<Transform>(player,Transform{entrance,0,home});w.add<Body>(player,Body{25,1});w.add<Health>(player,Health{1000,1000});
         dungeon.moveToRealm=[&](Entity e,Realm realm,Vec2 p){auto& t=w.get<Transform>(e);t.realm=realm;t.position=p;};
