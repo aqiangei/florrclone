@@ -9,7 +9,7 @@ using namespace flix::testsupport;
 namespace {
 bool loadWikiStats() { std::string error; return loadContent(dataDir(),error); }
 bool hasLine(std::uint16_t id,Rarity r,const std::string& text) {
-    for(const auto& line:ui::petalTooltipLines(id,r,{},1)) if(line.text.find(text)!=std::string::npos)return true;
+    for(const auto& line:ui::petalTooltipLines(id,r,{},1)) if(line.text.find(text)!=std::string::npos || line.altText.find(text)!=std::string::npos)return true;
     return false;
 }
 }

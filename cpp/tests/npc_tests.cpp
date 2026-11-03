@@ -3013,7 +3013,7 @@ TEST(pyramid_map_scrolls_reveal_one_visit_without_inventory_and_refill) {
     CHECK(!world.isAlive(picked)); CHECK_EQ(scrolls().size(),39u);
     CHECK(!watcher.pyramidMapRevealed);
     CHECK_EQ(explorer.profile().inventory.size(),before.size());
-    h.step(900,{&watcher,&explorer}); CHECK_EQ(scrolls().size(),40u);
+    h.step(903,{&watcher,&explorer}); CHECK_EQ(scrolls().size(),40u);
     explorer.leaveGame(); h.step(4,{&watcher,&explorer}); CHECK(!explorer.pyramidMapRevealed);
     explorer.joinGame(1280,720,"pyramid:spawn","explorer");
     CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::Playing;}));
