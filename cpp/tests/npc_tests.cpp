@@ -3257,6 +3257,7 @@ TEST(hyper_hammer_network_forges_mjolnir_from_five_eternal_hammers) {
     CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique)==0;}));removeDataDir(dir);
 }
 TEST(hyper_operator_exchange_waits_for_cutover_and_broadcasts_once_without_double_charging) {
+    const auto oldLanguage=ui::language();ui::setLanguage(ui::Language::En);
     const auto dir=titanWorld("operator-hammer");
     const auto gate=testsupport::tempUnique("operator-gate",".flag");
     const auto ready=testsupport::tempUnique("operator-ready",".flag");
@@ -3286,5 +3287,5 @@ TEST(hyper_operator_exchange_waits_for_cutover_and_broadcasts_once_without_doubl
     CHECK_EQ(result["players"][id]["inventory"]["apex"]["petal_mjolnir"].asInt(),1);
     int messages=0;for(const auto& message:client.chat())if(message.text.find("has been forged by")!=std::string::npos)++messages;
     CHECK_EQ(messages,1);
-    std::remove(ready.c_str());removeDataDir(dir);
+    std::remove(ready.c_str());removeDataDir(dir);ui::setLanguage(oldLanguage);
 }
