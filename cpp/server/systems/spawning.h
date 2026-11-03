@@ -367,6 +367,7 @@ inline constexpr Rarity kAnnouncedRarity = Rarity::Super;
 /// ANIMAL: a centipede's body segments share its tier and are not more of it,
 /// and a player's pets are not wild at all.
 inline constexpr double kUniqueSpawnCooldownMillis = 5.0 * 60.0 * 1000.0;
+inline constexpr int kEternalPopulationTarget = 3;
 // AshFlor BJ: no apex time gate — one per biome may stand; when it dies the
 // next upgrade may place another immediately (cooldown was 2h upstream).
 inline constexpr double kApexSpawnCooldownMillis = 0.0;
@@ -646,6 +647,7 @@ public:
         double apexReadyMillis = 0;
         bool scattered = false;
         bool uniqueStanding = false;
+        bool uniqueDeathCooldown = false;
         bool apexStanding = false;
     };
     /// Every staged map's biome, in map order. Mutable so a test or an
@@ -1044,7 +1046,7 @@ private:
     std::vector<TopBoss> topBosses_;
     struct SuperMapState { Realm realm; SuperPopulation population; };
     std::vector<SuperMapState> superPopulations_;
-    struct EternalMapState { Realm realm; bool hadLiving = false; };
+    struct EternalMapState { Realm realm; int previousLiving = 0; };
     std::vector<EternalMapState> eternalPopulations_;
     void stockEternals(World&, const Terrain&, const ContentRegistry&,
                        const std::vector<Viewer>&, Rng&, double);

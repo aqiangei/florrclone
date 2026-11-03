@@ -654,6 +654,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(steal);
     }
 
+    if (stats.petalEvasion > 0.0) {
+        lines.push_back({std::string(chinese ? "花瓣自身闪避：" : "Petal evasion: ") + exactNumber(stats.petalEvasion * 100.0) + "%", 12.0});
+        lines.push_back({chinese ? "仅保护花瓣自身；闪电不可闪避。" : "Protects this petal only; lightning bypasses evasion.", 12.0});
+    }
+    if (stats.petalPoisonImmune) lines.push_back({chinese ? "花瓣自身免疫中毒。" : "This petal is immune to poison.", 12.0});
+
     // Talisman. The chance grows a step every tier and nothing in play shows
     // it -- a dodge is a hit that simply did not happen -- so it is printed.
     if (stats.modifiers.evasion > 0.0) {

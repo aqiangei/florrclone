@@ -1301,6 +1301,8 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.armorReduction = ctx.range(src, "armorReduction", 0.0, 0.0, kMaxBaseStat);
     p.armorPerStack = ctx.range(src, "armorPerStack", 0.0, 0.0, kMaxBaseStat);
     p.petalArmor = ctx.range(src, "petalArmor", 0.0, 0.0, kMaxBaseStat);
+    p.petalEvasion = ctx.range(src, "petalEvasion", 0.0, 0.0, 1.0);
+    p.petalPoisonImmune = ctx.boolean(src, "petalPoisonImmune", false);
     p.clawCritDamage = ctx.range(src, "clawCritDamage", 0.0, 0.0, kMaxBaseStat);
     // A FRACTION, not a percentage: 0.35 heals a third of the hit. Above one
     // is legal -- gardn's mythic fang heals three times what it deals -- and
@@ -1908,6 +1910,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // -- a flat amount off each hit the wearer takes -- so a bone and a mob
     // of one tier are as hard to scratch as each other.
     s.petalArmor = c.petalArmor * kMobArmorScale[static_cast<std::size_t>(rarityIndex(tier))];
+    s.petalEvasion = c.petalEvasion;
+    s.petalPoisonImmune = c.petalPoisonImmune;
     // A claw's bonus is damage, so it is on the damage ladder beside `damage`.
     s.critDamage = c.clawCritDamage * strength;
     // Fang uses healing/damage scaling, so its percentage falls at Ultra+.

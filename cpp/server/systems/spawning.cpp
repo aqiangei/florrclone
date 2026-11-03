@@ -1768,13 +1768,13 @@ std::uint32_t SpawnSystem::biomeKey(Realm realm) const {
 
 bool SpawnSystem::topBossTaken(World& world, Rarity rarity, Realm realm) {
     const std::uint32_t key = biomeKey(realm);
-    bool taken = false;
+    int standing = 0;
     ambient_->each([&](Entity e, MobTag&, Transform& transform, Body&, MobType& type,
                        AmbientMob&) {
-        if (taken || type.rarity != rarity || !isWholeAnimal(world, e)) return;
-        taken = isWorldRealm(transform.realm) && biomeKey(transform.realm) == key;
+        if (type.rarity != rarity || !isWholeAnimal(world, e)) return;
+        if (isWorldRealm(transform.realm) && biomeKey(transform.realm) == key) ++standing;
     });
-    return taken;
+    return standing >= (rarity == Rarity::Unique ? kEternalPopulationTarget : 1);
 }
 
 void SpawnSystem::noteStandingBosses(World& world, const CommandBuffer& commands) {
@@ -1824,10 +1824,13 @@ void SpawnSystem::cullExtraTopBosses(World& world, CommandBuffer& commands) {
         return a.order < b.order;
     });
     culled_.clear();
+    int standing = 1;
     for (std::size_t i = 1; i < topBosses_.size(); ++i) {
         const TopBoss& first = topBosses_[i - 1];
         const TopBoss& extra = topBosses_[i];
-        if (extra.biome == first.biome && extra.rarity == first.rarity) {
+        standing = extra.biome == first.biome && extra.rarity == first.rarity ? standing + 1 : 1;
+        const int cap = extra.rarity == Rarity::Unique ? kEternalPopulationTarget : 1;
+        if (standing > cap) {
             culled_.push_back(extra.entity);
         }
     }
@@ -1990,18 +1993,20 @@ void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
         auto state=std::find_if(eternalPopulations_.begin(),eternalPopulations_.end(),
                                [&](const EternalMapState& v){return v.realm==map.realm();});
         if(state==eternalPopulations_.end()) {
-            eternalPopulations_.push_back({map.realm(),false});state=std::prev(eternalPopulations_.end());
+            eternalPopulations_.push_back({map.realm(),0});state=std::prev(eternalPopulations_.end());
         }
-        bool living=false;
+        int living=0;
         ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob&){
             if(at.realm==map.realm() && type.rarity==Rarity::Unique &&
-               !world.has<Dead>(e) && isWholeAnimal(world,e))living=true;
+               !world.has<Dead>(e) && isWholeAnimal(world,e))++living;
         });
-        if(living){state->hadLiving=true;continue;}
-        if(state->hadLiving){
+        if(state->previousLiving>living){
             chargeBossClock(Rarity::Unique,map.realm(),nowMillis);
-            state->hadLiving=false;
+            const auto slot=realmBiome_[realmIndex(map.realm())];
+            if(slot<bossClocks_.size())bossClocks_[slot].uniqueDeathCooldown=true;
         }
+        state->previousLiving=living;
+        if(living>=kEternalPopulationTarget)continue;
         if(bossCooldownLeft(Rarity::Unique,map.realm(),nowMillis)>0)continue;
         double highest=-1e9;
         for(const auto& zone:zones_)if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0)
@@ -2013,11 +2018,11 @@ void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
             if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0&&zone.difficulty>=floor)
                 candidates.push_back(static_cast<std::uint16_t>(n));
         }
-        for(int attempt=0;attempt<80&&!candidates.empty();++attempt) {
+        for(int attempt=0;attempt<240&&!candidates.empty()&&living<kEternalPopulationTarget;++attempt) {
             const auto n=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
             if(stockZone(world,terrain,content,zones_[n],n,viewers,rng,nowMillis,
                          Slot::TopUp,{},true,Rarity::Unique)) {
-                state->hadLiving=true;break;
+                ++living;state->previousLiving=living;
             }
         }
     }

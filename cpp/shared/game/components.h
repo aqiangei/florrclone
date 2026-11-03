@@ -175,6 +175,7 @@ struct Armor {
 struct Evasion {
     double chance = 0;
 };
+struct PoisonImmune {};
 
 /// Damage dealt by touching this entity.
 struct ContactDamage {

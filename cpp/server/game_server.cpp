@@ -724,7 +724,7 @@ void GameServer::persistBossClocks() {
         // the cooldown it started is handed back: its clock is saved as of the
         // moment the boss spent it, which the next run reads as ready. Once it
         // dies the real ready time goes back in.
-        const double unique = clock.uniqueStanding
+        const double unique = clock.uniqueStanding && !clock.uniqueDeathCooldown
                                   ? clock.uniqueReadyMillis - kUniqueSpawnCooldownMillis
                                   : clock.uniqueReadyMillis;
         const double apex = clock.apexStanding ? clock.apexReadyMillis - kApexSpawnCooldownMillis

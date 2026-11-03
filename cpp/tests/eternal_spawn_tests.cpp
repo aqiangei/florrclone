@@ -12,7 +12,7 @@ TEST(eternal_stats_are_three_times_super_without_speed_or_armor_inflation) {
         CHECK_NEAR(e.armor,s.armor,1e-9);
     }
 }
-TEST(eternal_one_per_regular_map_keeps_five_supers_and_waits_after_death) {
+TEST(eternal_three_per_regular_map_keeps_five_supers_and_waits_after_death) {
     ContentRegistry c;WorldMaps maps;Terrain terrain;std::string error;
     CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),error));
     CHECK(maps.load(testsupport::dataDir(),&terrain,error));
@@ -33,7 +33,7 @@ TEST(eternal_one_per_regular_map_keeps_five_supers_and_waits_after_death) {
             if(type.rarity==Rarity::Super)++supers;
         });
         std::printf("  %s: E=%d S=%d\n",map.id().c_str(),eternal,supers);
-        CHECK_EQ(eternal,1);CHECK_EQ(supers,5);++mapsChecked;
+        CHECK_EQ(eternal,3);CHECK_EQ(supers,5);++mapsChecked;
     }
     CHECK_EQ(mapsChecked,9);CHECK(boss!=NULL_ENTITY);if(boss==NULL_ENTITY)return;
     w.get<Health>(boss).current*=0.5;
@@ -43,9 +43,9 @@ TEST(eternal_one_per_regular_map_keeps_five_supers_and_waits_after_death) {
     w.destroy(boss);step(7500500);
     int count=0;auto countBosses=[&](){count=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();
         q.each([&](Entity e,MobTag&,MobType& type,Transform& at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(at.realm==garden&&type.rarity==Rarity::Unique&&(!b||b->chainHead==e))++count;});};
-    countBosses();CHECK_EQ(count,0);
+    countBosses();CHECK_EQ(count,2);
     for(int n=0;n<10;++n)step(7501000+n*500);
-    countBosses();CHECK_EQ(count,1);
+    countBosses();CHECK_EQ(count,3);
 }
 TEST(eternal_restored_cooldown_survives_a_fresh_spawner) {
     ContentRegistry c;WorldMaps maps;Terrain terrain;std::string error;
@@ -60,5 +60,6 @@ TEST(eternal_restored_cooldown_survives_a_fresh_spawner) {
         q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob&){const auto* b=world.tryGet<BodySegment>(e);if(at.realm==garden&&t.rarity==Rarity::Unique&&(!b||b->chainHead==e))++n;});return n;};
     step(1000);step(299999);CHECK_EQ(count(),0);
     for(int n=0;n<10;++n)step(301000+n*500);
-    CHECK_EQ(count(),1);
+    CHECK_EQ(count(),3);
 }
+

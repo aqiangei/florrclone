@@ -195,3 +195,27 @@ TEST(feedback_flowers_can_stand_inside_moon_without_shoving_it) {
     CHECK_NEAR(distance(w.get<Transform>(player).position,start),0,1e-6);
     CHECK_NEAR(distance(w.get<Transform>(moon).position,moonAt),0,1e-6);
 }
+
+TEST(feedback_chip_has_independent_ninety_percent_self_evasion_but_not_lightning){
+    CHECK(feedbackContent());const auto chipIndex=content().petalIndex("poker_chip");
+    for(int tier=0;tier<kLadderRarityCount;++tier){const auto stats=content().petalStats(chipIndex,static_cast<Rarity>(tier));CHECK_NEAR(stats.petalEvasion,.9,1e-12);CHECK(stats.petalPoisonImmune);}
+    World w;CommandBuffer commands{w};PetalSystem petals;CombatSystem combat;const auto player=w.create();
+    w.add<PlayerTag>(player);w.add<Transform>(player,Transform{{10000,10000},0});w.add<Motion>(player);w.add<Body>(player,Body{25,1});
+    w.add<Health>(player,Health{1000,1000});w.add<Faction>(player,Faction{Team::Players,false});w.add<PlayerProgress>(player);
+    w.add<PlayerInput>(player);w.add<PlayerModifiers>(player);w.add<Loadout>(player);w.add<PetalRing>(player);w.add<Afflictions>(player);w.add<HitCooldowns>(player);w.add<PlayerSkillTree>(player);
+    w.get<Loadout>(player).slots[0].configIndex=chipIndex;double now=1000;
+    for(int n=0;n<100;++n){now+=net::kTickMillis;petals.run(w,content(),now,net::kTickSeconds,commands);commands.flush();}
+    Entity chip=NULL_ENTITY;Query<PetalInstance,Health> q{w};q.each([&](Entity e,PetalInstance& p,Health&){if(p.owner==player&&p.configIndex==chipIndex)chip=e;});
+    CHECK(chip!=NULL_ENTITY);if(chip==NULL_ENTITY)return;
+    CHECK_NEAR(w.get<Evasion>(chip).chance,.9,1e-12);CHECK(w.has<PoisonImmune>(chip));CHECK_NEAR(w.get<PlayerModifiers>(player).evasion,0,1e-12);
+    const auto enemy=w.create();w.add<MobTag>(enemy);w.add<Health>(enemy,Health{1e8,1e8});w.add<Faction>(enemy,Faction{Team::Hostiles,false});
+    w.get<Health>(chip).current=1e8;w.get<Health>(chip).max=1e8;
+    int dodges=0;for(int n=0;n<20000;++n){now+=1000;const auto hit=combat.applyDamage(w,chip,enemy,1,now,DamageKind::Recoil);CHECK(!hit.refused);if(hit.dodged)++dodges;}
+    CHECK(dodges>17600&&dodges<18400);
+    dodges=0;for(int n=0;n<2000;++n){now+=1000;const auto hit=combat.applyDamage(w,chip,enemy,1,now,DamageKind::Direct);if(hit.dodged)++dodges;}
+    CHECK(dodges>1720&&dodges<1880);
+    for(int n=0;n<100;++n){now+=1000;const auto hit=combat.applyDamage(w,chip,enemy,1,now,DamageKind::Lightning);CHECK(!hit.dodged);CHECK_NEAR(hit.applied,1,1e-12);}
+    const auto poison=combat.applyDamage(w,chip,enemy,10,now+1000,DamageKind::Poison);CHECK(poison.refused);CHECK_NEAR(poison.applied,0,1e-12);
+    combat.applyPoison(w,chip,enemy,10,1000,now+2000);const auto* status=w.tryGet<Afflictions>(chip);CHECK(!status||status->poisonPerSecond==0);
+    const auto ownerHit=combat.applyDamage(w,player,enemy,1,now+3000,DamageKind::Direct);CHECK(!ownerHit.dodged);CHECK_NEAR(ownerHit.applied,1,1e-12);
+}

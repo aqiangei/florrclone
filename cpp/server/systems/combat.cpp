@@ -588,6 +588,10 @@ bool CombatSystem::canHit(const World& world, Entity victim, Entity source, doub
 DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity source,
                                        double amount, double nowMillis, DamageKind kind) {
     DamageResult result;
+    if (kind == DamageKind::Poison && world.has<PoisonImmune>(victim)) {
+        result.refused = true;
+        return result;
+    }
     // Non-finite damage reaches here from a config that multiplied a zero by
     // an infinity; it must cost a refused hit, not a NaN health bar that no
     // comparison can ever bring back below zero.
@@ -748,7 +752,9 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
     // armour, the shield and root's stacks, because a hit that never landed
     // has nothing for any of them to blunt -- root would otherwise spend a
     // stack on a blow that went wide. Direct only: a drip is not an attack.
-    if (kind == DamageKind::Direct && !sharingColonyHit_ && rollDodge(world, victim, nowMillis)) {
+    if ((kind == DamageKind::Direct ||
+         (kind == DamageKind::Recoil && world.has<PetalTag>(victim))) &&
+        !sharingColonyHit_ && rollDodge(world, victim, nowMillis)) {
         result.dodged = true;
         return result;
     }
@@ -1545,6 +1551,7 @@ void CombatSystem::applyPoison(World& world, Entity victim, Entity source, doubl
     // it is a bite the leech never feels. See poolOwner().
     victim = poolOwner(world, victim);
     if (!world.isAlive(victim) || !world.has<Health>(victim)) return;
+    if (world.has<PoisonImmune>(victim)) return;
 
     // Credited to the PLAYER rather than to the petal that applied it: the
     // petal is often destroyed before the poison finishes ticking, and a kill

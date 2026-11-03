@@ -902,6 +902,8 @@ struct PetalConfig {
     /// mob takes. Bone's "Sturdy". Stated at the common tier and scaled on
     /// kMobArmorScale, the ladder a mob's armour climbs.
     double petalArmor = 0;
+    double petalEvasion = 0;     ///< The petal's own flat dodge chance, never the flower's.
+    bool petalPoisonImmune = false;
     /// What a claw adds to its swing while the victim is still above
     /// kClawCritHealthFraction of its health, before rarity. A flat figure
     /// on the petal damage ladder, added to `damage` rather than replacing it.
@@ -1141,6 +1143,8 @@ struct PetalStats {
     double armorPerStack = 0;
     /// Armour the petal itself wears, scaled for this tier on kMobArmorScale.
     double petalArmor = 0;
+    double petalEvasion = 0;
+    bool petalPoisonImmune = false;
     /// A claw's bonus against a victim above kClawCritHealthFraction, scaled
     /// for this tier.
     double critDamage = 0;

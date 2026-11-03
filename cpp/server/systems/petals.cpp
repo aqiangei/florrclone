@@ -1364,6 +1364,8 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     // path lands on the petal is blunted by the one rule that blunts a mob's.
     // Only on a petal that has some, so every other petal keeps its archetype.
     if (stats.petalArmor > 0.0) world.add<Armor>(petal, Armor{stats.petalArmor, config.id == "bone"});
+    if (stats.petalEvasion > 0.0) world.add<Evasion>(petal, Evasion{stats.petalEvasion});
+    if (stats.petalPoisonImmune) world.add<PoisonImmune>(petal);
 
     PetalInstance instance;
     instance.owner = player;
