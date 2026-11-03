@@ -104,14 +104,15 @@ std::size_t orphanedPets(World& world) {
 Entity splitWithPetsOnBothHalves(Harness& h, NetClient& client, const char* account) {
     World& world = h.server.world();
     const std::uint16_t splitter = content().petalIndex(kSplitterPetalId);
-    const std::uint16_t egg = content().petalIndex("soldier_ant_egg");
+    const char* eggId=content().petalIndex("soldier_ant_egg")!=kInvalidIndex?"soldier_ant_egg":"egg";
+    const std::uint16_t egg = content().petalIndex(eggId);
     if (splitter == kInvalidIndex || egg == kInvalidIndex) return NULL_ENTITY;
 
     if (!equipSplitter(h, client, account, splitter)) return NULL_ENTITY;
     if (!h.stepUntil({&client}, [&] { return bodiesNamed(world, account).size() == 2; })) {
         return NULL_ENTITY;
     }
-    client.sendChat(std::string("/admin give ") + account + " soldier_ant_egg common 1");
+    client.sendChat(std::string("/admin give ") + account + " "+eggId+" common 1");
     if (!h.stepUntil({&client}, [&] {
             return client.profile().stackCount(egg, Rarity::Common) > 0;
         })) {

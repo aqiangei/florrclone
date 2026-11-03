@@ -357,6 +357,13 @@ constexpr double kDefendOrbit = kPlayerBaseRadius + kPetalOrbitDefendGap;
 // Ring placement
 // ---------------------------------------------------------------------------
 
+static double feedbackNaturalReload(const char* id,Rarity rarity=Rarity::Common) {
+    return fixture().registry.petalStats(petalId(id),rarity).reloadMillis*kPetalReloadFeelScale;
+}
+static double feedbackEquipReload(const char* id,Rarity rarity=Rarity::Common) {
+    return std::max(feedbackNaturalReload(id,rarity),SkillSet{}.equipReloadFloorMillis());
+}
+
 TEST(petal_ring_places_one_petal_per_slot_evenly) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -1753,10 +1760,10 @@ TEST(a_combat_killed_independent_petal_still_pays_its_reload) {
 
     CHECK_EQ(rig.petals(0).size(), std::size_t(2));
     const PetalSlotState& state = rig.world.get<PetalSlotState>(rig.player);
-    CHECK_NEAR(state.slots[0].instanceReadyAtMillis[1], brokenAt + 500.0, 1e-9);
+    CHECK_NEAR(state.slots[0].instanceReadyAtMillis[1], brokenAt + feedbackNaturalReload("shards"), 1e-9);
     // Stays down for the whole reload, as a single petal would, and not a
     // tick longer.
-    while (rig.now + net::kTickMillis < brokenAt + 500.0) {
+    while (rig.now + net::kTickMillis < brokenAt + feedbackNaturalReload("shards")) {
         rig.tick();
         CHECK_EQ(rig.petals(0).size(), std::size_t(2));
     }
@@ -1777,7 +1784,7 @@ TEST(a_clumped_grain_killed_and_reaped_pays_the_same_reload_as_a_single_petal) {
     const double singleBrokenAt = single.now + net::kTickMillis;
     single.tick();
     CHECK(single.slot(0).broken);
-    CHECK_NEAR(single.slot(0).reloadReadyAtMillis, singleBrokenAt + 1200.0, 1e-9);
+    CHECK_NEAR(single.slot(0).reloadReadyAtMillis, singleBrokenAt + feedbackNaturalReload("basic"), 1e-9);
 
     Rig clump;
     clump.equip(0, "sandy");
@@ -1789,11 +1796,11 @@ TEST(a_clumped_grain_killed_and_reaped_pays_the_same_reload_as_a_single_petal) {
     clump.tick();
     CHECK_EQ(clump.petals(0).size(), std::size_t(0));
     CHECK(clump.slot(0).broken);
-    CHECK_NEAR(clump.slot(0).reloadReadyAtMillis, clumpBrokenAt + 800.0, 1e-9);
+    CHECK_NEAR(clump.slot(0).reloadReadyAtMillis, clumpBrokenAt + feedbackNaturalReload("sandy"), 1e-9);
     clump.tick(5);
     CHECK_EQ(clump.petals(0).size(), std::size_t(0));
     CHECK(clump.tickUntil([&] { return clump.petals(0).size() == 4; }));
-    CHECK(clump.now >= clumpBrokenAt + 800.0);
+    CHECK(clump.now >= clumpBrokenAt + feedbackNaturalReload("sandy"));
 }
 
 TEST(an_independent_slot_reads_as_broken_only_when_all_of_it_is_down) {
@@ -1884,7 +1891,7 @@ TEST(re_equipping_over_a_broken_slot_serves_the_new_petals_reload) {
     const double equippedAt = rig.now + net::kTickMillis;
     rig.tick();
     CHECK(rig.slot(0).broken);
-    CHECK_NEAR(rig.slot(0).reloadReadyAtMillis, equippedAt + 500.0, 1e-9);
+    CHECK_NEAR(rig.slot(0).reloadReadyAtMillis, equippedAt + feedbackEquipReload("shards"), 1e-9);
     CHECK(rig.petals(0).empty());
 
     rig.settleEquips();
@@ -1915,14 +1922,14 @@ TEST(swapping_two_slots_reloads_both_clump_and_single_alike) {
     CHECK(rig.petals(1).empty());
     CHECK(rig.slot(0).broken);
     CHECK(rig.slot(1).broken);
-    CHECK_NEAR(rig.slot(0).reloadReadyAtMillis, swappedAt + 1200.0, 1e-9);
-    CHECK_NEAR(rig.slot(1).reloadReadyAtMillis, swappedAt + 800.0, 1e-9);
+    CHECK_NEAR(rig.slot(0).reloadReadyAtMillis, swappedAt + feedbackEquipReload("basic"), 1e-9);
+    CHECK_NEAR(rig.slot(1).reloadReadyAtMillis, swappedAt + feedbackEquipReload("sandy"), 1e-9);
     for (const double ready : rig.world.get<PetalSlotState>(rig.player).slots[1].instanceReadyAtMillis) {
-        CHECK_NEAR(ready, swappedAt + 800.0, 1e-9);
+        CHECK_NEAR(ready, swappedAt + feedbackEquipReload("sandy"), 1e-9);
     }
 
     // And the sand is back once that reload is served, not a tick sooner.
-    while (rig.now + net::kTickMillis < swappedAt + 800.0) {
+    while (rig.now + net::kTickMillis < swappedAt + feedbackEquipReload("sandy")) {
         rig.tick();
         CHECK(rig.petals(1).empty());
     }
@@ -3133,31 +3140,22 @@ TEST(a_bubble_pop_never_covers_its_reach_in_one_tick) {
 }
 
 TEST(attacking_throws_one_web_and_consumes_its_petal) {
-    if (!contentLoaded()) return;
-    Rig rig;
-    rig.equip(0, "web");
-    rig.freezeRing();
-    rig.settleEquips();
-    rig.settleRing();
-    rig.setFlags(net::InputAttack);
-    rig.tick();
-    const Entity spentWeb = rig.petals(0).front();
-    const double bearing = rig.angleOf(spentWeb);
-
-    Query<GroundEffect, Transform, Lifetime> fields{rig.world};
-    CHECK_EQ(fields.count(), std::size_t(1));
-    fields.each([&](Entity, GroundEffect& field, Transform& transform, Lifetime& lifetime) {
-        CHECK_EQ(field.kind, GroundEffectKind::Web);
-        CHECK_NEAR(field.radius, 90.0, 1e-9);
-        CHECK_NEAR(field.slowFactor, 0.5, 1e-12);
-        CHECK_NEAR(lifetime.remainingSeconds, 10.0, 1e-12);
-        CHECK_NEAR(angularGap((transform.position - rig.position(rig.player)).angle(), bearing),
-                   0.0, 1e-6);
-        CHECK_NEAR(distance(transform.position, rig.position(rig.player)),
-                   rig.radiusOf(spentWeb) + 620.0, 1e-6);
+    if (!contentLoaded()) return;Rig rig;rig.equip(0,"web");rig.freezeRing();rig.settleEquips();rig.settleRing();
+    rig.setFlags(net::InputAttack);rig.tick();const Entity spent=rig.petals(0).front();
+    const Vec2 launch=rig.position(spent);const double bearing=rig.angleOf(spent);
+    Entity launched=NULL_ENTITY;Query<GroundEffect,WebFlight,Transform> fields{rig.world};
+    CHECK_EQ(fields.count(),1u);
+    fields.each([&](Entity e,GroundEffect& field,WebFlight& flight,Transform& at){
+        launched=e;CHECK_EQ(field.kind,GroundEffectKind::Web);CHECK_NEAR(field.radius,0,1e-9);
+        CHECK_NEAR(flight.radius,90,1e-9);CHECK_NEAR(flight.duration,.35,1e-9);
+        CHECK_NEAR(distance(at.position,launch),0,1e-6);
+        CHECK_NEAR(distance(flight.to,launch),620,1e-6);
+        CHECK_NEAR(angularGap((flight.to-launch).angle(),bearing),0,1e-6);
     });
-    CHECK(rig.world.has<Dead>(spentWeb));
-    rig.tick();
+    CHECK(rig.world.has<Dead>(spent));int moving=0;
+    for(int i=0;i<14;++i){rig.tick();if(launched!=NULL_ENTITY&&rig.world.has<WebFlight>(launched))++moving;}
+    CHECK(moving>=8);CHECK(launched!=NULL_ENTITY);
+    if(launched!=NULL_ENTITY){CHECK(!rig.world.has<WebFlight>(launched));CHECK_NEAR(rig.world.get<GroundEffect>(launched).radius,90,1e-9);}
     CHECK(rig.slot(0).broken);
 }
 
@@ -5133,7 +5131,7 @@ TEST(a_mimic_reloads_on_the_left_petals_reload_not_its_own) {
         fixture().registry.petalStats(petalId("bubble"), Rarity::Legendary).reloadMillis;
     CHECK(ownTierReload < leftReload);
     CHECK(rig.slot(1).broken);
-    CHECK_NEAR(rig.slot(1).reloadReadyAtMillis, equippedAt + leftReload, 1e-9);
+    CHECK_NEAR(rig.slot(1).reloadReadyAtMillis, equippedAt + std::max(leftReload*kPetalReloadFeelScale,SkillSet{}.equipReloadFloorMillis()), 1e-9);
 
     // Broken in the field, it pays the same one again.
     rig.settleEquips();
@@ -5144,7 +5142,7 @@ TEST(a_mimic_reloads_on_the_left_petals_reload_not_its_own) {
     const double brokeAt = rig.now + net::kTickMillis;
     rig.tick();
     CHECK(rig.slot(1).broken);
-    CHECK_NEAR(rig.slot(1).reloadReadyAtMillis, brokeAt + leftReload, 1e-9);
+    CHECK_NEAR(rig.slot(1).reloadReadyAtMillis, brokeAt + leftReload*kPetalReloadFeelScale, 1e-9);
 }
 
 TEST(a_mimic_with_nothing_to_its_left_is_a_mimic) {
@@ -5160,7 +5158,7 @@ TEST(a_mimic_with_nothing_to_its_left_is_a_mimic) {
         CHECK_EQ(rig.world.get<PetalSlotState>(rig.player).slots[static_cast<std::size_t>(i)]
                      .configIndex,
                  petalId("mimic"));
-        CHECK_NEAR(rig.slot(i).reloadReadyAtMillis, equippedAt + ownReload, 1e-9);
+        CHECK_NEAR(rig.slot(i).reloadReadyAtMillis, equippedAt + std::max(ownReload*kPetalReloadFeelScale,SkillSet{}.equipReloadFloorMillis()), 1e-9);
     }
     rig.settleEquips(1000);
     CHECK_EQ(rig.petals(0).size(), std::size_t(1));
