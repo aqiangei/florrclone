@@ -307,7 +307,14 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
       node.__last = ' ';
       node.__composing = false;
     }
-    if (document.activeElement !== node) node.focus({ preventScroll: true });
+    // On iOS an animation-frame focus can succeed in DOM while the keyboard
+    // remains closed. A later real tap must refocus inside that gesture even
+    // if the hidden input already claims focus. The per-frame ensure (2)
+    // never blurs, so ongoing IME composition remains intact.
+    if (wanted === 1 && document.activeElement === node) node.blur();
+    if (wanted === 1 || document.activeElement !== node) {
+      try { node.focus({ preventScroll: true }); } catch (_) { node.focus(); }
+    }
     Module.cppSoftUp = true;
   } else {
     node.blur();

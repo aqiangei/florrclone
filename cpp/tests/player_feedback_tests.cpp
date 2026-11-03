@@ -105,7 +105,7 @@ TEST(feedback_scarce_shop_petals_keep_their_authored_price_premium) {
     const auto mimic=content().petalIndex("mimic");
     const auto basic=content().petalIndex("basic");
     const double price=shopPrice(mimic,Rarity::Super);
-    CHECK_NEAR(price,3600,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*4);
+    CHECK_NEAR(price,6000,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*6);
     CHECK(!shopSellsRarity(Rarity::Unique));
     CHECK(shopPrice(mimic,Rarity::Ultra)>shopPrice(basic,Rarity::Ultra)*4);
 }
