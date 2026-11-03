@@ -107,6 +107,9 @@ TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {
         dungeon.run(w,terrain,content(),spawn,combat,rng,1000,commands);commands.flush();
         dungeon.run(w,terrain,content(),spawn,combat,rng,1700,commands);commands.flush();
         const auto inside=w.get<Transform>(player).realm;CHECK(inside!=home);CHECK(dungeon.isInstance(inside));
+        int brood=0;Query<DungeonDweller,Transform> insideMobs{w};
+        insideMobs.each([&](Entity,DungeonDweller& dweller,Transform& at){if(dweller.entrance==nest){++brood;CHECK(at.realm==inside);}});
+        CHECK(brood>0);
         CHECK_EQ(maps.forRealm(inside)->width(),16+2*rarityIndex(tier));Realm exterior;Vec2 projected;
         CHECK(dungeon.exteriorForRealm(inside,exterior,projected));CHECK(exterior==home);CHECK_NEAR(distance(projected,entrance),0,1e-6);
         NetClient::OnlineRosterEntry row;row.placed=true;row.realm=static_cast<std::uint8_t>(inside);row.x=100;row.y=200;
