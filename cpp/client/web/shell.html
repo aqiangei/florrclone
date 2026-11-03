@@ -52,6 +52,15 @@
         .loading-hint {font-size:12px;line-height:1.8;color:#9bbbaa;border-top:1px solid #ffffff1c;padding-top:18px;margin-top:18px;}
         #loading-retry {font:inherit;border:0;border-radius:10px;background:#c1ee86;color:#173a27;padding:12px 26px;cursor:pointer;margin-top:18px;}
         @media(max-width:480px){.loading-card{padding:28px 20px;}#loading-stage{font-size:21px;}}
+        #serverNotice {position:fixed;z-index:4;top:max(12px,env(safe-area-inset-top,0px));
+            right:max(12px,env(safe-area-inset-right,0px));width:min(340px,calc(100vw - 24px));
+            max-height:45vh;overflow:auto;padding:16px 38px 16px 16px;border:1px solid #b4e69a66;
+            border-radius:12px;background:#123d27f2;color:#fff;font-size:14px;line-height:1.65;
+            box-shadow:0 6px 24px #0005;touch-action:pan-y;}
+        #serverNotice[hidden]{display:none;}
+        #serverNotice p{margin-top:7px;}#serverNotice a{color:#c5f28f;overflow-wrap:anywhere;}
+        #closeServerNotice{position:absolute;right:8px;top:7px;border:0;background:transparent;
+            color:white;font-size:24px;line-height:28px;width:28px;height:28px;cursor:pointer;}
 
     </style>
 </head>
@@ -68,6 +77,12 @@
         <p class="loading-hint">加载期间无需反复刷新。账号和存档保存在服务器。</p>
       </div>
     </section>
+    <aside id="serverNotice" role="note" aria-label="游戏公告" hidden>
+      <button id="closeServerNotice" type="button" aria-label="关闭游戏公告">×</button>
+      <strong>游戏公告</strong>
+      <p>本服为 florr 克隆私服，另有版本访问地址：<a href="https://viepnex.duckdns.org/" target="_blank" rel="noopener noreferrer">https://viepnex.duckdns.org/</a>。</p>
+      <p>前端作者：666 &amp; hyper1Qa；服务端：flowrix-io。</p>
+    </aside>
     <canvas id="canvas" oncontextmenu="return false;"></canvas>
     <script>
 (function () {
@@ -79,6 +94,9 @@
   const progress = document.getElementById('loading-progress');
   const meta = document.getElementById('loading-meta');
   const retry = document.getElementById('loading-retry');
+  const serverNotice = document.getElementById('serverNotice');
+  let noticeDismissed = false;
+  document.getElementById('closeServerNotice').onclick=()=>{noticeDismissed=true;serverNotice.hidden=true;};
   const began = performance.now();
   let failed = false, bytes = 0, total = 0, lastProgress = performance.now();
   const ui = window.flixLoading = {
@@ -93,7 +111,7 @@
       failed=true;status.hidden=false;stage.textContent='暂时未能进入游戏';detail.textContent=message;
       progress.hidden=true;retry.hidden=false;meta.textContent='你的账号和存档不会因此丢失。';
     },
-    finish() { if(!failed){status.hidden=true;clearInterval(timer);} }
+    finish() { if(!failed){status.hidden=true;serverNotice.hidden=noticeDismissed;clearInterval(timer);} }
   };
   retry.onclick=()=>location.reload();
   const timer=setInterval(()=>{
