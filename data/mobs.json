@@ -2958,6 +2958,7 @@
     "florrclonePort": true
   },
   "gambler": {
+    "hideRotation": true,
     "name": "Gambler",
     "damage": 15,
     "health": 100,
@@ -3074,6 +3075,7 @@
     "florrclonePort": true
   },
   "mecha_flower": {
+    "hideRotation": true,
     "name": "Mecha Flower",
     "damage": 10,
     "health": 100,
