@@ -1,3 +1,4 @@
+#include "shared/game/shop.h"
 #include "server/daily_drop_bonus.h"
 #include "server/timed_hammers.h"
 // NPCs, and the first two with a service: the oracle and the trader.
@@ -3158,5 +3159,27 @@ TEST(daily_bonus_claim_is_account_scoped_and_reported_over_network) {
     CHECK_EQ(plain.dropBonusMultiplier,1);
     const auto until=bonus.dropBonusUntil;bonus.requestDailyDropBonus(true);h.step(8,{&bonus,&plain});
     CHECK_EQ(bonus.dropBonusStreak,1);CHECK(std::abs(bonus.dropBonusUntil-until)<1000);
+    removeDataDir(dir);
+}
+
+TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
+    const auto dir=titanWorld("shop-lock-purchase");const auto old=shopRotation(shopClockNow())-10;
+    Harness h("shop-lock-purchase",[&](const std::string& path){seedAccount(path,"buyer");
+        Database db;std::string error;CHECK(db.load(path,error));auto& r=db.progress(db.findUser("buyer")->id);
+        r.stars=100000;r.extra["lockedShopRotation"]=Json(static_cast<double>(old));db.markDirty();CHECK(db.save());
+    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient buyer;CHECK(joinAs(h,buyer,"buyer"));CHECK_EQ(buyer.lockedShopRotation,old);
+    const auto offer=shopOffers(old).front();const auto owned=buyer.profile().stackCount(offer.petalIndex,offer.rarity);
+    const auto stars=buyer.profile().stars;buyer.requestBuyPetal(offer.petalIndex,offer.rarity,0);
+    CHECK(awaitProfile(h,buyer,[&](const Profile& p){return p.stackCount(offer.petalIndex,offer.rarity)==owned+1;}));
+    CHECK_NEAR(buyer.profile().stars,stars-offer.price,1e-6);
+    buyer.toggleShopLock();CHECK(h.stepUntil({&buyer},[&]{return buyer.lockedShopRotation==-1;}));
+    buyer.toggleShopLock();CHECK(h.stepUntil({&buyer},[&]{return buyer.lockedShopRotation==shopRotation(shopClockNow());}));
+    CHECK_EQ(kShopRotationSeconds,21600);
+    CHECK_EQ(starsForKill(Rarity::Mythic),1);CHECK_EQ(starsForKill(Rarity::Ultra),5);CHECK_EQ(starsForKill(Rarity::Super),25);
+    for(std::uint16_t p=0;p<content().petalCount();++p)if(shopSellsPetal(p)){
+        CHECK(shopPrice(p,Rarity::Rare)<=15);CHECK(shopPrice(p,Rarity::Super)<=900);
+        CHECK(!shopSellsRarity(Rarity::Unique));
+    }
     removeDataDir(dir);
 }

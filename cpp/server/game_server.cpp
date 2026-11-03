@@ -2296,11 +2296,15 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
     w.u32(dropBonusStreak(record,now));w.u8(activeDropBonus(record,now));
     w.u32(static_cast<std::uint32_t>(clamp(b["until"].asDouble()-now,0.0,3600000.0)));
     w.u32(claimed?static_cast<std::uint32_t>((dropBonusDay(now)+1)*86400000-8LL*3600000-now):0);
+    w.i64(static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1)));
     connection.send(w);
 }
 void GameServer::handleDropBonus(Session& session, net::Connection& connection, ByteReader& reader) {
-    const auto claim=reader.u8();if(!reader.ok()||!session.authenticated()||claim>1)return;
-    if(claim && claimDropBonus(database_.progress(session.userId),dropBonusNow())) database_.markDirty();
+    const auto claim=reader.u8();if(!reader.ok()||!session.authenticated()||claim>2)return;
+    auto& record=database_.progress(session.userId);
+    if(claim==1 && claimDropBonus(record,dropBonusNow())) database_.markDirty();
+    if(claim==2){const auto old=record.extra["lockedShopRotation"].asDouble(-1);
+        record.extra["lockedShopRotation"]=Json(old<0?static_cast<double>(shopRotation(shopClockNow())):-1.0);database_.markDirty();}
     sendDropBonus(session,connection);
 }
 
@@ -4002,7 +4006,8 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     // click on a store that has since changed.
     double price = shopPrice(petalIndex, rarity);
     if (offerSlot != net::kNoShopOffer) {
-        const std::vector<ShopOffer> offers = shopOffers(shopRotation(shopClockNow()));
+        const auto locked=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
+        const std::vector<ShopOffer> offers = shopOffers(locked>=0?locked:shopRotation(shopClockNow()));
         const auto slot = static_cast<std::size_t>(offerSlot);
         if (slot >= offers.size() || offers[slot].petalIndex != petalIndex ||
             offers[slot].rarity != rarity) {

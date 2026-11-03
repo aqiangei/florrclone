@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 78;
+inline constexpr std::uint16_t kProtocolVersion = 79;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -233,7 +233,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< is then unmet. Hold-to-refund on the talent tree;
                         ///< points come back because spent() drops. (Version 69.)
     BulkCraft,          ///< u8 target rarity; craft every lower unequipped stack up to target.
-    DailyDropBonus,     ///< u8 claim: 0 query, 1 claim daily one-hour drop bonus (v78).
+    DailyDropBonus,     ///< u8 action: 0 query, 1 claim, 2 toggle shop lock; daily one-hour drop bonus (v78).
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -455,7 +455,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< squad invite for the top-left Accept/Decline toast.
                         ///< Additive; older clients skip an unknown id.
     PyramidMapState,    ///< u8 realm, u8 revealed; visit-only, never saved (v74).
-    DailyDropBonusState, ///< u32 streak, u8 multiplier, u32 remainingMs, u32 nextClaimMs (v78).
+    DailyDropBonusState, ///< u32 streak, u8 multiplier, u32 remainingMs, u32 nextClaimMs, i64 lockedShopRotation (-1 unlocked) (v79).
 };
 
 // ---------------------------------------------------------------------------

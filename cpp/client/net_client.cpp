@@ -322,7 +322,7 @@ void NetClient::forgetAccount() {
     craftOutcome_ = CraftOutcome{};
     craftAttemptCount_ = 0;
     pyramidMapRevealed = false;
-    dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=0;
+    lockedShopRotation=-1;dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=0;
     oracleOutcome_ = OracleOutcome{};
     oracleReadyAtMillis_ = 0;
     tradeOutcome_ = TradeOutcome{};
@@ -452,6 +452,7 @@ void NetClient::usePetal(int slot) {
     send(w);
 }
 
+void NetClient::toggleShopLock(){ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.u8(2);send(w);}
 void NetClient::requestDailyDropBonus(bool claim) {
     ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.boolean(claim);send(w);
 }
@@ -1148,8 +1149,8 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::AuthResult:   handleAuthResult(reader); break;
         case net::ServerMessage::DailyDropBonusState: {
             const auto streak=reader.u32();const auto multiplier=reader.u8();
-            const auto remaining=reader.u32();const auto next=reader.u32();
-            if(reader.ok()) {dropBonusStreak=streak;dropBonusMultiplier=multiplier;
+            const auto remaining=reader.u32();const auto next=reader.u32();const auto locked=reader.i64();
+            if(reader.ok()) {lockedShopRotation=locked;dropBonusStreak=streak;dropBonusMultiplier=multiplier;
                 dropBonusUntil=wallClockMillis()+remaining;dropBonusNextClaim=wallClockMillis()+next;}
             break;
         }

@@ -791,6 +791,8 @@ public:
     WorldView& view() { return view_; }
     const WorldView& view() const { return view_; }
     bool pyramidMapRevealed = false;
+    std::int64_t lockedShopRotation=-1;
+    void toggleShopLock();
     std::uint32_t dropBonusStreak=0;
     int dropBonusMultiplier=1;
     std::int64_t dropBonusUntil=0,dropBonusNextClaim=0;

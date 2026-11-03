@@ -22,10 +22,13 @@
 
 namespace flix {
 
-/// Each tier is 3.5x the last, so the ladder outruns star income far faster
-/// than crafting does -- buying your way to legendary is meant to be absurd.
+/// Tier prices track the server star bounty; variety premiums are capped.
+/// Rare missing pieces remain affordable without selling the top reward tiers.
 inline double shopPrice(std::uint16_t petalIndex, Rarity rarity) {
-    return std::floor(content().petal(petalIndex).price * std::pow(3.5, rarityIndex(rarity)));
+    static constexpr double tierPrices[]={3,5,10,20,40,80,180,600,1800,5400,16200,48600};
+    const double base=std::max(1.0,content().petal(petalIndex).price);
+    const double variety=clamp(1.0+std::log(base/20.0)*0.10,0.75,1.50);
+    return std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
 }
 
 /// By id. An id no petal answers to has no price at all and quotes zero --
@@ -79,7 +82,7 @@ inline bool shopSellsPetal(std::uint16_t petalIndex) {
 /// How long one set of offers stands. The panel counts down to the next
 /// rotation against this and the server prices a purchase by the rotation the
 /// clock is in, so the number is shared rather than spelled out twice.
-inline constexpr std::int64_t kShopRotationSeconds = 3600;
+inline constexpr std::int64_t kShopRotationSeconds = 6 * 3600;
 
 /// Two rows of five. The panel's grid is built to this.
 inline constexpr int kShopOfferCount = 10;

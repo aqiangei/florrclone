@@ -704,9 +704,10 @@ bool ShopPanel::render(MenuContext& ctx) {
     Rect codeField{};
     Rect redeemButton{};
     Rect bonusButton{};
+    Rect lockButton{};
 
     if (tab_ == Tab::Offers) {
-        const std::int64_t rotation = shopRotation(shopClockNow());
+        const std::int64_t rotation = ctx.net.lockedShopRotation>=0?ctx.net.lockedShopRotation:shopRotation(shopClockNow());
         if (state.offersRotation != rotation) {
             state.offersRotation = rotation;
             state.offers = shopOffers(rotation);
@@ -715,7 +716,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         text(canvas, trEnZh("Today's offers:", "今日特惠："), panel.x + panel.w * 0.5,
              panel.y + kHeadingMiddle, shopText(kOffersHeadingSize));
         const std::int64_t remaining = shopRotationEnd(rotation) - shopClockNow();
-        text(canvas, rotationCaption(remaining), panel.x + panel.w * 0.5, panel.y + kSubMiddle,
+        text(canvas, ctx.net.lockedShopRotation>=0?trEnZh("Offers locked until you unlock them","商品已锁定，解锁后恢复刷新"):rotationCaption(remaining), panel.x + panel.w * 0.5, panel.y + kSubMiddle,
              shopText(kSubSize));
 
         // Locking an offer through a rotation is florr's; nothing on this
@@ -723,12 +724,13 @@ bool ShopPanel::render(MenuContext& ctx) {
         // belongs and left inert -- no hover, no press -- rather than made to
         // lie about what it did.
         {
-            const char* lockLabel = trEnZh("Lock", "锁定");
+            const char* lockLabel = ctx.net.lockedShopRotation>=0?trEnZh("Unlock","解锁"):trEnZh("Lock", "锁定");
             const double width = measure(lockLabel, kLockSize) + textPad(kLockSize) + kLockExtra;
             const double right = panel.x + kGridLeft + 4.0 * kCellWidth + kPlateWidth;
             const Rect lock{right - width, panel.y + kHeaderTop + (kHeaderHeight - kLockHeight) * 0.5,
                             width, kLockHeight};
-            drawFlorrButton(canvas, lock, kLockFace, kButtonBorder, kButtonRadius, false, false);
+            lockButton=lock;
+            drawFlorrButton(canvas, lock, kLockFace, kButtonBorder, kButtonRadius, lock.contains(under), pressing(lock));
             text(canvas, lockLabel, lock.x + lock.w * 0.5, lock.y + lock.h * 0.5,
                  shopText(kLockSize));
         }
@@ -1040,6 +1042,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         return true;
     }
 
+    if(clicked(lockButton)){ctx.net.toggleShopLock();return true;}
     if(clicked(bonusButton) && ctx.net.dropBonusNextClaim<=shopClockNow()*1000) {ctx.net.requestDailyDropBonus(true);return true;}
     if (!trimmed(state.code).empty() && clicked(redeemButton)) {
         submitCode();

@@ -32,7 +32,7 @@ manifest=json.loads((ROOT/'maps/maps.json').read_text(encoding='utf-8'))
 manifest['maps']=[e for e in manifest['maps'] if not (isinstance(e,dict) and e.get('file','').startswith('termite_mound_t'))]
 records=[]
 for tier in range(12):
- side=16+4*tier;factor=side/32;shape=scale(wall,xfact=factor,yfact=factor,origin=(0,0))
+ side=16+2*tier;factor=side/32;shape=scale(wall,xfact=factor,yfact=factor,origin=(0,0))
  collision=[];images=[];data=[]
  for y in range(side):
   for x in range(side):

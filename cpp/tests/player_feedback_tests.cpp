@@ -55,8 +55,8 @@ TEST(feedback_mound_interiors_scale_by_rarity_with_safe_spawns) {
     CHECK(maps.maps().size()<kMaxWorldMaps);Rng rng{121};
     for(int tier=0;tier<kRarityCount;++tier){const auto id=tier==0?std::string("termite_mound"):"termite_mound_t"+std::to_string(tier);
         const auto copies=maps.copiesOf(id);CHECK_EQ(copies.size(),8u);if(copies.empty())continue;
-        const auto* map=maps.forRealm(copies.front());CHECK(map);if(!map)continue;CHECK_EQ(map->width(),16+4*tier);
-        CHECK_NEAR(terrain.realmExtent(copies.front()).x,(16+4*tier)*256.0,1e-8);
+        const auto* map=maps.forRealm(copies.front());CHECK(map);if(!map)continue;CHECK_EQ(map->width(),16+2*tier);
+        CHECK_NEAR(terrain.realmExtent(copies.front()).x,(16+2*tier)*256.0,1e-8);
         int blocked=0,open=0;
         for(int y=1;y<map->width()-1;++y)for(int x=1;x<map->width()-1;++x){
             const Vec2 probe{(x+.5)*256,(y+.5)*256};
@@ -103,7 +103,7 @@ TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {
         dungeon.run(w,terrain,content(),spawn,combat,rng,1000,commands);commands.flush();
         dungeon.run(w,terrain,content(),spawn,combat,rng,1700,commands);commands.flush();
         const auto inside=w.get<Transform>(player).realm;CHECK(inside!=home);CHECK(dungeon.isInstance(inside));
-        CHECK_EQ(maps.forRealm(inside)->width(),16+4*rarityIndex(tier));Realm exterior;Vec2 projected;
+        CHECK_EQ(maps.forRealm(inside)->width(),16+2*rarityIndex(tier));Realm exterior;Vec2 projected;
         CHECK(dungeon.exteriorForRealm(inside,exterior,projected));CHECK(exterior==home);CHECK_NEAR(distance(projected,entrance),0,1e-6);
         NetClient::OnlineRosterEntry row;row.placed=true;row.realm=static_cast<std::uint8_t>(inside);row.x=100;row.y=200;
         row.insideDungeon=true;row.exteriorRealm=static_cast<std::uint8_t>(home);row.exteriorX=projected.x;row.exteriorY=projected.y;
