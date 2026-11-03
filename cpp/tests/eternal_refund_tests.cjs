@@ -15,6 +15,8 @@ hammer.notifications=[{id:'hammer',type:'unique_craft',message:'The Eternal Time
 assert.equal(refund(hammer,catalog).report.superMaterialsRefunded,0);
 const duplicate=fixture([10,25,55]);duplicate.notifications.push(duplicate.notifications[2]);
 assert.equal(refund(duplicate,catalog).report.superMaterialsRefunded,50);
+const trimmed=fixture([10,25,55]);trimmed.notifications=trimmed.notifications.slice(-1);
+assert.equal(refund(trimmed,catalog).report.superMaterialsRefunded,50);
 const unknown=fixture([25]);delete unknown.users.tester;
 assert.throws(()=>refund(unknown,catalog),/Cannot resolve/);
 console.log('Permanent Eternal refund: first/second/third/fourth, idempotence, hammer exclusion, duplicate evidence and unresolved owner passed');

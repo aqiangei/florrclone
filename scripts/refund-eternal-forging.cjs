@@ -9,7 +9,7 @@ function refund(db,catalog){
     if(names.has(p.name))throw Error('Ambiguous petal name: '+p.name);
     names.set(p.name,id);
   }
-  const owed=new Map(),seen=new Map();
+  const owed=new Map(),seen=new Map(),secondSeen=new Set();
   for(const n of db.notifications||[]){
     if(n.type!=='unique_craft')continue;
     const m=/^The Eternal (.+) has been forged by @(.+) \[.*\] \(forged x1, consumed x(25|55)\)$/.exec(n.message||'');
@@ -23,6 +23,7 @@ function refund(db,catalog){
     const key=id+'\0'+material,ids=seen.get(key)||new Set();
     if(ids.has(n.id))continue;
     ids.add(n.id);seen.set(key,ids);
+    if(Number(m[3])===25)secondSeen.add(key);
     owed.set(key,(owed.get(key)||0)+Number(m[3])-15);
   }
   // Historical counters were capped at two. They prove a second forge but do
@@ -31,7 +32,8 @@ function refund(db,catalog){
     if(!Number.isInteger(count)||count<2||material==='fragment'||material==='timed_mjolnir')continue;
     assert(catalog[material],'Unknown forge counter material');
     const key=id+'\0'+material;
-    owed.set(key,Math.max(10,owed.get(key)||0));
+    const observed=owed.get(key)||0;
+    owed.set(key,secondSeen.has(key)?Math.max(10,observed):observed+10);
   }
   for(const [key,total]of owed){
     const [id,material]=key.split('\0'),p=result.players[id];
