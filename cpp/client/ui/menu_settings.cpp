@@ -59,6 +59,33 @@
 #include "client/ui/text.h"
 #include "client/ui/text_input.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+EM_JS(int, flix_settings_fullscreen_active, (), {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+});
+EM_JS(void, flix_settings_toggle_fullscreen, (int chinese), {
+    const root = document.documentElement;
+    const active = document.fullscreenElement || document.webkitFullscreenElement;
+    const toggle = active ? (document.exitFullscreen || document.webkitExitFullscreen) :
+                            (root.requestFullscreen || root.webkitRequestFullscreen);
+    if (!toggle) {
+        alert(chinese ? '当前浏览器不支持网页原生全屏。iPhone 可在 Safari 中选择“分享 → 添加到主屏幕”，再从主屏幕打开游戏。其他手机可尝试使用系统浏览器。' :
+              'This browser does not support page fullscreen. On iPhone, use Safari: Share > Add to Home Screen, then open the game from that icon. Otherwise try your system browser.');
+        return;
+    }
+    try {
+        const request = toggle.call(active ? document : root);
+        if (request && request.catch) request.catch(function() {
+            alert(chinese ? '浏览器未允许全屏，请再次点击全屏按钮，或使用系统浏览器打开游戏。' :
+                  'Fullscreen was blocked. Tap Fullscreen again or open the game in your system browser.');
+        });
+    } catch (error) {
+        alert(chinese ? '无法进入全屏，请使用系统浏览器重试。' : 'Unable to enter fullscreen. Try your system browser.');
+    }
+});
+#endif
+
 namespace flix {
 
 using namespace flix::ui;
@@ -355,6 +382,18 @@ struct Painter {
         return click(r);
     }
 
+    void fullscreenRow() {
+#ifdef __EMSCRIPTEN__
+        const bool zh = language() == Language::Zh;
+        const bool active = flix_settings_fullscreen_active();
+        const char* caption = active ? (zh ? "退出全屏" : "Exit Fullscreen") :
+                                       (zh ? "全屏" : "Fullscreen");
+        if (button(Rect{x, cy, w, 30.0}, caption, kActionFill, 14.0, 9901))
+            flix_settings_toggle_fullscreen(zh ? 1 : 0);
+        cy += 40.0;
+#endif
+    }
+
     /// One checkbox row. Advances the cursor by a full row.
     void checkbox(int toggleId, const std::string& caption) {
         const Rect row{x, cy, w, kRowStride};
@@ -620,6 +659,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
 
     switch (st.tab) {
         case Tab::Controls: {
+            p.fullscreenRow();
             p.label(tr(Msg::ControlsHeading), p.cy + 10.0, 15.0, kPaper, kInk);
             p.cy += 28.0;
 
@@ -672,6 +712,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
         }
 
         case Tab::Graphics: {
+            p.fullscreenRow();
             p.checkbox(kClassicLoadoutBar, tr(Msg::ClassicLoadoutBar));
             p.checkbox(kShowHitboxes, tr(Msg::ShowHitboxes));
             p.checkbox(kHideOtherPetals, tr(Msg::HideOtherPetals));
