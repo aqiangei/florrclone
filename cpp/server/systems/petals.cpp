@@ -199,8 +199,8 @@ double reloadMillisFor(const PetalStats& stats, double scale) {
 }
 
 /// What the golden leaves on `loadout`'s active row take off a reload.
-double barReloadCutOf(const ContentRegistry& registry, const Loadout& loadout) {
-    return barReloadCut(registry, [&](int i) { return equippedPetal(registry, loadout, i); });
+double barReloadCutOf(const ContentRegistry& registry, const Loadout& loadout, const SkillSet* skills) {
+    return barReloadCut(registry, [&](int i) { return equippedPetal(registry, loadout, i); }, skills);
 }
 
 /// What every reload on `player`'s ring is multiplied by: the Reload talent
@@ -211,7 +211,7 @@ double reloadScaleOf(World& world, const ContentRegistry& registry, Entity playe
     const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player);
     const Loadout* loadout = world.tryGet<Loadout>(player);
     return (tree ? tree->skills.reloadScale() : 1.0) *
-           (1.0 - (loadout ? barReloadCutOf(registry, *loadout) : 0.0)) *
+           (1.0 - (loadout ? barReloadCutOf(registry, *loadout, tree ? &tree->skills : nullptr) : 0.0)) *
            kPetalReloadFeelScale;
 }
 

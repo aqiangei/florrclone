@@ -1711,15 +1711,17 @@ inline PetalStats equippedPetalStats(const ContentRegistry& registry, const Equi
 /// the server sizes every reload by it and the client sweeps the bar's wedge
 /// by it.
 template <class EquippedAt>
-double barReloadCut(const ContentRegistry& registry, EquippedAt&& equippedAt) {
+double barReloadCut(const ContentRegistry& registry, EquippedAt&& equippedAt, const SkillSet* skills = nullptr) {
     double cut = 0.0;
     bool adminLeaf = false;
     for (int i = 0; i < kLoadoutActiveSlots; ++i) {
         const EquippedPetal petal = equippedAt(i);
         if (petal.empty() || !petalCutsReload(registry.petal(petal.configIndex))) continue;
         adminLeaf = adminLeaf || petal.rarity == Rarity::Admin;
-        cut = 1.0 - (1.0 - cut) *
-                        (1.0 - registry.petalStats(petal.configIndex, petal.rarity).reloadCut);
+        const auto& config = registry.petal(petal.configIndex);
+        const int copies = petalCopies(1, skills, i, rarityIndex(petal.rarity), config.stackable);
+        cut = 1.0 - (1.0 - cut) * std::pow(
+            1.0 - registry.petalStats(petal.configIndex, petal.rarity).reloadCut, copies);
     }
     // Admin petals already reload twice as fast. Their leaves share a
     // ceiling so stacking them cannot erase the remaining cooldown.

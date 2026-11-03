@@ -975,7 +975,7 @@ bool InventoryPanel::render(MenuContext& ctx) {
         // The reload the bar would actually run, as the slot wedge times it.
         const double reloadScale =
             profile.skills.reloadScale() *
-            (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }));
+            (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills));
         const std::vector<TooltipLine> lines =
             petalTooltipLines(cell.petalIndex, cell.rarity, profile.skills, reloadScale);
         const bool alt = ctx.altMode;

@@ -1532,7 +1532,7 @@ double slotReloadProgress(const NetClient& net, int index) {
     if (equipped.empty()) return 1.0;
     const PetalStats stats = equippedPetalStats(content(), equipped);
     const double cut =
-        barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); });
+        barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills);
     const double total = (stats.reloadMillis > 0.0 ? stats.reloadMillis : kDefaultPetalReloadMillis) *
                          profile.skills.reloadScale() * (1.0 - cut);
     // A remaining that outruns the total is a slot whose petal has just been
@@ -2121,7 +2121,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         const Profile::Slot& slot = shown[static_cast<std::size_t>(tipIndex)];
         const double reloadScale =
             profile.skills.reloadScale() *
-            (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }));
+            (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills));
         const std::vector<TooltipLine> lines =
             petalTooltipLines(slot.petalIndex, slot.rarity, profile.skills, reloadScale);
         const bool alt = altMode_;
