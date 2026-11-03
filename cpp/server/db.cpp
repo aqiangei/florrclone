@@ -224,6 +224,11 @@ PlayerRecord playerFromJson(const Json& value) {
             if (tier < 0) continue;
             out.set(id, std::min(tier, skillTierCount(id) - 1));
         }
+        // Removed invalid child nodes refund themselves because TP is derived
+        // from spent(); preserve every valid branch and migration bonus.
+        for(const auto& gate:kSkillGates)
+            if(out.level(gate.child)>=0 && !out.prerequisiteMet(gate.child))out.set(gate.child,-1);
+
     };
     readSkills(value["skills"], record.skills, nullptr);
     record.mazeTotalXp = value["mazeTotalXP"].asDouble(0);
