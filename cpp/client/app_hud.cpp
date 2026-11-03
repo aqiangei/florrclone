@@ -438,11 +438,22 @@ void App::drawSquadHud(Canvas& canvas, double time) {
     double centreY = hudBottom + 78.0 * kScale;
 
     const Vec2 eye = net_.view().self().position;
+    bool wearsSplitter = false;
+    for (int slot = 0; slot < net_.profile().skills.loadoutSlots(); ++slot) {
+        const auto worn = net_.profile().equipped(content(), slot);
+        if (!worn.empty() && content().petal(worn.configIndex).id == "splitter") {
+            wearsSplitter = true;
+            break;
+        }
+    }
     for (const SquadState::Member& member : squad.members) {
         if (member.netId == 0) continue;
         // The locally controlled body is already represented by the main HUD.
         // Its streamed entity need not carry StateSelf during a respawn/switch.
         if (member.netId == net_.view().self().netId) continue;
+        // A stale body row can survive a merge until the next squad update.
+        // Only a genuinely equipped splitter warrants another own-account row.
+        if (!wearsSplitter && member.account == net_.profile().username) continue;
         const auto found = net_.view().entities().find(member.netId);
         // A member whose body is not in this client's world has nothing to
         // draw a bar from. They are streamed however far away they are, so in
