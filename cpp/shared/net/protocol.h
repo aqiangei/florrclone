@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 75;
+inline constexpr std::uint16_t kProtocolVersion = 76;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -232,6 +232,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< tier - 1), plus any fork children whose prerequisite
                         ///< is then unmet. Hold-to-refund on the talent tree;
                         ///< points come back because spent() drops. (Version 69.)
+    BulkCraft,          ///< u8 target rarity; craft every lower unequipped stack up to target.
 };
 
 enum class ServerMessage : std::uint8_t {

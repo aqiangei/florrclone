@@ -6,6 +6,7 @@
 // tier index 0..n-1 for the highest owned tier, or -1 when none).
 
 #include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -104,7 +105,7 @@ inline constexpr std::array<SkillGate, 7> kSkillGates = {{
     {SkillId::SecondChance, SkillId::Health, 3},
     {SkillId::Magnetism, SkillId::Loadout, 5},
     {SkillId::Duplicator, SkillId::Loadout, 4},
-    {SkillId::BodyToxicity, SkillId::SharpEdges, 6},
+    {SkillId::BodyToxicity, SkillId::SharpEdges, 7},
     {SkillId::ConcentratedPoison, SkillId::Poison, 3},
 }};
 
@@ -136,7 +137,7 @@ inline constexpr std::array<double, 9> kPetalHealthTalentScale = {
 };
 /// Reload time reduction fractions; cooldown *= (1 - value).
 inline constexpr std::array<double, 9> kReloadReduce = {
-    0.1, 0.19, 0.271, 0.344, 0.475, 0.58, 0.664, 0.731, 0.812,
+    0.1, 0.19, 0.271, 0.3439, 0.47512, 0.580096, 0.6640768, 0.73126144, 0.811883008,
 };
 /// Rotation speed rad/s.
 inline constexpr std::array<double, 5> kRotationRad = {3.1, 3.7, 4.3, 4.9, 5.5};
@@ -144,7 +145,7 @@ inline constexpr std::array<double, 5> kRotationRad = {3.1, 3.7, 4.3, 4.9, 5.5};
 inline constexpr std::array<double, 3> kAntennaeFov = {0.25, 0.5, 1.0};
 /// Luck values.
 inline constexpr std::array<double, 9> kLuckTalent = {
-    0.1, 0.3, 0.5, 0.7, 1.0, 1.4, 1.8, 2.3, 2.8,
+    0.1, 0.25, 0.45, 0.7, 1.0, 1.35, 1.75, 2.2, 2.7,
 };
 /// Poison damage bonus fractions.
 inline constexpr std::array<double, 9> kPoisonBonus = {
@@ -154,7 +155,7 @@ inline constexpr std::array<double, 9> kPoisonBonus = {
 inline constexpr std::array<double, 3> kReachBonus = {50.0, 100.0, 150.0};
 /// Summon health multiplier.
 inline constexpr std::array<double, 9> kSummonerScale = {
-    1.1, 1.21, 1.331, 1.464, 1.611, 1.772, 1.949, 2.144, 2.594,
+    1.15, 1.3225, 1.5209, 1.749, 2.0114, 2.3132, 2.66, 3.059, 4.0456,
 };
 /// Second Chance: duration / cooldown ms by tier.
 inline constexpr std::array<double, 2> kSecondChanceDurationMillis = {300.0, 1500.0};
@@ -289,17 +290,16 @@ struct SkillSet {
     bool magnetismUnlocked() const {
         return level(SkillId::Magnetism) >= 0 && prerequisiteMet(SkillId::Magnetism);
     }
-    double magnetismBonus() const { return magnetismUnlocked() ? 250.0 : 0.0; }
+    double magnetismBonus() const { return magnetismUnlocked() ? 1000.0 : 0.0; }
 
     /// florrclone duplicator: tiers unlock higher rarity duplication; bonus copies
     /// for multi-petal slots. Conservative: +1 at tier0, +2 at tier1+.
-    int petalCopies(int copies) const {
-        if (copies < 2 || !prerequisiteMet(SkillId::Duplicator)) return copies;
-        const int t = level(SkillId::Duplicator);
-        if (t < 0) return copies;
-        const int extra = t >= 1 ? 2 : 1;
-        const int boosted = copies + extra;
-        return boosted < kMaxPetalCopies ? boosted : kMaxPetalCopies;
+    int petalCopies(int copies, int slot = -1, int rarity = 0, bool stackable = true) const {
+        if (copies <= 0 || !prerequisiteMet(SkillId::Duplicator)) return copies;
+        const int t=level(SkillId::Duplicator);if(t<0)return copies;
+        int extra=copies>=2 ? (t>=1?2:1) : 0;
+        if(slot==0 && t>=2 && stackable && (rarity<8 || t>=3)) ++extra;
+        return std::min(kMaxPetalCopies,copies+extra);
     }
 
     // Compatibility shims for call sites still using old flowrix SkillId names
@@ -322,8 +322,8 @@ struct SkillSet {
     bool prestigeUnlocked() const { return false; }
 };
 
-inline int petalCopies(int copies, const SkillSet* skills) {
-    return skills != nullptr ? skills->petalCopies(copies) : copies;
+inline int petalCopies(int copies, const SkillSet* skills, int slot=-1, int rarity=0, bool stackable=true) {
+    return skills != nullptr ? skills->petalCopies(copies,slot,rarity,stackable) : copies;
 }
 
 inline int availableTalentPoints(int level, const SkillSet& skills, int migrationBonus = 0) {

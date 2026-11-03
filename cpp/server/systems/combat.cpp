@@ -2315,7 +2315,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.position = transform.position;
         source.realm = transform.realm;
         source.radius = body.radius;
-        source.damage = stats.damage;
+        source.damage = config.lightningDamage && stats.lightningDamagePerHit > 0 ? stats.lightningDamagePerHit : stats.damage;
         source.hitIntervalMillis = stats.damageIntervalMillis;
         source.petalBreakable = stats.breakable;
         source.knockback = stats.knockback;

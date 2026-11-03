@@ -989,6 +989,7 @@ struct PetalConfig {
     /// lightning damage (DamageKind::Lightning), with no strike attached: the
     /// one victim touched, nothing chained. Blueberries.
     bool lightningDamage = false;
+    bool stackable = true;
 
     /// Held at a fixed angle instead of orbiting. `has` distinguishes the
     /// petals pinned to 0 radians from the ones that simply orbit.
@@ -1423,7 +1424,7 @@ inline constexpr int kCrownMaxLoans = 25;
 /// player could otherwise reach it through has to leave out: the shop, the
 /// `random` drop rows, and the gallery's mirror of them.
 inline bool petalHasOwnSource(const PetalConfig& config) {
-    return petalIsSacrifice(config) || petalLendsBasic(config);
+    return petalIsSacrifice(config) || petalLendsBasic(config) || config.id == "timed_mjolnir";
 }
 
 /// Whether the world hands this petal out at this tier: at or above its

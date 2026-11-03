@@ -355,7 +355,8 @@ private:
     /// True, with the player told why, when the session's body is in the maze,
     /// which locks the loadout for the run. Every loadout edit asks first.
     bool loadoutLockedInMaze(Session&);
-    void handleCraft(Session&, net::Connection&, ByteReader&);
+    void handleCraft(Session&, net::Connection&, ByteReader&, bool quiet = false);
+    void handleBulkCraft(Session&, net::Connection&, ByteReader&);
     /// A guaranteed craft at an oracle. Refused unless the session's body is
     /// alive and standing at one; see NpcSystem::findService.
     void handleOracleCraft(Session&, net::Connection&, ByteReader&);
@@ -1767,6 +1768,9 @@ private:
     std::unordered_map<unsigned, PyramidMapStock> pyramidMaps_;
     Rng pyramidMapRng_;
     void servicePyramidMaps(double now);
+    bool expireTimedHammer(PlayerRecord& record);
+    void serviceTimedHammers(double now);
+    double nextTimedHammerSweep_ = 0;
     void sendPyramidMapState(Session&);
 
     ByteWriter scratch_;

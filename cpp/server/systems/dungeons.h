@@ -79,6 +79,7 @@ private:
     struct Instance {
         Realm realm = Realm::Overworld;
         std::string mapId;
+        int rarityBand = -1;
         bool live = false;
         Entity entrance = NULL_ENTITY;
         Realm returnRealm = Realm::Overworld;
@@ -96,7 +97,7 @@ private:
     };
 
     void index(const ContentRegistry& content);
-    Instance* claim(const std::string& mapId);
+    Instance* claim(const std::string& mapId, Rarity rarity);
     bool populate(World& world, const Terrain& terrain, const ContentRegistry& content,
                   SpawnSystem& spawning, Rng& rng, double nowMillis, Instance& instance,
                   Entity entrance);

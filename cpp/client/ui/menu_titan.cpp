@@ -34,7 +34,7 @@ constexpr double kBodyTop = 53.6;
 constexpr double kFirstLineY = kBodyTop + 250.0 + 11.2;
 constexpr double kLinePitch = 22.4;
 constexpr std::array<const char*, 3> kLines = {
-    "永久保留，可重复锻造，不会被其他玩家收回。",
+    "普通花瓣永久保留；碎片兑换的锤子限时1小时。",
     "同种首次10、第二次25、之后55个超级。",
     "每种独立计价；产出永恒（原版唯一强度档）。",
 };

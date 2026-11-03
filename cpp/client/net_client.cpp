@@ -451,6 +451,10 @@ void NetClient::usePetal(int slot) {
     send(w);
 }
 
+void NetClient::requestBulkCraft(Rarity target) {
+    ByteWriter w;beginMessage(w,net::ClientMessage::BulkCraft);w.u8(static_cast<std::uint8_t>(target));send(w);
+}
+
 void NetClient::requestCraft(std::uint16_t petalIndex, Rarity rarity, int count) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::Craft);

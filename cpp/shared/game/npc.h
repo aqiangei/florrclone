@@ -133,7 +133,7 @@ inline constexpr int titanForgeCost(unsigned completed) {
 inline constexpr Rarity kTitanInputRarity = Rarity::Super;
 inline constexpr Rarity kTitanOutputRarity = Rarity::Unique; // next rung, displayed Eternal
 inline bool titanForgeEligible(const std::string& id) {
-    return id != "blood_sacrifice" && id != "sacrifice";
+    return id != "blood_sacrifice" && id != "sacrifice" && id != "timed_mjolnir";
 }
 
 /// What a universal's holder gets back when another player forges the same

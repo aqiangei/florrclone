@@ -421,26 +421,18 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             break;
         }
         case SkillId::Duplicator:
-            if (cn) {
-                std::snprintf(buffer, sizeof buffer,
-                              "为至少拥有 %d 份的花瓣%s。", kDuplicatorMinCopies,
-                              tier == 0 ? "额外增加 1 份" : "额外增加 2 份");
-            } else {
-                std::snprintf(buffer, sizeof buffer,
-                              "Adds %s for petals that have at least %d copies.",
-                              tier == 0 ? "an extra copy" : "two extra copies",
-                              kDuplicatorMinCopies);
-            }
-            row({{buffer}});
+            if(tier<2)row({{cn ? (tier==0?"多粒花瓣额外增加1粒。":"多粒花瓣累计额外增加2粒。") :
+                                 (tier==0?"Adds one particle to multi-particle petals.":"Adds two particles to multi-particle petals.")}});
+            else row({{cn ? (tier==2?"最左槽可叠加花瓣再增加1粒；不适用于永恒及以上。":"最左槽额外1粒的效果也适用于永恒及以上。") :
+                             (tier==2?"Adds one particle to the leftmost stackable petal below Eternal.":"Allows the leftmost extra particle at Eternal and above.")}});
             break;
         case SkillId::Magnetism: {
-            const auto at = static_cast<std::size_t>(std::clamp(tier, 0, 2));
             if (cn) {
                 std::snprintf(buffer, sizeof buffer, "花瓣拾取范围增加 %.0f。",
-                              kReachBonus[at]);
+                              1000.0);
             } else {
                 std::snprintf(buffer, sizeof buffer, "Increases petal pick up range by %.0f.",
-                              kReachBonus[at]);
+                              1000.0);
             }
             row({{buffer}});
             break;

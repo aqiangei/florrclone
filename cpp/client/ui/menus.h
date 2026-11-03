@@ -839,6 +839,8 @@ private:
     /// "Craft All" toggle: when on, a click on a craftable petal stages every
     /// available batch (Shift-click's behaviour). Survives close/reopen.
     bool fillAllMode_ = false;
+    int bulkTarget_ = 2;
+    bool bulkArmed_ = false;
 
     Phase phase_ = Phase::Idle;
     double phaseStarted_ = 0;

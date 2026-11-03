@@ -72,7 +72,8 @@ constexpr double kViewportCeilingSlack = 1.01;
 /// cannot claim more than its loadout pays for.
 Vec2 claimableViewport(World& world, Entity body, const ContentRegistry& content, double width,
                        double height) {
-    double zoom = 1.0;
+    const auto* talents = world.tryGet<PlayerSkillTree>(body);
+    double zoom = talents ? 1.0 / (1.0 + talents->skills.antennaeFovBonus()) : 1.0;
     if (const Loadout* loadout = world.tryGet<Loadout>(body)) {
         for (int i = 0; i < kLoadoutActiveSlots; ++i) {
             // Resolved, as the client resolves it: a mimic beside a third eye
@@ -888,6 +889,7 @@ void GameServer::tick(double nowMillis) {
     // Public online list under the minimap (same session walk as the admin
     // crown Players tab; fingerprint skips unchanged payloads).
     serviceOnlineRoster(nowMillis);
+    serviceTimedHammers(nowMillis);
     markTickPhase("sessions");
 
     // Housekeeping, ABOVE the idle gate: an account registered by somebody
@@ -1412,6 +1414,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::SwapLoadoutRows:
         case net::ClientMessage::SaveLoadoutPreset:
         case net::ClientMessage::LoadLoadoutPreset:
+        case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
         case net::ClientMessage::Craft:
         case net::ClientMessage::OracleCraft:
         case net::ClientMessage::Trade:
@@ -2075,7 +2078,8 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
     // ring), and the progression track it is on (the maze's, in the maze) --
     // so the panels show what the flower actually has and the talent menu
     // spends the points the body actually earned.
-    const PlayerRecord& record = liveRecord(session);
+    PlayerRecord& record = liveRecord(session);
+    if (expireTimedHammer(record) && session.playing()) applyAccountToSession(session);
     const bool onMazeTrack = session.playing() && session.realm == Realm::Maze;
     const double trackXp = onMazeTrack ? record.mazeTotalXp : record.totalXp;
     const SkillSet& skills = onMazeTrack ? record.mazeSkills : record.skills;
@@ -2919,7 +2923,7 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
                result.missing > 0 ? net::NoticeSeverity::Warning : net::NoticeSeverity::Good, text);
 }
 
-void GameServer::handleCraft(Session& session, net::Connection& connection, ByteReader& reader) {
+void GameServer::handleCraft(Session& session, net::Connection& connection, ByteReader& reader, bool quiet) {
     const std::uint16_t petalIndex = reader.u16();
     const Rarity rarity = clampRarity(reader.u8());
     const std::uint32_t count = reader.u32();
@@ -2933,7 +2937,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     // short rather than narrowed into a number that might not be.
     const bool valid = count >= kCraftBatch &&
                        count <= static_cast<std::uint32_t>(kMaxStackCount) &&
-                       craftsOutOf(rarity) && petalIndex < content().petalCount();
+                       craftsOutOf(rarity) && petalIndex < content().petalCount() && content().petal(petalIndex).id != "timed_mjolnir";
     if (!valid || !takeFromInventory(record, petalIndex, rarity, static_cast<int>(count))) {
         w.boolean(false);
         w.u16(petalIndex);
@@ -2942,8 +2946,8 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
         w.u8(0);
         w.str("Not enough petals to craft.");
         w.u32(0); w.u32(0);
-        connection.send(w);
-        resyncProfile(session, connection);
+        if (!quiet) connection.send(w);
+        if (!quiet) resyncProfile(session, connection);
         return;
     }
 
@@ -3017,8 +3021,29 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     w.str(upgrades > 0 ? "" : "The craft failed.");
     w.u32(attemptCount);
     w.u32(count - petalsReturned);
-    connection.send(w);
-    sendProfile(session, connection);
+    if (!quiet) connection.send(w);
+    if (!quiet) sendProfile(session, connection);
+}
+
+void GameServer::handleBulkCraft(Session& session, net::Connection& connection, ByteReader& reader) {
+    const unsigned target=reader.u8();
+    if(!reader.ok() || !session.authenticated() || target<1 || target>static_cast<unsigned>(rarityIndex(kTopLadderRarity)))return;
+    if(clockMillis_<session.nextBulkCraftMillis)return;
+    session.nextBulkCraftMillis=clockMillis_+1500;
+    auto& record=liveRecord(session);int groups=0;
+    for(unsigned tier=0;tier<target;++tier) {
+        const auto rarity=static_cast<Rarity>(tier);if(!craftsOutOf(rarity))break;
+        for(std::uint16_t petal=0;petal<content().petalCount();++petal) {
+            if(content().petal(petal).id=="timed_mjolnir" || !petalComesAt(content().petal(petal),rarity))continue;
+            const auto owned=record.itemCount(rarity,inventoryKey(petal));
+            if(owned<kCraftBatch)continue;
+            ByteWriter request;request.u16(petal);request.u8(static_cast<std::uint8_t>(rarity));request.u32(static_cast<std::uint32_t>(std::min<std::int64_t>(owned,kMaxStackCount)));
+            ByteReader input(request.data(),request.size());handleCraft(session,connection,input,true);++groups;
+        }
+    }
+    if(groups>0)database_.markDirty();
+    sendProfile(session,connection);
+    sendNotice(connection,net::NoticeSeverity::Info,groups>0 ? "一键合成完成：已处理目标等级以下的可用材料，装备花瓣保留。" : "目标等级以下没有足够合成的材料。");
 }
 
 void GameServer::handleOracleCraft(Session& session, net::Connection& connection,
@@ -3338,7 +3363,7 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
     double units = 0.0;
     std::int64_t absorbed = 0;
     for (const Stack& stack : stacks) {
-        if (stack.petalIndex >= content().petalCount() || stack.count <= 0 ||
+        if (stack.petalIndex >= content().petalCount() || content().petal(stack.petalIndex).id == "timed_mjolnir" || stack.count <= 0 ||
             stack.count > kMaxStackCount) {
             reply(false, 0, 0, "Nothing to absorb.");
             return;
@@ -3432,7 +3457,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         reply(false, "血祭不能用于泰坦锻造。");
         return;
     }
-    outputIndex = petal.id == "fragment" ? content().petalIndex("mjolnir") : petalIndex;
+    outputIndex = petal.id == "fragment" ? content().petalIndex("timed_mjolnir") : petalIndex;
     if (outputIndex >= content().petalCount()) { reply(false, "锻造产物不存在。"); return; }
     PlayerRecord& record = liveRecord(session);
     const int completed = clamp(record.extra["titanForgeCounts"][petal.id].asInt(0), 0, 2);
@@ -3447,7 +3472,13 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         resyncProfile(session, connection);
         return;
     }
-    giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
+    if (petal.id == "fragment") {
+        bool owned = record.itemCount(kTitanOutputRarity, inventoryKey(outputIndex)) > 0;
+        for (const auto& slot : record.loadout) if (slot && slot->petalType == "timed_mjolnir") owned = true;
+        if (!owned) giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
+        record.extra["titanHammerExpiresAt"] = Json(static_cast<double>(database_.nowMillis() + 3600000));
+        sendNotice(connection, net::NoticeSeverity::Info,"限时雷神之锤有效期1小时，离线也计时；再次兑换刷新为1小时。");
+    } else giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
     record.extra["titanForgeCounts"][petal.id] = std::min(2, completed + 1);
     database_.markDirty();
     announceRareCraft(session, outputIndex, kTitanOutputRarity, 1, cost, true);
@@ -6602,6 +6633,35 @@ void GameServer::servicePyramidMaps(double now) {
             if (auto* peer = listener_.find(id)) sendNotice(*peer, net::NoticeSeverity::Info,
                 "已找到金字塔地图！本次探索可查看小地图，离开后失效。");
             break;
+        }
+    }
+}
+
+
+bool GameServer::expireTimedHammer(PlayerRecord& record) {
+    const double expiry=record.extra["titanHammerExpiresAt"].asDouble(0);
+    if (!(expiry>0) || database_.nowMillis()<expiry) return false;
+    const auto index=content().petalIndex("timed_mjolnir");
+    if(index!=kInvalidIndex) {
+        for(int t=0;t<kRarityCount;++t){const auto r=static_cast<Rarity>(t);
+            const auto n=record.itemCount(r,inventoryKey(index));if(n>0)record.addItem(r,inventoryKey(index),-n);}
+        for(auto& slot:record.loadout)if(slot && slot->petalType=="timed_mjolnir")slot.reset();
+    }
+    record.extra["titanHammerExpiresAt"]=Json(0);database_.markDirty();return true;
+}
+void GameServer::serviceTimedHammers(double now) {
+    if(now<nextTimedHammerSweep_)return;nextTimedHammerSweep_=now+1000;
+    for(auto& [id,session]:sessions_) {
+        if(!session.authenticated())continue;
+        auto& record=database_.progress(session.userId);
+        const auto expiry=record.extra["titanHammerExpiresAt"].asDouble(0);
+        if(!(expiry>0) || database_.nowMillis()<expiry)continue;
+        liveRecord(session);
+        if(!expireTimedHammer(record))continue;
+        if(session.playing())applyAccountToSession(session);
+        if(auto* connection=listener_.find(id)) {
+            sendNotice(*connection,net::NoticeSeverity::Info,"限时雷神之锤已到期，可前往泰坦重新兑换。");
+            sendProfile(session,*connection);
         }
     }
 }

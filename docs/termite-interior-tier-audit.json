@@ -1,0 +1,74 @@
+[
+  {
+    "rarityIndex": 0,
+    "tiles": 16,
+    "worldSize": 4096,
+    "wallTiles": 138
+  },
+  {
+    "rarityIndex": 1,
+    "tiles": 20,
+    "worldSize": 5120,
+    "wallTiles": 206
+  },
+  {
+    "rarityIndex": 2,
+    "tiles": 24,
+    "worldSize": 6144,
+    "wallTiles": 238
+  },
+  {
+    "rarityIndex": 3,
+    "tiles": 28,
+    "worldSize": 7168,
+    "wallTiles": 324
+  },
+  {
+    "rarityIndex": 4,
+    "tiles": 32,
+    "worldSize": 8192,
+    "wallTiles": 77
+  },
+  {
+    "rarityIndex": 5,
+    "tiles": 36,
+    "worldSize": 9216,
+    "wallTiles": 413
+  },
+  {
+    "rarityIndex": 6,
+    "tiles": 40,
+    "worldSize": 10240,
+    "wallTiles": 333
+  },
+  {
+    "rarityIndex": 7,
+    "tiles": 44,
+    "worldSize": 11264,
+    "wallTiles": 484
+  },
+  {
+    "rarityIndex": 8,
+    "tiles": 48,
+    "worldSize": 12288,
+    "wallTiles": 238
+  },
+  {
+    "rarityIndex": 9,
+    "tiles": 52,
+    "worldSize": 13312,
+    "wallTiles": 585
+  },
+  {
+    "rarityIndex": 10,
+    "tiles": 56,
+    "worldSize": 14336,
+    "wallTiles": 506
+  },
+  {
+    "rarityIndex": 11,
+    "tiles": 60,
+    "worldSize": 15360,
+    "wallTiles": 667
+  }
+]

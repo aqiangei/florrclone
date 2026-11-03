@@ -42,7 +42,7 @@ enum class Realm : std::uint8_t {
 /// this leaves room to grow. Raising it costs one broadphase Layer and one
 /// tile grid header per realm, and nothing on the wire; a realm nothing was
 /// staged for keeps a one-cell layer and an empty grid.
-inline constexpr int kMaxRealms = 64;
+inline constexpr int kMaxRealms = 128;
 
 /// How many world MAPS can be staged: every realm that is not the arena or the
 /// maze.

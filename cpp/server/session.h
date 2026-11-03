@@ -111,6 +111,7 @@ struct Session {
     /// When this session's next TitanHolder query will be answered, on the
     /// server's tick clock. See kTitanHolderQueryMillis.
     double nextTitanQueryMillis = 0;
+    double nextBulkCraftMillis = 0;
 
     /// The revision of the last Profile or ProfileDelta sent on this
     /// connection, 0 before the first, and when its next ProfileCheck is worth

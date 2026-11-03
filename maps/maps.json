@@ -56,6 +56,50 @@
     {
       "file": "termite_mound.tmj",
       "copies": 8
+    },
+    {
+      "file": "termite_mound_t1.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t2.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t3.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t4.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t5.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t6.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t7.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t8.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t9.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t10.tmj",
+      "copies": 8
+    },
+    {
+      "file": "termite_mound_t11.tmj",
+      "copies": 8
     }
   ]
 }

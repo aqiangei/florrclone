@@ -1054,7 +1054,7 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
     // the order the set happens to be walked in. Mass plays no part -- the
     // separation is symmetric and driven purely by the two radii.
     for (SeparationEntry& self : separationSet_) {
-        if (self.noCollision) continue;
+        if (self.noCollision || anchoredAgainstKnockback(world, content(), self.entity)) continue;
         // The grid files a mob under every cell its own circle touches, so a
         // query of this mob's radius plus the buffer already returns every
         // neighbour that can be inside the sum of the two radii.

@@ -3312,7 +3312,7 @@ double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry
     // Per petal, the shared rule: the server bounds the viewport this client
     // may report by the very same figure, so the two cannot disagree about
     // how much world is on screen.
-    double zoom = 1.0;
+    double zoom = 1.0 / (1.0 + profile.skills.antennaeFovBonus());
     const std::size_t worn =
         std::min(profile.loadout.size(), static_cast<std::size_t>(kLoadoutActiveSlots));
     for (std::size_t i = 0; i < worn; ++i) {

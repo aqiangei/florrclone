@@ -472,8 +472,19 @@ bool CraftingPanel::render(MenuContext& ctx) {
     // --- the grid ----------------------------------------------------------
     const std::uint32_t held =
         static_cast<std::uint32_t>(std::max(0, batches_)) * static_cast<std::uint32_t>(kBatch);
+    SlotCardLayout bulkCard=card;bulkCard.listView.y+=44;bulkCard.listView.h=std::max(0.0,bulkCard.listView.h-44);
+    const Rect bulkPrev{panel.x+12,card.listView.y+4,32,30};
+    const Rect bulkTarget{bulkPrev.right()+5,bulkPrev.y,170,30};
+    const Rect bulkNext{bulkTarget.right()+5,bulkPrev.y,32,30};
+    const Rect bulkRun{bulkNext.right()+10,bulkPrev.y,std::max(100.0,panel.right()-12-bulkNext.right()-10),30};
+    static const char* bulkZh[]={"普通","罕见","稀有","史诗","传说","神话","究极","超级","永恒","Hyper"};
+    const bool bulkChinese=language()==Language::Zh;
+    drawSlotButton(canvas,bulkPrev,"<",std::nullopt,bulkPrev.contains(mouse),false);
+    drawSlotButton(canvas,bulkTarget,std::string(bulkChinese?"合成至：":"Craft to: ")+(bulkChinese?bulkZh[bulkTarget_]:rarityLabel(static_cast<Rarity>(bulkTarget_))),rarityColor(static_cast<Rarity>(bulkTarget_)),false,false);
+    drawSlotButton(canvas,bulkNext,">",std::nullopt,bulkNext.contains(mouse),false);
+    drawSlotButton(canvas,bulkRun,bulkArmed_?(bulkChinese?"确认消耗低阶材料":"Confirm consuming lower tiers"):(bulkChinese?"一键合成全部低阶花瓣":"Craft all lower tiers"),bulkArmed_?0xCC6644u:0x5A9FDBu,bulkRun.contains(mouse),false);
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
-        ctx, card, kCraftingSkin, false,
+        ctx, bulkCard, kCraftingSkin, false,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;
@@ -606,6 +617,13 @@ bool CraftingPanel::render(MenuContext& ctx) {
         return true;
     }
 
+    if(phase_==Phase::Idle && (bulkPrev.contains(mouse)||bulkNext.contains(mouse))) {
+        bulkTarget_=std::clamp(bulkTarget_+(bulkNext.contains(mouse)?1:-1),1,rarityIndex(kTopLadderRarity));bulkArmed_=false;return true;
+    }
+    if(phase_==Phase::Idle && bulkRun.contains(mouse)) {
+        if(!bulkArmed_){bulkArmed_=true;return true;}
+        ctx.net.requestBulkCraft(static_cast<Rarity>(bulkTarget_));bulkArmed_=false;stagedPetal_=kNoPetal;batches_=0;return true;
+    }
     if (craftRect.contains(mouse)) {
         beginCraft();
         return true;

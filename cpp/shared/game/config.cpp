@@ -1027,6 +1027,7 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
                                 kMaxMobVisualOffset);
 
     m.ai = parseAi(ctx, ctx.text(src, "ai_type", "neutral"));
+    if (m.speed == 0.0 && m.ai == AiKind::Passive) m.ai = AiKind::Stationary;
 
     // Before the groups: the array spelling of `groups` takes this as its
     // weight, so it has to be read first.
@@ -1341,6 +1342,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.passiveMana = ctx.range(src, "passiveMana", 0.0, 0.0, kMaxBaseStat);
     p.requiredMana = ctx.range(src, "requiredMana", 0.0, 0.0, kMaxBaseStat);
     p.lightningDamage = ctx.boolean(src, "lightningDamage");
+    p.stackable = ctx.boolean(src, "stackable", true);
 
     if (src.contains("fixedDirection")) {
         p.hasFixedDirection = true;
@@ -1887,6 +1889,11 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         s.lightningDamagePerHit = 12.0 * strength;
         s.lightningBounces = 2 + ladderIndex(r);
         s.batteryCharges = c.id == "battery" ? 3 : 0;
+    }
+
+    if (c.id == "mjolnir" || c.id == "timed_mjolnir") {
+        s.lightningDamagePerHit = 50.0 * strength;
+        s.lightningBounces = 0;
     }
 
     s.health = c.health * strength;

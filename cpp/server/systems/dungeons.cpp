@@ -24,19 +24,17 @@ void DungeonSystem::index(const ContentRegistry& content) {
         const std::string& mapId = config.dungeon.mapId;
         if (std::find(seen.begin(), seen.end(), mapId) != seen.end()) continue;
         seen.push_back(mapId);
-        const std::vector<Realm> copies = worldMaps->copiesOf(mapId);
-        if (copies.empty()) {
-            // A content bug, not a runtime condition: the nest is an
-            // untouchable stone until somebody stages the map.
-            contentWarning("[dungeon] %s leads into map \"%s\", which is not staged\n",
-                           config.id.c_str(), mapId.c_str());
-        }
-        for (const Realm realm : copies) {
-            Instance instance;
-            instance.realm = realm;
-            instance.mapId = mapId;
-            byRealm_[realmIndex(realm)] = static_cast<int>(instances_.size());
-            instances_.push_back(instance);
+        const bool tiered = !worldMaps->copiesOf(mapId + "_t1").empty();
+        const int bands = tiered ? kRarityCount : 1;
+        for (int tier = 0; tier < bands; ++tier) {
+            const auto copies = worldMaps->copiesOf(tier == 0 ? mapId : mapId + "_t" + std::to_string(tier));
+            if (copies.empty()) contentWarning("[dungeon] missing staged map %s tier %d\n",mapId.c_str(),tier);
+            for (const Realm realm : copies) {
+                Instance instance;instance.realm=realm;instance.mapId=mapId;
+                instance.rarityBand=tiered?tier:-1;
+                byRealm_[realmIndex(realm)]=static_cast<int>(instances_.size());
+                instances_.push_back(instance);
+            }
         }
     }
 }
@@ -45,9 +43,10 @@ bool DungeonSystem::isInstance(Realm realm) const {
     return indexed_ && byRealm_[realmIndex(realm)] >= 0;
 }
 
-DungeonSystem::Instance* DungeonSystem::claim(const std::string& mapId) {
+DungeonSystem::Instance* DungeonSystem::claim(const std::string& mapId, Rarity rarity) {
     for (Instance& instance : instances_) {
-        if (!instance.live && instance.mapId == mapId) return &instance;
+        if (!instance.live && instance.mapId == mapId &&
+            (instance.rarityBand < 0 || instance.rarityBand == rarityIndex(rarity))) return &instance;
     }
     return nullptr;
 }
@@ -260,7 +259,7 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
             instance = &instances_[static_cast<std::size_t>(byRealm_[realmIndex(door->realm)])];
         } else {
             // Every copy taken: the flower stays out until one comes free.
-            instance = claim(content.mob(type->configIndex).dungeon.mapId);
+            instance = claim(content.mob(type->configIndex).dungeon.mapId, type->rarity);
             if (instance == nullptr) continue;
             if (!populate(world, terrain, content, spawning, rng, nowMillis, *instance, nest)) {
                 instance->live = false;

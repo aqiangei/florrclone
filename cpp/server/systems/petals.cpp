@@ -856,7 +856,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         // above an integer survives the exact run of hits that empties it: a
         // rare stinger under the epic talent would hold 24.3 rather than 24,
         // and survive the fourth 6-damage hit that ought to break it.
-        stats.health = std::round(stats.health * petalHealthScale);
+        if (stats.health > 1.0) stats.health = std::round(stats.health * petalHealthScale);
         // A moon that is not the live one is a slot of zero copies: it serves
         // its equip reload like any other, then holds nothing. Counted rather
         // than skipped, so that the count changing -- the live moon taken off,
@@ -864,7 +864,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         // already knows how, full reload included.
         const int count = petalAnchorsRing(config) && i != moonSlot
                               ? 0
-                              : petalCopies(std::max(0, stats.count), skills);
+                              : petalCopies(std::max(0, stats.count), skills, i, rarityIndex(equipped.rarity), config.stackable);
         const double reload = reloadMillisFor(stats, reloadScale);
 
         if (slotState.configIndex != equipped.configIndex || slotState.rarity != equipped.rarity ||
@@ -1243,7 +1243,7 @@ void PetalSystem::serveLentPetal(World& world, const ContentRegistry& registry, 
     const Rarity rarity = lent.lenderRarity;
     PetalStats stats = registry.petalStats(lentIndex, rarity);
     if (const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player)) {
-        stats.health = std::round(stats.health * tree->skills.healthScale(SkillId::PetalHealth));
+        if (stats.health > 1.0) stats.health = std::round(stats.health * tree->skills.healthScale(SkillId::PetalHealth));
     }
     const double reload = reloadMillisFor(stats, reloadScaleOf(world, registry, player));
 
@@ -1332,7 +1332,7 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     if (!config.noPhysics) {
         world.add<Body>(petal, Body{stats.radius, loose ? kLoosePetalMass : 1.0});
         world.add<ContactDamage>(petal,
-                                 ContactDamage{stats.damage,
+                                 ContactDamage{config.lightningDamage && stats.lightningDamagePerHit > 0 ? stats.lightningDamagePerHit : stats.damage,
                                                std::max(0.0, stats.damageIntervalMillis)});
         world.add<HitCooldowns>(petal);
     }
@@ -1983,7 +1983,7 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
         // ring at all, so it leaves no gap in it either.
         if (config.noPhysics || petalIsLooseBody(config)) continue;
         const int count = std::max(
-            1, petalCopies(registry.petalStats(slot.configIndex, slot.rarity).count, skills));
+            1, petalCopies(registry.petalStats(slot.configIndex, slot.rarity).count, skills, i, rarityIndex(slot.rarity), config.stackable));
         occupied += config.clumped ? 1 : count;
     }
     // A crown's loan takes the place after the bar's last, and keeps it open
