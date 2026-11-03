@@ -498,6 +498,8 @@ void MovementSystem::shoveLooseBodies(const Terrain& terrain, Transform& transfo
     const double radius = sanitizeCollisionRadius(body.radius);
     const double mass = bodyMass(&body);
     for (LooseDisc& disc : looseDiscs_) {
+        // Moon is a ring centre, not an obstacle to any flower.
+        if (boundWorld_->has<RingAnchor>(disc.entity)) continue;
         if (disc.realm != transform.realm) continue;
         const double reach = disc.radius + radius;
         const Vec2 offset = transform.position - disc.position;

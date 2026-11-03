@@ -129,3 +129,14 @@ TEST(feedback_talent_effects_reach_live_petals_and_locked_slots_stay_owned) {
     w.get<PlayerSkillTree>(player).skills.set(SkillId::PetalHealth,8);const auto stinger=content().petalIndex("stinger");w.get<Loadout>(player).slots[0].configIndex=stinger;tick(400);
     int checked=0;Query<PetalInstance,Health> q{w};q.each([&](Entity,PetalInstance& p,Health& health){if(p.owner==player&&p.configIndex==stinger){++checked;CHECK_NEAR(health.max,1,1e-8);}});CHECK(checked>0);
 }
+
+TEST(feedback_flowers_can_stand_inside_moon_without_shoving_it) {
+    World w;Terrain terrain;MovementSystem movement;const auto player=w.create(),moon=w.create();
+    const Vec2 start{5000,5000},moonAt{5010,5000};
+    w.add<PlayerTag>(player);w.add<Transform>(player,Transform{start,0});w.add<Motion>(player);
+    w.add<Body>(player,Body{25,1});w.add<PlayerInput>(player);w.add<PlayerModifiers>(player);w.add<Health>(player,Health{100,100});
+    w.add<LoosePetal>(moon);w.add<RingAnchor>(moon);w.add<Transform>(moon,Transform{moonAt,0});w.add<Body>(moon,Body{100,10});
+    for(int i=0;i<120;++i)movement.run(w,terrain,i*net::kTickMillis,net::kTickSeconds);
+    CHECK_NEAR(distance(w.get<Transform>(player).position,start),0,1e-6);
+    CHECK_NEAR(distance(w.get<Transform>(moon).position,moonAt),0,1e-6);
+}
