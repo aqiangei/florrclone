@@ -73,9 +73,9 @@ TEST(feedback_petal_health_talent_updates_live_shared_and_independent_pools_with
         CHECK_NEAR(w.get<Health>(first).current,base*fraction,1e-8);
         // A talent change cannot revive broken petals or shorten their timers.
         for(const auto e:live())w.get<Health>(e).current=0;
-        tick(1);CHECK(live().empty());const double deadline=slot.reloadReadyAtMillis;
+        tick(1);CHECK(live().empty());const double deadline=w.get<Loadout>(player).slots[0].reloadReadyAtMillis;
         CHECK(deadline>now);skills.set(SkillId::PetalHealth,8);tick(1);
-        CHECK(live().empty());CHECK_NEAR(slot.reloadReadyAtMillis,deadline,1e-8);
+        CHECK(live().empty());CHECK_NEAR(w.get<Loadout>(player).slots[0].reloadReadyAtMillis,deadline,1e-8);
         tick(400);instances=live();CHECK(!instances.empty());
         for(const auto e:instances){CHECK_NEAR(w.get<Health>(e).max,boosted,1e-8);CHECK_NEAR(w.get<Health>(e).current,boosted,1e-8);}
     }
