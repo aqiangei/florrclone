@@ -554,10 +554,10 @@ void App::drawLogin(Canvas& canvas, double time) {
         inputField(canvas, box, value, placeholder, focusedField_ == index, time,
                    focusedField_ == index ? &authField_ : nullptr, masked, InputLook::Auth);
     };
-    field(layout.username, usernameField_, "Username", 0, false);
-    field(layout.password, passwordField_, "Password", 1, true);
+    field(layout.username, usernameField_, ui::trEnZh("Username", "用户名（点击输入）"), 0, false);
+    field(layout.password, passwordField_, ui::trEnZh("Password", "密码（点击输入）"), 1, true);
     if (registering_) {
-        field(layout.confirmation, confirmPasswordField_, "Confirm Password", 2, true);
+        field(layout.confirmation, confirmPasswordField_, ui::trEnZh("Confirm Password", "再次输入密码"), 2, true);
     }
     if (advancedOpen_) field(layout.serverIp, serverField_, "Server IP", serverField, false);
 

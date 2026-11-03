@@ -859,6 +859,15 @@ struct Window::Impl {
                        : type == EMSCRIPTEN_EVENT_MOUSEDOWN ? PointerSample::Kind::Press
                                                             : PointerSample::Kind::Release,
                        event, targetX, targetY);
+    // Real text-field gestures must be usable even before enough mouse
+    // movement exists to judge a trajectory. This exception is confined to
+    // registered input rectangles; gameplay and scripted events stay guarded.
+    const float keyboardScale = impl->fit > 0 ? static_cast<float>(1.0 / impl->fit) : 1.0f;
+    if (impl->eventTrusted && impl->onKeyboardField(event->targetX * keyboardScale,
+                                                  event->targetY * keyboardScale)) {
+      targetX = event->targetX;
+      targetY = event->targetY;
+    }
     recordPointer(impl, targetX, targetY);
     impl->pointerIsTouch = false;
     recordModifiers(impl, event->shiftKey, event->ctrlKey, event->altKey, event->metaKey);
@@ -971,7 +980,10 @@ struct Window::Impl {
     // The click follows the mouseup it came from, which the pointer physics
     // has already judged; it is not a sample of its own.
     double targetX = event->targetX, targetY = event->targetY;
-    if (impl->inputGuard &&
+    const bool trustedField = impl->eventTrusted &&
+        impl->onKeyboardField(static_cast<float>(targetX)*toDesign,
+                              static_cast<float>(targetY)*toDesign);
+    if (!trustedField && impl->inputGuard &&
         (!impl->eventTrusted || !impl->pointerPhysics.lastBelieved())) {
       impl->randomPoint(targetX, targetY);
     }

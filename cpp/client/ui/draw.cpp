@@ -555,9 +555,9 @@ void inputField(Canvas& canvas, Rect r, const std::string& value, const std::str
                 static_cast<float>(clipBox.w), static_cast<float>(clipBox.h));
     canvas.clip();
     if (shown.empty()) {
-        // The auth form's placeholder goes while it has the caret -- the caret
-        // already says where the text will go. An <input>'s stays.
-        if (look != InputLook::Auth || !focused) {
+        // Keep the placeholder while empty, including the focused auth field,
+        // so a new player can still tell which credential belongs here.
+        {
             style.fill = placeholderFill;
             text(canvas, placeholder, layout.left, middle, style);
         }
