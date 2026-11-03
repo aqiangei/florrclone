@@ -2332,7 +2332,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         const bool loose = world.has<LoosePetal>(e);
         if (loose && stats.damage <= 0.0) return;
 
-        const bool inert = stats.damage <= 0.0 && stats.critDamage <= 0.0 &&
+        const bool inert = stats.damage <= 0.0 && (!config.lightningDamage||stats.lightningDamagePerHit<=0.0) && stats.critDamage <= 0.0 &&
                            stats.poisonPerSecond <= 0.0 && stats.slowFactor >= 1.0 &&
                            stats.knockback <= 0.0 && stats.armorReduction <= 0.0 &&
                            stats.noHealDurationMillis <= 0.0;
