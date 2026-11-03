@@ -100,6 +100,9 @@ TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {
         const auto entrance=w.get<Transform>(nest).position;const auto player=w.create();
         w.add<PlayerTag>(player);w.add<Transform>(player,Transform{entrance,0,home});w.add<Body>(player,Body{25,1});w.add<Health>(player,Health{1000,1000});
         dungeon.moveToRealm=[&](Entity e,Realm realm,Vec2 p){auto& t=w.get<Transform>(e);t.realm=realm;t.position=p;};
+        dungeon.run(w,terrain,content(),spawn,combat,rng,900,commands);commands.flush();
+        CHECK(w.get<Transform>(player).realm==home);
+        dungeon.requestEntry(player,1000);
         dungeon.run(w,terrain,content(),spawn,combat,rng,1000,commands);commands.flush();
         dungeon.run(w,terrain,content(),spawn,combat,rng,1700,commands);commands.flush();
         const auto inside=w.get<Transform>(player).realm;CHECK(inside!=home);CHECK(dungeon.isInstance(inside));

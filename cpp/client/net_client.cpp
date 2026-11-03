@@ -453,6 +453,7 @@ void NetClient::usePetal(int slot) {
 }
 
 void NetClient::toggleShopLock(){ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.u8(2);send(w);}
+void NetClient::requestDungeonEntry(){ByteWriter w;beginMessage(w,net::ClientMessage::EnterDungeon);send(w);}
 void NetClient::requestDailyDropBonus(bool claim) {
     ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.boolean(claim);send(w);
 }

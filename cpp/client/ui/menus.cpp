@@ -1288,7 +1288,7 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
         // What changed and where to talk about it are read before a run, not
         // during one: both belong to the title screen only.
         else if (slot.action == StripAction::Feedback || slot.action == StripAction::Discord ||
-                 slot.action == StripAction::Qq || slot.menu == MenuId::Changelog)
+                 slot.action == StripAction::Qq)
             visible[static_cast<std::size_t>(i)] = !inGame_;
         else if (slot.menu == MenuId::Debug)
             visible[static_cast<std::size_t>(i)] = settings_.showDebugButton;
@@ -3081,6 +3081,18 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     }
     // Under the open card, which is painted next and keeps any click it is
     // standing on: the chip hangs where the corner cards do.
+    if(inGame_ && open_==MenuId::None && !net.dead()) {
+        bool near=false;
+        for(const auto& pair:net.view().entities()) {const auto& entity=pair.second;
+            if(entity.kind!=net::EntityKind::Mob || entity.typeIndex>=content().mobCount())continue;
+            if(!content().mob(entity.typeIndex).dungeon.present)continue;
+            if(distance(entity.targetPosition,net.view().self().position)<=std::min(entity.radius*.3,120.0)+25)near=true;
+        }
+        if(near){const Rect entry{canvas.width()*.5-120.0,canvas.height()*.65,240,44};
+            button(canvas,entry,"进入白蚁丘 [F]",entry.contains({window.mouseX(),window.mouseY()}),window.mouseDown(MouseButton::Left));
+            if(window.keyPressed(Key::F)||(window.mouseReleased(MouseButton::Left)&&entry.contains({window.mouseX(),window.mouseY()})))net.requestDungeonEntry();
+        }
+    }
     drawReleaseChip(canvas, window, net);
     drawInviteToasts(canvas, window, net);
     if (layer == PanelLayer::Over) {

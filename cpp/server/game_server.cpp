@@ -1473,6 +1473,8 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::Absorb:        handleAbsorb(*session, connection, reader); break;
         case net::ClientMessage::TitanHolder:   handleTitanHolder(*session, connection, reader); break;
         case net::ClientMessage::Respawn:       handleRespawn(*session); break;
+        case net::ClientMessage::EnterDungeon:
+            if(session->playing()&&dungeons_&&spend(session->inventoryAllowance))dungeons_->requestEntry(session->entity,clockMillis_);break;
         case net::ClientMessage::Ping:          handlePing(connection, reader); break;
         case net::ClientMessage::UpgradeSkill:  handleUpgradeSkill(*session, connection, reader); break;
         case net::ClientMessage::DowngradeSkill:
@@ -5719,6 +5721,7 @@ std::string GameServer::squadBiomeRefusal(const Squad& squad, SquadMemberId who,
 }
 
 void GameServer::enforceSquadBiome(SquadMemberId member) {
+    if(!member.bot())if(const auto* session=sessionFor(member.connection);session && session->split())return;
     Squad* squad = squads_.forMember(member);
     if (squad == nullptr) return;
     // Against the REST of the squad, not against squadBiome(): a leader who

@@ -13897,6 +13897,47 @@
             ]
           ]
         ]
+      },
+      {
+        "type": "petal",
+        "itemType": "splitter",
+        "rarity": "common",
+        "probability": 1,
+        "minQuantity": 1,
+        "maxQuantity": 1,
+        "rarityChances": [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [
+            [
+              6,
+              0.02
+            ]
+          ],
+          [
+            [
+              7,
+              0.02
+            ]
+          ],
+          [
+            [
+              8,
+              0.02
+            ]
+          ],
+          [
+            [
+              9,
+              0.02
+            ]
+          ]
+        ],
+        "rollGroup": 0
       }
     ]
   },
@@ -17416,6 +17457,47 @@
             ]
           ]
         ]
+      },
+      {
+        "type": "petal",
+        "itemType": "splitter",
+        "rarity": "common",
+        "probability": 1,
+        "minQuantity": 1,
+        "maxQuantity": 1,
+        "rarityChances": [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [
+            [
+              6,
+              0.02
+            ]
+          ],
+          [
+            [
+              7,
+              0.02
+            ]
+          ],
+          [
+            [
+              8,
+              0.02
+            ]
+          ],
+          [
+            [
+              9,
+              0.02
+            ]
+          ]
+        ],
+        "rollGroup": 0
       }
     ]
   },

@@ -55,6 +55,8 @@ inline constexpr double kDungeonExitGap = 80.0;
 
 class DungeonSystem {
 public:
+    void requestEntry(Entity player,double now){entryRequests_.push_back({player,now+1500});}
+    std::vector<std::pair<Entity,double>> entryRequests_;
     /// The staged maps. Null leaves the system idle: no copies to claim.
     const WorldMaps* worldMaps = nullptr;
     /// Carries a player into another realm -- GameServer::moveEntityToRealm.

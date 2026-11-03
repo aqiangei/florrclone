@@ -251,21 +251,8 @@ bool GameServer::splitSession(Session& session) {
     session.splitOther = clone;
     parkBody(clone);
 
-    // A SPLIT FLOWER SQUADS WITH ITSELF AND NOBODY ELSE. Whatever party it was
-    // in is left on the way in -- one person steering two bodies through
-    // somebody else's four-flower cap is not a party -- and a private squad of
-    // its own takes its place, so the client's party HUD carries the other
-    // half's bar and the minimap its dot. Every door back into a squad is
-    // refused while it is split (splitSquadRefusal).
-    net::Connection* connection = listener_.find(session.connection);
-    if (squads_.forMember(squadIdOf(session)) != nullptr) {
-        departSquad(session, connection, squadDisplayName(squadIdOf(session)));
-    }
-    if (connection != nullptr) {
-        if (Squad* own = squads_.create(squadIdOf(session), false, rng_)) {
-            sendSquadUpdate(*connection, own);
-        }
-    }
+    // Both bodies remain members of the account's existing party.
+    if(const auto* squad=squads_.forMember(squadIdOf(session)))broadcastSquadUpdate(*squad);
     return true;
 }
 
@@ -307,12 +294,7 @@ void GameServer::endSplit(Session& session, double nowMillis, bool armReload) {
                        at != nullptr ? at->realm : Realm::Overworld);
     }
 
-    // The squad the split made for itself goes with it. Nobody else can be in
-    // one -- every door is refused while split -- so leaving is a disband.
-    net::Connection* connection = listener_.find(session.connection);
-    if (squads_.forMember(squadIdOf(session)) != nullptr) {
-        departSquad(session, connection, squadDisplayName(squadIdOf(session)));
-    }
+    if(const auto* squad=squads_.forMember(squadIdOf(session)))broadcastSquadUpdate(*squad);
 }
 
 void GameServer::switchSplitHalf(Session& session, double nowMillis) {
@@ -448,11 +430,7 @@ void GameServer::handleUsePetal(Session& session, ByteReader& reader) {
 }
 
 std::string GameServer::splitSquadRefusal(SquadMemberId who, const std::string& whoLabel) const {
-    if (who.bot()) return {};
-    const auto it = sessions_.find(who.connection);
-    if (it == sessions_.end() || !it->second.split()) return {};
-    return whoLabel + " split in two. A split flower squads with itself until the splitter "
-                      "comes off the bar.";
+    (void)who; (void)whoLabel; return {};
 }
 
 } // namespace flix

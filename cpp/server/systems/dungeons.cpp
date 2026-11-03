@@ -232,6 +232,7 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
         flowers.push_back({e, transform.realm, transform.position, body.radius});
     });
 
+    entryRequests_.erase(std::remove_if(entryRequests_.begin(),entryRequests_.end(),[&](const auto& request){return request.second<nowMillis||!world.isAlive(request.first);}),entryRequests_.end());
     std::vector<Approach> stillApproaching;
     std::vector<std::pair<Entity, Entity>> entering;   // (player, nest)
     Query<DungeonEntrance, Transform, Body> nests{world};
@@ -239,7 +240,8 @@ void DungeonSystem::run(World& world, const Terrain& terrain, const ContentRegis
         if (!isStanding(world, nest)) return;
         for (const Flower& flower : flowers) {
             if (flower.realm != transform.realm) continue;
-            const double reach = body.radius + flower.radius;
+            if(std::none_of(entryRequests_.begin(),entryRequests_.end(),[&](const auto& request){return request.first==flower.entity;}))continue;
+            const double reach = std::min(body.radius*0.3,120.0) + flower.radius;
             if (distanceSq(flower.position, transform.position) > reach * reach) continue;
             if (admits && !admits(flower.entity)) continue;
             const TeleporterState* pads = world.tryGet<TeleporterState>(flower.entity);

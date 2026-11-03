@@ -381,7 +381,7 @@ TEST(taking_the_splitter_off_puts_the_flower_back_together) {
     CHECK_EQ(alice.view().self().netId, world.get<NetId>(left.front()).value);
 }
 
-TEST(a_split_flower_may_not_join_a_squad) {
+TEST(a_split_flower_can_join_switch_and_merge_without_losing_squad) {
     Harness h("splitter-squad", {}, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
@@ -405,27 +405,16 @@ TEST(a_split_flower_may_not_join_a_squad) {
     CHECK(equipSplitter(h, alice, "alice", splitter));
     CHECK(h.stepUntil({&alice}, [&] { return bodiesNamed(world, "alice").size() == 2; }));
 
-    // Bob opens a squad and invites the split flower. The invitation is
-    // refused at the door rather than left pending, so nothing is waiting for
-    // an answer when the splitter comes off.
-    bob.sendChat("/squad create public");
-    h.step(5, {&alice, &bob});
+    bob.sendChat("/squad create public");h.step(5,{&alice,&bob});
     bob.sendChat("/squad-invite alice");
-    h.step(10, {&alice, &bob});
-
-    // Alice is still in her OWN squad -- the one the split made -- and it holds
-    // nobody but her two flowers.
-    CHECK(alice.squad().inSquad);
-    CHECK_EQ(alice.squad().members.size(), std::size_t{2});
-    for (const auto& member : alice.squad().members) CHECK_EQ(member.account, std::string("alice"));
-    // Bob's squad is still his alone: the invite did not quietly land.
-    CHECK(bob.squad().inSquad);
-    CHECK_EQ(bob.squad().members.size(), std::size_t{1});
-
-    // And she cannot walk into a public one either.
-    alice.sendChat("/squad-join " + std::string("squad_nonexistent"));
-    h.step(5, {&alice, &bob});
-    CHECK_EQ(alice.squad().members.size(), std::size_t{2});
+    CHECK(h.stepUntil({&alice,&bob},[&]{return alice.squadInvite().waiting;}));
+    alice.sendChat("/squad-accept");
+    CHECK(h.stepUntil({&alice,&bob},[&]{return alice.squad().inSquad && alice.squad().members.size()==3;}));
+    alice.usePetal(0);h.step(10,{&alice,&bob});
+    CHECK(alice.squad().inSquad);CHECK_EQ(alice.squad().members.size(),3u);
+    alice.setLoadoutSlot(0,kNoPetal,Rarity::Common);
+    CHECK(h.stepUntil({&alice,&bob},[&]{return bodiesNamed(world,"alice").size()==1;}));
+    CHECK(alice.squad().inSquad);CHECK(bob.squad().inSquad);
 }
 
 TEST(losing_a_half_ends_the_split_and_the_splitter_reloads) {

@@ -676,6 +676,7 @@ public:
     /// Forgets the answer for this petal, so the next look asks again.
     void forgetTitanHolder(std::uint16_t petalIndex) { titanHolders_.erase(petalIndex); }
     void requestRespawn();
+    void requestDungeonEntry();
     void sendPing();
     /// Tells the server what the held Profile's bag and bar fold to
     /// (net::ProfileDigest), so it can send the real one back when they have

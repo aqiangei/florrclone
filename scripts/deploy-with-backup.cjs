@@ -27,6 +27,15 @@ async function main(){
     ssh('test -s '+q(release+'/server.wasm')+' && test -s '+q(release+'/bundle.wasm')+' && test -s '+q(release+'/deploy-runtime.cjs'));
     ssh('curl -fsS http://127.0.0.1:8788/api/health');
     ssh('install -d -m 700 '+q(remote));
+    // Publish this release's Chinese notes before enabling maintenance.
+    const notes=JSON.parse(fs.readFileSync(path.join(__dirname,'release-notes.json'),'utf8'));
+    assert(Array.isArray(notes.changes)&&notes.changes.length>0,'Release notes are required');
+    const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const html=fs.readFileSync(path.join(__dirname,'maintenance.html'),'utf8').replace('<!-- RELEASE_NOTES -->',
+      '<section style="text-align:left;font-size:14px"><h2>'+escape(notes.title)+'</h2><ul>'+notes.changes.map(t=>'<li>'+escape(t)+'</li>').join('')+'</ul></section>');
+    const waitingFile=path.join(local,'maintenance.html');fs.writeFileSync(waitingFile,html);
+    scp(waitingFile,host+':/var/www/florrclone-maintenance/index.next.html');
+    ssh('mv /var/www/florrclone-maintenance/index.next.html /var/www/florrclone-maintenance/index.html');
     // Serve the waiting page before gracefully stopping the old process.
     ssh('touch '+q(marker));
     const waiting=ssh('curl -sS http://127.0.0.1:8088/');

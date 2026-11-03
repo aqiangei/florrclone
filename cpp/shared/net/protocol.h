@@ -233,6 +233,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< is then unmet. Hold-to-refund on the talent tree;
                         ///< points come back because spent() drops. (Version 69.)
     BulkCraft,          ///< u8 target rarity; craft every lower unequipped stack up to target.
+    EnterDungeon,       ///< no payload; explicit nearby dungeon entry.
     DailyDropBonus,     ///< u8 action: 0 query, 1 claim, 2 toggle shop lock; daily one-hour drop bonus (v78).
 };
 

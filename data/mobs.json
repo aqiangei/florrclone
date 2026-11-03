@@ -2518,7 +2518,7 @@
     "image": "$termite_mound",
     "ai_type": "passive",
     "groups": {
-      "jungle": 0.05
+      "jungle": 0.01
     },
     "range": 0,
     "hideRotation": true,

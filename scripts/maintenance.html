@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>游戏更新中</title>
 <style>body{margin:0;background:#179c60;color:white;font:18px system-ui;min-height:100vh;display:grid;place-items:center}main{width:min(520px,calc(100% - 48px));margin:20px 0;padding:18px;background:#163b32;border-radius:18px;text-align:center;box-shadow:0 10px 35px #0004;box-sizing:border-box}h1{font-size:26px;margin:10px}p{line-height:1.6;color:#d5eee3;font-size:15px}small{color:#afe0c9}canvas{display:block;width:100%;background:#21865c;border-radius:12px;touch-action:none}button{font:inherit;background:#ffe36e;border:0;padding:10px 24px;border-radius:8px;cursor:pointer;margin:8px}#enter{background:#72f2a2}#score{margin:10px}</style>
-<main><h1>游戏正在更新</h1><p>维护期间，来玩一局花朵躲石头吧！<br>方向键移动，或在下方拖动花朵。碰到石头后可重新开始。</p><div id="score" aria-live="polite">得分：0</div><canvas id="game" width="440" height="320" aria-label="花朵躲石头小游戏"></canvas><button id="restart">重新开始</button><div><small id="status" role="status">正在等待服务器恢复…</small></div><button id="enter" hidden>更新完成，进入游戏</button><p>小游戏成绩仅保存在当前页面。</p></main>
+<main><h1>游戏正在更新</h1><!-- RELEASE_NOTES --><p>维护期间，来玩一局花朵躲石头吧！<br>方向键移动，或在下方拖动花朵。碰到石头后可重新开始。</p><div id="score" aria-live="polite">得分：0</div><canvas id="game" width="440" height="320" aria-label="花朵躲石头小游戏"></canvas><button id="restart">重新开始</button><div><small id="status" role="status">正在等待服务器恢复…</small></div><button id="enter" hidden>更新完成，进入游戏</button><p>小游戏成绩仅保存在当前页面。</p></main>
 <script>
 const canvas=document.getElementById('game'),ctx=canvas.getContext('2d'),scoreEl=document.getElementById('score');
 let player,rocks,score,over,last=0,spawn=0;const keys=new Set();
