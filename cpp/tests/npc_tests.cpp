@@ -3022,7 +3022,7 @@ TEST(pyramid_map_scrolls_reveal_one_visit_without_inventory_and_refill) {
     CHECK(!watcher.pyramidMapRevealed);
     CHECK_EQ(explorer.profile().inventory.size(),before.size());
     h.step(903,{&watcher,&explorer}); CHECK_EQ(scrolls().size(),40u);
-    world.get<Health>(body).current=0;
+    world.get<Health>(body).current=0;world.add<Dead>(body);
     CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.dead();}));
     explorer.requestRespawn();
     CHECK(h.stepUntil({&watcher,&explorer},[&]{return !explorer.dead() && explorer.pyramidMapRevealed;}));

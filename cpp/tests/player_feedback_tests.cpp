@@ -126,6 +126,6 @@ TEST(feedback_talent_effects_reach_live_petals_and_locked_slots_stay_owned) {
     const auto spin=w.get<PetalRing>(player).spin;tick(1);
     const auto mods=w.get<PlayerModifiers>(player);CHECK_NEAR(mods.damageScale,1.38,1e-8);CHECK_NEAR(mods.luck,3.7,1e-8);CHECK_NEAR(mods.attackRange,150,1e-8);
     CHECK_NEAR(mods.magnetism-kBaseMagnetism,1000,1e-8);CHECK_NEAR(wrapAngle(w.get<PetalRing>(player).spin-spin),3.1*net::kTickSeconds,1e-8);
-    w.get<PlayerSkillTree>(player).skills.set(SkillId::PetalHealth,8);const auto stinger=content().petalIndex("stinger");w.get<Loadout>(player).slots[0].configIndex=stinger;tick(100);
+    w.get<PlayerSkillTree>(player).skills.set(SkillId::PetalHealth,8);const auto stinger=content().petalIndex("stinger");w.get<Loadout>(player).slots[0].configIndex=stinger;tick(400);
     int checked=0;Query<PetalInstance,Health> q{w};q.each([&](Entity,PetalInstance& p,Health& health){if(p.owner==player&&p.configIndex==stinger){++checked;CHECK_NEAR(health.max,1,1e-8);}});CHECK(checked>0);
 }

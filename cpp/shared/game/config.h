@@ -1760,4 +1760,9 @@ const ContentRegistry& content();
 /// content in place and fills `errorOut`.
 bool loadContent(const std::string& dataDir, std::string& errorOut);
 
+// Physical body contact ignores decorative legs, wings and antennae.
+inline double mobBodyContactScale(const std::string& id) {
+    return id.find("spider")!=std::string::npos ? 0.55 : 0.80;
+}
+
 } // namespace flix

@@ -1029,6 +1029,7 @@ void MovementSystem::buildSeparationSet(World& world) {
         }
         if (const MobType* type = world.tryGet<MobType>(e)) {
             const MobConfig& config = registry.mob(type->configIndex);
+            entry.radius *= mobBodyContactScale(config.id);
             entry.noCollision = config.noMobCollision;
             entry.gardnChain = config.gardnChain;
         }

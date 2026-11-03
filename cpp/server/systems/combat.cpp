@@ -2220,6 +2220,8 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
         source.damage = contact.amount;
         source.hitIntervalMillis = contact.intervalMillis;
         source.isMobBody = world.has<MobTag>(e);
+        if(source.isMobBody) if(const auto* type=world.tryGet<MobType>(e))
+            source.radius *= mobBodyContactScale(content.mob(type->configIndex).id);
         source.isNpcBody = world.has<NpcTag>(e);
         source.isPet = world.has<Pet>(e);
         source.isPlayerBody = world.has<PlayerTag>(e);
