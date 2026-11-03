@@ -8,7 +8,7 @@ TEST(sewers_reference_curve_has_ultras_in_real_high_threat_habitats) {
     CHECK(maps.load(testsupport::dataDir(),&terrain,error));bool found=false;
     const auto realm=maps.realmOfId("sewers",found);CHECK(found);const auto* map=maps.forRealm(realm);
     CHECK(map&&map->usesReferenceSpawnCurve());if(!map)return;
-    std::vector<SpawnSystem::Viewer> viewers;Rng points{718};
+    std::vector<RealmPoint> viewers;Rng points{718};
     for(const auto& e:map->elements())if(e.isSpawnBand()&&e.difficulty>=55&&!e.singular){
         for(int n=0;n<3000;++n){Vec2 at{points.range(e.bounds.x,e.bounds.right()),points.range(e.bounds.y,e.bounds.bottom())};
             if(e.contains(at)&&!terrain.blocked(at,realm)){viewers.push_back({at,realm});break;}}

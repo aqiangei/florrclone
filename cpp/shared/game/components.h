@@ -163,6 +163,7 @@ struct Health {
 /// mob is a mob that takes extra -- see effectiveArmor() in combat.
 struct Armor {
     double amount = 0;
+    bool halvesOnHit = false;
 };
 
 /// Chance, 0..1, that a DIRECT hit on this mob misses outright -- the fly's

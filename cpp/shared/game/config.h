@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -796,7 +797,40 @@ struct MobConfig {
 // ---------------------------------------------------------------------------
 
 /// One entry of petals.json, at its base (common) tier.
+struct PetalRarityOverrides {
+    std::optional<double> damage;
+    std::optional<double> health;
+    std::optional<double> reloadMillis;
+    std::optional<double> heal;
+    std::optional<double> passiveHealPerSecond;
+    std::optional<double> conditionalHealPerSecond;
+    std::optional<double> shield;
+    std::optional<double> poisonPerSecond;
+    std::optional<double> poisonDurationMillis;
+    std::optional<double> bodyDamage;
+    std::optional<double> armorReduction;
+    std::optional<double> armorPerStack;
+    std::optional<double> petalArmor;
+    std::optional<double> lifesteal;
+    std::optional<double> maxMana;
+    std::optional<double> mana;
+    std::optional<double> passiveManaPerSecond;
+    std::optional<double> petManaCost;
+    std::optional<double> totemHealPerSecond;
+    std::optional<double> lightningDamagePerHit;
+    std::optional<double> flowerHealthBonus;
+    std::optional<double> flowerRadiusBonus;
+    std::optional<double> undeadMillis;
+    std::optional<double> undeadBodyDamageCut;
+    std::optional<double> collisionResist;
+    std::optional<double> knockback;
+    std::optional<double> luck, magnetism, count;
+    std::optional<double> overhealShield, healBonus;
+};
+
 struct PetalConfig {
+    std::array<PetalRarityOverrides, kLadderRarityCount> rarityOverrides;
+
     std::string id;
     std::string name;
     std::string description;
@@ -1119,6 +1153,7 @@ struct PetalStats {
     double heal = 0;                    ///< burst heal per charge
     double healChargeMillis = 0;
     double passiveHealPerSecond = 0;
+    double conditionalHealPerSecond = 0; // Starfish, below 75% flower health
     /// Mana added to the wearer's pool while this petal is worn, this tier.
     double totemHealPerSecond = 0;
     double lightningDamagePerHit = 0;

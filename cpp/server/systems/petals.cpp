@@ -1341,7 +1341,7 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     // Bone's armour is the same component a mob's is, so every hit the damage
     // path lands on the petal is blunted by the one rule that blunts a mob's.
     // Only on a petal that has some, so every other petal keeps its archetype.
-    if (stats.petalArmor > 0.0) world.add<Armor>(petal, Armor{stats.petalArmor});
+    if (stats.petalArmor > 0.0) world.add<Armor>(petal, Armor{stats.petalArmor, config.id == "bone"});
 
     PetalInstance instance;
     instance.owner = player;
@@ -1576,6 +1576,10 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // does, per the rule at the top of this loop.
             if (!registry.petal(equipped.configIndex).passiveHealDefendOnly || blocking) {
                 aggregate.modifiers.passiveHealPerSecond += stats.passiveHealPerSecond;
+            }
+            if (stats.conditionalHealPerSecond > 0) {
+                const auto* pool = world.tryGet<Health>(player);
+                if (pool && pool->fraction() < 0.75) aggregate.modifiers.passiveHealPerSecond += stats.conditionalHealPerSecond;
             }
             // Summed, not maximised: an orb and a magic flower are two
             // grants of pool, and two orbs are two of them. Mana is the one
@@ -2833,6 +2837,7 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
         }
 
         case PetalBehaviourKind::Starfish: {
+            if (stats.conditionalHealPerSecond > 0) return;
             if (trigger == PetalTrigger::Collision || trigger == PetalTrigger::Interval) return;
             if (guarded) {
                 const Health* health = world.tryGet<Health>(player);

@@ -6565,7 +6565,7 @@ void GameServer::servicePyramidMaps(double now) {
                 if (scrolls.size() < 8 && !doors.empty()) {
                     const auto& door = doors.front()->bounds;
                     at = Vec2{door.x + door.w * 0.5, door.y + door.h * 0.5} +
-                         Vec2::fromAngle(pyramidMapRng_.angle(), 100.0 + pyramidMapRng_.unit() * 1600.0);
+                         Vec2::fromAngle(pyramidMapRng_.angle(), 800.0 + pyramidMapRng_.unit() * 1200.0);
                 }
                 if (at.x < 32 || at.y < 32 || at.x > extent.x - 32 || at.y > extent.y - 32 ||
                     terrain_->blocked(at, realm) || terrain_->inWater(at, realm) ||

@@ -1215,6 +1215,43 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
                        const std::unordered_map<std::string, std::uint16_t>& mobIds) {
     PetalConfig p;
     p.id = id;
+    // Sparse authored tier exceptions. Keep all hot-path reads typed and finite.
+    const Json& tierStats = src["rarityStats"];
+    for (int i = 0; i < kLadderRarityCount; ++i) {
+        const Json& row = tierStats[std::to_string(i)];
+        auto& target = p.rarityOverrides[static_cast<std::size_t>(i)];
+        if (row["damage"].isNumber()) target.damage = ctx.range(row,"damage",0.0,0.0,1e30);
+        if (row["health"].isNumber()) target.health = ctx.range(row,"health",0.0,0.0,1e30);
+        if (row["reloadMillis"].isNumber()) target.reloadMillis = ctx.range(row,"reloadMillis",0.0,0.0,1e30);
+        if (row["heal"].isNumber()) target.heal = ctx.range(row,"heal",0.0,0.0,1e30);
+        if (row["passiveHealPerSecond"].isNumber()) target.passiveHealPerSecond = ctx.range(row,"passiveHealPerSecond",0.0,0.0,1e30);
+        if (row["conditionalHealPerSecond"].isNumber()) target.conditionalHealPerSecond = ctx.range(row,"conditionalHealPerSecond",0.0,0.0,1e30);
+        if (row["shield"].isNumber()) target.shield = ctx.range(row,"shield",0.0,0.0,1e30);
+        if (row["poisonPerSecond"].isNumber()) target.poisonPerSecond = ctx.range(row,"poisonPerSecond",0.0,0.0,1e30);
+        if (row["poisonDurationMillis"].isNumber()) target.poisonDurationMillis = ctx.range(row,"poisonDurationMillis",0.0,0.0,1e30);
+        if (row["bodyDamage"].isNumber()) target.bodyDamage = ctx.range(row,"bodyDamage",0.0,0.0,1e30);
+        if (row["armorReduction"].isNumber()) target.armorReduction = ctx.range(row,"armorReduction",0.0,0.0,1e30);
+        if (row["armorPerStack"].isNumber()) target.armorPerStack = ctx.range(row,"armorPerStack",0.0,0.0,1e30);
+        if (row["petalArmor"].isNumber()) target.petalArmor = ctx.range(row,"petalArmor",0.0,0.0,1e30);
+        if (row["lifesteal"].isNumber()) target.lifesteal = ctx.range(row,"lifesteal",0.0,0.0,1e30);
+        if (row["maxMana"].isNumber()) target.maxMana = ctx.range(row,"maxMana",0.0,0.0,1e30);
+        if (row["mana"].isNumber()) target.mana = ctx.range(row,"mana",0.0,0.0,1e30);
+        if (row["passiveManaPerSecond"].isNumber()) target.passiveManaPerSecond = ctx.range(row,"passiveManaPerSecond",0.0,0.0,1e30);
+        if (row["petManaCost"].isNumber()) target.petManaCost = ctx.range(row,"petManaCost",0.0,0.0,1e30);
+        if (row["totemHealPerSecond"].isNumber()) target.totemHealPerSecond = ctx.range(row,"totemHealPerSecond",0.0,0.0,1e30);
+        if (row["lightningDamagePerHit"].isNumber()) target.lightningDamagePerHit = ctx.range(row,"lightningDamagePerHit",0.0,0.0,1e30);
+        if (row["flowerHealthBonus"].isNumber()) target.flowerHealthBonus = ctx.range(row,"flowerHealthBonus",0.0,0.0,1e30);
+        if (row["flowerRadiusBonus"].isNumber()) target.flowerRadiusBonus = ctx.range(row,"flowerRadiusBonus",0.0,0.0,1e30);
+        if (row["undeadMillis"].isNumber()) target.undeadMillis = ctx.range(row,"undeadMillis",0.0,0.0,1e30);
+        if (row["undeadBodyDamageCut"].isNumber()) target.undeadBodyDamageCut = ctx.range(row,"undeadBodyDamageCut",0.0,0.0,1e30);
+        if (row["collisionResist"].isNumber()) target.collisionResist = ctx.range(row,"collisionResist",0.0,0.0,1e30);
+        if (row["knockback"].isNumber()) target.knockback = ctx.range(row,"knockback",0.0,0.0,1e30);
+        if (row["overhealShield"].isNumber()) target.overhealShield = ctx.range(row,"overhealShield",0.0,0.0,1e30);
+        if (row["healBonus"].isNumber()) target.healBonus = ctx.range(row,"healBonus",0.0,0.0,1e30);
+        if (row["count"].isNumber()) target.count = ctx.range(row,"count",1.0,0.0,64.0);
+        if (row["luck"].isNumber()) target.luck = ctx.range(row,"luck",0.0,0.0,1e30);
+        if (row["magnetism"].isNumber()) target.magnetism = ctx.range(row,"magnetism",0.0,0.0,1e30);
+    }
     p.name = ctx.text(src, "name", id);
     p.description = ctx.text(src, "description");
     p.image = ctx.text(src, "image");
@@ -1857,9 +1894,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // above ultra and a bur that flattened with it would be dead weight at the
     // three tiers where a raid actually needs one.
     s.armorReduction = c.armorReduction * stat;
-    // Root's stack, on the same plain ladder and for the mirror of that
-    // reason: what a stack absorbs has to keep pace with what a mob of the
-    // same tier hits for, and mob damage is the 3x ladder all the way up.
+    // Root uses the defensive/healing scale above Mythic, matching the wiki.
     s.armorPerStack = c.armorPerStack * heal;
     // Bone's own armour climbs the ladder a MOB's armour climbs, flattening
     // above ultra with it: it is the same kind of number doing the same job
@@ -1868,7 +1903,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     s.petalArmor = c.petalArmor * kMobArmorScale[static_cast<std::size_t>(rarityIndex(tier))];
     // A claw's bonus is damage, so it is on the damage ladder beside `damage`.
     s.critDamage = c.clawCritDamage * strength;
-    // A fraction of the damage dealt, and that damage already climbs.
+    // Fang uses healing/damage scaling, so its percentage falls at Ultra+.
     s.lifesteal = c.lifesteal * heal / stat;
     s.reloadMillis = c.cooldownMillis;
     if (c.id == "yggdrasil") {
@@ -2054,6 +2089,43 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     }
     if (c.id == "antennae" && rarityIndex(tier) >= rarityIndex(Rarity::Rare)) {
         s.cameraZoom = 1.0 / antennaeVisionRangeScale(tier);
+    }
+    // Apply explicit exceptions only on the authored ladder. Devine/Admin retain
+    // their separate server-specific rules, not guessed extra wiki tiers.
+    if (rarityIndex(graded) < kLadderRarityCount) {
+        const auto& row = c.rarityOverrides[static_cast<std::size_t>(rarityIndex(graded))];
+        if (row.damage) s.damage = *row.damage;
+        if (row.health) s.health = *row.health;
+        if (row.reloadMillis) s.reloadMillis = *row.reloadMillis;
+        if (row.heal) s.heal = *row.heal;
+        if (row.passiveHealPerSecond) s.passiveHealPerSecond = *row.passiveHealPerSecond;
+        if (row.conditionalHealPerSecond) s.conditionalHealPerSecond = *row.conditionalHealPerSecond;
+        if (row.shield) s.shield = *row.shield;
+        if (row.poisonPerSecond) s.poisonPerSecond = *row.poisonPerSecond;
+        if (row.poisonDurationMillis) s.poisonDurationMillis = *row.poisonDurationMillis;
+        if (row.bodyDamage) s.bodyDamage = *row.bodyDamage;
+        if (row.armorReduction) s.armorReduction = *row.armorReduction;
+        if (row.armorPerStack) s.armorPerStack = *row.armorPerStack;
+        if (row.petalArmor) s.petalArmor = *row.petalArmor;
+        if (row.lifesteal) s.lifesteal = *row.lifesteal;
+        if (row.maxMana) s.maxMana = *row.maxMana;
+        if (row.mana) s.mana = *row.mana;
+        if (row.passiveManaPerSecond) s.passiveManaPerSecond = *row.passiveManaPerSecond;
+        if (row.petManaCost) s.petManaCost = *row.petManaCost;
+        if (row.totemHealPerSecond) s.totemHealPerSecond = *row.totemHealPerSecond;
+        if (row.lightningDamagePerHit) s.lightningDamagePerHit = *row.lightningDamagePerHit;
+        if (row.flowerHealthBonus) s.flowerHealthBonus = *row.flowerHealthBonus;
+        if (row.flowerRadiusBonus) s.flowerRadiusBonus = *row.flowerRadiusBonus;
+        if (row.undeadMillis) s.undeadMillis = *row.undeadMillis;
+        if (row.undeadBodyDamageCut) s.undeadBodyDamageCut = *row.undeadBodyDamageCut;
+        if (row.collisionResist) s.collisionResist = *row.collisionResist;
+        if (row.knockback) s.knockback = *row.knockback;
+        if (row.overhealShield) s.overhealShield = *row.overhealShield;
+        if (row.healBonus) s.healBonus = *row.healBonus;
+        if (row.count) s.count = static_cast<int>(*row.count);
+        if (row.flowerHealthBonus && c.id == "cactus") s.modifiers.maxHealth = 1.0;
+        if (row.luck) s.modifiers.luck = *row.luck;
+        if (row.magnetism) s.modifiers.magnetism = *row.magnetism;
     }
     // Admin starts with universal combat strength and apex utility, then
     // boosts the useful effects. Apply AFTER all named-petal overrides so

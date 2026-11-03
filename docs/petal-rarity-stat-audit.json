@@ -1,0 +1,1240 @@
+{
+  "reference": "florrclone engine R(petal)",
+  "referencePetals": 118,
+  "combinations": 1180,
+  "preserved": [
+    "Leaf healing and server 3x multiplier",
+    "stackable Powder and requested player speed",
+    "movement engine knockback defaults",
+    "Devine/Admin custom scaling"
+  ],
+  "petals": [
+    {
+      "id": "square",
+      "reference": "Square",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "beetle_egg",
+      "reference": "Beetle Egg",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "egg",
+      "reference": "Ant Egg",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "mysterious_stick",
+      "reference": "Mysterious Stick",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "mana_orb",
+      "reference": "Mana Orb",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "maxMana",
+        "mana"
+      ]
+    },
+    {
+      "id": "magic_leaf",
+      "reference": "Magic Leaf",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "maxMana",
+        "passiveManaPerSecond"
+      ]
+    },
+    {
+      "id": "magic_cactus",
+      "reference": "Magic Cactus",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "maxMana"
+      ]
+    },
+    {
+      "id": "magic_cotton",
+      "reference": "Magic Cotton",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "magic_stinger",
+      "reference": "Magic Stinger",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "magic_eye",
+      "reference": "Magic Eye",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "magic_missile",
+      "reference": "Magic Missile",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "magic_stick",
+      "reference": "Magic Stick",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "magic_bubble",
+      "reference": "Magic Bubble",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "mimic",
+      "reference": "Mimic",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "fragment",
+      "reference": "Fragment",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "mecha_missile",
+      "reference": "Mecha Missile",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "observer",
+      "reference": "Mecha Antennae",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "dark_mark",
+      "reference": "Dark Mark",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "blood_sacrifice",
+      "reference": "Blood Sacrifice",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "basic",
+      "reference": "Basic",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "rose",
+      "reference": "Rose",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "heal"
+      ]
+    },
+    {
+      "id": "light",
+      "reference": "Light",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "rock",
+      "reference": "Rock",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "stinger",
+      "reference": "Stinger",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "leaf",
+      "reference": "Leaf",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "iris",
+      "reference": "Iris",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "poisonPerSecond",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "wing",
+      "reference": "Wing",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "faster",
+      "reference": "Faster",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "cactus",
+      "reference": "Cactus",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "flowerHealthBonus",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "bubble",
+      "reference": "Bubble",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "missile",
+      "reference": "Missile",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "peas",
+      "reference": "Peas",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "pollen",
+      "reference": "Pollen",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "sand",
+      "reference": "Sand",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "antennae",
+      "reference": "Antennae",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "lentil",
+      "reference": "Lentil",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "corn",
+      "reference": "Corn",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "knockback"
+      ]
+    },
+    {
+      "id": "grapes",
+      "reference": "Grapes",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "poisonPerSecond",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "rice",
+      "reference": "Rice",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "pincer",
+      "reference": "Pincer",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "poisonPerSecond",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "pearl",
+      "reference": "Pearl",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "honey",
+      "reference": "Honey",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "heavy",
+      "reference": "Heavy",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "knockback"
+      ]
+    },
+    {
+      "id": "bean",
+      "reference": "Bean",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "bone",
+      "reference": "Bone",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "petalArmor",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "claw",
+      "reference": "Claw",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "coin",
+      "reference": "Coin",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "dahlia",
+      "reference": "Dahlia",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count",
+        "heal"
+      ]
+    },
+    {
+      "id": "dandelion",
+      "reference": "Dandelion",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "dice",
+      "reference": "Dice",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "fang",
+      "reference": "Fang",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "lifesteal",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "jelly",
+      "reference": "Jelly",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "knockback"
+      ]
+    },
+    {
+      "id": "laser",
+      "reference": "Laser",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "orange",
+      "reference": "Orange",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "plank",
+      "reference": "Plank",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "rubber",
+      "reference": "Rubber",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "salt",
+      "reference": "Salt",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "sawblade",
+      "reference": "Sawblade",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "shell",
+      "reference": "Shell",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "shield",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "soil",
+      "reference": "Soil",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "flowerHealthBonus",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "starfish",
+      "reference": "Starfish",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "conditionalHealPerSecond"
+      ]
+    },
+    {
+      "id": "talisman_of_evasion",
+      "reference": "Talisman of Evasion",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "third_eye",
+      "reference": "Third Eye",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "tomato",
+      "reference": "Tomato",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "wax",
+      "reference": "Wax",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "web",
+      "reference": "Web",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "yucca",
+      "reference": "Yucca",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "passiveHealPerSecond"
+      ]
+    },
+    {
+      "id": "clover",
+      "reference": "Clover",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "luck"
+      ]
+    },
+    {
+      "id": "magnet",
+      "reference": "Magnet",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "magnetism"
+      ]
+    },
+    {
+      "id": "lightning",
+      "reference": "Lightning",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "lightningDamagePerHit"
+      ]
+    },
+    {
+      "id": "mjolnir",
+      "reference": "Mjolnir",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "poo",
+      "reference": "Poo",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "broccoli",
+      "reference": "Broccoli",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "bur",
+      "reference": "Bur",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "armorReduction",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "carrot",
+      "reference": "Carrot",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "clay",
+      "reference": "Clay",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "cutter",
+      "reference": "Cutter",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "bodyDamage",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "disc",
+      "reference": "Disc",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "collisionResist",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "dust",
+      "reference": "Dust",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "electric_web",
+      "reference": "Electric Web",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "glass",
+      "reference": "Glass",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "golden_leaf",
+      "reference": "Golden Leaf",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "bulb",
+      "reference": "Light Bulb",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "lotus",
+      "reference": "Lotus",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "mysterious_powder",
+      "reference": "Mysterious Powder",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "poker_chip",
+      "reference": "Poker Chip",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "root",
+      "reference": "Root",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "armorPerStack",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "sponge",
+      "reference": "Sponge",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "triangle",
+      "reference": "Triangle",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "uranium",
+      "reference": "Uranium",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "yin_yang",
+      "reference": "Yin Yang",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "nazar_amulet",
+      "reference": "Nazar Amulet",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "air",
+      "reference": "Air",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "basil",
+      "reference": "Basil",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "healBonus",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "blood_stinger",
+      "reference": "Blood Stinger",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "ankh",
+      "reference": "Ankh",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "dead_leaf",
+      "reference": "Dead Leaf",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "coral",
+      "reference": "Coral",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "privet_berry",
+      "reference": "Privet Berry",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "cotton",
+      "reference": "Cotton",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "amulet",
+      "reference": "Amulet",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "overhealShield",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "compass",
+      "reference": "Compass",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "moon_rock",
+      "reference": "Moon Rock",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "totem",
+      "reference": "Totem",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "totemHealPerSecond",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "monstera",
+      "reference": "Monstera",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "cogwheel",
+      "reference": "Cogwheel",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "shovel",
+      "reference": "Shovel",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "magic_peas",
+      "reference": "Blueberries",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "count"
+      ]
+    },
+    {
+      "id": "domino",
+      "reference": "Domino",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "card",
+      "reference": "Card",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "battery",
+      "reference": "Battery",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis",
+        "lightningDamagePerHit"
+      ]
+    },
+    {
+      "id": "yggdrasil",
+      "reference": "Yggdrasil",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "bandage",
+      "reference": "Bandage",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "undeadBodyDamageCut",
+        "reloadMillis",
+        "undeadMillis"
+      ]
+    },
+    {
+      "id": "mysterious_relic",
+      "reference": "Mysterious Relic",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "paranormal_goggles",
+      "reference": "Paranormal Goggles",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "champion_crown",
+      "reference": "Champion's Crown",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "pharaoh_s_crown",
+      "reference": "Pharaoh's Crown",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    },
+    {
+      "id": "corruption",
+      "reference": "Corruption",
+      "tiers": 10,
+      "attributes": [
+        "damage",
+        "health",
+        "reloadMillis"
+      ]
+    }
+  ]
+}

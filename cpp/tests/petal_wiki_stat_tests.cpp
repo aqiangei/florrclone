@@ -69,3 +69,31 @@ TEST(wiki_stat_touch_hold_inspects_without_click_and_drag_still_cancels) {
     CHECK(!h.update(2,{30,10},2.6,false));CHECK(!h.consumedRelease);
     CHECK(!h.update(2,{10,10},3,true));CHECK(!h.update(2,{10,10},3.2,false));CHECK(!h.consumedRelease);
 }
+
+TEST(wiki_stat_rarity_exceptions_are_applied_to_real_runtime_stats) {
+    CHECK(loadWikiStats());
+    CHECK_EQ(content().petalStats(content().petalIndex("stinger"),Rarity::Super).count,5);
+    CHECK_NEAR(content().petalStats(content().petalIndex("stinger"),Rarity::Super).health,1,1e-8);
+    CHECK_NEAR(content().petalStats(content().petalIndex("bone"),Rarity::Super).petalArmor,21870,1e-8);
+    CHECK_NEAR(content().petalStats(content().petalIndex("cotton"),Rarity::Super).health,1458,1e-8);
+    CHECK_NEAR(content().petalStats(content().petalIndex("shell"),Rarity::Super).shield,5103,1e-8);
+    CHECK_NEAR(content().petalStats(content().petalIndex("iris"),Rarity::Super).poisonPerSecond,51030,1e-8);
+    CHECK_NEAR(content().petalStats(content().petalIndex("starfish"),Rarity::Super).conditionalHealPerSecond,1640,1e-8);
+    CHECK_NEAR(content().petalStats(content().petalIndex("moon_rock"),Rarity::Super).reloadMillis,100000,1e-8);
+}
+
+TEST(wiki_stat_moon_rock_actually_spawns_and_becomes_the_ring_anchor) {
+    CHECK(loadWikiStats());World world;CommandBuffer commands{world};PetalSystem petals;
+    const auto player=world.create();world.add<PlayerTag>(player);
+    world.add<Transform>(player,Transform{{1000,1000},0});world.add<Motion>(player);
+    world.add<Body>(player,Body{25,1});world.add<Health>(player,Health{1000,1000});
+    world.add<Faction>(player,Faction{Team::Players,false});world.add<PlayerProgress>(player);
+    world.add<PlayerInput>(player);world.add<PlayerModifiers>(player);world.add<Loadout>(player);
+    world.add<PetalRing>(player);world.add<Afflictions>(player);world.add<HitCooldowns>(player);
+    auto& loadout=world.get<Loadout>(player);loadout.slots[0].configIndex=content().petalIndex("moon_rock");
+    loadout.slots[1].configIndex=content().petalIndex("basic");
+    for(int i=0;i<3100;++i){petals.run(world,content(),1000+i*net::kTickMillis,net::kTickSeconds,commands);commands.flush();}
+    int anchors=0;Query<RingAnchor,PetalInstance> q{world};
+    q.each([&](Entity e,RingAnchor&,PetalInstance& p){if(p.owner==player&&!world.has<Dead>(e))++anchors;});
+    CHECK_EQ(anchors,1);
+}

@@ -5927,6 +5927,7 @@ TEST(wiki_mechanism_battery_requires_real_damage_and_bounds_chain_targets) {
 }
 TEST(wiki_mechanism_lightning_bypasses_armor_and_dodge) {
     CHECK(contentLoaded());Rig rig;const auto victim=addMob(rig,{1100,1000});
+    rig.world.get<Health>(victim).current=rig.world.get<Health>(victim).max=1000;
     rig.world.add<Armor>(victim,Armor{1e9});rig.world.add<Evasion>(victim,Evasion{1.0});
     const auto before=rig.world.get<Health>(victim).current;
     CombatSystem combat;const auto hit=combat.applyDamage(rig.world,victim,rig.player,12,rig.now,DamageKind::Lightning);

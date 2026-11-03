@@ -509,6 +509,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (config.radiation.selfPoisonScale > 0)
             special("自身中毒倍率：", "Self-poison multiplier: ", config.radiation.selfPoisonScale);
     }
+    if (stats.conditionalHealPerSecond > 0) {
+        special("低于75%生命时治疗：", "Healing below 75% health: ",
+            stats.conditionalHealPerSecond * healTalent * kPlayerHealMultiplier, chinese ? "/秒" : "/s");
+        special("基础条件治疗：", "Base conditional healing: ", stats.conditionalHealPerSecond, chinese ? "/秒" : "/s");
+    }
     if (stats.totemHealPerSecond > 0) {
         special("每次击杀增加回血：", "Heal per kill: ", stats.totemHealPerSecond * healTalent * kPlayerHealMultiplier,
                 chinese ? "/秒，持续10秒，可叠加" : "/s for 10s, stacking");
@@ -619,6 +624,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Bone. Its armour is the whole of what the petal is for and it climbs the
     // mob armour ladder, so the figure a player is weighing belongs here.
+    if (config.id == "bone") lines.push_back({chinese ? "每次受击后，自身护甲减半；重新加载恢复。" : "Armor halves after each hit and resets on reload.",12.0});
     if (stats.petalArmor > 0.0) {
         TooltipLine armor{std::string(tipArmor()) + abbreviate(stats.petalArmor), 12.0};
         armor.alpha = 0.56;

@@ -767,6 +767,7 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
     if (armorBlunts(kind) && !sharingColonyHit_) {
         const double armor = effectiveArmor(world, victim, nowMillis);
         if (armor != 0.0) amount = std::max(0.0, amount - armor);
+        if (auto* boneArmor = world.tryGet<Armor>(victim); boneArmor && boneArmor->halvesOnHit) boneArmor->amount *= 0.5;
     }
 
     const bool directPlayerHit = isDirectHit(kind) && world.has<PlayerTag>(victim);
