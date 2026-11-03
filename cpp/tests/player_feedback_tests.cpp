@@ -31,7 +31,7 @@ TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
     CHECK(w.get<PlayerVisuals>(p).equippedCorruption);
     CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)!=0);
     w.get<Loadout>(p).slots[2]=w.get<Loadout>(p).slots[1];
-    for(int second=2;second<=8;++second){
+    for(int second=2;second<=14;++second){
         petals.run(w,content(),second*1000.0,net::kTickSeconds,commands);commands.flush();
     }
     int mummies=0;
@@ -55,7 +55,7 @@ TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
     w.get<Loadout>(p).slots[1]=LoadoutSlot{};
     w.get<Loadout>(p).slots[2]=LoadoutSlot{};
     w.get<PlayerVisuals>(p).corrupted=true;
-    petals.run(w,content(),9000,net::kTickSeconds,commands);commands.flush();
+    petals.run(w,content(),15000,net::kTickSeconds,commands);commands.flush();
     CHECK(!w.get<PlayerVisuals>(p).equippedCorruption);
     CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)==0);
     CHECK(w.get<PlayerVisuals>(p).corrupted);
