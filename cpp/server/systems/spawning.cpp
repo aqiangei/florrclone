@@ -1978,6 +1978,51 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
     }
 }
 
+void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
+                                const ContentRegistry& content, const std::vector<Viewer>& viewers,
+                                Rng& rng, double nowMillis) {
+    if(!worldMaps)return;
+    for(const auto& map:worldMaps->maps()) {
+        const auto& id=map.id();
+        if(worldMaps->isPrestige(map.realm()) || !map.usesReferenceSpawnCurve() ||
+           (id!="garden"&&id!="desert"&&id!="computer"&&id!="ocean"&&id!="jungle"&&
+            id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"))continue;
+        auto state=std::find_if(eternalPopulations_.begin(),eternalPopulations_.end(),
+                               [&](const EternalMapState& v){return v.realm==map.realm();});
+        if(state==eternalPopulations_.end()) {
+            eternalPopulations_.push_back({map.realm(),false});state=std::prev(eternalPopulations_.end());
+        }
+        bool living=false;
+        ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob&){
+            if(at.realm==map.realm() && type.rarity==Rarity::Unique &&
+               !world.has<Dead>(e) && isWholeAnimal(world,e))living=true;
+        });
+        if(living){state->hadLiving=true;continue;}
+        if(state->hadLiving){
+            chargeBossClock(Rarity::Unique,map.realm(),nowMillis);
+            state->hadLiving=false;
+        }
+        if(bossCooldownLeft(Rarity::Unique,map.realm(),nowMillis)>0)continue;
+        double highest=-1e9;
+        for(const auto& zone:zones_)if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0)
+            highest=std::max(highest,zone.difficulty);
+        std::vector<std::uint16_t> candidates;
+        const double floor=std::min(highest,std::max(45.0,highest-20.0));
+        for(std::size_t n=0;n<zones_.size();++n) {
+            const auto& zone=zones_[n];
+            if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0&&zone.difficulty>=floor)
+                candidates.push_back(static_cast<std::uint16_t>(n));
+        }
+        for(int attempt=0;attempt<80&&!candidates.empty();++attempt) {
+            const auto n=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
+            if(stockZone(world,terrain,content,zones_[n],n,viewers,rng,nowMillis,
+                         Slot::TopUp,{},true,Rarity::Unique)) {
+                state->hadLiving=true;break;
+            }
+        }
+    }
+}
+
 void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
                                   const ContentRegistry& content,
                                   const std::vector<Viewer>& viewers, Rng& rng,
@@ -1986,6 +2031,7 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
     // behind this one that would cover the ground the author left unbanded.
     if (zones_.empty()) return;
     stockSupers(world, terrain, content, viewers, rng, nowMillis);
+    stockEternals(world, terrain, content, viewers, rng, nowMillis);
 
     for (std::size_t index = 0; index < zones_.size(); ++index) {
         SpawnZone& zone = zones_[index];
@@ -2015,7 +2061,7 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
 bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                             SpawnZone& zone, std::uint16_t zoneIndex,
                             const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
-                            Slot slot, Vec2 lostAt, bool fixedSuper) {
+                            Slot slot, Vec2 lostAt, bool fixedSuper, Rarity managedTier) {
     // Everything about this happens in the band's OWN realm: the map it is
     // drawn on has its own size, its own walls and its own population, and the
     // same numbers on the overworld describe somewhere else entirely.
@@ -2092,7 +2138,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
                                       ? rollReferenceSpawnRarity(zone.difficulty,luck,rng)
                                       : rollSpawnRarity(zone.difficulty, luck, rng));
     if (rarityIndex(rarity) > rarityIndex(Rarity::Super)) rarity = Rarity::Super;
-    if (fixedSuper) rarity = Rarity::Super;
+    if (fixedSuper) rarity = managedTier;
     // A prestige twin's band grows what the plain band would, a tier up --
     // and still never past super (shared/game/prestige.h).
     if (zone.prestige) rarity = prestigeRarity(rarity);
@@ -2123,7 +2169,12 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // in a prestige twin, which has no clocks.
     bool upgraded = false;
     if (rarity == Rarity::Super && !zone.prestige && !content.mob(type).neverAmbient) {
-        if (!fixedSuper) rarity = rollBossUpgrade(world, zone, nowMillis);
+        if (!fixedSuper) {
+            const auto* authored=worldMaps?worldMaps->forRealm(zone.realm):nullptr;
+            // Reference maps use separate S and E populations, not random promotions.
+            rarity = authored && authored->usesReferenceSpawnCurve() ? Rarity::Super :
+                     rollBossUpgrade(world, zone, nowMillis);
+        }
         upgraded = rarity != Rarity::Super;
         if (!fixedSuper && !upgraded) rarity = Rarity::Ultra;
     }

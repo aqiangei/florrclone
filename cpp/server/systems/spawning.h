@@ -806,7 +806,7 @@ private:
     bool stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                    SpawnZone& zone, std::uint16_t zoneIndex, const std::vector<Viewer>& viewers,
                    Rng& rng, double nowMillis, Slot slot = Slot::TopUp, Vec2 lostAt = Vec2{},
-                   bool fixedSuper = false);
+                   bool fixedSuper = false, Rarity managedTier = Rarity::Super);
 
     /// Gives each band back the population that died in it, where it died.
     ///
@@ -1044,6 +1044,11 @@ private:
     std::vector<TopBoss> topBosses_;
     struct SuperMapState { Realm realm; SuperPopulation population; };
     std::vector<SuperMapState> superPopulations_;
+    struct EternalMapState { Realm realm; bool hadLiving = false; };
+    std::vector<EternalMapState> eternalPopulations_;
+    void stockEternals(World&, const Terrain&, const ContentRegistry&,
+                       const std::vector<Viewer>&, Rng&, double);
+
     void stockSupers(World&, const Terrain&, const ContentRegistry&,
                      const std::vector<Viewer>&, Rng&, double);
     std::vector<Entity> culled_;
