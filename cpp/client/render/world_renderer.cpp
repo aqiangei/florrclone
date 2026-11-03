@@ -875,6 +875,11 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                     (event.flag & net::DamageOffView) != 0) {
                     break;
                 }
+                // Damage ownership is resolved by the server through petals,
+                // projectiles and summons. Keep our incoming damage warning,
+                // but never accumulate other players' outgoing numbers.
+                if (view.self().netId != 0 && (event.flag & net::DamageByViewer) == 0 &&
+                    event.netId != view.self().netId) break;
                 // A flower's own damage is never throttled: you must see every
                 // hit you take. A mob's is, because a full ring lands eight
                 // hits in one tick and eight stacked numbers read as noise.
