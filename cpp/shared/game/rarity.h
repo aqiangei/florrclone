@@ -145,6 +145,7 @@ inline constexpr Rarity minionRarity(Rarity asked) {
 /// Mob health per tier. Superlinear on purpose: each tier is meant to be a
 /// wall, not a gentle step, so a common-tier loadout cannot chip down a
 /// legendary by patience alone.
+/// Hyper health is 6x Eternal; its damage and rewards keep their existing scale.
 inline constexpr std::array<double, kLadderRarityCount> kMobHealthScale = {
     1.0, 3.75, 13.5, 54.0, 324.0, 3159.0, 126830.0, 2374000.0, 14244000.0, 21366000.0,
 };

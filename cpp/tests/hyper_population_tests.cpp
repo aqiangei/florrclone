@@ -12,6 +12,9 @@ TEST(hyper_health_is_six_times_eternal_without_other_stat_inflation){
         CHECK_NEAR(h.health,e.health*6,1e-5);CHECK_NEAR(h.damage,e.damage*3,1e-5);
         CHECK_NEAR(h.xp,e.xp*3,1e-5);
         CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor,1e-9);}
+    const auto pollen=data().petalStats(data().petalIndex("pollen"),Rarity::Apex);
+    CHECK_NEAR(pollen.damage,83106,1e-9);CHECK_NEAR(pollen.health,10935,1e-9);
+    CHECK_EQ(pollen.count,3);CHECK_NEAR(pollen.reloadMillis,2000,1e-9);
 }
 TEST(hyper_one_per_regular_map_preserves_supers_eternals_and_waits_thirty_minutes){
     WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));

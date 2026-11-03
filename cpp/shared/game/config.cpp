@@ -775,10 +775,9 @@ void parseMobGroups(Ctx& ctx, MobConfig& m, std::uint16_t mobIndex, const Json& 
 /// decision and never was one. Requiring it here means a new mob cannot be
 /// added without saying what it is worth.
 ///
-/// Apex is the ONE derived tier: the tables stop at unique, and apex is a 3x
-/// step above unique everywhere else in the game, so deriving it keeps an apex
-/// kill from paying the same as a common one without asking every entry to
-/// write the multiplication out.
+/// Apex XP remains a derived 3x unique step, independently of monster health
+/// balancing. Deriving it keeps an apex kill from paying the same as a common
+/// one without asking every entry to write the multiplication out.
 std::array<double, kLadderRarityCount> parseXp(Ctx& ctx, const Json& src) {
     constexpr std::size_t kUnique = static_cast<std::size_t>(Rarity::Unique);
     constexpr std::size_t kApex = static_cast<std::size_t>(Rarity::Apex);
