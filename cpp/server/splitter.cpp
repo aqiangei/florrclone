@@ -251,7 +251,11 @@ bool GameServer::splitSession(Session& session) {
     session.splitOther = clone;
     parkBody(clone);
 
-    // Both bodies remain members of the account's existing party.
+    // Preserve an existing team; solo players still see both soul bars.
+    session.splitCreatedSoloSquad=false;
+    if(!squads_.forMember(squadIdOf(session))) {
+        session.splitCreatedSoloSquad=squads_.create(squadIdOf(session),false,rng_)!=nullptr;
+    }
     if(const auto* squad=squads_.forMember(squadIdOf(session)))broadcastSquadUpdate(*squad);
     return true;
 }
@@ -294,7 +298,12 @@ void GameServer::endSplit(Session& session, double nowMillis, bool armReload) {
                        at != nullptr ? at->realm : Realm::Overworld);
     }
 
-    if(const auto* squad=squads_.forMember(squadIdOf(session)))broadcastSquadUpdate(*squad);
+    if(const auto* squad=squads_.forMember(squadIdOf(session))) {
+        if(session.splitCreatedSoloSquad && squad->members.size()==1)
+            departSquad(session,listener_.find(session.connection),squadDisplayName(squadIdOf(session)));
+        else broadcastSquadUpdate(*squad);
+    }
+    session.splitCreatedSoloSquad=false;
 }
 
 void GameServer::switchSplitHalf(Session& session, double nowMillis) {

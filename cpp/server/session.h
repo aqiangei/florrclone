@@ -44,6 +44,7 @@ struct Session {
     /// is keyed on.
     std::string clientAddress;
 
+    bool splitCreatedSoloSquad = false;
     bool pyramidMapRevealed = false;
     Realm pyramidMapRealm = static_cast<Realm>(255);
     std::string userId;
