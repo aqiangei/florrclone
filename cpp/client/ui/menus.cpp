@@ -2106,13 +2106,19 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     const bool tipSlot =
         hovered >= 0 && hovered < owned && hovered < kLoadoutBarSlots &&
         !(secondaryHidden && hovered >= kLoadoutBarPrimary) && !shown[static_cast<std::size_t>(hovered)].empty();
-    const bool touchTip = loadoutTouchInspect_.update(tipSlot ? hovered : -1,
-        {window.mouseX(),window.mouseY()},timeSeconds,
-        window.pointerIsTouch() && window.mouseDown(MouseButton::Left));
-    const bool showTip = tipSlot && (touchTip ||
+    const bool touchTip = loadoutTouchInspect_.touch(window,timeSeconds,[&](Vec2 point){
+        if(panelRect_.w>0 && panelRect_.contains(point))return -1;
+        for(int i=0;i<std::min(owned,kLoadoutBarSlots);++i)
+            if(!(secondaryHidden&&i>=kLoadoutBarPrimary) && !shown[static_cast<std::size_t>(i)].empty() &&
+               insideInclusive(loadoutRects_[static_cast<std::size_t>(i)],point))return i;
+        return -1;
+    });
+    if(touchTip && drag_.source==DragState::Source::LoadoutSlot)drag_.clear();
+    const int tipIndex=touchTip?loadoutTouchInspect_.target:hovered;
+    const bool showTip = touchTip || (tipSlot &&
         (!window.pointerIsTouch() && loadoutTooltipDelay.update(hovered,timeSeconds,pointerDown)));
     if (showTip) {
-        const Profile::Slot& slot = shown[static_cast<std::size_t>(hovered)];
+        const Profile::Slot& slot = shown[static_cast<std::size_t>(tipIndex)];
         const double reloadScale =
             profile.skills.reloadScale() *
             (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }));
@@ -2122,7 +2128,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, alt);
         // Slot boxes are laid out in screen space; the slide only moves the
         // paint. Offset the anchor so the card tracks the drawn tile.
-        Rect anchor = loadoutRects_[static_cast<std::size_t>(hovered)];
+        Rect anchor = loadoutRects_[static_cast<std::size_t>(tipIndex)];
         anchor.y += (1.0 - loadoutSlide_) * 120.0;
         const Vec2 at = tooltipAnchor(anchor, size, canvas.width(), canvas.height());
         paintTooltip(canvas, at.x, at.y, lines, 0.0, 0.0, alt);

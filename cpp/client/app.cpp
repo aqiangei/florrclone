@@ -261,6 +261,7 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // instant a finger lands rather than on the frame that follows -- see the
     // touch section of Window's header for why the answer cannot wait.
     window_.setTouchClaimHandler([this](const TouchPoint& point) {
+        if (menus_.capturesMouse({point.x,point.y})) return false;
         return touchControlsVisible() && mobile_.hits(point.x, point.y);
     });
 

@@ -70,6 +70,26 @@ TEST(wiki_stat_touch_hold_inspects_without_click_and_drag_still_cancels) {
     CHECK(!h.update(2,{30,10},2.6,false));CHECK(!h.consumedRelease);
     CHECK(!h.update(2,{10,10},3,true));CHECK(!h.update(2,{10,10},3.2,false));CHECK(!h.consumedRelease);
 }
+TEST(wiki_stat_touch_inspection_tracks_the_real_finger_before_mouse_delay_and_consumes_release) {
+    ui::TouchInspectDelay h;
+    const auto hit=[](Vec2 p){return p.x>=100&&p.x<=160&&p.y>=100&&p.y<=160?2:-1;};
+    std::vector<TouchPoint> fingers{{4,10,10},{7,120,120}};
+    CHECK(!h.contacts(fingers,1.0,hit,false,2.0));
+    fingers[1].x=130; // Five physical pixels on a scaled phone is normal drift.
+    CHECK(h.contacts(fingers,1.41,hit,false,2.0));CHECK_EQ(h.target,2);
+    fingers.erase(fingers.begin()+1);
+    CHECK(!h.contacts(fingers,1.5,hit,false,2.0));CHECK(h.consumedRelease);
+    h.reset();fingers={{7,120,120}};
+    CHECK(!h.contacts(fingers,2,hit));CHECK(h.contacts(fingers,2.41,hit));
+    fingers[0].x=300;CHECK(!h.contacts(fingers,2.5,hit));
+    CHECK(!h.contacts({},2.6,hit));CHECK(h.consumedRelease);
+    h.reset();fingers={{7,120,120}};
+    CHECK(!h.contacts(fingers,3,hit));CHECK(!h.contacts(fingers,3.2,hit,true));
+    CHECK(!h.contacts({},3.7,hit));CHECK(!h.consumedRelease);
+    h.reset();fingers={{7,10,10}};CHECK(!h.contacts(fingers,4,hit));
+    fingers[0].x=120;fingers[0].y=120;CHECK(!h.contacts(fingers,4.5,hit));
+    CHECK(!h.contacts(fingers,5,hit)); // Dragging into a cell is not a new hold.
+}
 
 TEST(wiki_stat_rarity_exceptions_are_applied_to_real_runtime_stats) {
     CHECK(loadWikiStats());

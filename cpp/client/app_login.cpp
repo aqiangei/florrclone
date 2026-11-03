@@ -567,7 +567,8 @@ void App::drawLogin(Canvas& canvas, double time) {
     advancedStyle.radius = 5.0;
     advancedStyle.textSize = 14.0;
     button(canvas, layout.advanced,
-           advancedOpen_ ? "Advanced Settings [^]" : "Advanced Settings [v]",
+           advancedOpen_ ? ui::trEnZh("Advanced Settings [^]", "高级设置 [^]")
+                         : ui::trEnZh("Advanced Settings [v]", "高级设置 [v]"),
            hovered == "toggleAdvanced", pressed == "toggleAdvanced", advancedStyle);
 
     // No disabled state: the reference's buttons are full-colour with both

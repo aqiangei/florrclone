@@ -959,12 +959,19 @@ bool InventoryPanel::render(MenuContext& ctx) {
     // painted when those are idle.
     const bool pointerDown = ctx.window.mouseDown(MouseButton::Left) ||
                              ctx.window.mousePressed(MouseButton::Left) || ctx.drag.active();
-    const bool holdTip = touchInspect.update(hovered,mouse,ctx.timeSeconds,
-        touchPointer && ctx.window.mouseDown(MouseButton::Left),touchScrolling);
-    const bool showTooltip = hovered >= 0 && (holdTip ||
+    const auto& pan=ctx.window.touchPan();
+    const bool holdTip = touchInspect.touch(ctx.window,ctx.timeSeconds,[&](Vec2 point){
+        if(!view.contains(point)||track.contains(point))return -1;
+        for(std::size_t i=0;i<grid.cells.size();++i){const auto& cell=grid.cells[i];
+            if(Rect{originX+cell.rect.x,originY+cell.rect.y,cell.rect.w,cell.rect.h}.contains(point))return static_cast<int>(i);}
+        return -1;
+    },pan.active && view.contains({pan.originX,pan.originY}));
+    if(holdTip && ctx.drag.source==DragState::Source::Inventory)ctx.drag.clear();
+    const int tipIndex=holdTip?touchInspect.target:hovered;
+    const bool showTooltip = holdTip || (hovered >= 0 &&
         (!touchPointer && tooltipDelay.update(hovered,ctx.timeSeconds,pointerDown)));
     if (showTooltip) {
-        const Cell& cell = grid.cells[static_cast<std::size_t>(hovered)];
+        const Cell& cell = grid.cells[static_cast<std::size_t>(tipIndex)];
         // The reload the bar would actually run, as the slot wedge times it.
         const double reloadScale =
             profile.skills.reloadScale() *
@@ -973,7 +980,8 @@ bool InventoryPanel::render(MenuContext& ctx) {
             petalTooltipLines(cell.petalIndex, cell.rarity, profile.skills, reloadScale);
         const bool alt = ctx.altMode;
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, alt);
-        const Vec2 at = tooltipAnchor(hoveredRect, size, canvas.width(), canvas.height());
+        const Rect tipRect{originX+cell.rect.x,originY+cell.rect.y,cell.rect.w,cell.rect.h};
+        const Vec2 at = tooltipAnchor(tipRect, size, canvas.width(), canvas.height());
         paintTooltip(canvas, at.x, at.y, lines, 0.0, 0.0, alt);
     }
 

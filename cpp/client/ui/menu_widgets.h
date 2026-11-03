@@ -13,11 +13,13 @@
 // panel that owns the geometry.
 
 #include <cstdint>
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "canvas.h"
+#include "window.h"
 #include "shared/core/types.h"
 
 #include "client/ui/draw.h"
@@ -140,17 +142,40 @@ struct TouchInspectDelay {
     double since = 0;
     flix::Vec2 start{};
     bool downBefore = false, held = false, blocked = false, consumedRelease = false;
-    bool update(int index, flix::Vec2 point, double now, bool down, bool scrolling = false) {
+    bool inspected = false;
+    std::optional<std::int64_t> finger;
+    std::vector<std::int64_t> liveFingers;
+    bool update(int index, flix::Vec2 point, double now, bool down, bool scrolling = false,
+                double slop = 8.0) {
         consumedRelease = false;
         if (!down) {
-            consumedRelease = downBefore && held && !blocked;
+            consumedRelease = downBefore && inspected;
             downBefore = false; held = false; target = -1; blocked = false;
+            inspected = false;
             return false;
         }
-        if (!downBefore) { downBefore=true;target=index;since=now;start=point;held=false;blocked=index<0; }
-        if (scrolling || index != target || (point-start).length() > 8.0) {blocked=true;held=false;}
-        if (!blocked && now-since >= 0.4) held=true;
+        if (!downBefore) { downBefore=true;target=index;since=now;start=point;held=false;blocked=index<0;inspected=false; }
+        if (scrolling || index != target || (point-start).length() > slop) {blocked=true;held=false;}
+        if (!blocked && now-since >= 0.4) {held=true;inspected=true;}
         return held;
+    }
+    template<class HitTest>
+    bool touch(const Window& window,double now,HitTest hit,bool scrolling=false) {
+        const double units=window.devicePixelRatio()*window.renderScale()/std::max(.001,window.uiScale());
+        return contacts(window.touches(),now,hit,scrolling,units);
+    }
+    template<class HitTest>
+    bool contacts(const std::vector<TouchPoint>& points,double now,HitTest hit,
+                  bool scrolling=false,double units=1.0) {
+        if(!finger)for(const auto& p:points)
+            if(std::find(liveFingers.begin(),liveFingers.end(),p.id)==liveFingers.end() &&
+               hit(flix::Vec2{p.x,p.y})>=0){finger=p.id;break;}
+        liveFingers.clear();for(const auto& p:points)liveFingers.push_back(p.id);
+        if(finger)for(const auto& p:points)if(p.id==*finger){
+            return update(hit(flix::Vec2{p.x,p.y}),{p.x,p.y},now,true,scrolling,10.0*units);
+        }
+        finger.reset();
+        return update(-1,{},now,false);
     }
     void reset() { *this = TouchInspectDelay{}; }
 };
