@@ -22,6 +22,14 @@ TEST(wiki_stat_leaf_keeps_server_three_times_and_shows_base) {
     CHECK(hasLine(leaf,Rarity::Super,"2187")); CHECK(hasLine(leaf,Rarity::Super,"729"));
     CHECK(hasLine(leaf,Rarity::Super,"本服治疗倍率：x3"));
 }
+TEST(wiki_stat_blueberries_have_real_lightning_damage_and_nonzero_tooltip){
+    CHECK(loadWikiStats());ui::setLanguage(ui::Language::Zh);
+    const auto id=content().petalIndex("magic_peas");
+    CHECK_NEAR(content().petalStats(id,Rarity::Common).lightningDamagePerHit,30,1e-8);
+    CHECK_NEAR(content().petalStats(id,Rarity::Unique).lightningDamagePerHit,196830,1e-8);
+    CHECK_EQ(content().petalStats(id,Rarity::Unique).lightningBounces,0);
+    CHECK(hasLine(id,Rarity::Unique,"196830"));CHECK(hasLine(id,Rarity::Unique,"不会连锁"));
+}
 TEST(wiki_stat_battery_and_lightning_share_damage_chain_and_description) {
     CHECK(loadWikiStats()); ui::setLanguage(ui::Language::Zh);
     for(const auto* id:{"battery","lightning"}) {

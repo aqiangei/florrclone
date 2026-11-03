@@ -2673,7 +2673,8 @@ bool PetalSystem::fireProjectiles(World& world, Entity player, Entity petal,
     // reference stamps the flower's petal-damage multiplier onto the volley
     // when it leaves, and nothing re-reads the shooter afterwards.
     const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(player);
-    const double damage = stats.damage * (modifiers ? modifiers->petalDamageScale : 1.0);
+    const double hitDamage=config.lightningDamage&&stats.lightningDamagePerHit>0?stats.lightningDamagePerHit:stats.damage;
+    const double damage = hitDamage * (modifiers ? modifiers->petalDamageScale : 1.0);
 
     // A shot is a scale model of the flower that fired it. The petal states
     // the shot's size at a STOCK flower, and a flower that has grown -- a

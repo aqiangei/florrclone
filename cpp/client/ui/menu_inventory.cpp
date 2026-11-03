@@ -314,7 +314,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     const PetalConfig& config = content().petal(petalIndex);
     const PetalStats stats = content().petalStats(petalIndex, rarity);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
-    const double damage = std::round(stats.damage);
+    const double damage = std::round(config.lightningDamage&&stats.lightningDamagePerHit>0?stats.lightningDamagePerHit:stats.damage);
 
     std::vector<TooltipLine> lines;
     // florr's header: on the name's right, what bringing the petal out costs
@@ -526,6 +526,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 chinese ? "/秒，持续10秒，可叠加" : "/s for 10s, stacking");
     }
     if (stats.lightningDamagePerHit > 0) {
+        if(config.id=="magic_peas")lines.push_back({chinese?"四颗蓝莓分别造成闪电伤害，不会连锁跳跃。":"Four blueberries deal lightning damage individually, with no chain jumps.",12.0});
         lines.push_back({chinese ? "闪电无视护甲和闪避。" : "Lightning bypasses armor and dodge.",12.0});
         special("基础闪电伤害：", "Base lightning damage: ", stats.lightningDamagePerHit);
         special("连锁跳跃次数：", "Chain bounces: ", stats.lightningBounces);

@@ -1895,6 +1895,10 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
 
     PetalStats s;
     s.damage = c.damage * strength;
+    if(c.id=="magic_peas"){
+        s.lightningDamagePerHit=30.0*strength;
+        s.lightningBounces=0;
+    }
     if (c.id == "battery" || c.id == "lightning") {
         s.lightningDamagePerHit = 12.0 * strength;
         s.lightningBounces = 2 + ladderIndex(r);
