@@ -812,9 +812,9 @@ bool ShopPanel::render(MenuContext& ctx) {
         const int multiplier=left>0?ctx.net.dropBonusMultiplier:(nextDay%4==0?3:2);
         const double y=box.bottom()+28;
         text(canvas,trEnZh("Daily Drop Bonus","每日掉落 Bonus"),panel.x+panel.w*.5,y,shopText(20));
-        text(canvas,trEnZh("1 hour: 2x / 2x / 2x / 3x. Ultra and below only.","每日1小时：2倍 / 2倍 / 2倍 / 3倍，仅究极及以下怪物。"),
+        text(canvas,trEnZh("1 hour: 2x / 2x / 2x / 3x. Ultra and below.","每日1小时：2倍 / 2倍 / 2倍 / 3倍，究极及以下怪物。"),
             panel.x+panel.w*.5,y+30,shopText(14));
-        text(canvas,trEnZh("Super+ stays at 30 independent rolls; missed days reset the cycle.","超级及以上保持30次独立掉落；漏领重置，每天北京时间0点更新。"),
+        text(canvas,trEnZh("Super+ gets 1.5x / 2x (45 / 60 rolls); missed days reset.","超级及以上对应1.5倍/2倍（45/60次）；漏领重置，北京时间0点更新。"),
             panel.x+panel.w*.5,y+53,shopText(13));
         bonusButton={panel.x+panel.w*.5-150,y+76,300,42};
         const bool hot=ready&&bonusButton.contains(under);

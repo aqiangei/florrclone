@@ -59,13 +59,15 @@ TEST(ant_egg_trials_and_golden_leafbug_orb_conversion_use_reference_probabilitie
     for(const auto&[key,n]:magic)if(key.first=="magic_leaf")CHECK_EQ(key.second,5);
 }
 
-TEST(daily_bonus_adds_independent_low_tier_trials_but_never_super_trials){
+TEST(daily_bonus_adds_independent_trials_and_reduced_super_bonus){
     const auto plain=kills("sandstorm",Rarity::Ultra,20);
     const auto twice=kills("sandstorm",Rarity::Ultra,20,false,2);
     const auto triple=kills("sandstorm",Rarity::Ultra,20,false,3);
     CHECK_EQ(total(twice,"sand"),2*total(plain,"sand"));
     CHECK_EQ(total(triple,"sand"),3*total(plain,"sand"));
-    CHECK(kills("sandstorm",Rarity::Super,20)==kills("sandstorm",Rarity::Super,20,false,3));
+    const auto base=kills("sandstorm",Rarity::Super,20);
+    CHECK_EQ(total(kills("sandstorm",Rarity::Super,20,false,2),"sand"),total(base,"sand")*3/2);
+    CHECK_EQ(total(kills("sandstorm",Rarity::Super,20,false,3),"sand"),total(base,"sand")*2);
 }
 TEST(centipede_segments_drop_leaf_and_convert_it_with_mana_orb){
     const auto normal=kills("centipede_body",Rarity::Super,30);
