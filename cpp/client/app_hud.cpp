@@ -448,7 +448,8 @@ void App::drawSquadHud(Canvas& canvas, double time) {
             if(member.netId==net_.view().self().netId)continue;
             const NetClient::OnlineRosterEntry* presence=nullptr;
             for(const auto& row:net_.onlineRoster())if(row.name==member.name || row.name==member.account){presence=&row;break;}
-            flowerBar(canvas,barX,centreY-barHeight*.5,barWidth,barHeight,presence?presence->healthRatio:0,kHealth,kScale);
+            HealthBarEase presenceBar;presenceBar.snap(presence?presence->healthRatio:0,0);
+            flowerBar(canvas,barX,centreY-barHeight*.5,barWidth,barHeight,presenceBar,kHealth,kScale);
             text(canvas,member.name.empty()?member.account:member.name,barX+barWidth*.5,centreY,label);
             const std::string location=presence ? (presence->insideDungeon ? (ui::language()==ui::Language::Zh?"白蚁丘内":"Inside mound") : presence->location) : (ui::language()==ui::Language::Zh?"其他区域":"Other area");
             text(canvas,location,barX,centreY+40*kScale,tag);
