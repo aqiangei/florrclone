@@ -2625,7 +2625,8 @@
       "maxAlive": 4,
       "spawnRarityOffset": -1
     },
-    "undead_ms": 30000
+    "undead_ms": 30000,
+    "min_rarity": "super"
   },
   "tomb": {
     "name": "Tomb",
@@ -2687,7 +2688,7 @@
     "ai_type": "passive",
     "range": 100,
     "replace_chance": {
-      "common": 0.00001,
+      "common": 1e-05,
       "super": 0.0001
     },
     "noEggDrop": false

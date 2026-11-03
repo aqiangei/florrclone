@@ -1882,6 +1882,7 @@ std::uint16_t SpawnSystem::rollResolvedRows(const ContentRegistry& content,
     // `npcs` objects, placed by NpcSystem, not by any band -- and the console
     // puts one down with spawn_npc, or as a mob with spawn.
     if (chosen->mob == kInvalidIndex || chosen->mob >= content.mobCount()) return kInvalidIndex;
+    if (rarityIndex(rarity) < rarityIndex(content.mob(chosen->mob).minRarity)) return kInvalidIndex;
     return chosen->mob;
 }
 

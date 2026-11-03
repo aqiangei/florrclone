@@ -901,7 +901,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
             // from the grains further on.
             const double naturalEquipReload = config.id == "egg" || config.id == "beetle_egg"
                                                   ? std::min(reload, 1000.0) : reload;
-            const double equipReload = std::max(naturalEquipReload, 2500.0 * reloadScale);
+            const double equipReload = std::max(naturalEquipReload, tree ? tree->skills.equipReloadFloorMillis() : 2500.0);
             slotState.instanceReadyAtMillis.assign(
                 static_cast<std::size_t>(count), slotState.independent ? nowMillis + equipReload : 0.0);
             slot.broken = !slotState.independent;
@@ -1697,6 +1697,10 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         // damage, so the two factors are published separately.
         aggregate.modifiers.petalDamageScale = 1.0;
         aggregate.modifiers.maxHealthScale *= tree->skills.statScale(SkillId::Health);
+        aggregate.modifiers.damageScale *= tree->skills.bodyDamageScale();
+        aggregate.modifiers.luck += tree->skills.luck();
+        aggregate.modifiers.attackRange += tree->skills.reachBonus();
+        aggregate.spinScale *= tree->skills.rotationSpeed() / kPetalSpinRate;
         const double petalHealing = aggregate.modifiers.passiveHealPerSecond - 1.0;
         aggregate.modifiers.passiveHealPerSecond =
             1.0 + petalHealing * tree->skills.effectScale(SkillId::Medic);

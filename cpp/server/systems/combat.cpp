@@ -1552,6 +1552,10 @@ void CombatSystem::applyPoison(World& world, Entity victim, Entity source, doubl
     const Entity credited = creditedPlayer(world, source);
     const Entity attribution = credited != NULL_ENTITY ? credited : source;
 
+    if (credited != NULL_ENTITY) if (const auto* tree=world.tryGet<PlayerSkillTree>(credited)) {
+        perSecond *= 1.0 + tree->skills.poisonBonus();
+        if(tree->skills.concentratedPoison()){perSecond*=1.2;durationMillis/=1.2;}
+    }
     const double untilMillis = nowMillis + durationMillis;
     Afflictions& afflictions = world.ensure<Afflictions>(victim);
 
@@ -2281,6 +2285,9 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
         // sitting on an exact health boundary dies on the same hit it dies on
         // in the reference. Mob contact damage is unrounded on both sides.
         if (source.isPlayerBody) source.damage = std::round(source.damage);
+        if(source.isPlayerBody)if(const auto* tree=world.tryGet<PlayerSkillTree>(e))
+            if(tree->skills.bodyToxicity()){source.poisonPerSecond=source.damage*0.6;source.poisonDurationMillis=1000;}
+
         // A body that does nothing on contact is not gathered -- but a shock IS
         // something it does, so a mob whose whole weapon is the strike still
         // reaches resolveMelee rather than being dropped for dealing no bump.

@@ -73,4 +73,4 @@ for tier in range(12):
  records.append({'rarityIndex':tier,'tiles':side,'worldSize':side*256,'wallTiles':len(collision)})
 (ROOT/'maps/maps.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
 (ROOT/'docs/termite-interior-tier-audit.json').write_text(json.dumps(records,indent=2),encoding='utf-8')
-print(json.dumps({'tiers':12,'copiesPerTier':8,'sizes':records}))
+print(json.dumps({'tiers':12,'copiesPerTier':8,'sizes':records}))

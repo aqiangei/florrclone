@@ -247,6 +247,10 @@ struct SkillSet {
         if (t < 0) return 1.0;
         return 1.0 - tableAt(kReloadReduce, t);
     }
+    double equipReloadFloorMillis() const {
+        const int tier=level(SkillId::Reload);
+        return tier<0 ? 2500.0 : std::max(0.0,2000.0-500.0*tier);
+    }
     double rotationSpeed() const {
         const int t = level(SkillId::Rotation);
         return t < 0 ? 2.5 : tableAt(kRotationRad, t);  // base ~2.5 if unknown
