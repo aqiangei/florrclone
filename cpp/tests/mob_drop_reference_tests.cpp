@@ -8,8 +8,8 @@ using namespace flix;
 namespace {
 const ContentRegistry& registry(){static ContentRegistry c;static bool loaded=false;if(!loaded){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));loaded=true;}return c;}
 using Counts=std::map<std::pair<std::string,int>,int>;
-Counts kills(const char* id,Rarity rarity,int count,bool orb=false){
-    const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;
+Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1){
+    const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
     const Entity p=w.create();w.add<PlayerTag>(p);w.add<Transform>(p,Transform{{10000,10000},0});w.add<Body>(p,Body{25,1});w.add<Health>(p,Health{100,100,0,0});
     if(orb){w.add<Loadout>(p);auto& s=w.get<Loadout>(p).slots[0];s.configIndex=c.petalIndex("mana_orb");s.rarity=Rarity::Mythic;}
     for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,100);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{p});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);}
@@ -31,7 +31,7 @@ TEST(all_imported_mob_tables_link_without_obsolete_generated_eggs){
         ++imported;const auto& entries=tables.guaranteedForMob(c.mobIndex(id));CHECK_EQ(entries.size(),json[id]["drops"].size());
         for(const auto& e:entries){CHECK(e.petalIndex!=kNoPetal);CHECK(!c.petal(e.petalIndex).isAdminPetal);CHECK(!e.rates.empty());for(int tier=0;tier<kLadderRarityCount;++tier){double sum=0;for(const auto&r:ratesFor(e.rates,static_cast<Rarity>(tier)))sum+=r.probability;CHECK(sum<=1.0000000001);}}
     }
-    CHECK_EQ(imported,74); // 73 reference definitions plus Fire Ant Hole alias
+    CHECK_EQ(imported,76); // Reference definitions, Fire Ant Hole and two corrected body aliases
 }
 
 TEST(super_sandstorm_drops_only_sand_glass_and_stick_at_reference_tiers){
@@ -57,4 +57,19 @@ TEST(ant_egg_trials_and_golden_leafbug_orb_conversion_use_reference_probabilitie
     const auto ordinary=kills("golden_leafbug",Rarity::Super,100);CHECK_EQ(total(ordinary,"magic_leaf"),0);CHECK_NEAR(static_cast<double>(total(ordinary,"golden_leaf"))/supers,.643,.03);
     const auto magic=kills("golden_leafbug",Rarity::Super,30,true);CHECK_EQ(total(magic,"golden_leaf"),0);CHECK_EQ(total(magic,"magic_leaf"),30*kLootFeelCopies*kLootFeelSuperMultiplier);
     for(const auto&[key,n]:magic)if(key.first=="magic_leaf")CHECK_EQ(key.second,5);
+}
+
+TEST(daily_bonus_adds_independent_low_tier_trials_but_never_super_trials){
+    const auto plain=kills("sandstorm",Rarity::Ultra,20);
+    const auto twice=kills("sandstorm",Rarity::Ultra,20,false,2);
+    const auto triple=kills("sandstorm",Rarity::Ultra,20,false,3);
+    CHECK_EQ(total(twice,"sand"),2*total(plain,"sand"));
+    CHECK_EQ(total(triple,"sand"),3*total(plain,"sand"));
+    CHECK(kills("sandstorm",Rarity::Super,20)==kills("sandstorm",Rarity::Super,20,false,3));
+}
+TEST(centipede_segments_drop_leaf_and_convert_it_with_mana_orb){
+    const auto normal=kills("centipede_body",Rarity::Super,30);
+    CHECK(total(normal,"leaf")>0);CHECK(total(normal,"peas")>0);
+    const auto magic=kills("centipede_body",Rarity::Super,30,true);
+    CHECK_EQ(total(magic,"leaf"),0);CHECK(total(magic,"magic_leaf")>0);
 }
