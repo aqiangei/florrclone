@@ -252,6 +252,7 @@ add_library(flix_server STATIC
   server/crypto.cpp
   server/systems/movement.cpp
   server/systems/mob_ai.cpp
+  server/systems/flower_mobs.cpp
   server/systems/petals.cpp
   server/systems/combat.cpp
   server/systems/spawning.cpp

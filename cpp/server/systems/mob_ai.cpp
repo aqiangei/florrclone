@@ -1,4 +1,5 @@
 #include "server/systems/mob_ai.h"
+#include "server/systems/flower_mobs.h"
 
 #include "server/loot_eligibility.h"
 #include "server/systems/combat.h"
@@ -1567,6 +1568,14 @@ bool MobAiSystem::pursueTarget(World& world, Entity self, const MobType& type,
     const double reach = body.radius + threatRadius + kMobContactSlack;
     if (gap <= reach) stampAttack(world, self, ai, nowMillis, drive);
 
+    const auto& flowerKind=content().mob(type.configIndex).id;
+    if(isFlowerMob(flowerKind)) {
+        desired=flowerMobPursuit(world,self,toTarget,body.radius,threatRadius,chaseSpeed,
+                                 flowerKind=="gambler");
+        facing=toTarget;
+        return true;
+    }
+
     if (drive.crabStrafe) {
         desired = steerCrab(ai, toTarget, body.radius, chaseSpeed, nowMillis, facing);
         return true;
@@ -2699,6 +2708,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
 
     steerPets(world, terrain, grid, nowMillis, dt, commands);
     pruneBroods(world);
+    stepFlowerMobs(world,content(),nowMillis,dt,allocateNetId);
 }
 
 void MobAiSystem::placeChains(World& world, const Terrain& terrain,

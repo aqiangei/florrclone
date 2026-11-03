@@ -1,4 +1,5 @@
 #include "server/systems/combat.h"
+#include "server/systems/flower_mobs.h"
 
 #include <algorithm>
 #include <array>
@@ -2569,6 +2570,11 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // A claw's bonus is decided here, per victim, off the health the
             // victim has BEFORE this hit.
             double swing = swingDamage(world, source.damage, source.critDamage, victim);
+            if(const auto* petal=world.tryGet<FlowerMobPetal>(source.attacker)) {
+                if(petal->damageMax>swing)swing=rng_.range(swing,petal->damageMax);
+                if(petal->critChance>0 && rng_.chance(petal->critChance))
+                    swing*=petal->critMultiplier;
+            }
             // The first Icosahedron hit keeps its normal damage; each bounce
             // retains 75% of the previous hit, using the petal's current stats.
             if (const auto* petal = world.tryGet<PetalInstance>(source.attacker)) {
