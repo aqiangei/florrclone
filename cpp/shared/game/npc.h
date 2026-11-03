@@ -127,7 +127,8 @@ inline std::string traderCooldownText(double remainingMillis) {
 inline constexpr int kTitanForgeCost = 5;
 
 /// 30 independent loot rolls: each petal has its own permanent progression.
-inline constexpr int titanForgeCost(unsigned completed) {
+inline constexpr int titanForgeCost(unsigned completed, const std::string& inputId = {}) {
+    if (inputId == "fragment") return 5;
     return completed == 0 ? 10 : completed == 1 ? 25 : 55;
 }
 inline constexpr Rarity kTitanInputRarity = Rarity::Super;

@@ -1,3 +1,4 @@
+#include "server/timed_hammers.h"
 ﻿#include "server/game_server.h"
 
 #include "shared/core/process_stats.h"
@@ -3460,8 +3461,9 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     outputIndex = petal.id == "fragment" ? content().petalIndex("timed_mjolnir") : petalIndex;
     if (outputIndex >= content().petalCount()) { reply(false, "锻造产物不存在。"); return; }
     PlayerRecord& record = liveRecord(session);
+    if (expireTimedHammer(record) && session.playing()) applyAccountToSession(session);
     const int completed = clamp(record.extra["titanForgeCounts"][petal.id].asInt(0), 0, 2);
-    const int cost = titanForgeCost(completed);
+    const int cost = titanForgeCost(completed, petal.id);
     // Refuse before spending when the output cannot fit. Never remove anybody else's items.
     if (record.itemCount(kTitanOutputRarity, inventoryKey(outputIndex)) >= kMaxStackCount) {
         reply(false, "目标花瓣堆叠已满。");
@@ -3473,11 +3475,8 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         return;
     }
     if (petal.id == "fragment") {
-        bool owned = record.itemCount(kTitanOutputRarity, inventoryKey(outputIndex)) > 0;
-        for (const auto& slot : record.loadout) if (slot && slot->petalType == "timed_mjolnir") owned = true;
-        if (!owned) giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
-        record.extra["titanHammerExpiresAt"] = Json(static_cast<double>(database_.nowMillis() + 3600000));
-        sendNotice(connection, net::NoticeSeverity::Info,"限时雷神之锤有效期1小时，离线也计时；再次兑换刷新为1小时。");
+        addHammerLease(record, static_cast<double>(database_.nowMillis()));
+        sendNotice(connection, net::NoticeSeverity::Info,"已获得1把限时雷神之锤，每把独立计时1小时，离线也计时。");
     } else giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
     record.extra["titanForgeCounts"][petal.id] = std::min(2, completed + 1);
     database_.markDirty();
@@ -6639,23 +6638,16 @@ void GameServer::servicePyramidMaps(double now) {
 
 
 bool GameServer::expireTimedHammer(PlayerRecord& record) {
-    const double expiry=record.extra["titanHammerExpiresAt"].asDouble(0);
-    if (!(expiry>0) || database_.nowMillis()<expiry) return false;
-    const auto index=content().petalIndex("timed_mjolnir");
-    if(index!=kInvalidIndex) {
-        for(int t=0;t<kRarityCount;++t){const auto r=static_cast<Rarity>(t);
-            const auto n=record.itemCount(r,inventoryKey(index));if(n>0)record.addItem(r,inventoryKey(index),-n);}
-        for(auto& slot:record.loadout)if(slot && slot->petalType=="timed_mjolnir")slot.reset();
-    }
-    record.extra["titanHammerExpiresAt"]=Json(0);database_.markDirty();return true;
+    const bool expired=expireHammerLeases(record,static_cast<double>(database_.nowMillis()))>0;
+    database_.markDirty();return expired;
 }
 void GameServer::serviceTimedHammers(double now) {
     if(now<nextTimedHammerSweep_)return;nextTimedHammerSweep_=now+1000;
     for(auto& [id,session]:sessions_) {
         if(!session.authenticated())continue;
         auto& record=database_.progress(session.userId);
-        const auto expiry=record.extra["titanHammerExpiresAt"].asDouble(0);
-        if(!(expiry>0) || database_.nowMillis()<expiry)continue;
+        if(record.extra["titanHammerLeases"].size()==0 &&
+           !(record.extra["titanHammerExpiresAt"].asDouble(0)>0))continue;
         liveRecord(session);
         if(!expireTimedHammer(record))continue;
         if(session.playing())applyAccountToSession(session);

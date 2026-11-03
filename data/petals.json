@@ -8588,7 +8588,7 @@
     "size": 1,
     "cooldown": 8000,
     "price": 10,
-    "description": "泰坦兑换的限时锤子，兑换后1小时到期，离线计时；再次兑换刷新为1小时，不叠加锤子。",
+    "description": "泰坦兑换的限时锤子，兑换后1小时到期，离线计时；每5个超级碎片兑换1把，可持有多把，每把独立计时。",
     "color": "#90EE90",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g transform=\"rotate(-28 32 32)\"><path d=\"M28 26h8v30h-8z\" fill=\"#976435\" stroke=\"#493e34\" stroke-width=\"3\"/><path d=\"M9 10h46v23H9z\" fill=\"#a5b4c2\" stroke=\"#45576a\" stroke-width=\"4\" stroke-linejoin=\"round\"/><path d=\"M34 12l-10 12h9l-4 7 13-13h-9z\" fill=\"#b4f8ff\"/></g></svg>",

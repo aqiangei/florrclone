@@ -1,3 +1,4 @@
+#include "server/timed_hammers.h"
 // NPCs, and the first two with a service: the oracle and the trader.
 //
 // An NPC is a mob's config standing in the world without being a mob
@@ -2117,10 +2118,13 @@ TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_acco
     }));
     client.requestTitanForge(content().petalIndex("fragment"));
     CHECK(awaitForge(h, both, client, out)); CHECK(out.success);
-    CHECK_EQ(out.petalIndex, content().petalIndex("mjolnir"));
+    CHECK_EQ(out.petalIndex, content().petalIndex("timed_mjolnir"));
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(content().petalIndex("mjolnir"), Rarity::Unique) == 1;
+        return p.stackCount(content().petalIndex("timed_mjolnir"), Rarity::Unique) == 1;
     }));
+    client.requestTitanForge(content().petalIndex("fragment"));
+    CHECK(awaitForge(h,both,client,out));CHECK(out.success);
+    CHECK(awaitProfile(h,client,[&](const Profile& p){return p.stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique)==2 && p.stackCount(content().petalIndex("fragment"),Rarity::Super)==0;}));
     CHECK_EQ(rival.profile().stackCount(rose, Rarity::Unique), 3u);
     CHECK_EQ(rival.profile().stackCount(rose, Rarity::Universal), 1u);
     CHECK(!rival.profile().loadout[0].empty());
@@ -3044,4 +3048,28 @@ TEST(permanent_titan_forge_broadcasts_eternal_theme_to_other_accounts) {
         CHECK(text.find("@smith")!=std::string::npos);CHECK(text.find("forged x1")!=std::string::npos);
         CHECK(text.find("consumed x10")!=std::string::npos);}
     CHECK(seen);ui::setLanguage(oldLanguage);removeDataDir(dir);
+}
+
+TEST(timed_hammer_leases_expire_equipped_and_bag_copies_independently) {
+    PlayerRecord record;addHammerLease(record,1000);addHammerLease(record,1001000);
+    CHECK_EQ(record.itemCount(kTitanOutputRarity,"petal_timed_mjolnir"),2);
+    StoredItem item;item.petalType="timed_mjolnir";item.rarity=kTitanOutputRarity;
+    record.loadout[0]=item;record.addItem(kTitanOutputRarity,"petal_timed_mjolnir",-1);
+    CHECK_EQ(expireHammerLeases(record,1002000),0);
+    CHECK_EQ(expireHammerLeases(record,3601001),1);CHECK(!record.loadout[0]);
+    CHECK_EQ(record.itemCount(kTitanOutputRarity,"petal_timed_mjolnir"),1);
+    CHECK_EQ(record.extra["titanHammerLeases"].size(),1u);
+    CHECK_EQ(expireHammerLeases(record,4601001),1);
+    CHECK_EQ(record.itemCount(kTitanOutputRarity,"petal_timed_mjolnir"),0);
+    CHECK_EQ(titanForgeCost(0,"fragment"),5);CHECK_EQ(titanForgeCost(1,"fragment"),5);CHECK_EQ(titanForgeCost(2000,"fragment"),5);
+    CHECK_EQ(titanForgeCost(0,"rose"),10);CHECK_EQ(titanForgeCost(2,"rose"),55);
+}
+TEST(timed_hammer_legacy_deadline_and_offline_expiry_are_preserved) {
+    PlayerRecord record;record.addItem(kTitanOutputRarity,"petal_timed_mjolnir",1);
+    record.extra["titanHammerExpiresAt"]=Json(10000.0);
+    CHECK_EQ(expireHammerLeases(record,9000),0);
+    CHECK_NEAR(record.extra["titanHammerLeases"][0]["expiresAt"].asDouble(),10000,1e-8);
+    const Json saved=record.extra;PlayerRecord restored=record;restored.extra=saved;
+    CHECK_EQ(expireHammerLeases(restored,11000),1);
+    CHECK_EQ(restored.itemCount(kTitanOutputRarity,"petal_timed_mjolnir"),0);
 }

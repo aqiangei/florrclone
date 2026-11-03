@@ -34,9 +34,9 @@ constexpr double kBodyTop = 53.6;
 constexpr double kFirstLineY = kBodyTop + 250.0 + 11.2;
 constexpr double kLinePitch = 22.4;
 constexpr std::array<const char*, 3> kLines = {
-    "普通花瓣永久保留；碎片兑换的锤子限时1小时。",
-    "同种首次10、第二次25、之后55个超级。",
-    "每种独立计价；产出永恒（原版唯一强度档）。",
+    "普通花瓣永久保留；每5个超级碎片兑换1把锤子。",
+    "普通花瓣首次10、第二次25、之后55个超级。",
+    "锤子可持有多把，每把独立计时1小时，离线计时。",
 };
 
 /// The forge's spin: toward 10 rad/s while it is out, easing both ways at
@@ -56,6 +56,10 @@ constexpr double kForgeTimeoutSeconds = 8.0;
 constexpr double kRefusalSeconds = 3.0;
 
 /// An apex stack as the staging counts it, held below what an int holds.
+int forgeCost(const Profile& profile, std::uint16_t index) {
+    return titanForgeCost(profile.titanForgeCount(index),
+        index < content().petalCount() ? content().petal(index).id : std::string());
+}
 std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex) {
     return std::min<std::uint32_t>(profile.stackCount(petalIndex, kTitanInputRarity),
                                    static_cast<std::uint32_t>(kMaxStackCount));
@@ -136,7 +140,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     // server's, and a profile landing a frame ahead of the result would empty
     // the ring under its own animation.
     if (phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
-        (forgeInputOwned(profile, stagedPetal_) < static_cast<std::uint32_t>(titanForgeCost(profile.titanForgeCount(stagedPetal_))) ||
+        (forgeInputOwned(profile, stagedPetal_) < static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_)) ||
          !titanForgeEligible(content().petal(stagedPetal_).id))) {
         stagedPetal_ = kNoPetal;
     }
@@ -151,7 +155,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     ItemTile shownTile;
     shownTile.petalIndex = shown;
     shownTile.rarity = kTitanInputRarity;
-    shownTile.badge = "x" + std::to_string(phase_ == Phase::Forging ? offeredCost_ : titanForgeCost(profile.titanForgeCount(shown)));
+    shownTile.badge = "x" + std::to_string(phase_ == Phase::Forging ? offeredCost_ : forgeCost(profile, shown));
     shownTile.timeSeconds = now;
     // Lit under the cursor only while the slot is at rest.
     shownTile.hovered =
@@ -193,7 +197,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     if (knownPetal(stagedPetal_)) {
         SlotCardLayout line = card;
         line.lineY = (card.slotRect.bottom() + panel.y + kFirstLineY - kLinePitch * 0.5) * 0.5;
-        drawSlotLine(canvas, line, "本次消耗：" + std::to_string(titanForgeCost(profile.titanForgeCount(stagedPetal_))) + " 个同种超级，成功率100%");
+        drawSlotLine(canvas, line, "本次消耗：" + std::to_string(forgeCost(profile, stagedPetal_)) + " 个同种超级，成功率100%");
     }
 
     // --- the grid ----------------------------------------------------------
@@ -204,10 +208,10 @@ bool TitanPanel::render(MenuContext& ctx) {
             SlotCell cell;
             cell.count = owned;
             if (petalIndex == stagedPetal_) {
-                const std::uint32_t staged = static_cast<std::uint32_t>(titanForgeCost(profile.titanForgeCount(stagedPetal_)));
+                const std::uint32_t staged = static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_));
                 cell.count = owned > staged ? owned - staged : 0;
             }
-            cell.greyed = cell.count < static_cast<std::uint32_t>(titanForgeCost(profile.titanForgeCount(petalIndex))) ||
+            cell.greyed = cell.count < static_cast<std::uint32_t>(forgeCost(profile, petalIndex)) ||
                           !titanForgeEligible(content().petal(petalIndex).id);
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
@@ -241,7 +245,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             phase_ = Phase::Forging;
             phaseStarted_ = now;
             offeredPetal_ = stagedPetal_;
-            offeredCost_ = titanForgeCost(profile.titanForgeCount(stagedPetal_));
+            offeredCost_ = forgeCost(profile, stagedPetal_);
             resultPending_ = false;
             refusal_.clear();
             ctx.net.requestTitanForge(stagedPetal_);
