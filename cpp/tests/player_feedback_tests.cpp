@@ -30,6 +30,15 @@ TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
     petals.run(w,content(),1000,net::kTickSeconds,commands);commands.flush();
     CHECK(w.get<PlayerVisuals>(p).equippedCorruption);
     CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)!=0);
+    const auto other=w.create();
+    w.add<PlayerTag>(other);w.add<Faction>(other,Faction{Team::Players,false});
+    w.add<PlayerProgress>(other);w.add<PlayerVisuals>(other);
+    w.get<PlayerProgress>(other).level=20;
+    CHECK(CombatSystem::canDamage(w,p,other));
+    CHECK(CombatSystem::canDamage(w,other,p));
+    w.get<PlayerProgress>(other).level=19;
+    CHECK(!CombatSystem::canDamage(w,p,other));
+    CHECK(!CombatSystem::canDamage(w,other,p));
     w.get<Loadout>(p).slots[0]=LoadoutSlot{};
     w.get<Loadout>(p).slots[1]=LoadoutSlot{};
     w.get<PlayerVisuals>(p).corrupted=true;
@@ -37,6 +46,9 @@ TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
     CHECK(!w.get<PlayerVisuals>(p).equippedCorruption);
     CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)==0);
     CHECK(w.get<PlayerVisuals>(p).corrupted);
+    w.get<PlayerVisuals>(p).corrupted=false;
+    w.get<PlayerProgress>(other).level=20;
+    CHECK(!CombatSystem::canDamage(w,p,other));
 }
 TEST(feedback_talent_vision_changes_camera_and_does_not_stack_with_antennae) {
     CHECK(feedbackContent());Profile p;
