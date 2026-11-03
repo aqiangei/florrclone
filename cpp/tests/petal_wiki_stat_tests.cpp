@@ -2,6 +2,7 @@
 #include "test_data.h"
 #include "client/ui/menu_widgets.h"
 #include "client/ui/i18n.h"
+#include "client/ui/chat_i18n.h"
 #include "shared/game/config.h"
 #include "server/systems/petals.h"
 using namespace flix;
@@ -103,4 +104,12 @@ TEST(wiki_stat_lentil_keeps_functional_petals_excluded) {
     CHECK(petalCanBeAttracted(content().petal(content().petalIndex("sawblade"))));
     for(const auto* id : {"sponge","poo","root","cotton","rose","shell","battery"})
         CHECK(!petalCanBeAttracted(content().petal(content().petalIndex(id))));
+}
+
+TEST(wiki_stat_eternal_forge_localization_keeps_theme_and_counts) {
+    const auto oldLanguage=ui::language();ui::setLanguage(ui::Language::Zh);
+    const auto text=ui::localizeChatText("<b style=\"color: #eeeeee;\">The Eternal Rose has been forged by <b style=\"color: #00ff00;\">@smith</b> [smith]</b> (forged x1, consumed x10)");
+    CHECK(text.find("#eeeeee")!=std::string::npos);CHECK(text.find("永恒")!=std::string::npos);
+    CHECK(text.find("锻造")!=std::string::npos);CHECK(text.find("锻造 ×1")!=std::string::npos);
+    CHECK(text.find("消耗 ×10")!=std::string::npos);ui::setLanguage(oldLanguage);
 }
