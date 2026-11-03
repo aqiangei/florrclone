@@ -151,6 +151,16 @@ inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
         const auto taken = static_cast<std::size_t>(slot);
         const auto remaining = static_cast<std::uint32_t>(pool.size() - taken);
         std::swap(pool[taken], pool[taken + rng.below(remaining)]);
+        // Super-only petals (e.g. Spaceship) belong in the two Super cards.
+        // Lifting one of the other eight cards to its floor would silently
+        // create a third Super and break the fixed stock guarantee.
+        if(slot<count-2&&rarityIndex(content().petal(pool[taken]).minRarity)>=rarityIndex(Rarity::Super)){
+            const auto allowed=std::find_if(pool.begin()+taken+1,pool.end(),[](std::uint16_t index){
+                return rarityIndex(content().petal(index).minRarity)<rarityIndex(Rarity::Super);
+            });
+            if(allowed==pool.end())continue;
+            std::iter_swap(pool.begin()+taken,allowed);
+        }
 
         // The top row draws from the cheap half of the ladder and the bottom
         // row from the dear half, which is what gives the grid a shape a

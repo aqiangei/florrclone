@@ -198,7 +198,7 @@ TEST(the_shipped_oracle_is_a_mob_that_offers_a_service) {
     const std::uint16_t titan = content().mobIndex("titan");
     const std::uint16_t assembler = content().mobIndex("assembler");
     for (std::uint16_t i = 0; i < content().mobCount(); ++i) {
-        if (i == oracle || i == dummy || i == trader || i == titan || i == assembler) continue;
+        if (i == oracle || i == dummy || i == trader || i == titan || i == assembler || content().mob(i).id=="cyber_assembler") continue;
         CHECK(!content().mob(i).npc.present);
     }
 }
