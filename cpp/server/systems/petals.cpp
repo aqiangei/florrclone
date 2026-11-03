@@ -2943,16 +2943,20 @@ void PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double d
             if (t.realm == realm && f.team != Team::Players && isStanding(world,e)) candidates.push_back(e);
         });
         Vec2 from = at;
+        double fromRadius = world.has<Body>(player) ? world.get<Body>(player).radius : 0.0;
         std::vector<Vec2> points;
         for (int hop = 0; hop <= bounces; ++hop) {
-            Entity next = NULL_ENTITY; double best = 240.0 * 240.0;
+            Entity next = NULL_ENTITY; double best = 240.0;
             for (Entity e : candidates) {
                 if (std::find(selected.begin(),selected.end(),e) != selected.end()) continue;
-                const double gap = distanceSq(from,world.get<Transform>(e).position);
+                // Reach is between body edges: large touching mobs must chain too.
+                const double gap = std::max(0.0, distance(from,world.get<Transform>(e).position) -
+                    fromRadius - world.get<Body>(e).radius);
                 if (gap < best) { next=e; best=gap; }
             }
             if (next==NULL_ENTITY) break;
             selected.push_back(next); from=world.get<Transform>(next).position; points.push_back(from);
+            fromRadius=world.get<Body>(next).radius;
             const Entity burst=world.create(); world.add<GroundEffectTag>(burst);
             world.add<Transform>(burst,Transform{from,0,realm});
             world.add<GroundEffect>(burst,GroundEffect{GroundEffectKind::Poison,player,1.0,0.0,
@@ -2960,7 +2964,7 @@ void PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double d
             world.add<Lifetime>(burst,Lifetime{net::kTickSeconds*1.5});
             world.add<LightningBurst>(burst); world.add<LightningTarget>(burst,LightningTarget{next});
         }
-        if (events_ && !points.empty()) events_->lightning(at,240.0,realm,points);
+        if (events_ && !points.empty()) events_->lightning(at,240.0,realm,points,true);
         return;
     }
     emitDamageBurst(world, player, at, kLightningRadius, base * scale, true);
@@ -3230,11 +3234,11 @@ void PetalSystem::strikeBatteries(World& world, const ContentRegistry& registry,
     bool targetInRange = false;
     mobs_->each([&](Entity e, MobTag&, Transform& t, Body&) {
         if(t.realm==transform->realm && isStanding(world,e) && !world.has<Pet>(e) &&
-           distanceSq(t.position,at)<240.0*240.0) targetInRange=true;
+           distance(t.position,at)<240.0+body->radius+world.get<Body>(e).radius) targetInRange=true;
     });
     npcs_->each([&](Entity e, NpcTag&, Transform& t, Body&, Faction& f) {
         if(t.realm==transform->realm && f.team!=Team::Players && isStanding(world,e) &&
-           distanceSq(t.position,at)<240.0*240.0) targetInRange=true;
+           distance(t.position,at)<240.0+body->radius+world.get<Body>(e).radius) targetInRange=true;
     });
     if(!targetInRange) return;
 

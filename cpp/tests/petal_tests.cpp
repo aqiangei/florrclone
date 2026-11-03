@@ -5918,7 +5918,8 @@ TEST(wiki_mechanism_battery_requires_real_damage_and_bounds_chain_targets) {
     CHECK(contentLoaded()); Rig rig; rig.equip(0,"battery"); rig.settleEquips();
     const auto at=rig.world.get<Transform>(rig.player).position;
     const auto source=addMob(rig,at+Vec2{30,0});
-    for(int n=1;n<=5;++n)addMob(rig,at+Vec2{100.0*n,0});
+    std::vector<Entity> enemies{source};
+    for(int n=1;n<=5;++n)enemies.push_back(addMob(rig,at+Vec2{30.0+200.0*n,0}));
     rig.tick(); CHECK_EQ(countStrikes(rig),0u); // touching alone is not damage
     CombatSystem combat;
     const auto hit=combat.applyDamage(rig.world,rig.player,source,1,rig.now);
@@ -5926,6 +5927,11 @@ TEST(wiki_mechanism_battery_requires_real_damage_and_bounds_chain_targets) {
     CHECK_EQ(countStrikes(rig),1u); CHECK_EQ(batteryCharges(rig),2);
     int targets=0;Query<LightningTarget> q{rig.world};q.each([&](Entity,LightningTarget&){++targets;});
     CHECK_EQ(targets,3); // initial target plus two Common bounces
+    const auto* strike=firstStrike(rig); CHECK(strike!=nullptr);
+    if(strike){CHECK((strike->flag & net::LightningChained)!=0);CHECK_EQ(strike->points.size(),3u);}
+    ricochetCombatTick(rig,combat);
+    for(int n=0;n<3;++n)CHECK(rig.world.get<Health>(enemies[n]).current<10000);
+    CHECK_NEAR(rig.world.get<Health>(enemies[3]).current,10000,1e-8);
     rig.tick(); CHECK_EQ(countStrikes(rig),1u);
 }
 TEST(wiki_mechanism_lightning_bypasses_armor_and_dodge) {
@@ -5936,4 +5942,16 @@ TEST(wiki_mechanism_lightning_bypasses_armor_and_dodge) {
     CombatSystem combat;const auto hit=combat.applyDamage(rig.world,victim,rig.player,12,rig.now,DamageKind::Lightning);
     CHECK(!hit.dodged);CHECK_NEAR(hit.applied,12,1e-8);
     CHECK_NEAR(rig.world.get<Health>(victim).current,before-12,1e-8);
+}
+
+TEST(wiki_mechanism_battery_chains_between_large_touching_bodies) {
+    CHECK(contentLoaded()); Rig rig; rig.equip(0,"battery");rig.settleEquips();
+    const auto at=rig.position(rig.player);
+    const auto first=addMob(rig,at+Vec2{200,0});
+    const auto second=addMob(rig,at+Vec2{650,0});
+    rig.world.get<Body>(first).radius=200;rig.world.get<Body>(second).radius=200;
+    CombatSystem combat;combat.applyDamage(rig.world,rig.player,first,1,rig.now);rig.tick();
+    ricochetCombatTick(rig,combat);
+    CHECK(rig.world.get<Health>(first).current<10000);
+    CHECK(rig.world.get<Health>(second).current<10000);
 }

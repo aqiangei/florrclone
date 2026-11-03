@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 74;
+inline constexpr std::uint16_t kProtocolVersion = 75;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -978,6 +978,8 @@ enum class EventKind : std::uint8_t {
 /// cap buy nothing that can be seen. The set kept is the NEAREST, which is a
 /// disc around the strike -- the shape the effect should have anyway.
 inline constexpr std::size_t kMaxLightningTargets = 24;
+/// Lightning points form an ordered chain rather than independent radial arms.
+inline constexpr std::uint8_t LightningChained = 1u;
 
 // ---------------------------------------------------------------------------
 // Content hash

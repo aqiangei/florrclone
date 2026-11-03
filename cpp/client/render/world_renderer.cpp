@@ -992,10 +992,12 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 // tick later, so some of these mobs are already dead and gone
                 // from the table by the time this is read -- and a bolt to the
                 // mob it just killed is precisely the bolt to draw.
+                Vec2 from = event.position;
                 for (const Vec2& target : event.points) {
                     if (bolts_.size() >= kMaxLightningBolts) break;
                     LightningBolt bolt;
-                    buildLightningBolt(event.position, target, bolt.points);
+                    buildLightningBolt(from, target, bolt.points);
+                    if ((event.flag & net::LightningChained) != 0) from = target;
                     bolts_.push_back(std::move(bolt));
                 }
                 break;
