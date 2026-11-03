@@ -34,12 +34,13 @@ async function main(){
     const html=fs.readFileSync(path.join(__dirname,'maintenance.html'),'utf8').replace('<!-- RELEASE_NOTES -->',
       '<section style="text-align:left;font-size:14px"><h2>'+escape(notes.title)+'</h2><ul>'+notes.changes.map(t=>'<li>'+escape(t)+'</li>').join('')+'</ul></section>');
     const waitingFile=path.join(local,'maintenance.html');fs.writeFileSync(waitingFile,html);
-    scp(waitingFile,host+':/var/www/florrclone-maintenance/index.next.html');
-    ssh('mv /var/www/florrclone-maintenance/index.next.html /var/www/florrclone-maintenance/index.html');
+    scp(waitingFile,host+':/var/www/florrclone-maintenance/maintenance.next.html');
+    ssh('mv /var/www/florrclone-maintenance/maintenance.next.html /var/www/florrclone-maintenance/maintenance.html');
     // Serve the waiting page before gracefully stopping the old process.
     ssh('touch '+q(marker));
     const waiting=ssh('curl -sS http://127.0.0.1:8088/');
     assert(waiting.includes('花朵躲石头'),'Waiting page must work before stopping');
+    assert(waiting.includes(escape(notes.title)) && waiting.includes(escape(notes.changes[0])),'Current release notes must be visible before stopping');
     stopped=true;ssh('systemctl stop florrclone');
     ssh('cp /var/lib/florrclone/cpp-state/inventory.json '+q(remote+'/inventory.json')+' && chmod 600 '+q(remote+'/inventory.json'));
     scp(host+':'+remote+'/inventory.json',path.join(local,'inventory.json'));
