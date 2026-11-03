@@ -46808,12 +46808,17 @@
             {
               "name": "difficulty",
               "type": "float",
-              "value": -1
+              "value": 0
             },
             {
               "name": "mobs",
               "type": "string",
               "value": "computer"
+            },
+            {
+              "name": "forceRarity",
+              "type": "int",
+              "value": 0
             }
           ],
           "rotation": 0,
