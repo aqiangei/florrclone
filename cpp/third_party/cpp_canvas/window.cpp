@@ -211,6 +211,18 @@ EM_JS(double, web_css_height, (const char* element), {
   return node ? node.clientHeight : 0;
 });
 
+// Canvas and window listeners have different target-relative origins. Use
+// viewport coordinates for every phase, including releases outside canvas.
+EM_JS(double, web_canvas_coordinate, (const char* element, double client, int axis), {
+  const node = document.getElementById(UTF8ToString(element));
+  if (!node) return client;
+  const rect = node.getBoundingClientRect();
+  const origin = axis ? rect.top : rect.left;
+  const extent = axis ? rect.height : rect.width;
+  const logical = axis ? node.clientHeight : node.clientWidth;
+  return extent > 0 ? (client - origin) * logical / extent : client - origin;
+});
+
 // Whether the primary pointing device is a finger. The same query the browser
 // client asks, and the only thing a page can say about it before anything has
 // been touched.
@@ -868,7 +880,9 @@ struct Window::Impl {
     // this same button as it happened; letting the echo through would press
     // whatever it landed on a second time.
     if (emscripten_get_now() < impl->ghostUntilMillis) return EM_TRUE;
-    double targetX = event->targetX, targetY = event->targetY;
+    double targetX = web_canvas_coordinate(impl->elementId.c_str(), event->clientX, 0);
+    double targetY = web_canvas_coordinate(impl->elementId.c_str(), event->clientY, 1);
+    const double originalX = targetX, originalY = targetY;
     impl->judgePointer(type == EMSCRIPTEN_EVENT_MOUSEMOVE   ? PointerSample::Kind::Move
                        : type == EMSCRIPTEN_EVENT_MOUSEDOWN ? PointerSample::Kind::Press
                                                             : PointerSample::Kind::Release,
@@ -877,10 +891,10 @@ struct Window::Impl {
     // movement exists to judge a trajectory. This exception is confined to
     // registered input rectangles; gameplay and scripted events stay guarded.
     const float keyboardScale = impl->fit > 0 ? static_cast<float>(1.0 / impl->fit) : 1.0f;
-    if (impl->eventTrusted && impl->onKeyboardField(event->targetX * keyboardScale,
-                                                  event->targetY * keyboardScale)) {
-      targetX = event->targetX;
-      targetY = event->targetY;
+    if (impl->eventTrusted && impl->onKeyboardField(originalX * keyboardScale,
+                                                   originalY * keyboardScale)) {
+      targetX = originalX;
+      targetY = originalY;
     }
     recordPointer(impl, targetX, targetY);
     impl->pointerIsTouch = false;
@@ -908,7 +922,8 @@ struct Window::Impl {
   static EM_BOOL onPointerBoundary(int type, const EmscriptenMouseEvent* event,
                                    void* userData) {
     Impl* impl = implOf(userData);
-    double targetX = event->targetX, targetY = event->targetY;
+    double targetX = web_canvas_coordinate(impl->elementId.c_str(), event->clientX, 0);
+    double targetY = web_canvas_coordinate(impl->elementId.c_str(), event->clientY, 1);
     impl->judgePointer(type == EMSCRIPTEN_EVENT_MOUSEENTER ? PointerSample::Kind::Enter
                                                           : PointerSample::Kind::Leave,
                        event, targetX, targetY);
@@ -941,7 +956,8 @@ struct Window::Impl {
       // finger on the screen, changed or not, and treating them all as moves
       // would replay a stationary finger's position on every frame.
       if (!point.isChanged) continue;
-      double targetX = point.targetX, targetY = point.targetY;
+      double targetX = web_canvas_coordinate(impl->elementId.c_str(), point.clientX, 0);
+      double targetY = web_canvas_coordinate(impl->elementId.c_str(), point.clientY, 1);
       impl->disguiseIfScripted(targetX, targetY);
       const float x = static_cast<float>(targetX) * toDesign;
       const float y = static_cast<float>(targetY) * toDesign;
@@ -993,7 +1009,8 @@ struct Window::Impl {
     const float toDesign = impl->fit > 0 ? static_cast<float>(1.0 / impl->fit) : 1.0f;
     // The click follows the mouseup it came from, which the pointer physics
     // has already judged; it is not a sample of its own.
-    double targetX = event->targetX, targetY = event->targetY;
+    double targetX = web_canvas_coordinate(impl->elementId.c_str(), event->clientX, 0);
+    double targetY = web_canvas_coordinate(impl->elementId.c_str(), event->clientY, 1);
     const bool trustedField = impl->eventTrusted &&
         impl->onKeyboardField(static_cast<float>(targetX)*toDesign,
                               static_cast<float>(targetY)*toDesign);
