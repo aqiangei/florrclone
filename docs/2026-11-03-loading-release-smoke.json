@@ -1,0 +1,90 @@
+{
+  "spawnChoices": [
+    "garden:spawn",
+    "desert:spawn",
+    "computer:spawn",
+    "ocean:spawn",
+    "jungle:spawn",
+    "hel:spawn",
+    "ant_hell:spawn",
+    "sewers:spawn",
+    "pyramid:spawn"
+  ],
+  "clients": 9,
+  "durationSeconds": 10,
+  "movingWithAttackInput": true,
+  "results": [
+    {
+      "client": 0,
+      "snapshots": 200,
+      "bytes": 51678,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    },
+    {
+      "client": 1,
+      "snapshots": 200,
+      "bytes": 42201,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    },
+    {
+      "client": 2,
+      "snapshots": 200,
+      "bytes": 28899,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    },
+    {
+      "client": 3,
+      "snapshots": 200,
+      "bytes": 35306,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    },
+    {
+      "client": 4,
+      "snapshots": 200,
+      "bytes": 24582,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    },
+    {
+      "client": 5,
+      "snapshots": 200,
+      "bytes": 42873,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    },
+    {
+      "client": 6,
+      "snapshots": 200,
+      "bytes": 23362,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    },
+    {
+      "client": 7,
+      "snapshots": 200,
+      "bytes": 18570,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    },
+    {
+      "client": 8,
+      "snapshots": 200,
+      "bytes": 24122,
+      "p95ServerGapMs": 67.53390799999761,
+      "maxServerGapMs": 68.43454499999643,
+      "closed": false
+    }
+  ]
+}
