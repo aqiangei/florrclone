@@ -29,7 +29,7 @@ assert(count>=5,'Account needs five Eternal hammers; only proven expired copies 
 p.inventory.unique.petal_timed_mjolnir=count;
 p.loadout=(p.loadout||[]).map(s=>hammer(s)?null:s);
 for(const lease of p.titanHammerLeases||[])lease.slot=-1;
-assert(db.operatorHyperForgeRequest?.status!=='pending','Another operator request is pending');
+assert(db.operatorHyperForgeRequest?.status!=='pending'||db.operatorHyperForgeRequest.userId===user.id,'Another account operator request is pending');
 db.operatorHyperForgeRequest={id,userId:user.id,input:'timed_mjolnir',status:'pending',announced:false,maintenanceGate:gate,readyFile:ready};
 const compare=structuredClone(db);compare.players[user.id]=structuredClone(original.players[user.id]);if(Object.hasOwn(original,'operatorHyperForgeRequest'))compare.operatorHyperForgeRequest=original.operatorHyperForgeRequest;else delete compare.operatorHyperForgeRequest;
 assert.deepEqual(compare,original);fs.writeFileSync(output,JSON.stringify(db));

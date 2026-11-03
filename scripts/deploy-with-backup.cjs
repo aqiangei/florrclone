@@ -80,7 +80,8 @@ async function main(){
     }
     if(process.env.FLORR_OPERATOR_HYPER_USER){
       const queued=path.join(local,'inventory.operator.json');
-      const ready='/var/www/florrclone-maintenance/operator-ready-'+stamp;
+      // Only the database directory is mounted into the WASM filesystem.
+      const ready='/var/lib/florrclone/cpp-state/operator-ready-'+stamp;
       report.operatorRequest=JSON.parse(run(process.execPath,[path.join(__dirname,'prepare-operator-hyper-forge.cjs'),next,queued,process.env.FLORR_OPERATOR_HYPER_USER,'hammer-'+stamp,marker,ready]));
       fs.writeFileSync(path.join(local,'operator-request.json'),JSON.stringify(report.operatorRequest,null,2));
       next=queued;
