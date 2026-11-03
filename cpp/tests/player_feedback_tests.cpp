@@ -30,7 +30,8 @@ TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
     petals.run(w,content(),1000,net::kTickSeconds,commands);commands.flush();
     CHECK(w.get<PlayerVisuals>(p).equippedCorruption);
     CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)!=0);
-    load.slots[0]=LoadoutSlot{};load.slots[1]=LoadoutSlot{};
+    w.get<Loadout>(p).slots[0]=LoadoutSlot{};
+    w.get<Loadout>(p).slots[1]=LoadoutSlot{};
     w.get<PlayerVisuals>(p).corrupted=true;
     petals.run(w,content(),2000,net::kTickSeconds,commands);commands.flush();
     CHECK(!w.get<PlayerVisuals>(p).equippedCorruption);
