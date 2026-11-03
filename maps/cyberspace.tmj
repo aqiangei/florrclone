@@ -46813,7 +46813,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             },
             {
               "name": "forceRarity",
@@ -46841,7 +46841,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             }
           ],
           "rotation": 0,
@@ -46864,7 +46864,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "javascript 80% computer 20%"
+              "value": "javascript 80% cyberspace 20%"
             }
           ],
           "rotation": 0,
@@ -46887,7 +46887,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             }
           ],
           "rotation": 0,
@@ -46910,7 +46910,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             }
           ],
           "rotation": 0,
@@ -46933,7 +46933,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             }
           ],
           "rotation": 0,
@@ -46956,7 +46956,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             }
           ],
           "rotation": 0,
@@ -46979,7 +46979,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "dust 40% computer 60%"
+              "value": "dust 40% cyberspace 60%"
             }
           ],
           "rotation": 0,
@@ -47002,7 +47002,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             }
           ],
           "rotation": 0,
@@ -47025,7 +47025,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "glitch_flower 50% computer 50%"
+              "value": "glitch_flower 50% cyberspace 50%"
             }
           ],
           "rotation": 0,
@@ -47048,7 +47048,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             }
           ],
           "rotation": 0,
@@ -47071,7 +47071,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "glitch 50% computer 50%"
+              "value": "glitch 50% cyberspace 50%"
             }
           ],
           "rotation": 0,
@@ -47094,7 +47094,7 @@
             {
               "name": "mobs",
               "type": "string",
-              "value": "computer"
+              "value": "cyberspace"
             }
           ],
           "rotation": 0,
@@ -47182,7 +47182,7 @@
     {
       "name": "defaultMobGroup",
       "type": "string",
-      "value": "computer"
+      "value": "cyberspace"
     },
     {
       "name": "spawnCurve",
