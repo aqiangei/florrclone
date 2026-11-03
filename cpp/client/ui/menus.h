@@ -179,12 +179,8 @@ inline constexpr int kStripSlotCount = 18;
 
 /// The range ClientSettings::zoom is held to, and how far one press of a zoom
 /// key moves it. The step is the browser's own ZOOM_STEP; the range is this
-/// client's. The floor is 100%: the wheel and the keys only ever zoom IN.
-/// Seeing MORE of the world than the default view is what antennae and
-/// observer are for (see loadoutCameraZoom), and a wheel that could scroll
-/// out past them -- this client's once reached 0.6, the browser's 0.5 --
-/// made the two petals pointless.
-inline constexpr double kMinZoom = 1.0;
+/// client's. The floor is 25%; camera equipment still multiplies this value.
+inline constexpr double kMinZoom = kMinimumUserCameraZoom;
 inline constexpr double kMaxZoom = 1.6;
 inline constexpr double kZoomKeyStep = 0.1;
 

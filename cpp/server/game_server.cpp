@@ -87,7 +87,7 @@ Vec2 claimableViewport(World& world, Entity body, const ContentRegistry& content
     }
     // Antennae bottoms out at 0.1; this only stops a bad figure dividing by
     // zero or by a negative.
-    zoom = std::max(zoom, 0.05);
+    zoom = std::max(zoom * kMinimumUserCameraZoom, 0.01);
     const double ceilingX = std::max(kMaxViewportAxis, kViewportWidth / zoom * kViewportCeilingSlack);
     const double ceilingY = std::max(kMaxViewportAxis, kViewportHeight / zoom * kViewportCeilingSlack);
     return {clamp(width, 320.0, ceilingX), clamp(height, 240.0, ceilingY)};

@@ -84,18 +84,14 @@ TEST(a_rebound_control_survives_the_settings_file) {
     std::remove(path.c_str());
 }
 
-TEST(the_wheel_cannot_scroll_out_past_the_default_view) {
-    // kMinZoom is the floor the wheel, the zoom keys and the settings file all
-    // land on. It is 100%: a file written by a build that let the wheel reach
-    // 0.6 -- or by the TypeScript client, which reached 0.5 -- comes back at
-    // the default view. Seeing more of the world than that is the loadout's to
-    // grant, not the wheel's; see loadoutCameraZoom.
-    CHECK_NEAR(kMinZoom, 1.0, 1e-12);
+TEST(the_wheel_can_zoom_out_to_quarter_scale_and_settings_preserve_it) {
+    // File, wheel and keyboard share the quarter-scale zoom floor.
+    CHECK_NEAR(kMinZoom, 0.25, 1e-12);
     const std::string path = tempPath("zoom.txt");
     std::remove(path.c_str());
 
     ClientSettings written;
-    written.zoom = 0.5;
+    written.zoom = 0.1;
     CHECK(written.save(path));
     ClientSettings read;
     CHECK(read.load(path));

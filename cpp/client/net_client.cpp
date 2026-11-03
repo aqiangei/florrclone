@@ -316,6 +316,7 @@ void NetClient::forgetAccount() {
     ++notificationsRevision_;
     squad_ = SquadState{};
     onlineRoster_.clear();
+    view_.setGuildNames({});
     guild_ = GuildState{};
     guildInvite_ = GuildInvite{};
     squadInvite_ = SquadInvite{};
@@ -1686,6 +1687,13 @@ void NetClient::handleOnlineRoster(ByteReader& reader) {
         next.push_back(std::move(row));
     }
     onlineRoster_ = std::move(next);
+    std::unordered_map<std::string,std::string> guildNames;
+    for (const auto& row : onlineRoster_) {
+        const auto old=guildNames.find(row.name);
+        if(old==guildNames.end()) guildNames.emplace(row.name,row.guild);
+        else if(old->second!=row.guild) old->second.clear();
+    }
+    view_.setGuildNames(std::move(guildNames));
 }
 
 void NetClient::handleSquadUpdate(ByteReader& reader) {

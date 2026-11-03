@@ -8,7 +8,20 @@
 #include "server/systems/spawning.h"
 #include "shared/game/config.h"
 #include "shared/game/shop.h"
+#include "client/camera.h"
 using namespace flix;
+TEST(feedback_public_guild_tags_follow_roster_and_zoom_reaches_quarter_scale) {
+    WorldView view;RemoteEntity player;player.netId=9;player.name="Visitor";
+    player.kind=net::EntityKind::Player;
+    view.setGuildNames({{"Visitor","TestGuild"}});view.seedForTest(player);
+    CHECK_EQ(view.entities().at(9).guildName,std::string("TestGuild"));
+    view.setGuildNames({{"Visitor","NewGuild"}});
+    CHECK_EQ(view.entities().at(9).guildName,std::string("NewGuild"));
+    view.setGuildNames({});CHECK(view.entities().at(9).guildName.empty());
+    Camera camera;camera.userZoom=kMinZoom;
+    CHECK_NEAR(camera.zoom(),0.25,1e-12);
+    camera.loadoutZoom=0.5;CHECK_NEAR(camera.zoom(),0.125,1e-12);
+}
 namespace {
 bool feedbackContent(){std::string error;return loadContent(testsupport::dataDir(),error);}
 int antFamily(const std::string& id){return id.find("fire_ant")!=std::string::npos?1:id.find("termite")!=std::string::npos?2:id.find("ant")!=std::string::npos?0:-1;}

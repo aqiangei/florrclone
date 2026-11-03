@@ -570,6 +570,9 @@ constexpr ChangelogEntry kChangelog[] = {
      {"商店支持批量购买，显示数量与总价，并由服务器校验扣款。",
       "修复泡泡飞行切装临时缩小碰撞半径，并增加卡墙恢复保护。",
       "补齐法老王冠每秒召唤亡灵木乃伊甲虫、存活六秒，重复佩戴不叠加。"}},
+    {"2026年11月3日 · 公会与视野",
+     {"其他玩家公会显示在血条左下角，隐藏名字时仍可随血条显示。",
+      "缩放最低可达25%，装备视野加成继续生效，服务器同步放宽可见范围。"}},
 };
 
 constexpr int kEntryCount = static_cast<int>(sizeof(kChangelog) / sizeof(kChangelog[0]));

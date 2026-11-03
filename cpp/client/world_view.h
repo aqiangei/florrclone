@@ -155,12 +155,7 @@ struct RemoteEntity {
     /// string, and a republished skin changes on this screen at once.
     std::string equippedSkinId;
 
-    /// The guild whose tag hangs under this flower's health bar. Nothing sets
-    /// it yet: the snapshot carries no guild tag -- GuildUpdate describes only
-    /// the viewer's own guild, see menu_guild.cpp -- so the tag draws for
-    /// nobody, which is what the reference draws for a player in no guild. The
-    /// plate reads the field rather than the transport so the wire lands in
-    /// one place when it exists.
+    /// Public guild tag supplied by the server's online roster.
     std::string guildName;
 
     /// Petal-only: the flower this petal orbits, and the petal's DRAWN offset
@@ -339,6 +334,8 @@ public:
     /// as a spawn's does, and so does a mob's plate, which a spawn's does not.
     void seedForTest(const RemoteEntity& entity) {
         RemoteEntity& seeded = entities_[entity.netId] = entity;
+        const auto guild=guildNames_.find(seeded.name);
+        if(guild!=guildNames_.end()) seeded.guildName=guild->second;
         seeded.healthBar.snap(entity.healthFraction, entity.shieldFraction);
         seeded.plate.snap(entity.healthFraction, entity.shieldFraction, plateShows(seeded));
     }
@@ -358,6 +355,13 @@ public:
     }
 
     const std::unordered_map<std::uint32_t, RemoteEntity>& entities() const { return entities_; }
+    void setGuildNames(std::unordered_map<std::string,std::string> names) {
+        guildNames_ = std::move(names);
+        for(auto& [id,entity]:entities_) {
+            const auto it=guildNames_.find(entity.name);
+            entity.guildName=it==guildNames_.end()?std::string{}:it->second;
+        }
+    }
     const SelfState& self() const { return self_; }
 
     /// The petal configs, for the one thing smoothing has to know about a
@@ -443,6 +447,7 @@ private:
     /// Owner net id -> the net id of the moon its ring orbits, rebuilt every
     /// frame by interpolate(). A member so a frame does not allocate it.
     std::unordered_map<std::uint32_t, std::uint32_t> ringAnchors_;
+    std::unordered_map<std::string,std::string> guildNames_;
     std::vector<ViewEvent> events_;
     std::vector<RemoteEntity> removedPetals_;
     SelfState self_;

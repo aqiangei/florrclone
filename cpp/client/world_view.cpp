@@ -442,6 +442,8 @@ bool WorldView::applySnapshot(ByteReader& reader) {
                 e.faceFlags & ~static_cast<std::uint8_t>(FaceDeadEyes));
             if ((s.state & net::StateDead) == 0) suppressSelfCorpse_ = false;
         }
+        const auto guild = guildNames_.find(e.name);
+        if (guild != guildNames_.end()) e.guildName = guild->second;
         entities_[s.netId] = std::move(e);
     }
 

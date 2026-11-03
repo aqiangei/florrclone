@@ -2554,17 +2554,19 @@ void WorldRenderer::drawPlayerPlate(Canvas& canvas, const RemoteEntity& entity,
         ui::text(canvas, "Lv. " + std::to_string(entity.level), right, barY + 20.0 * zoom,
                  level);
 
-        // The guild tag mirrors the level label on the other side of the bar,
-        // one point smaller so a five-character id and its brackets cannot
-        // collide with it.
-        if (!entity.guildName.empty()) {
+    }
+    // Public guild remains visible with health bars even if names are hidden.
+    if ((options.names || options.healthBars) && !entity.guildName.empty()) {
             ui::TextStyle tag;
             tag.size = 8.0 * zoom;
             tag.align = ui::Align::Left;
             tag.baseline = ui::Baseline::Alphabetic;
             tag.fill = 0x27DADEu;
-            ui::text(canvas, "[" + entity.guildName + "]", left, barY + 20.0 * zoom, tag);
-        }
+            const std::string label="[" + entity.guildName + "]";
+            const double width=ui::textWidth(canvas,label,tag.size);
+            const double available=(right-left)*0.6;
+            if(width>available && width>0) tag.size*=available/width;
+            ui::text(canvas,label,left,barY+20.0*zoom,tag);
     }
 }
 

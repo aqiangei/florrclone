@@ -84,7 +84,7 @@ public:
     int viewportHeight() const { return viewportHeight_; }
 
     /// Player-controlled zoom: the settings value the wheel and the zoom keys
-    /// move, floored at 1 -- see kMinZoom in client/ui/menus.h.
+    /// move, floored at 0.25 -- see kMinZoom in client/ui/menus.h.
     double userZoom = 1.0;
     /// What the worn loadout asks for: the smallest cameraZoom on the active
     /// bar, or 1 -- see loadoutCameraZoom. Antennae and observer are the

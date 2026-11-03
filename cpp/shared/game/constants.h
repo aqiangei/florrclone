@@ -18,6 +18,7 @@
 #include "shared/net/protocol.h"
 
 namespace flix {
+inline constexpr double kMinimumUserCameraZoom = 0.25;
 
 // ---------------------------------------------------------------------------
 // World
