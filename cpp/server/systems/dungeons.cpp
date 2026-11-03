@@ -43,6 +43,13 @@ bool DungeonSystem::isInstance(Realm realm) const {
     return indexed_ && byRealm_[realmIndex(realm)] >= 0;
 }
 
+bool DungeonSystem::exteriorForRealm(Realm realm, Realm& outRealm, Vec2& outPosition) const {
+    if(!isInstance(realm))return false;
+    const auto& instance=instances_[static_cast<std::size_t>(byRealm_[realmIndex(realm)])];
+    if(!instance.live)return false;
+    outRealm=instance.returnRealm;outPosition=instance.returnAt;return true;
+}
+
 DungeonSystem::Instance* DungeonSystem::claim(const std::string& mapId, Rarity rarity) {
     for (Instance& instance : instances_) {
         if (!instance.live && instance.mapId == mapId &&

@@ -1665,6 +1665,9 @@ void NetClient::handleOnlineRoster(ByteReader& reader) {
             row.y = reader.f32();
             if (!reader.ok()) return;
         }
+        row.insideDungeon=reader.u8()!=0;
+        if(row.insideDungeon){row.exteriorRealm=reader.u8();row.exteriorX=reader.f32();row.exteriorY=reader.f32();}
+        row.healthRatio=reader.f32();if(!reader.ok())return;
         if (row.level < 1) row.level = 1;
         next.push_back(std::move(row));
     }

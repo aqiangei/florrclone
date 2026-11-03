@@ -4758,6 +4758,9 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
         std::uint8_t realm = 0;
         float x = 0.f;
         float y = 0.f;
+        bool insideDungeon = false;
+        std::uint8_t exteriorRealm = 0;
+        float exteriorX=0, exteriorY=0, healthRatio=0;
     };
     std::vector<Row> rows;
     rows.reserve(sessions_.size());
@@ -4783,6 +4786,14 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
                 row.realm = static_cast<std::uint8_t>(t->realm);
                 row.x = static_cast<float>(t->position.x);
                 row.y = static_cast<float>(t->position.y);
+                if(const auto* health=world_.tryGet<Health>(session.entity))
+                    row.healthRatio=health->max>0?static_cast<float>(clamp(health->current/health->max,0.0,1.0)):0;
+                Realm exterior;Vec2 entrance;
+                if(dungeons_ && dungeons_->exteriorForRealm(t->realm,exterior,entrance)) {
+                    row.insideDungeon=true;row.exteriorRealm=static_cast<std::uint8_t>(exterior);
+                    row.exteriorX=static_cast<float>(entrance.x);row.exteriorY=static_cast<float>(entrance.y);
+                    row.location="Termite Mound";
+                }
             }
         }
         rows.push_back(std::move(row));
@@ -4803,6 +4814,8 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
         fingerprint.append(row.guild);
         fingerprint.push_back('\n');
         fingerprint.append(row.location);
+        fingerprint.append(std::to_string(static_cast<int>(row.healthRatio*100)));
+        if(row.insideDungeon)fingerprint.append("inside:"+std::to_string(row.exteriorRealm)+":"+std::to_string(row.exteriorX)+","+std::to_string(row.exteriorY));
         fingerprint.push_back('\n');
         // Coarse so a player pacing in place does not force a resend every
         // interval; ~32u steps still look right on a whole-map corner.
@@ -4834,6 +4847,9 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
             w.f32(row.x);
             w.f32(row.y);
         }
+        w.u8(row.insideDungeon?1:0);
+        if(row.insideDungeon){w.u8(row.exteriorRealm);w.f32(row.exteriorX);w.f32(row.exteriorY);}
+        w.f32(row.healthRatio);
     }
     broadcastToAuthenticated(w);
 }
@@ -6444,7 +6460,10 @@ std::string GameServer::biomeLabel(const std::string& biome) const {
 std::string GameServer::biomeOfEntity(Entity entity) const {
     if (entity == NULL_ENTITY || !world_.isAlive(entity)) return {};
     const Transform* transform = world_.tryGet<Transform>(entity);
-    return transform != nullptr ? biomeOfRealm(transform->realm) : std::string();
+    if(!transform)return {};
+    Realm exterior;Vec2 entrance;
+    if(dungeons_ && dungeons_->exteriorForRealm(transform->realm,exterior,entrance))return biomeOfRealm(exterior);
+    return biomeOfRealm(transform->realm);
 }
 
 const SpawnChoice* GameServer::chosenDoor(const Session& session) const {

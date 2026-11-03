@@ -3073,3 +3073,28 @@ TEST(timed_hammer_legacy_deadline_and_offline_expiry_are_preserved) {
     CHECK_EQ(expireHammerLeases(restored,11000),1);
     CHECK_EQ(restored.itemCount(kTitanOutputRarity,"petal_timed_mjolnir"),0);
 }
+
+TEST(feedback_bulk_craft_stops_at_target_and_keeps_equipped_petals) {
+    const auto dir=titanWorld("bulk-craft");
+    Harness h("bulk-craft",[](const std::string& path){seedAccount(path,"bulk");
+        seedStack(path,"bulk","petal_basic",Rarity::Common,100);seedStack(path,"bulk","petal_rose",Rarity::Common,100);
+        seedStack(path,"bulk","petal_wing",Rarity::Rare,20);seedWorn(path,"bulk",0,"basic",Rarity::Common);
+    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient client;CHECK(joinAs(h,client,"bulk"));const auto basic=content().petalIndex("basic"),rose=content().petalIndex("rose"),wing=content().petalIndex("wing");
+    client.requestBulkCraft(Rarity::Rare);
+    CHECK(h.stepUntil({&client},[&]{return client.profile().stackCount(basic,Rarity::Common)<5 && client.profile().stackCount(rose,Rarity::Common)<5;},120));
+    CHECK_EQ(client.profile().stackCount(wing,Rarity::Rare),20u);CHECK_EQ(client.profile().stackCount(basic,Rarity::Epic),0u);
+    CHECK(!client.profile().loadout[0].empty());CHECK_EQ(client.profile().loadout[0].petalIndex,basic);removeDataDir(dir);
+}
+TEST(feedback_expired_timed_hammer_is_removed_on_login_without_touching_permanent_hammer) {
+    const auto dir=titanWorld("timed-login");
+    Harness h("timed-login",[](const std::string& path){seedAccount(path,"lease");
+        seedStack(path,"lease","petal_timed_mjolnir",Rarity::Unique,1);seedStack(path,"lease","petal_mjolnir",Rarity::Unique,1);
+        Database db;std::string error;CHECK(db.load(path,error));const auto* user=db.findUser("lease");CHECK(user);if(user){
+            auto& record=db.progress(user->id);Json item=Json::object();item["expiresAt"]=Json(1.0);item["slot"]=-1;
+            record.extra["titanHammerLeases"]=Json::array();record.extra["titanHammerLeases"].push(item);db.markDirty();CHECK(db.save());}
+    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient client;CHECK(joinAs(h,client,"lease"));
+    CHECK_EQ(client.profile().stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique),0u);
+    CHECK_EQ(client.profile().stackCount(content().petalIndex("mjolnir"),Rarity::Unique),1u);removeDataDir(dir);
+}

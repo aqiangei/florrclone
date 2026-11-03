@@ -954,6 +954,16 @@ public:
         std::uint8_t realm = 0;
         float x = 0.f;
         float y = 0.f;
+        bool insideDungeon = false;
+        std::uint8_t exteriorRealm = 0;
+        float exteriorX = 0, exteriorY = 0, healthRatio = 0;
+        bool mapPosition(std::uint8_t viewingRealm, Vec2& position, bool& projected) const {
+            if(!placed)return false;
+            if(realm==viewingRealm){position={x,y};projected=false;return true;}
+            if(insideDungeon && exteriorRealm==viewingRealm){position={exteriorX,exteriorY};projected=true;return true;}
+            return false;
+        }
+
     };
     const std::vector<OnlineRosterEntry>& onlineRoster() const { return onlineRoster_; }
 

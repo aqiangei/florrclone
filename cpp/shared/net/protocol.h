@@ -448,7 +448,8 @@ enum class ServerMessage : std::uint8_t {
                         ///< placed != 0] }*. Live signed-in players for the
                         ///< top-right roster and whole-map dots. `location` is
                         ///< the biome label (empty on title / death). Readers
-                        ///< must consume `placed` and optional coords.
+                        ///< must consume placed/coords, u8 insideDungeon, optional exterior
+                        ///< {u8 realm,f32 x,f32 y}, and f32 healthRatio (version 76).
     SquadInviteReceived, ///< str fromUsername, u8 fromGuild (0/1). Pending
                         ///< squad invite for the top-left Accept/Decline toast.
                         ///< Additive; older clients skip an unknown id.

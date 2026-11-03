@@ -460,7 +460,8 @@ void App::drawMinimap(Canvas& canvas) {
     const std::string& selfAccount = net_.profile().username;
     const std::uint8_t myRealm = static_cast<std::uint8_t>(realm);
     for (const auto& row : net_.onlineRoster()) {
-        if (!row.placed || row.realm != myRealm) continue;
+        Vec2 at;bool projected=false;
+        if(!row.mapPosition(myRealm,at,projected))continue;
         if (row.name == selfName || (!selfAccount.empty() && row.name == selfAccount)) continue;
         bool already = false;
         for (const std::string& n : painted) {
@@ -470,9 +471,9 @@ void App::drawMinimap(Canvas& canvas) {
             }
         }
         if (already) continue;
-        const Vec2 at{row.x, row.y};
-        if (squadByName(row.name)) dot(at, 4.0, 0xFF69B4u, true, &row.name);
-        else dot(at, 4.0, kInk, false, &row.name);
+        const std::string markerLabel=row.name+(projected?(ui::language()==ui::Language::Zh?"（白蚁丘内）":" (inside mound)"):"");
+        if (squadByName(row.name)) dot(at, 4.0, 0xFF69B4u, true, &markerLabel);
+        else dot(at, 4.0, kInk, false, &markerLabel);
     }
     // Self last, so the blue dot is never hidden under someone standing on it.
     dot(me, 3.0, 0x0000FFu, true, &selfName);

@@ -69,6 +69,7 @@ public:
 
     /// True when `realm` is one of the dungeon copies.
     bool isInstance(Realm realm) const;
+    bool exteriorForRealm(Realm realm, Realm& outRealm, Vec2& outPosition) const;
 
     /// Where a flower leaving the copy `realm` by its own pad comes out:
     /// beside its nest, rather than wherever the pad's `targetMap` says. False

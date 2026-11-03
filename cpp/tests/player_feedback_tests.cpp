@@ -2,6 +2,7 @@
 #include "test_data.h"
 #include "client/ui/menus.h"
 #include "server/systems/combat.h"
+#include "server/systems/dungeons.h"
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
 #include "shared/game/config.h"
@@ -78,4 +79,26 @@ TEST(feedback_ant_hell_supers_cover_black_fire_and_termite_habitats) {
     });
     std::printf("Ant Hell Supers %d; black %d fire %d termite %d\n",supers,habitats[0],habitats[1],habitats[2]);
     CHECK_EQ(supers,5);for(const auto n:habitats)CHECK(n>0);
+}
+
+TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {
+    CHECK(feedbackContent());WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    bool found=false;const auto home=maps.realmOfId("jungle",found);CHECK(found);if(!found)return;Rng rng{88};
+    for(const auto tier:{Rarity::Uncommon,Rarity::Super}){
+        World w;CommandBuffer commands{w};SpawnSystem spawn;CombatSystem combat;DungeonSystem dungeon;dungeon.worldMaps=&maps;
+        const auto at=maps.forRealm(home)->defaultSpawn(rng,terrain);
+        const auto nest=spawn.spawnMob(w,terrain,content(),content().mobIndex("termite_mound"),tier,at,home,0,rng);CHECK(nest!=NULL_ENTITY);if(nest==NULL_ENTITY)continue;
+        const auto entrance=w.get<Transform>(nest).position;const auto player=w.create();
+        w.add<PlayerTag>(player);w.add<Transform>(player,Transform{entrance,0,home});w.add<Body>(player,Body{25,1});w.add<Health>(player,Health{1000,1000});
+        dungeon.moveToRealm=[&](Entity e,Realm realm,Vec2 p){auto& t=w.get<Transform>(e);t.realm=realm;t.position=p;};
+        dungeon.run(w,terrain,content(),spawn,combat,rng,1000,commands);commands.flush();
+        dungeon.run(w,terrain,content(),spawn,combat,rng,1700,commands);commands.flush();
+        const auto inside=w.get<Transform>(player).realm;CHECK(inside!=home);CHECK(dungeon.isInstance(inside));
+        CHECK_EQ(maps.forRealm(inside)->width(),16+4*rarityIndex(tier));Realm exterior;Vec2 projected;
+        CHECK(dungeon.exteriorForRealm(inside,exterior,projected));CHECK(exterior==home);CHECK_NEAR(distance(projected,entrance),0,1e-6);
+        NetClient::OnlineRosterEntry row;row.placed=true;row.realm=static_cast<std::uint8_t>(inside);row.x=100;row.y=200;
+        row.insideDungeon=true;row.exteriorRealm=static_cast<std::uint8_t>(home);row.exteriorX=projected.x;row.exteriorY=projected.y;
+        Vec2 marker;bool outside=false;CHECK(row.mapPosition(static_cast<std::uint8_t>(home),marker,outside));CHECK(outside);CHECK_NEAR(distance(marker,entrance),0,.01);
+        CHECK(row.mapPosition(static_cast<std::uint8_t>(inside),marker,outside));CHECK(!outside);CHECK_NEAR(marker.x,100,1e-6);
+    }
 }
