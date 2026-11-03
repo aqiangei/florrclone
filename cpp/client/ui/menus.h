@@ -1821,6 +1821,7 @@ private:
     /// The Release chip as last painted, for capturesMouse(). Empty while no
     /// control is running.
     Rect releaseRect_{};
+    Rect dungeonEntryRect_{};
     /// Invite toast cards as last painted (guild and/or squad), for hits.
     std::array<Rect, 2> inviteToastRects_{};
 

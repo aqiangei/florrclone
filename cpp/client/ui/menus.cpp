@@ -2942,6 +2942,7 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
                         const WorldRenderer& renderer, double timeSeconds, double dt,
                         const OverlayFn& overStripUnderBar) {
     wantsText_ = false;
+    dungeonEntryRect_ = Rect{};
     panelRect_ = Rect{};
     // Taken back every frame and claimed again by whatever still holds the
     // keyboard this frame: a closed editor must not keep Ctrl+S from the
@@ -3089,6 +3090,7 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
             if(distance(entity.targetPosition,net.view().self().position)<=std::min(entity.radius*.3,120.0)+25)near=true;
         }
         if(near){const Rect entry{canvas.width()*.5-120.0,canvas.height()*.65,240,44};
+            dungeonEntryRect_=entry;
             button(canvas,entry,"进入白蚁丘 [F]",entry.contains({window.mouseX(),window.mouseY()}),window.mouseDown(MouseButton::Left));
             if(window.keyPressed(Key::F)||(window.mouseReleased(MouseButton::Left)&&entry.contains({window.mouseX(),window.mouseY()})))net.requestDungeonEntry();
         }
@@ -3275,6 +3277,7 @@ void MenuSystem::renderStripOnly(Canvas& canvas, Window& window, double timeSeco
     // screen left in the panel and bar state is cleared rather than carried
     // over, or a card nobody is painting would still be swallowing clicks.
     wantsText_ = false;
+    dungeonEntryRect_ = Rect{};
     panelRect_ = Rect{};
     window.setClaimedShortcuts({});
     loadoutHovered_ = -1;
@@ -3303,6 +3306,7 @@ double MenuSystem::stripBottom() const {
 }
 
 bool MenuSystem::capturesMouse(Vec2 mouse) const {
+    if(dungeonEntryRect_.w>0 && dungeonEntryRect_.contains(mouse))return true;
     if (panelRect_.w > 0 && panelRect_.contains(mouse)) return true;
     if (releaseRect_.w > 0 && releaseRect_.contains(mouse)) return true;
     for (const Rect& toast : inviteToastRects_) {
