@@ -20,7 +20,9 @@ inline bool expireTemporaryHyperHammer(PlayerRecord& record,double now) {
     if(now<lease["expiresAt"].asDouble(0))return false;
     if(slot>=0)record.loadout[slot].reset();
     else if(record.itemCount(Rarity::Apex,"petal_mjolnir")>0)record.addItem(Rarity::Apex,"petal_mjolnir",-1);
-    for(auto& [name,slots]:record.loadoutPresets)for(auto& s:slots)if(isHammer(s))s.reset();
+    bool remaining=record.itemCount(Rarity::Apex,"petal_mjolnir")>0;
+    for(const auto& worn:record.loadout)remaining=remaining||isHammer(worn);
+    if(!remaining)for(auto& [name,slots]:record.loadoutPresets)for(auto& s:slots)if(isHammer(s))s.reset();
     lease["active"]=false;return true;
 }
 // Each lease represents one physical hammer; a slot association survives
