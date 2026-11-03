@@ -924,7 +924,7 @@ void GameServer::tick(double nowMillis) {
                 const bool completed=state["operatorRequest"].asString()==requestId&&
                     state["owner"].asString()==userId;
                 HyperForgeResult result;
-                if(completed)result.ok=true;
+                if(completed){result.ok=true;result.consumed=state["paid"].asInt(5);}
                 else if(database_.findUserById(userId)) {
                     persistAll();
                     if(job["mode"].asString()=="temporary15h")
@@ -934,6 +934,7 @@ void GameServer::tick(double nowMillis) {
                 auto& receipt=database_.rawTable("operatorHyperForgeRequest");
                 receipt["status"]=result.ok?"done":"failed";
                 receipt["reason"]=result.reason;
+                receipt["consumed"]=result.consumed;
                 receipt["completedAt"]=Json(static_cast<double>(database_.nowMillis()));
                 database_.markDirty();database_.save();
                 if(result.ok)for(auto& [id,other]:sessions_){
@@ -949,7 +950,7 @@ void GameServer::tick(double nowMillis) {
                 if(listeners&&account){
                     Session credit;credit.userId=userId;credit.username=account->username;
                     const bool temporary=receipt["mode"].asString()=="temporary15h";
-                    announceRareCraft(credit,content().petalIndex("mjolnir"),Rarity::Apex,1,temporary?0:kHyperForgeCost,true);
+                    announceRareCraft(credit,content().petalIndex("mjolnir"),Rarity::Apex,1,temporary?0:receipt["consumed"].asInt(5),true);
                     if(temporary)broadcastChat(net::ChatChannel::System,"",account->username+" 获得补发的超凡锤子，限时15小时；未消耗永恒锤子。 ");
                     database_.rawTable("operatorHyperForgeRequest")["announced"]=true;
                     database_.markDirty();database_.save();
@@ -3574,8 +3575,9 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         if(state.protectedUntil>database_.nowMillis()){
             reply(false,"保护期尚未结束，剩余"+std::to_string((state.protectedUntil-database_.nowMillis()+59999)/60000)+"分钟。");return;
         }
-        if(liveRecord(session).itemCount(Rarity::Unique,inventoryKey(petalIndex))<kHyperForgeCost){
-            reply(false,"需要5个未装备的同种永恒花瓣。");return;
+        const int cost=hyperForgeCost(state.claims);
+        if(liveRecord(session).itemCount(Rarity::Unique,inventoryKey(petalIndex))<cost){
+            reply(false,"需要"+std::to_string(cost)+"个未装备的同种永恒材料。");return;
         }
         persistAll();
         const auto result=forgeHyper(database_,session.userId,petal.id,database_.nowMillis());
@@ -3586,10 +3588,10 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
             if(auto* peer=listener_.find(id)){
                 sendProfile(other,*peer);
                 if(other.userId!=session.userId)sendNotice(*peer,net::NoticeSeverity::Warning,
-                    "你的超凡"+petal.name+"已被其他玩家锻造夺取，已返还4个同种永恒花瓣。");
+                    "你的超凡"+petal.name+"已被其他玩家夺取，已返还原投入材料，净损失2个永恒材料。");
             }
         }
-        announceRareCraft(session,outputIndex,Rarity::Apex,1,kHyperForgeCost,true);
+        announceRareCraft(session,outputIndex,Rarity::Apex,1,result.consumed,true);
         reply(true,"");return;
     }
     outputIndex = petal.id == "fragment" ? content().petalIndex("timed_mjolnir") : petalIndex;
@@ -3646,6 +3648,7 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
     const auto* owner=database_.findUserById(state.owner);
     w.str(owner?owner->username:"");
     w.u32(static_cast<std::uint32_t>(std::max<std::int64_t>(0,state.protectedUntil-database_.nowMillis())));
+    w.u8(static_cast<std::uint8_t>(hyperForgeCost(state.claims)));
     connection.send(w);
 }
 

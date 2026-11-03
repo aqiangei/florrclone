@@ -332,6 +332,7 @@ void NetClient::forgetAccount() {
     assembleOutcome_ = AssembleOutcome{};
     absorbOutcome_ = AbsorbOutcome{};
     titanHolders_.clear();
+    hyperInputCosts_.clear();
     hyperProtectedUntil_.clear();
     shopOutcome_ = ShopOutcome{};
     passwordOutcome_ = PasswordOutcome{};
@@ -1565,9 +1566,11 @@ void NetClient::handleTitanHolder(ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
     std::string holder = reader.str();
     const auto remaining=reader.u32();
+    const int cost=reader.u8();
     if (!reader.ok()) return;
     titanHolders_[petalIndex] = std::move(holder);
     hyperProtectedUntil_[petalIndex]=renderClockMillis()+remaining;
+    hyperInputCosts_[petalIndex]=clamp(cost,5,10);
 }
 double NetClient::hyperProtectionLeft(std::uint16_t index) const {
     const auto it=hyperProtectedUntil_.find(index);

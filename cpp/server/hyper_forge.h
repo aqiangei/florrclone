@@ -12,7 +12,7 @@ inline HyperForgeState hyperForgeState(const Database& db,const std::string& pet
             row["protectedUntil"].asInt64()};
 }
 struct HyperForgeResult {
-    bool ok=false;std::string reason;std::vector<std::string> affected;
+    bool ok=false;int consumed=0;std::string reason;std::vector<std::string> affected;
 };
 inline HyperForgeResult grantTemporaryHyperHammer(Database& db,const std::string& userId,
                                                  std::int64_t now,const std::string& request) {
@@ -42,6 +42,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     }
     const std::string petal=hyperForgeOutput(input);
     const auto state=hyperForgeState(db,petal);
+    const int cost=hyperForgeCost(state.claims);
     if(state.owner==userId){out.reason="你已经持有该超凡花瓣。";return out;}
     if(state.protectedUntil>now){out.reason="保护期尚未结束，剩余"+
         std::to_string((state.protectedUntil-now+59999)/60000)+"分钟。";return out;}
@@ -49,8 +50,8 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     const std::string material="petal_"+input;
     PlayerRecord available=original?*original:PlayerRecord{};
     if(input=="timed_mjolnir")expireHammerLeases(available,static_cast<double>(now));
-    if(!original || available.itemCount(Rarity::Unique,material)<kHyperForgeCost){
-        out.reason="需要5个未装备的同种永恒花瓣。";return out;}
+    if(!original || available.itemCount(Rarity::Unique,material)<cost){
+        out.reason="需要"+std::to_string(cost)+"个未装备的同种永恒材料。";return out;}
     std::map<std::string,PlayerRecord> before;before[userId]=*original;
     for(const auto& id:db.playerIds()){
         const auto* record=db.findProgress(id);if(!record)continue;
@@ -66,6 +67,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     const auto previousInput=oldTable[petal]["input"].asString(
         petal=="mjolnir"?"fragment":petal);
     const std::string refundMaterial="petal_"+previousInput;
+    const int refundPerCopy=hyperForgeRefund(clamp(oldTable[petal]["paid"].asInt(5),5,10));
     for(const auto& [id,record]:before){
         if(id==userId)continue;
         auto& changed=db.progress(id);int lost=changed.itemCount(Rarity::Apex,key);
@@ -74,7 +76,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
         for(auto& [name,slots]:changed.loadoutPresets)
             for(auto& slot:slots)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal)slot.reset();
         const int refund=static_cast<int>(std::min<std::int64_t>(
-            static_cast<std::int64_t>(lost)*kHyperForgeRefund,kMaxStackCount));
+            static_cast<std::int64_t>(lost)*refundPerCopy,kMaxStackCount));
         if(previousInput=="timed_mjolnir"){
             expireHammerLeases(changed,static_cast<double>(now));
             for(int n=0;n<refund;++n)addHammerLease(changed,static_cast<double>(now));
@@ -83,12 +85,13 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     }
     auto& winner=db.progress(userId);
     if(input=="timed_mjolnir")winner=available;
-    winner.addItem(Rarity::Unique,material,-kHyperForgeCost);winner.addItem(Rarity::Apex,key,1);
+    winner.addItem(Rarity::Unique,material,-cost);winner.addItem(Rarity::Apex,key,1);
     if(input=="timed_mjolnir")expireHammerLeases(winner,static_cast<double>(now));
     Json entry=Json::object();entry["owner"]=userId;
     const int claims=std::min(1000000,state.claims+1);
     entry["claims"]=claims;entry["protectedUntil"]=Json(static_cast<double>(now+hyperProtectionMillis(claims)));
     entry["input"]=input;
+    entry["paid"]=cost;
     if(!operatorRequest.empty())entry["operatorRequest"]=operatorRequest;
     db.rawTable("hyperForges")[petal]=entry;db.markDirty();
     if(!db.save()){
@@ -96,6 +99,6 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
         db.rawTable("hyperForges")=oldTable.isObject()?oldTable:Json::object();db.markDirty();
         out.affected.clear();out.reason="存档写入失败，未完成锻造，请稍后重试。";return out;
     }
-    out.affected.push_back(userId);out.ok=true;return out;
+    out.affected.push_back(userId);out.consumed=cost;out.ok=true;return out;
 }
 }

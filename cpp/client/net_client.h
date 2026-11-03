@@ -676,6 +676,7 @@ public:
     /// Forgets the answer for this petal, so the next look asks again.
     void forgetTitanHolder(std::uint16_t petalIndex) { titanHolders_.erase(petalIndex); }
     double hyperProtectionLeft(std::uint16_t index) const;
+    int hyperInputCost(std::uint16_t index) const {const auto i=hyperInputCosts_.find(index);return i==hyperInputCosts_.end()?5:i->second;}
     void requestRespawn();
     void requestDungeonEntry();
     void sendPing();
@@ -1216,6 +1217,7 @@ private:
     /// The titan's answers, by petal: who holds it at universal.
     std::unordered_map<std::uint16_t, std::string> titanHolders_;
     std::unordered_map<std::uint16_t,double> hyperProtectedUntil_;
+    std::unordered_map<std::uint16_t,int> hyperInputCosts_;
     ShopOutcome shopOutcome_;
     PasswordOutcome passwordOutcome_;
     UsernameOutcome usernameOutcome_;

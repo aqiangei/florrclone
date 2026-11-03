@@ -132,7 +132,9 @@ inline constexpr int titanForgeCost(unsigned completed, const std::string& input
     return completed == 0 ? 10 : 15;
 }
 inline constexpr int kHyperForgeCost=5;
-inline constexpr int kHyperForgeRefund=4;
+inline constexpr int kHyperForgeRefund=3;
+inline constexpr int hyperForgeCost(int completed){return 5+std::min(5,std::max(0,completed));}
+inline constexpr int hyperForgeRefund(int paid){return std::max(0,paid-2);}
 inline std::string hyperForgeOutput(const std::string& input) {
     return input=="timed_mjolnir"?"mjolnir":input;
 }
