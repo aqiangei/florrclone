@@ -3133,3 +3133,30 @@ TEST(urgent_inventory_messages_do_not_run_bulk_crafting_or_consume_payload) {
     CHECK_EQ(client.profile().loadout[1].petalIndex,basic);
     removeDataDir(dir);
 }
+
+TEST(daily_bonus_cycle_expiry_missed_day_and_duplicate_claim) {
+    PlayerRecord record;const std::int64_t start=20000LL*86400000;
+    for(int day=0;day<8;++day){
+        const auto now=start+day*86400000;
+        CHECK(claimDropBonus(record,now));
+        CHECK_EQ(activeDropBonus(record,now),day%4==3?3:2);
+        CHECK(!claimDropBonus(record,now+1000));
+        CHECK_EQ(activeDropBonus(record,now+3600000),1);
+    }
+    CHECK(claimDropBonus(record,start+10*86400000));
+    CHECK_EQ(dropBonusStreak(record,start+10*86400000),1);
+    CHECK_EQ(activeDropBonus(record,start+10*86400000),2);
+    Json saved;std::string error;CHECK(Json::parse(record.extra.dump(0),saved,error));PlayerRecord restored;restored.extra=saved;
+    CHECK_EQ(activeDropBonus(restored,start+10*86400000+1000),2);
+}
+TEST(daily_bonus_claim_is_account_scoped_and_reported_over_network) {
+    const auto dir=titanWorld("daily-bonus");Harness h("daily-bonus",[](const std::string& path){seedAccount(path,"bonus");seedAccount(path,"plain");},dir,0);
+    CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient bonus,plain;CHECK(joinAs(h,bonus,"bonus"));CHECK(joinAs(h,plain,"plain"));
+    bonus.requestDailyDropBonus(true);
+    CHECK(h.stepUntil({&bonus,&plain},[&]{return bonus.dropBonusMultiplier==2 && bonus.dropBonusStreak==1;}));
+    CHECK_EQ(plain.dropBonusMultiplier,1);
+    const auto until=bonus.dropBonusUntil;bonus.requestDailyDropBonus(true);h.step(8,{&bonus,&plain});
+    CHECK_EQ(bonus.dropBonusStreak,1);CHECK(std::abs(bonus.dropBonusUntil-until)<1000);
+    removeDataDir(dir);
+}
