@@ -5,6 +5,7 @@
 
 #include "server/loot_eligibility.h"
 #include "shared/core/json.h"
+#include "shared/game/garbage_contents.h"
 
 namespace flix {
 
@@ -853,4 +854,3 @@ std::size_t LootSystem::pickFeatured(Rng& rng) const {
 }
 
 } // namespace flix
-#include "shared/game/garbage_contents.h"
