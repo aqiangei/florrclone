@@ -544,7 +544,10 @@ constexpr ChangelogEntry kChangelog[] = {
       "K/L配装更改自动保存，无需Shift。",
       "普通九图各维持1只永恒E，死后20分钟补充。",
       "E血伤为同种S的3倍，速度不额外提高。"}},
-
+    {"2026年11月3日 · 天赋修复",
+     {"每级获得2 TP，已有等级自动补齐双倍点数。",
+      "花瓣血量天赋立即作用于已装备的花瓣。",
+      "保留受损比例与冷却，不会因加退点回满血。"}},
 };
 
 constexpr int kEntryCount = static_cast<int>(sizeof(kChangelog) / sizeof(kChangelog[0]));

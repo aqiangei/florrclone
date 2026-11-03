@@ -489,9 +489,8 @@ bool AbsorbPanel::render(MenuContext& ctx) {
                   clamp(reach * kBarRamp, 0.0, 1.0) * kBarFillWidth, kBarFill, 1.0);
     }
 
-    // One talent point a level (availableTalentPoints), which is what florr's
-    // "Next level: +N SP" told its players about its skill points.
-    outlinedText(canvas, "Next level: +1 TP", barRight,
+    // Keep the level-up preview aligned with availableTalentPoints.
+    outlinedText(canvas, "下一级：+2 TP", barRight,
                  barY - kBarTrackWidth * 0.5 - 1.0 - kNextSize * kLineHeight * 0.5,
                  panelLabel(kNextSize, Align::Right, Baseline::Middle), 1.0);
     if (plus >= 0.5) {

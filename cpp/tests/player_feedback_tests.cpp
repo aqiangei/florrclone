@@ -32,6 +32,54 @@ TEST(feedback_talent_wiki_values_and_duplicator_eligibility) {
     s.set(SkillId::Duplicator,3);CHECK_EQ(s.petalCopies(1,0,8,true),2);CHECK_EQ(s.petalCopies(4,1,8,true),6);
     s.set(SkillId::Reload,0);CHECK_NEAR(s.equipReloadFloorMillis(),2000,1e-9);s.set(SkillId::Reload,4);CHECK_NEAR(s.equipReloadFloorMillis(),0,1e-9);
 }
+TEST(feedback_double_tp_covers_existing_levels_and_keeps_spending_and_fixed_credit) {
+    SkillSet skills;
+    CHECK_EQ(availableTalentPoints(1,skills),2);
+    CHECK_EQ(availableTalentPoints(100,skills),200);
+    skills.set(SkillId::Health,2);
+    CHECK_EQ(availableTalentPoints(100,skills,7),207-skills.spent());
+    const int before=availableTalentPoints(100,skills,7);
+    CHECK_EQ(availableTalentPoints(101,skills,7)-before,2);
+    skillRefundTo(skills,SkillId::Health,-1);
+    CHECK_EQ(availableTalentPoints(100,skills,7),207);
+    Profile profile;profile.level=100;profile.talentPointBonus=7;
+    CHECK_EQ(profile.talentPoints(),207);
+}
+
+TEST(feedback_petal_health_talent_updates_live_shared_and_independent_pools_without_reset) {
+    CHECK(feedbackContent());
+    for(const auto* id:{"basic","sand"}) {
+        World w;CommandBuffer commands{w};PetalSystem petals;const auto player=w.create();
+        w.add<PlayerTag>(player);w.add<Transform>(player,Transform{{10000,10000},0});
+        w.add<Motion>(player);w.add<Body>(player,Body{25,1});w.add<Health>(player,Health{1000,1000});
+        w.add<Faction>(player,Faction{Team::Players,false});w.add<PlayerProgress>(player);
+        w.add<PlayerInput>(player);w.add<PlayerModifiers>(player);w.add<Loadout>(player);
+        w.add<PetalRing>(player);w.add<Afflictions>(player);w.add<HitCooldowns>(player);w.add<PlayerSkillTree>(player);
+        const auto index=content().petalIndex(id);auto& slot=w.get<Loadout>(player).slots[0];
+        slot.configIndex=index;slot.rarity=Rarity::Super;
+        double now=1000;
+        auto tick=[&](int n){for(int i=0;i<n;++i){now+=net::kTickMillis;petals.run(w,content(),now,net::kTickSeconds,commands);commands.flush();}};
+        auto live=[&](){std::vector<Entity> out;Query<PetalInstance,Health> q{w};q.each([&](Entity e,PetalInstance& p,Health&){if(p.owner==player&&p.slot==0)out.push_back(e);});return out;};
+        tick(400);auto instances=live();CHECK(!instances.empty());if(instances.empty())continue;
+        const Entity first=instances.front();const double base=w.get<Health>(first).max;CHECK(base>1);
+        w.get<Health>(first).current=base*.5;tick(1);
+        const double fraction=w.get<Health>(first).current/base;
+        auto& skills=w.get<PlayerSkillTree>(player).skills;skills.set(SkillId::PetalHealth,8);tick(1);
+        const double boosted=std::round(content().petalStats(index,Rarity::Super).health*skills.petalHealthScale());
+        CHECK(w.isAlive(first));CHECK_NEAR(w.get<Health>(first).max,boosted,1e-8);
+        CHECK_NEAR(w.get<Health>(first).current,boosted*fraction,1e-8);
+        skills.set(SkillId::PetalHealth,-1);tick(1);
+        CHECK_NEAR(w.get<Health>(first).max,base,1e-8);
+        CHECK_NEAR(w.get<Health>(first).current,base*fraction,1e-8);
+        // A talent change cannot revive broken petals or shorten their timers.
+        for(const auto e:live())w.get<Health>(e).current=0;
+        tick(1);CHECK(live().empty());const double deadline=slot.reloadReadyAtMillis;
+        CHECK(deadline>now);skills.set(SkillId::PetalHealth,8);tick(1);
+        CHECK(live().empty());CHECK_NEAR(slot.reloadReadyAtMillis,deadline,1e-8);
+        tick(400);instances=live();CHECK(!instances.empty());
+        for(const auto e:instances){CHECK_NEAR(w.get<Health>(e).max,boosted,1e-8);CHECK_NEAR(w.get<Health>(e).current,boosted,1e-8);}
+    }
+}
 TEST(feedback_poison_and_concentrated_poison_affect_real_poison_status) {
     World w;const auto player=w.create(),victim=w.create();w.add<PlayerTag>(player);auto& tree=w.add<PlayerSkillTree>(player);
     tree.skills.set(SkillId::Poison,8);tree.skills.set(SkillId::ConcentratedPoison,0);w.add<Health>(victim,Health{1000,1000});

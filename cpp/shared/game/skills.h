@@ -341,7 +341,9 @@ inline int petalCopies(int copies, const SkillSet* skills, int slot=-1, int rari
 }
 
 inline int availableTalentPoints(int level, const SkillSet& skills, int migrationBonus = 0) {
-    const int free = level + migrationBonus - skills.spent();
+    // Derived from total level so existing accounts receive the same credit
+    // as new ones, without a repeatable login or migration grant.
+    const int free = 2 * level + migrationBonus - skills.spent();
     return free > 0 ? free : 0;
 }
 

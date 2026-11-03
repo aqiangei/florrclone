@@ -967,6 +967,27 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
             }
         }
 
+        // Talent changes must reach an already equipped ring too. Fold combat
+        // damage above using the OLD pool first, then retain its health fraction.
+        // Do not rebuild the slot: that would erase damage and reload deadlines.
+        if (hasPool && slotState.poolMax != stats.health) {
+            const double fraction = slotState.poolMax > 0.0
+                ? clamp(slotState.poolHealth / slotState.poolMax, 0.0, 1.0) : 0.0;
+            slotState.poolMax = stats.health;
+            slotState.poolHealth = stats.health * fraction;
+            slotState.syncedHealth = slotState.poolHealth;
+            if (slotState.independent) {
+                for (const Entity petal : live) {
+                    if (Health* health = world.tryGet<Health>(petal)) {
+                        const double remaining = health->max > 0.0
+                            ? clamp(health->current / health->max, 0.0, 1.0) : 0.0;
+                        health->max = stats.health;
+                        health->current = stats.health * remaining;
+                    }
+                }
+            }
+        }
+
         // A petal with a mana price comes back only once it is paid, and
         // the slot waits broken until then rather than coming back empty:
         // the fold above would charge an absent instance as a full loss and
