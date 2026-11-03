@@ -159,6 +159,9 @@ inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
         ShopOffer offer;
         offer.petalIndex = pool[taken];
         offer.rarity = tiers[static_cast<std::size_t>(rng.rangeInt(lowest, highest))];
+        // Reserve the last high-tier card for Super so a six-hour rotation
+        // cannot leave the whole server without a Super offer.
+        if (slot == count - 1 && shopSellsRarity(Rarity::Super)) offer.rarity = Rarity::Super;
         // A petal that only comes from some tier up is offered there at the
         // least. Lifted after the draw, so the rotation's stream -- and every
         // other card in it -- is what it was.

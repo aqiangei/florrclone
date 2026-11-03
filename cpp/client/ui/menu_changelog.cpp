@@ -563,7 +563,8 @@ constexpr ChangelogEntry kChangelog[] = {
       "分开毒素与幸运天赋节点，避免重叠。",
       "队友栏过滤当前控制的自己，修复重复自身血条。",
       "锯片恢复普通轨道攻击距离。",
-      "机械花与赌徒使用可破坏并重装的真实花瓣环。"}},
+      "机械花与赌徒使用可破坏并重装的真实花瓣环。",
+      "商店每轮至少出售一件超级花瓣。"}},
 };
 
 constexpr int kEntryCount = static_cast<int>(sizeof(kChangelog) / sizeof(kChangelog[0]));

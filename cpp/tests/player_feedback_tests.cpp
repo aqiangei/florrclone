@@ -7,6 +7,7 @@
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
 #include "shared/game/config.h"
+#include "shared/game/shop.h"
 using namespace flix;
 namespace {
 bool feedbackContent(){std::string error;return loadContent(testsupport::dataDir(),error);}
@@ -44,6 +45,20 @@ TEST(feedback_talent_vision_changes_camera_and_does_not_stack_with_antennae) {
     for(int tier=0;tier<3;++tier){p.skills.set(SkillId::Antennae,tier);CHECK_NEAR(loadoutCameraZoom(p,content()),expected[tier],1e-9);}
     p.loadout.resize(kLoadoutSlots);p.loadout[0].petalIndex=content().petalIndex("antennae");p.loadout[0].rarity=Rarity::Super;
     CHECK_NEAR(loadoutCameraZoom(p,content()),std::min(.5,petalCameraZoom(content(),p.loadout[0].petalIndex,Rarity::Super)),1e-9);
+}
+TEST(feedback_shop_each_rotation_has_a_super_offer_at_the_shared_price) {
+    CHECK(feedbackContent());
+    for (int rotation=0;rotation<200;++rotation) {
+        const auto offers=shopOffers(rotation);bool hasSuper=false;
+        CHECK_EQ(offers.size(),static_cast<std::size_t>(kShopOfferCount));
+        for (const auto& offer:offers) {
+            hasSuper |= offer.rarity==Rarity::Super;
+            CHECK(shopSellsPetal(offer.petalIndex));
+            CHECK(shopSellsRarity(offer.rarity));
+            CHECK_NEAR(offer.price,std::floor(shopPrice(offer.petalIndex,offer.rarity)*(100-offer.discountPercent)/100.0),1e-9);
+        }
+        CHECK(hasSuper);
+    }
 }
 TEST(feedback_talent_wiki_values_and_duplicator_eligibility) {
     SkillSet s;s.set(SkillId::Loadout,4);s.set(SkillId::Magnetism,0);CHECK_NEAR(s.magnetismBonus(),1000,1e-9);
