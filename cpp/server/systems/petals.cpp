@@ -1499,6 +1499,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     double flowerHealthBonus = 0.0;
     double flowerRadiusBonus = 0.0;
     double powderBonus = 0.0;
+    double cloverLuck = 0.0;
     double aggroCut = 1.0;
     double aggroBoost = 1.0;
     // Every worn basil's bonus, folded harmonically after the loop.
@@ -1550,7 +1551,8 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // `rotationSpeed += modifier - 1`.
             aggregate.spinScale += mods.rotationSpeed - 1.0;
 
-            aggregate.modifiers.luck += mods.luck;
+            if (registry.petal(equipped.configIndex).id == "clover") cloverLuck = std::max(cloverLuck, mods.luck);
+            else aggregate.modifiers.luck += mods.luck;
             aggregate.modifiers.magnetism += mods.magnetism;
             // Aggro is the exception to the rule above: a bulb glows and a poo
             // smells only while it is out on the ring. A broken one, or one
@@ -1738,6 +1740,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     if (PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(player)) {
         visuals->equipFlags = equipFlags;
     }
+    aggregate.modifiers.luck += cloverLuck;
     return aggregate;
 }
 
@@ -2810,7 +2813,7 @@ void PetalSystem::runBehaviour(World& world, Entity player, Entity petal,
         case PetalBehaviourKind::Lightning:
             // Parked at spawn, so only a contact or a break strikes.
             if (trigger == PetalTrigger::Spawn || trigger == PetalTrigger::Interval) return;
-            strikeLightning(world, player, at, stats.damage, rarity);
+            strikeLightning(world, player, at, stats.lightningDamagePerHit, rarity, stats.lightningBounces);
             return;
 
         case PetalBehaviourKind::BloodLeaf: {
@@ -2905,7 +2908,7 @@ void PetalSystem::emitDamageBurst(World& world, Entity player, Vec2 at, double r
 }
 
 void PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double damage,
-                                  Rarity rarity) {
+                                  Rarity rarity, int bounces) {
     // A strike is a petal hitting something, so it is paid at the PETAL rate --
     // the steep effect table getDamageMultiplier() puts a puff, a pulse and a
     // shot on, not the gentle stat table a body slam takes. The reference hands
@@ -2923,6 +2926,37 @@ void PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double d
     // apex petal.
     const double base =
         damage > 0.0 ? damage : kLightningFallbackDamage * petalStrengthScale(rarity);
+    if (bounces >= 0) {
+        const auto* ownerAt = world.tryGet<Transform>(player);
+        const Realm realm = ownerAt ? ownerAt->realm : Realm::Overworld;
+        std::vector<Entity> candidates, selected;
+        mobs_->each([&](Entity e, MobTag&, Transform& t, Body&) {
+            if (t.realm == realm && isStanding(world,e) && !world.has<Pet>(e)) candidates.push_back(e);
+        });
+        npcs_->each([&](Entity e, NpcTag&, Transform& t, Body&, Faction& f) {
+            if (t.realm == realm && f.team != Team::Players && isStanding(world,e)) candidates.push_back(e);
+        });
+        Vec2 from = at;
+        std::vector<Vec2> points;
+        for (int hop = 0; hop <= bounces; ++hop) {
+            Entity next = NULL_ENTITY; double best = 240.0 * 240.0;
+            for (Entity e : candidates) {
+                if (std::find(selected.begin(),selected.end(),e) != selected.end()) continue;
+                const double gap = distanceSq(from,world.get<Transform>(e).position);
+                if (gap < best) { next=e; best=gap; }
+            }
+            if (next==NULL_ENTITY) break;
+            selected.push_back(next); from=world.get<Transform>(next).position; points.push_back(from);
+            const Entity burst=world.create(); world.add<GroundEffectTag>(burst);
+            world.add<Transform>(burst,Transform{from,0,realm});
+            world.add<GroundEffect>(burst,GroundEffect{GroundEffectKind::Poison,player,1.0,0.0,
+                1.0,Rarity::Common,base*scale,0.0});
+            world.add<Lifetime>(burst,Lifetime{net::kTickSeconds*1.5});
+            world.add<LightningBurst>(burst); world.add<LightningTarget>(burst,LightningTarget{next});
+        }
+        if (events_ && !points.empty()) events_->lightning(at,240.0,realm,points);
+        return;
+    }
     emitDamageBurst(world, player, at, kLightningRadius, base * scale, true);
     reportLightning(world, player, at, kLightningRadius);
 }
@@ -3157,6 +3191,10 @@ void PetalSystem::strikeWornLightning(World& world, const ContentRegistry& regis
 
 void PetalSystem::strikeBatteries(World& world, const ContentRegistry& registry, Entity player,
                                   double nowMillis) {
+    auto* state = world.tryGet<PetalSlotState>(player);
+    const auto* health = world.tryGet<Health>(player);
+    if (!state || !health || state->batteryHurtSerial == health->directHurtSerial) return;
+    state->batteryHurtSerial = health->directHurtSerial;
     const Loadout* loadout = world.tryGet<Loadout>(player);
     const Transform* transform = world.tryGet<Transform>(player);
     const Body* body = world.tryGet<Body>(player);
@@ -3181,7 +3219,18 @@ void PetalSystem::strikeBatteries(World& world, const ContentRegistry& registry,
     // which is also what makes the charge worth spending while the ring is
     // pulled in and the petals are nowhere near the mob.
     const Vec2 at = transform->position;
-    if (!touchesMob(world, transform->realm, at, body->radius)) return;
+
+
+    bool targetInRange = false;
+    mobs_->each([&](Entity e, MobTag&, Transform& t, Body&) {
+        if(t.realm==transform->realm && isStanding(world,e) && !world.has<Pet>(e) &&
+           distanceSq(t.position,at)<240.0*240.0) targetInRange=true;
+    });
+    npcs_->each([&](Entity e, NpcTag&, Transform& t, Body&, Faction& f) {
+        if(t.realm==transform->realm && f.team!=Team::Players && isStanding(world,e) &&
+           distanceSq(t.position,at)<240.0*240.0) targetInRange=true;
+    });
+    if(!targetInRange) return;
 
     // Each battery pays its own charge on the same slam: they are separate
     // petals holding separate charges, and one cell going flat says nothing
@@ -3200,7 +3249,7 @@ void PetalSystem::strikeBatteries(World& world, const ContentRegistry& registry,
         instance->nextChargeMillis = nowMillis + kBatteryStrikeIntervalMillis;
         const bool flat = --instance->charges == 0;
 
-        strikeLightning(world, player, at, stats.damage, batteryRarity);
+        strikeLightning(world, player, at, stats.lightningDamagePerHit, batteryRarity, stats.lightningBounces);
         // The last charge retires the petal. spendPetal finds no Health on it
         // and takes the by-hand path: off the ring now, back on the slot's own
         // cooldown, holding three again.

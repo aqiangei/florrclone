@@ -1,7 +1,7 @@
 {
   "dry": true,
-  "updated": 11,
-  "unresolvedCount": 1,
+  "updated": 13,
+  "unresolvedCount": 0,
   "changes": [
     {
       "florName": "Ant Egg",
@@ -76,6 +76,21 @@
         "health": 1,
         "cooldown": 10000,
         "zh": "Blood Sacrifice"
+      }
+    },
+    {
+      "florName": "Glass",
+      "cppKey": "glass",
+      "before": {
+        "damage": 22,
+        "health": 1,
+        "cooldown": 2500
+      },
+      "after": {
+        "damage": 22,
+        "health": 1,
+        "cooldown": 2500,
+        "zh": "玻璃"
       }
     },
     {
@@ -154,6 +169,21 @@
       }
     },
     {
+      "florName": "Pharaoh's Crown",
+      "cppKey": "pharaoh_s_crown",
+      "before": {
+        "damage": 0,
+        "health": null,
+        "cooldown": 0
+      },
+      "after": {
+        "damage": 0,
+        "health": 1,
+        "cooldown": 0,
+        "zh": "法老之冠"
+      }
+    },
+    {
       "florName": "Corruption",
       "cppKey": "corruption",
       "before": {
@@ -169,7 +199,5 @@
       }
     }
   ],
-  "unresolved": [
-    "Pharaoh's Crown"
-  ]
+  "unresolved": []
 }

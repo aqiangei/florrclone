@@ -364,9 +364,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     hp.alpha = 0.56;
     hp.labelColor = kStatHealth;
     hp.altText = std::string(tipHp()) + exactNumber(health);
+    if (!stats.breakable) { hp.text = std::string(tipHp()) + (language() == Language::Zh ? "不可破坏" : "Unbreakable"); hp.altText = hp.text; }
     lines.push_back(hp);
 
-    const std::string damageLabel = tipDamage();
+    const std::string damageLabel = config.id == "battery" || config.id == "lightning"
+        ? (language() == Language::Zh ? "接触伤害：" : "Contact damage: ") : tipDamage();
     TooltipLine hit{damageLabel + abbreviate(damage), 12.0};
     hit.alpha = 0.56;
     hit.labelColor = kStatDamage;
@@ -394,8 +396,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // Healing talent for the amount the flower actually receives).
     const double healTalent = skills.effectScale(SkillId::Medic);
     if (stats.heal > 0.0) {
-        const double heal =
-            std::round(stats.heal * healTalent * kPlayerHealMultiplier);
+        const double heal = std::round(stats.heal * healTalent * kPlayerHealMultiplier);
         TooltipLine line{std::string(tipHeal()) + abbreviate(heal), 12.0};
         line.alpha = 0.56;
         line.labelColor = kStatHeal;
@@ -411,6 +412,14 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         line.labelColor = kStatHeal;
         line.altText = std::string(tipHealPerSec()) + exactNumber(heal);
         lines.push_back(line);
+    }
+    if (healTalent * kPlayerHealMultiplier != 1.0 && (stats.heal > 0 || stats.passiveHealPerSecond > 0)) {
+        const bool zh = language() == Language::Zh;
+        const double base = stats.heal > 0 ? stats.heal : stats.passiveHealPerSecond;
+        lines.push_back({std::string(zh ? "基础治疗：" : "Base healing: ") + exactNumber(base) +
+            (stats.heal > 0 ? "" : (zh ? "/秒" : "/s")),12.0});
+        lines.push_back({std::string(zh ? "本服治疗倍率：x" : "Server healing multiplier: x") + exactNumber(kPlayerHealMultiplier),12.0});
+        if (healTalent != 1) lines.push_back({std::string(zh ? "治疗天赋倍率：x" : "Healing talent: x") + exactNumber(healTalent),12.0});
     }
     if (stats.shield > 0.0) {
         const double shield = std::round(stats.shield);
@@ -460,6 +469,19 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
         if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
     }
+    if (stats.count > 1) special("每组花瓣数量：", "Petals per cluster: ", stats.count);
+    if (stats.armorPerStack > 0) {
+        special("每层护甲：", "Armor per stack: ", stats.armorPerStack);
+        special("护甲叠层间隔：", "Armor stack interval: ", 2.0, "s");
+        special("护甲层数上限：", "Armor stack limit: ", 10);
+    }
+    if (stats.noHealDurationMillis > 0) special("禁止治疗持续：", "Healing suppression: ", stats.noHealDurationMillis / 1000.0, "s");
+    if (stats.knockback != 0) special("击退强度：", "Knockback: ", stats.knockback);
+    if (stats.attractionForce > 0) special("花瓣吸引强度：", "Petal attraction strength: ", stats.attractionForce);
+    if (stats.modifiers.damage != 1) special("伤害变化：", "Damage bonus: ", (stats.modifiers.damage - 1) * 100, "%");
+    if (stats.modifiers.aggroRadius != 0) special("额外警觉范围：", "Extra aggro range: ", stats.modifiers.aggroRadius);
+    if (stats.modifiers.petalAttractionRadius > 0) special("花瓣吸引范围：", "Petal attraction radius: ", stats.modifiers.petalAttractionRadius);
+    if (!stats.breakable) lines.push_back({chinese ? "耐久：不可被攻击击碎" : "Durability: unbreakable",12.0});
     if (stats.webRadius > 0) special("蛛网半径：", "Web radius: ", stats.webRadius);
     if (stats.slowFactor < 1.0) {
         special("减速比例：", "Slow: ", (1.0 - stats.slowFactor) * 100.0, "%");
@@ -470,7 +492,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (stats.cameraZoom != 1.0) special("视野缩放倍率：", "Camera zoom: ", stats.cameraZoom);
     if (stats.modifiers.luck != 0.0)
         special(stats.modifiers.luck > 0 ? "幸运加成：+" : "幸运变化：",
-                stats.modifiers.luck > 0 ? "Luck: +" : "Luck: ", stats.modifiers.luck * 100.0, "%");
+                stats.modifiers.luck > 0 ? "Luck: +" : "Luck: ", stats.modifiers.luck);
     if (stats.modifiers.aggroRange != 1.0)
         special("怪物警觉范围变化：", "Mob detection range: ", (stats.modifiers.aggroRange - 1.0) * 100.0, "%");
     if (stats.modifiers.poisonArmor > 0) special("毒抗：", "Poison armor: ", stats.modifiers.poisonArmor);
@@ -490,10 +512,17 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("每次击杀增加回血：", "Heal per kill: ", stats.totemHealPerSecond * healTalent * kPlayerHealMultiplier,
                 chinese ? "/秒，持续10秒，可叠加" : "/s for 10s, stacking");
     }
-    if (config.id == "lightning") {
-        special("闪电伤害：", "Lightning damage: ",
-                (stats.damage > 0 ? stats.damage : 25.0 * petalStrengthScale(rarity)));
-        special("闪电范围：", "Lightning radius: ", 1000.0);
+    if (stats.lightningDamagePerHit > 0) {
+        lines.push_back({chinese ? "闪电无视护甲和闪避。" : "Lightning bypasses armor and dodge.",12.0});
+        special("基础闪电伤害：", "Base lightning damage: ", stats.lightningDamagePerHit);
+        special("连锁跳跃次数：", "Chain bounces: ", stats.lightningBounces);
+        special("每段索敌范围：", "Range per jump: ", stats.lightningRange);
+        if (stats.batteryCharges > 0) {
+            special("每轮放电次数：", "Discharges per reload: ", stats.batteryCharges);
+            TooltipLine mechanism{chinese ? "花朵实际受伤时放电；每轮3次，用完进入冷却。仅接触、护盾完全吸收、自伤和无敌期间不触发。" :
+                "Discharges on damage taken; reloads after 3 charges. No trigger on contact alone, fully shielded hits, self-damage or invulnerability.",12.0};
+            mechanism.maxWidth=kTooltipWrapWidth; lines.push_back(mechanism);
+        }
     }
 
     // Relic. The whole petal is this one number.
@@ -508,7 +537,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Rubber. Its price is printed beside what it buys.
     if (stats.flowerKnockback > 0.0) {
-        TooltipLine shove{"Flower Knockback: +" + exactNumber(stats.flowerKnockback * 100.0) + "%",
+        TooltipLine shove{std::string(chinese ? "花朵受击击退：+" : "Flower Knockback: +") + exactNumber(stats.flowerKnockback * 100.0) + "%",
                           12.0};
         shove.alpha = 0.56;
         shove.labelColor = kStatGeneric;
@@ -517,7 +546,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Amulet. florr's own line, and the whole of what the petal does.
     if (stats.overhealShield > 0.0) {
-        TooltipLine convert{"Overheal Conversion: +" + exactNumber(stats.overhealShield * 100.0) +
+        TooltipLine convert{std::string(chinese ? "溢出治疗转护盾：+" : "Overheal Conversion: +") + exactNumber(stats.overhealShield * 100.0) +
                                 "%",
                             12.0};
         convert.alpha = 0.56;
@@ -535,7 +564,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Golden leaf, florr's line: what it takes off the rest of the bar.
     if (stats.reloadCut > 0.0) {
-        TooltipLine cut{"Reload: -" + percentNumber(stats.reloadCut) + "%", 12.0};
+        TooltipLine cut{std::string(chinese ? "全局冷却缩减：-" : "Reload: -") + percentNumber(stats.reloadCut) + "%", 12.0};
         cut.alpha = 0.56;
         cut.labelColor = kStatGeneric;
         lines.push_back(cut);
@@ -543,7 +572,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Disc, florr's line, and the whole of what the petal does.
     if (stats.collisionResist > 0.0) {
-        TooltipLine resist{"Collision Damage Resistance: +" +
+        TooltipLine resist{std::string(chinese ? "碰撞伤害减免：+" : "Collision Damage Resistance: +") +
                                percentNumber(stats.collisionResist) + "%",
                            12.0};
         resist.alpha = 0.56;
@@ -559,7 +588,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             std::snprintf(buffer, sizeof buffer, "%g", std::round(millis / 10.0) / 100.0);
             return std::string(buffer) + "s";
         };
-        TooltipLine undead{"Undead: " + seconds(stats.undeadMillis), 12.0};
+        TooltipLine undead{std::string(chinese ? "不死持续：" : "Undead: ") + seconds(stats.undeadMillis), 12.0};
         undead.alpha = 0.56;
         undead.labelColor = kStatUndead;
         lines.push_back(undead);
@@ -569,7 +598,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         body.alpha = 0.56;
         body.labelColor = kStatDamage;
         lines.push_back(body);
-        TooltipLine lock{"Unrevivable: " + seconds(stats.unrevivableMillis), 12.0};
+        TooltipLine lock{std::string(chinese ? "无法复活持续：" : "Unrevivable: ") + seconds(stats.unrevivableMillis), 12.0};
         lock.alpha = 0.56;
         lock.labelColor = kStatDanger;
         lines.push_back(lock);
@@ -610,6 +639,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // Fang. landHeal multiplies the stolen amount by kPlayerHealMultiplier, so
     // the card shows the effective share of damage returned as HP.
     if (stats.lifesteal > 0.0) {
+        special("基础吸血比例：", "Base lifesteal: ", stats.lifesteal * 100.0, "%");
         const double pct = stats.lifesteal * 100.0 * kPlayerHealMultiplier;
         TooltipLine steal{std::string(tipLifesteal()) + exactNumber(pct) + "%", 12.0};
         steal.alpha = 0.56;
@@ -620,7 +650,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // Talisman. The chance grows a step every tier and nothing in play shows
     // it -- a dodge is a hit that simply did not happen -- so it is printed.
     if (stats.modifiers.evasion > 0.0) {
-        TooltipLine dodge{"Evasion: " + exactNumber(stats.modifiers.evasion * 100.0) + "%", 12.0};
+        TooltipLine dodge{std::string(chinese ? "闪避概率：" : "Evasion: ") + exactNumber(stats.modifiers.evasion * 100.0) + "%", 12.0};
         dodge.alpha = 0.56;
         dodge.labelColor = kStatGeneric;
         lines.push_back(dodge);
@@ -630,7 +660,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // fixed point -- an attacker of this card's own tier -- and the
     // description says how the rest of the ladder runs from there.
     if (stats.modifiers.damageReflection > 0.0) {
-        TooltipLine reflect{"Reflection: " +
+        TooltipLine reflect{std::string(chinese ? "反伤比例：" : "Reflection: ") +
                                 exactNumber(stats.modifiers.damageReflection * 100.0) +
                                 "% vs " + rarityTr(rarity),
                             12.0};
@@ -657,31 +687,31 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(summon);
     }
     if (config.petLifetimeMillis > 0.0) {
-        TooltipLine span{"Summon Lifetime: " + exactNumber(config.petLifetimeMillis / 1000.0) + "s",
+        TooltipLine span{std::string(chinese ? "召唤持续：" : "Summon Lifetime: ") + exactNumber(config.petLifetimeMillis / 1000.0) + "s",
                          12.0};
         span.alpha = 0.56;
         span.labelColor = kStatDuration;
         lines.push_back(span);
     }
     if (stats.maxMana > 0.0) {
-        TooltipLine pool{"Max Mana: +" + abbreviate(stats.maxMana), 12.0};
+        TooltipLine pool{std::string(chinese ? "魔法值上限：+" : "Max Mana: +") + abbreviate(stats.maxMana), 12.0};
         pool.alpha = 0.56;
         pool.labelColor = kStatMana;
-        pool.altText = "Max Mana: +" + exactNumber(stats.maxMana);
+        pool.altText = std::string(chinese ? "魔法值上限：+" : "Max Mana: +") + exactNumber(stats.maxMana);
         lines.push_back(pool);
     }
     if (stats.mana > 0.0) {
-        TooltipLine burst{"Mana Restored: " + abbreviate(stats.mana), 12.0};
+        TooltipLine burst{std::string(chinese ? "恢复魔法值：" : "Mana Restored: ") + abbreviate(stats.mana), 12.0};
         burst.alpha = 0.56;
         burst.labelColor = kStatMana;
-        burst.altText = "Mana Restored: " + exactNumber(stats.mana);
+        burst.altText = std::string(chinese ? "恢复魔法值：" : "Mana Restored: ") + exactNumber(stats.mana);
         lines.push_back(burst);
     }
     if (stats.passiveManaPerSecond > 0.0) {
-        TooltipLine regen{"Mana/s: " + abbreviate(stats.passiveManaPerSecond), 12.0};
+        TooltipLine regen{std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + abbreviate(stats.passiveManaPerSecond), 12.0};
         regen.alpha = 0.56;
         regen.labelColor = kStatMana;
-        regen.altText = "Mana/s: " + exactNumber(stats.passiveManaPerSecond);
+        regen.altText = std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + exactNumber(stats.passiveManaPerSecond);
         lines.push_back(regen);
     }
 

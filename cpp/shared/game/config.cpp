@@ -1846,6 +1846,12 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
 
     PetalStats s;
     s.damage = c.damage * strength;
+    if (c.id == "battery" || c.id == "lightning") {
+        s.lightningDamagePerHit = 12.0 * strength;
+        s.lightningBounces = 2 + ladderIndex(r);
+        s.batteryCharges = c.id == "battery" ? 3 : 0;
+    }
+
     s.health = c.health * strength;
     // The plain 3x ladder, deliberately NOT kMobArmorScale: mob armour flattens
     // above ultra and a bur that flattened with it would be dead weight at the
@@ -1854,7 +1860,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // Root's stack, on the same plain ladder and for the mirror of that
     // reason: what a stack absorbs has to keep pace with what a mob of the
     // same tier hits for, and mob damage is the 3x ladder all the way up.
-    s.armorPerStack = c.armorPerStack * stat;
+    s.armorPerStack = c.armorPerStack * heal;
     // Bone's own armour climbs the ladder a MOB's armour climbs, flattening
     // above ultra with it: it is the same kind of number doing the same job
     // -- a flat amount off each hit the wearer takes -- so a bone and a mob
@@ -1863,7 +1869,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // A claw's bonus is damage, so it is on the damage ladder beside `damage`.
     s.critDamage = c.clawCritDamage * strength;
     // A fraction of the damage dealt, and that damage already climbs.
-    s.lifesteal = c.lifesteal;
+    s.lifesteal = c.lifesteal * heal / stat;
     s.reloadMillis = c.cooldownMillis;
     if (c.id == "yggdrasil") {
         // TypeScript overrides every row: it is always a 1/1 petal and its
@@ -1871,8 +1877,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         s.damage = 1.0;
         s.health = 1.0;
         s.reloadMillis = 512000.0 / std::pow(2.0, rarityIndex(tier));
-    } else if (c.id == "lightning") {
-        s.health = 10.0;
+
     } else if (c.id == "bubble" || c.id == "magic_bubble") {
         // The magic bubble is a bubble with a mana price, and it pays the same
         // shortening reload: two petals that pop the same way must not read as
@@ -2009,7 +2014,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     const std::size_t ti = static_cast<std::size_t>(rarityIndex(tier));
     if (c.id == "clover") {
         static constexpr std::array<double, kLadderRarityCount> values = {
-            0.08, 0.12, 0.17, 0.24, 0.35, 0.5, 0.72, 1.04, 1.5, 2.0,
+            0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
         };
         s.modifiers.luck = values[ti];
     } else if (c.id == "faster") {
@@ -2056,6 +2061,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     if (graded == Rarity::Admin) {
         constexpr double boost = 10.0;
         s.damage *= 25.0;
+        s.lightningDamagePerHit *= 25.0;
         s.health *= 25.0;
         s.bodyDamage *= 25.0;
         s.critDamage *= 25.0;

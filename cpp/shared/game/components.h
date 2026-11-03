@@ -131,6 +131,7 @@ struct Health {
     /// replicated as StateInvulnerable: a health bar that turned the spawn
     /// shield's yellow on every bite would flash for the whole fight.
     double hitCooldownUntilMillis = 0;
+    std::uint64_t directHurtSerial = 0; // landed hostile direct hits; battery trigger
 
     /// Whether either window is refusing damage at `nowMillis`.
     bool shielded(double nowMillis) const {
@@ -1495,6 +1496,7 @@ struct LightningClock {
 /// stay exactly what the burst already had. All it wants is a different colour
 /// on the number.
 struct LightningBurst {};
+struct LightningTarget { Entity victim = NULL_ENTITY; };
 
 struct WebFlight {
     Vec2 from; Vec2 to;
@@ -1636,6 +1638,7 @@ FLIX_COMPONENT(flix::SacrificeRitual);
 FLIX_COMPONENT(flix::MobRemains);
 FLIX_COMPONENT(flix::GroundEffect);
 FLIX_COMPONENT(flix::LightningBurst);
+FLIX_COMPONENT(flix::LightningTarget);
 FLIX_COMPONENT(flix::LightningClock);
 FLIX_COMPONENT(flix::WebClock);
 FLIX_COMPONENT(flix::DropClock);

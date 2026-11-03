@@ -167,7 +167,7 @@ inline constexpr bool isDirectHit(DamageKind kind) {
 /// recoil a petal pays for one; never a drip, where a flat subtraction from
 /// each sliver would be immunity rather than a tax.
 inline constexpr bool armorBlunts(DamageKind kind) {
-    return isDirectHit(kind) || kind == DamageKind::Recoil;
+    return kind == DamageKind::Direct || kind == DamageKind::Recoil;
 }
 
 struct DamageResult {

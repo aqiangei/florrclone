@@ -1,0 +1,53 @@
+#include "test.h"
+#include "test_data.h"
+#include "client/ui/menu_widgets.h"
+#include "client/ui/i18n.h"
+#include "shared/game/config.h"
+using namespace flix;
+using namespace flix::testsupport;
+namespace {
+bool hasLine(std::uint16_t id,Rarity r,const std::string& text) {
+    for(const auto& line:ui::petalTooltipLines(id,r,{},1)) if(line.text.find(text)!=std::string::npos)return true;
+    return false;
+}
+}
+TEST(wiki_stat_leaf_keeps_server_three_times_and_shows_base) {
+    CHECK(ensureShippedContent()); ui::setLanguage(ui::Language::Zh);
+    const auto leaf=content().petalIndex("leaf");
+    CHECK_NEAR(content().petalStats(leaf,Rarity::Super).passiveHealPerSecond,729,1e-8);
+    CHECK_NEAR(kPlayerHealMultiplier,3,1e-12);
+    CHECK(hasLine(leaf,Rarity::Super,"2187")); CHECK(hasLine(leaf,Rarity::Super,"729"));
+    CHECK(hasLine(leaf,Rarity::Super,"本服治疗倍率：x3"));
+}
+TEST(wiki_stat_battery_and_lightning_share_damage_chain_and_description) {
+    CHECK(ensureShippedContent()); ui::setLanguage(ui::Language::Zh);
+    for(const auto* id:{"battery","lightning"}) {
+        const auto i=content().petalIndex(id); const auto s=content().petalStats(i,Rarity::Mythic);
+        CHECK_NEAR(s.lightningDamagePerHit,2916,1e-8); CHECK_EQ(s.lightningBounces,7);
+        CHECK_NEAR(s.lightningRange,240,1e-8); CHECK(hasLine(i,Rarity::Mythic,"基础闪电伤害：2916"));
+    }
+    CHECK(hasLine(content().petalIndex("battery"),Rarity::Mythic,"每轮放电次数：3"));
+    CHECK(hasLine(content().petalIndex("battery"),Rarity::Mythic,"实际受伤时放电"));
+    CHECK_NEAR(content().petalStats(content().petalIndex("lightning"),Rarity::Super).health,43740,1e-8);
+}
+TEST(wiki_stat_root_fang_clover_use_their_special_scaling) {
+    CHECK(ensureShippedContent());
+    CHECK_NEAR(content().petalStats(content().petalIndex("root"),Rarity::Super).armorPerStack,1822.5,1e-8);
+    CHECK_NEAR(content().petalStats(content().petalIndex("fang"),Rarity::Super).lifesteal,0.35/3,1e-10);
+    CHECK_NEAR(content().petalStats(content().petalIndex("clover"),Rarity::Common).modifiers.luck,0.1,1e-10);
+    CHECK_NEAR(content().petalStats(content().petalIndex("clover"),Rarity::Super).modifiers.luck,0.8,1e-10);
+}
+TEST(wiki_stat_all_petals_have_finite_values_and_no_phantom_luck) {
+    CHECK(ensureShippedContent()); ui::setLanguage(ui::Language::Zh); int checked=0;
+    for(std::uint16_t i=0;i<content().petalCount();++i)for(int t=0;t<kLadderRarityCount;++t) {
+        const auto r=static_cast<Rarity>(t);const auto s=content().petalStats(i,r);
+        const double values[]={s.damage,s.health,s.heal,s.passiveHealPerSecond,s.armorPerStack,
+            s.lifesteal,s.lightningDamagePerHit,s.flowerHealthBonus,s.maxMana,s.mana,s.requiredMana,
+            s.poisonPerSecond,s.knockback,s.modifiers.luck,s.modifiers.speed,s.modifiers.maxHealth};
+        for(double v:values)CHECK(std::isfinite(v));
+        CHECK(!ui::petalTooltipLines(i,r,{},1).empty());
+        if(s.modifiers.luck==0)CHECK(!hasLine(i,r,"幸运变化：")&&!hasLine(i,r,"幸运加成："));
+        ++checked;
+    }
+    std::printf("  checked %d petal/tier stat and tooltip combinations\n",checked);
+}

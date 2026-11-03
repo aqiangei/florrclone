@@ -748,7 +748,7 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
     // armour, the shield and root's stacks, because a hit that never landed
     // has nothing for any of them to blunt -- root would otherwise spend a
     // stack on a blow that went wide. Direct only: a drip is not an attack.
-    if (isDirectHit(kind) && !sharingColonyHit_ && rollDodge(world, victim, nowMillis)) {
+    if (kind == DamageKind::Direct && !sharingColonyHit_ && rollDodge(world, victim, nowMillis)) {
         result.dodged = true;
         return result;
     }
@@ -783,7 +783,7 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
     //
     // Direct only, for the reason the mob's armour is: a flat subtraction
     // from each sliver of a poison drip is immunity, not a tax.
-    if (directPlayerHit) {
+    if (directPlayerHit && kind != DamageKind::Lightning) {
         if (ArmorStackState* armor = world.tryGet<ArmorStackState>(victim)) {
             if (armor->stacks > 0 && armor->perStack > 0.0) {
                 --armor->stacks;
@@ -888,6 +888,7 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
     const bool invulnerable = world.has<NpcTag>(victim);
     if (!invulnerable) {
         health.current -= applied;
+        if (applied > 0 && isDirectHit(kind) && source != victim) ++health.directHurtSerial;
         if (health.current < 0.0) health.current = 0.0;
     }
     bool fatal = !invulnerable && health.current <= 0.0;
@@ -2046,6 +2047,8 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
             field.slowFactor >= 1.0) continue;
         queryBodies(grid, field.realm, field.position, field.radius + kBroadphasePad, candidates_);
         for (const Entity victim : candidates_) {
+            const auto* lightningTarget = world.tryGet<LightningTarget>(field.effect);
+            if (lightningTarget && lightningTarget->victim != victim) continue;
             const Transform* transform = world.tryGet<Transform>(victim);
             if (transform == nullptr) continue;
             // Circle overlap, not centre-in-radius: every one of the three

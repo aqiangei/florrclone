@@ -112,6 +112,7 @@ struct PetalSlotState {
     /// it belongs to the FLOWER, is maximised across every equipped raindrop
     /// and fires whether or not any one of them is due to act.
     double raindropReadyAtMillis = 0;
+    std::uint64_t batteryHurtSerial = 0;
 
     /// Next time a lightning cutter may strike. The reference's limiter is per
     /// PLAYER rather than per petal, so two cutters share one cadence.
@@ -473,7 +474,7 @@ private:
     /// One strike. `damage` is the petal's own stat, already up the rarity
     /// ladder; `rarity` is the tier it came from, which is what puts the
     /// fallback on that same ladder for a petal whose `damage` is 0.
-    void strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity);
+    void strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity, int bounces = -1);
     /// The strike's visual half: one event carrying the bolts' endpoints. The
     /// damage half is a field, and a field has nothing on the wire the client
     /// could draw a strike from.
