@@ -1725,9 +1725,10 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         // table, and it folds no petal `playerModifiers.damage` into the petal
         // side at all. Collapsing the two costs an apex-talented ring 2.5x its
         // damage, so the two factors are published separately.
-        aggregate.modifiers.petalDamageScale = 1.0;
+        aggregate.modifiers.petalDamageScale = tree->skills.effectScale(SkillId::Damage);
         aggregate.modifiers.maxHealthScale *= tree->skills.statScale(SkillId::Health);
-        aggregate.modifiers.damageScale *= tree->skills.bodyDamageScale();
+        aggregate.modifiers.damageScale *= tree->skills.bodyDamageScale() *
+                                           tree->skills.statScale(SkillId::Damage);
         aggregate.modifiers.luck += tree->skills.luck();
         aggregate.modifiers.attackRange += tree->skills.reachBonus();
         aggregate.spinScale *= tree->skills.rotationSpeed() / kPetalSpinRate;

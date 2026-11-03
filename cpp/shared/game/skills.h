@@ -32,6 +32,9 @@ enum class SkillId : std::uint8_t {
     BodyToxicity,
     ConcentratedPoison,
     Summoner,
+    // Append new branches to preserve all existing save and wire indices.
+    Damage,
+    Absorbing,
     Count,
 };
 
@@ -41,27 +44,27 @@ inline constexpr int kSkillCount = static_cast<int>(SkillId::Count);
 inline constexpr std::array<const char*, kSkillCount> kSkillKeys = {
     "health", "loadout", "rotation", "antennae", "luck", "medic", "petalHealth",
     "poison", "reach", "reload", "sharpEdges", "secondChance", "magnetism",
-    "duplicator", "bodyToxicity", "concentratedPoison", "summoner",
+    "duplicator", "bodyToxicity", "concentratedPoison", "summoner", "damage", "absorbing",
 };
 
 inline constexpr std::array<const char*, kSkillCount> kSkillLabels = {
     "Health", "Loadout", "Petal Rotation", "Antennae", "Luck", "Medic",
     "Petal Health", "Poison", "Reach", "Reload", "Sharp Edges", "Second Chance",
-    "Magnetism", "Duplicator", "Body Toxicity", "Concentrated Poison", "Summoner",
+    "Magnetism", "Duplicator", "Body Toxicity", "Concentrated Poison", "Summoner", "Damage", "Absorption",
 };
 
 inline constexpr std::array<const char*, kSkillCount> kSkillLabelsZh = {
     "血量", "槽位", "转速", "触角", "幸运", "治疗", "花瓣耐久", "剧毒", "攻击范围",
-    "刷新", "锐利边缘", "第二次机会", "磁性", "重瓣", "身体毒性", "浓缩剧毒", "召唤师",
+    "刷新", "锐利边缘", "第二次机会", "磁性", "重瓣", "身体毒性", "浓缩剧毒", "召唤师", "伤害", "吸收",
 };
 
 /// How many buyable tiers each branch has (florrclone costs[].length).
 inline constexpr std::array<int, kSkillCount> kSkillTiers = {
-    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 1, 4, 1, 1, 9,
+    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 1, 4, 1, 1, 9, 10, 10,
 };
 
 /// Per-tier point costs from florrclone.
-inline constexpr std::array<std::array<int, 9>, kSkillCount> kSkillCosts = {{
+inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
     {{2, 5, 8, 11, 14, 17, 20, 21, 24}},       // health
     {{3, 6, 9, 12, 15, 0, 0, 0, 0}},             // loadout
     {{1, 2, 3, 4, 5, 0, 0, 0, 0}},               // rotation
@@ -79,6 +82,8 @@ inline constexpr std::array<std::array<int, 9>, kSkillCount> kSkillCosts = {{
     {{10, 0, 0, 0, 0, 0, 0, 0, 0}},              // bodyToxicity
     {{15, 0, 0, 0, 0, 0, 0, 0, 0}},              // concentratedPoison
     {{2, 5, 8, 11, 14, 17, 20, 23, 26}},         // summoner
+    {{1, 2, 3, 5, 8, 12, 18, 25, 26, 30}},     // reference Damage
+    {{1, 2, 3, 5, 8, 12, 18, 25, 26, 30}},     // reference Absorption
 }};
 
 inline int skillTierCost(SkillId id, int tier) {
@@ -196,6 +201,18 @@ inline std::array<double, 2> secondChanceEffect(int tier) {
     return {kSecondChanceDurationMillis[static_cast<std::size_t>(tier)],
             kSecondChanceCooldownMillis[static_cast<std::size_t>(tier)]};
 }
+
+// Reference florr_clone-web/shared/game/skills.h: independent body, petal
+// damage and absorbed-XP curves. Unowned branches remain neutral.
+inline constexpr std::array<double, 10> kDamageTalentBodyScale = {
+    1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9,
+};
+inline constexpr std::array<double, 10> kDamageTalentPetalScale = {
+    1.0, 1.1, 1.2, 1.35, 1.6, 2.0, 2.6, 3.3, 4.0, 4.8,
+};
+inline constexpr std::array<double, 10> kAbsorbTalentScale = {
+    1.0, 1.26, 1.59, 2.0, 2.52, 3.17, 4.0, 5.04, 6.35, 8.0,
+};
 
 struct SkillSet {
     /// Highest owned tier index per branch, or -1 if none.
@@ -325,10 +342,13 @@ struct SkillSet {
         return 1.0;
     }
     double effectScale(SkillId id) const {
+        if (id == SkillId::Damage) return tableAt(kDamageTalentPetalScale, level(id));
+        if (id == SkillId::Absorbing) return tableAt(kAbsorbTalentScale, level(id));
         if (id == SkillId::Medic) return medicScale();
         return 1.0;
     }
     double statScale(SkillId id) const {
+        if (id == SkillId::Damage) return tableAt(kDamageTalentBodyScale, level(id));
         if (id == SkillId::Health) return healthScale();
         if (id == SkillId::SharpEdges) return bodyDamageScale();
         return 1.0;
@@ -352,9 +372,9 @@ inline SkillId skillFromKey(const std::string& key) {
         if (key == kSkillKeys[static_cast<std::size_t>(i)]) return static_cast<SkillId>(i);
     }
     // Legacy flowrix keys → nearest florrclone branch (import only).
-    if (key == "playerHealth" || key == "damage") return SkillId::Health;
+    if (key == "playerHealth") return SkillId::Health;
     if (key == "healingMultiplier" || key == "healing") return SkillId::Medic;
-    if (key == "absorbing" || key == "petHealth") return SkillId::Count;  // drop
+    if (key == "petHealth") return SkillId::Count;  // drop
     if (key == "prestige") return SkillId::Count;
     return SkillId::Count;
 }

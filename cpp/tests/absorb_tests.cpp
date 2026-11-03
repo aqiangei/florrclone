@@ -76,7 +76,7 @@ TEST(a_request_is_floored_once_so_fractions_add_up) {
     CHECK_EQ(absorbXpTotal(absorbUnits(Rarity::Rare), apex), 8.0);
 }
 
-TEST(the_basic_and_universals_cannot_be_absorbed) {
+TEST(the_basic_hyper_and_universals_cannot_be_absorbed) {
     PetalConfig basic;
     basic.id = "basic";
     PetalConfig rose;
@@ -84,7 +84,8 @@ TEST(the_basic_and_universals_cannot_be_absorbed) {
     CHECK(!absorbable(basic, Rarity::Common));
     CHECK(!absorbable(basic, Rarity::Mythic));
     CHECK(absorbable(rose, Rarity::Common));
-    CHECK(absorbable(rose, Rarity::Apex));
+    CHECK(absorbable(rose, Rarity::Unique));
+    CHECK(!absorbable(rose, Rarity::Apex));
     CHECK(!absorbable(rose, Rarity::Universal));
 }
 

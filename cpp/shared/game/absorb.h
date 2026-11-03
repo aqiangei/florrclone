@@ -50,16 +50,15 @@ inline double absorbUnits(Rarity rarity) {
 inline double absorbXpPerPetal(Rarity rarity) { return absorbUnits(rarity) / kAbsorbUnitsPerXp; }
 
 /// Whether a petal may be absorbed at `rarity`: anything on the ladder except
-/// the basic. Never a universal -- those are forged one per petal and tracked,
-/// and destroying one is not a trade the game offers.
+/// the basic. Contested Hyper petals and universals are tracked holdings;
+/// destroying one is not a trade the game offers.
 inline bool absorbable(const PetalConfig& petal, Rarity rarity) {
-    return rarityIndex(rarity) < kLadderRarityCount && petal.id != kUnabsorbablePetalId;
+    return rarityIndex(rarity) < rarityIndex(Rarity::Apex) && petal.id != kUnabsorbablePetalId;
 }
 
-/// Absorb XP scale. florrclone has no Absorption talent; keep neutral 1x
-/// (Luck affects drop rarity, not absorb XP).
-inline double absorbXpScale(const SkillSet& /*skills*/) {
-    return 1.0;
+/// Reference Absorption talent scales absorbed XP independently of Luck.
+inline double absorbXpScale(const SkillSet& skills) {
+    return skills.effectScale(SkillId::Absorbing);
 }
 
 /// What absorbing a whole request grants: `units` (the sum of

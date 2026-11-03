@@ -74,7 +74,7 @@ constexpr double kBadgeTipSize = 16.0;
 /// florrclone talent-wheel stage is an 880×880 viewBox. Nodes are projected
 /// with Nv(tier, phase, camera); only |phase−camera|<3 are shown.
 constexpr double kWheelSize = 880.0;
-constexpr double kCameraMax = 16.5;
+constexpr double kCameraMax = 24.5;
 constexpr double kPhaseVisible = 3.0;
 constexpr double kFlowerX = 440.0;
 constexpr double kFlowerY = 777.0;
@@ -213,12 +213,18 @@ const std::vector<Branch>& branches() {
         {SkillId::Poison,
          {{4, 15.5}, {6, 15.5}, {5, 15}, {5, 16}, {7, 15}, {7, 15.5}, {7, 16}, {9, 15}, {9, 16}}},
         {SkillId::ConcentratedPoison, {{9, 15.5}}},
+        {SkillId::Damage,
+         {{4, 18}, {5, 17.5}, {6, 18}, {7, 17.5}, {8, 18}, {9, 17.5},
+          {8, 18.5}, {7, 19}, {9, 19}, {9.5, 18.5}}},
+        {SkillId::Absorbing,
+         {{4, 22}, {5, 21.5}, {6, 22}, {7, 21.5}, {8, 22}, {9, 21.5},
+          {8, 22.5}, {7, 23}, {9, 23}, {9.5, 22.5}}},
     };
     return kBranches;
 }
 
-/// Open at florrclone's mid camera (Av/2).
-constexpr double kStartCamera = kCameraMax * 0.5;
+/// Preserve the original opening view when extending the wheel to the right.
+constexpr double kStartCamera = 8.25;
 
 /// florrclone Nv: grid.x = tier, grid.y = phase; camera scrolls phase.
 Vec2 projectWheel(Vec2 grid, double camera) {
@@ -336,6 +342,8 @@ std::string percent(double fraction) {
 template <std::size_t N>
 std::string fromTo(const std::array<double, N>& table, int tier) {
     const double before = tier > 0 ? scaleAt(table, tier - 1) : 1.0;
+    if (language() == Language::Zh)
+        return percent(before) + " → " + percent(scaleAt(table, tier));
     return "from " + percent(before) + " to " + percent(scaleAt(table, tier)) + ".";
 }
 
@@ -347,6 +355,16 @@ std::vector<TipRow> description(SkillId skill, int tier) {
     const bool cn = language() == Language::Zh;
     char buffer[128];
     switch (skill) {
+        case SkillId::Damage:
+            row({{cn ? "身体伤害：" : "Body damage: "},
+                 {fromTo(kDamageTalentBodyScale, tier), kStatDamage}});
+            row({{cn ? "花瓣伤害：" : "Petal damage: "},
+                 {fromTo(kDamageTalentPetalScale, tier), kStatDamage}});
+            break;
+        case SkillId::Absorbing:
+            row({{cn ? "吸收经验：" : "Absorbed XP: "},
+                 {fromTo(kAbsorbTalentScale, tier), kStatHealth}});
+            break;
         case SkillId::Health:
             if (cn) row({{"提升基础"}, {"花朵生命", kStatHealth}, {" " + fromTo(kHealthTalentScale, tier)}});
             else row({{"Increases base "}, {"Flower Health", kStatHealth},
