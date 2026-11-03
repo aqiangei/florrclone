@@ -4099,6 +4099,7 @@
   },
   "magic_stick": {
     "name": "Magic Stick",
+    "invulnerable": true,
     "damage": 0,
     "health": 1,
     "size": 1.3,

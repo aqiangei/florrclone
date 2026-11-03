@@ -6,10 +6,34 @@
 #include "server/systems/petals.h"
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
+#include "server/loot_eligibility.h"
 #include "shared/game/config.h"
 #include "shared/game/shop.h"
 #include "client/camera.h"
 using namespace flix;
+TEST(feedback_splitter_rewards_keep_the_contributing_body_and_refresh_only_after_removal) {
+    World world;
+    const Entity left=world.create(),right=world.create();
+    for(const Entity body:{left,right}) {
+        world.add<PlayerTag>(body);
+        world.add<PlayerAccount>(body,PlayerAccount{"same-account","test",17,false});
+    }
+    Bounty bounty;bounty.credit(left,10,17);bounty.credit(right,20,17);
+    CHECK_EQ(bounty.contributors.size(),std::size_t(1));
+    const auto share=refreshedShare(world,bounty.contributors.front());
+    CHECK(share.player==right);CHECK_NEAR(share.damage,30,1e-12);
+    world.add<Health>(right,Health{0,100});
+    CHECK(liveContributorBody(world,share)==left);
+    world.destroy(right);
+    CHECK(liveContributorBody(world,share)==left);
+}
+TEST(feedback_both_sticks_are_unbreakable_in_shipped_content) {
+    std::string error;CHECK(loadContent(testsupport::dataDir(),error));
+    for(const char* id:{"mysterious_stick","magic_stick"}) {
+        const auto& config=content().petal(content().petalIndex(id));
+        CHECK(!config.breakable);
+    }
+}
 TEST(feedback_golden_leaf_duplicate_reduces_real_shared_reload_multiplicatively) {
     std::string error;CHECK(loadContent(testsupport::dataDir(),error));
     const auto leaf=content().petalIndex("golden_leaf");

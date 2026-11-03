@@ -48,11 +48,24 @@ namespace flix {
 /// back to the stored body when that body is still a live player -- bots and
 /// harnesses have no connection.
 inline Entity liveContributorBody(World& world, const Bounty::Share& share) {
+    // A splitter has two live bodies on the same connection. Keep the body
+    // stored by Bounty::credit rather than arbitrarily replacing it with its
+    // sibling (whose loadout, orb tier and position may be different).
+    const auto living = [&](Entity body) {
+        if (!world.isAlive(body) || !world.has<PlayerTag>(body) || world.has<Dead>(body)) return false;
+        const auto* health = world.tryGet<Health>(body);
+        return !health || health->alive();
+    };
+    if (living(share.player)) {
+        const auto* account = world.tryGet<PlayerAccount>(share.player);
+        if (share.owner == 0 || (account && account->connection == share.owner))
+            return share.player;
+    }
     if (share.owner != 0) {
         Query<PlayerTag, PlayerAccount> flowers{world};
         Entity found = NULL_ENTITY;
         flowers.each([&](Entity flower, PlayerTag&, PlayerAccount& account) {
-            if (found == NULL_ENTITY && account.connection == share.owner) found = flower;
+            if (found == NULL_ENTITY && account.connection == share.owner && living(flower)) found = flower;
         });
         if (found != NULL_ENTITY) return found;
     }
