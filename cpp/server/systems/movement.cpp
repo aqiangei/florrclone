@@ -676,6 +676,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
                               double nowMillis, double dt) {
     const ContentRegistry& registry = content();
     queries_->mobs.each([&](Entity e, MobTag&, Transform& transform, Motion& motion, Body&) {
+        if (anchoredAgainstKnockback(world, registry, e)) motion.velocity = Vec2{0,0};
         // The shove a petal or a blast queued. The TypeScript server wrote
         // this vector on every hit and then never read it back, so a mob
         // walked straight through a ring; that was a bug, not a design.

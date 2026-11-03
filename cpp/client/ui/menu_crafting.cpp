@@ -188,6 +188,7 @@ Vec2 CraftingPanel::size(const Profile& profile) {
 }
 
 void CraftingPanel::reset() {
+    bulkArmed_=false;
     grid_.reset();
     stagedPetal_ = kNoPetal;
     batches_ = 0;
@@ -480,7 +481,8 @@ bool CraftingPanel::render(MenuContext& ctx) {
     static const char* bulkZh[]={"普通","罕见","稀有","史诗","传说","神话","究极","超级","永恒","Hyper"};
     const bool bulkChinese=language()==Language::Zh;
     drawSlotButton(canvas,bulkPrev,"<",std::nullopt,bulkPrev.contains(mouse),false);
-    drawSlotButton(canvas,bulkTarget,std::string(bulkChinese?"合成至：":"Craft to: ")+(bulkChinese?bulkZh[bulkTarget_]:rarityLabel(static_cast<Rarity>(bulkTarget_))),rarityColor(static_cast<Rarity>(bulkTarget_)),false,false);
+    const std::string bulkTargetLabel=std::string(bulkChinese?"合成至：":"Craft to: ")+(bulkChinese?bulkZh[bulkTarget_]:rarityLabel(static_cast<Rarity>(bulkTarget_)));
+    drawSlotButton(canvas,bulkTarget,bulkTargetLabel.c_str(),rarityColor(static_cast<Rarity>(bulkTarget_)),false,false);
     drawSlotButton(canvas,bulkNext,">",std::nullopt,bulkNext.contains(mouse),false);
     drawSlotButton(canvas,bulkRun,bulkArmed_?(bulkChinese?"确认消耗低阶材料":"Confirm consuming lower tiers"):(bulkChinese?"一键合成全部低阶花瓣":"Craft all lower tiers"),bulkArmed_?0xCC6644u:0x5A9FDBu,bulkRun.contains(mouse),false);
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
