@@ -261,6 +261,15 @@ StoredItem presetItem(const std::string& petalType, Rarity rarity) {
 }
 
 /// How closely a preset load came to what was saved.
+void autoSaveActivePreset(PlayerRecord& record) {
+    const int active=record.extra["activeLoadoutPreset"].asInt(-1);
+    if(active<0||active>=kLoadoutPresetCount)return;
+    std::vector<std::optional<StoredItem>> slots(kLoadoutSlots);
+    for(std::size_t i=0;i<slots.size()&&i<record.loadout.size();++i)
+        if(record.loadout[i])slots[i]=presetItem(record.loadout[i]->petalType,record.loadout[i]->rarity);
+    record.loadoutPresets[loadoutPresetName(active)]=std::move(slots);
+}
+
 struct PresetLoad {
     int downgraded = 0;   ///< equipped, but at a lower rarity than was saved
     int missing = 0;      ///< not owned at the saved rarity or any below it
@@ -2801,6 +2810,7 @@ void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
         item.rarity = rarity;
         record.loadout[slot] = item;
     }
+    autoSaveActivePreset(record);
     database_.markDirty();
 
     if (session.playing()) applyAccountToSession(session);
@@ -2852,6 +2862,7 @@ void GameServer::handleSwapLoadout(Session& session, ByteReader& reader) {
     PlayerRecord& record = liveRecord(session);
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
     std::swap(record.loadout[a], record.loadout[b]);
+    autoSaveActivePreset(record);
     database_.markDirty();
 
     if (session.playing()) applyAccountToSession(session);
@@ -2881,6 +2892,7 @@ void GameServer::handleSwapLoadoutRows(Session& session, net::Connection& connec
     for (std::size_t i = 0; i < kLoadoutActiveSlots; ++i) {
         std::swap(record.loadout[i], record.loadout[i + kLoadoutActiveSlots]);
     }
+    autoSaveActivePreset(record);
     database_.markDirty();
 
     if (session.playing()) applyAccountToSession(session);
@@ -2931,6 +2943,7 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
     if (loadoutLockedInMaze(session)) return;
 
     PlayerRecord& record = database_.progress(session.userId);
+    autoSaveActivePreset(record);
     const std::string name = loadoutPresetName(preset);
     // A preset never saved is an empty loadout, and loads as one: every petal
     // goes back into the bag. Copied either way -- equipPreset rewrites the
@@ -2940,6 +2953,8 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
         saved != record.loadoutPresets.end() ? saved->second
                                              : std::vector<std::optional<StoredItem>>(kLoadoutSlots);
     const PresetLoad result = equipPreset(record, slots, record.skills.loadoutSlots());
+    record.extra["activeLoadoutPreset"]=static_cast<int>(preset);
+    autoSaveActivePreset(record);
     database_.markDirty();
 
     if (session.playing()) applyAccountToSession(session);

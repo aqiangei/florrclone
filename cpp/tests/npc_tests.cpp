@@ -3183,3 +3183,18 @@ TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
     }
     removeDataDir(dir);
 }
+
+TEST(loadout_presets_autosave_edits_without_shift_or_manual_save) {
+    const auto dir=titanWorld("preset-autosave");Harness h("preset-autosave",[](const std::string& path){
+        seedAccount(path,"auto");seedStack(path,"auto","petal_basic",Rarity::Common,100);
+        seedStack(path,"auto","petal_rose",Rarity::Common,1);seedWorn(path,"auto",0,"basic",Rarity::Common);
+    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient c;CHECK(joinAs(h,c,"auto"));const auto basic=content().petalIndex("basic"),rose=content().petalIndex("rose");
+    c.loadLoadoutPreset(1);CHECK(awaitProfile(h,c,[](const Profile& p){return p.loadout[0].empty();}));
+    c.setLoadoutSlot(0,rose,Rarity::Common);CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[0].petalIndex==rose;}));
+    c.loadLoadoutPreset(2);CHECK(awaitProfile(h,c,[](const Profile& p){return p.loadout[0].empty();}));
+    c.setLoadoutSlot(0,basic,Rarity::Common);CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[0].petalIndex==basic;}));
+    c.loadLoadoutPreset(1);CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[0].petalIndex==rose;}));
+    CHECK_EQ(c.profile().stackCount(basic,Rarity::Common),101u);CHECK_EQ(c.profile().stackCount(rose,Rarity::Common),0u);
+    removeDataDir(dir);
+}
