@@ -100,6 +100,15 @@ TEST(feedback_shop_each_hour_has_exactly_two_super_offers_at_the_shared_price) {
         CHECK_EQ(shopRotationEnd(rotation)-shopRotationEnd(rotation-1),3600);
     }
 }
+TEST(feedback_scarce_shop_petals_keep_their_authored_price_premium) {
+    CHECK(feedbackContent());
+    const auto mimic=content().petalIndex("mimic");
+    const auto basic=content().petalIndex("basic");
+    const double price=shopPrice(mimic,Rarity::Super);
+    CHECK(price>=40000);CHECK(price>shopPrice(basic,Rarity::Super)*40);
+    CHECK(!shopSellsRarity(Rarity::Unique));
+    CHECK(shopPrice(mimic,Rarity::Ultra)>shopPrice(basic,Rarity::Ultra)*40);
+}
 TEST(feedback_talent_wiki_values_and_duplicator_eligibility) {
     SkillSet s;s.set(SkillId::Loadout,4);s.set(SkillId::Magnetism,0);CHECK_NEAR(s.magnetismBonus(),1000,1e-9);
     s.set(SkillId::Luck,8);CHECK_NEAR(s.luck(),2.7,1e-9);

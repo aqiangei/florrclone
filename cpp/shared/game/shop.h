@@ -22,12 +22,15 @@
 
 namespace flix {
 
-/// Tier prices track the server star bounty; variety premiums are capped.
+/// Tier prices track the server star bounty; scarce petals retain a premium.
 /// Rare missing pieces remain affordable without selling the top reward tiers.
 inline double shopPrice(std::uint16_t petalIndex, Rarity rarity) {
     static constexpr double tierPrices[]={3,5,10,20,40,80,180,600,1800,5400,16200,48600};
     const double base=std::max(1.0,content().petal(petalIndex).price);
-    const double variety=clamp(1.0+std::log(base/20.0)*0.10,0.75,1.50);
+    const double affordable=clamp(1.0+std::log(base/20.0)*0.10,0.75,1.50);
+    // The previous 1.5 ceiling priced a 99999-base Mimic almost like a basic
+    // item. Respect authored acquisition costs without lowering cheap petals.
+    const double variety=std::max(affordable,std::sqrt(std::max(1.0,base/20.0)));
     return std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
 }
 
