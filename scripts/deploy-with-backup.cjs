@@ -24,6 +24,9 @@ async function main(){
     ssh('mkdir /var/lib/florrclone/deploy.lock');locked=true;
     old=ssh('readlink -f /opt/florrclone/current').trim();
     assert.match(old,/^\/opt\/florrclone\/releases\/[a-zA-Z0-9_-]+$/);
+    if(process.env.FLORR_EXPECTED_RELEASE)assert.equal(old,process.env.FLORR_EXPECTED_RELEASE,'Online release changed; coordinate before deploying');
+    const releaseProbe=release+'/release-hello.cjs';
+    const probe=ssh('if test -s '+q(releaseProbe)+'; then echo '+q(releaseProbe)+'; else echo /var/lib/florrclone/release-hello.cjs; fi').trim();
     ssh('test -s '+q(release+'/server.wasm')+' && test -s '+q(release+'/bundle.wasm')+' && test -s '+q(release+'/deploy-runtime.cjs'));
     ssh('curl -fsS http://127.0.0.1:8788/api/health');
     ssh('install -d -m 700 '+q(remote));
@@ -77,9 +80,9 @@ async function main(){
     assert(healthy,'New service failed health check');
     for(const file of ['','bundle.js','bundle.wasm','bundle.js.bin','bundle.wasm.bin'])
       ssh('curl -fsS -o /dev/null '+q('http://127.0.0.1:8788/'+file));
-    ssh('PORT=8788 /opt/florrclone/runtime/bin/node /var/lib/florrclone/release-hello.cjs');
+    ssh('PORT=8788 /opt/florrclone/runtime/bin/node '+q(probe));
     ssh('rm '+q(marker));
-    ssh('PORT=8088 /opt/florrclone/runtime/bin/node /var/lib/florrclone/release-hello.cjs');
+    ssh('PORT=8088 /opt/florrclone/runtime/bin/node '+q(probe));
     fs.writeFileSync(path.join(local,'deployment-result.json'),JSON.stringify({...metadata,...report,status:'deployed'},null,2));
     console.log(JSON.stringify({status:'deployed',backup:local,...report}));
   }catch(error){
