@@ -41,6 +41,13 @@ inline int expireHammerLeases(PlayerRecord& record, double now) {
         auto free=std::find_if(leases.begin(),leases.end(),[](const Lease& lease){return lease.slot<0;});
         if(free!=leases.end()){free->slot=slot;assigned[slot]=true;}
     }
+    // A discarded copy must not leave a ghost lease that could later remove
+    // a newly purchased hammer. Equipped copies have already claimed leases.
+    int spare=static_cast<int>(std::count_if(leases.begin(),leases.end(),[](const Lease& l){return l.slot<0;}));
+    int discard=std::max(0,spare-record.itemCount(kTitanOutputRarity,"petal_timed_mjolnir"));
+    leases.erase(std::remove_if(leases.begin(),leases.end(),[&](const Lease& l){
+        if(l.slot<0 && discard>0){--discard;return true;}return false;
+    }),leases.end());
     Json next=Json::array();int expired=0;
     for(const auto& lease:leases) {
         if(lease.end<=now) {
