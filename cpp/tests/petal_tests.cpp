@@ -4943,7 +4943,10 @@ TEST(the_ring_flies_back_to_the_flower_when_its_moon_breaks) {
         CHECK(now <= gap + 1e-9);
         gap = now;
     }
-    rig.settleRing();
+    // Stay inside the reload window: a new Moon must not be mistaken for
+    // the old ring failing to return. The current reload talent is faster.
+    rig.settleRing(120);
+    CHECK(rig.slot(0).broken);
     CHECK_NEAR(rig.ring().radius, kRestOrbit, 1e-9);
     CHECK_NEAR(rig.radiusOf(basic), rig.ring().radius, 1e-3);
 }
