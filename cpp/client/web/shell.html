@@ -147,7 +147,7 @@
   const meta = document.getElementById('loading-meta');
   const retry = document.getElementById('loading-retry');
   const serverNotice = document.getElementById('serverNotice');
-  let noticeDismissed = false;
+  let noticeDismissed = true;
   document.getElementById('closeServerNotice').onclick=()=>{noticeDismissed=true;serverNotice.hidden=true;};
   const began = performance.now();
   let failed = false, bytes = 0, total = 0, lastProgress = performance.now();
