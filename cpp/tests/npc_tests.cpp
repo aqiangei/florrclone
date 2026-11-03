@@ -3246,12 +3246,12 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     CHECK(awaitProfile(h,beta,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
     removeDataDir(dir);
 }
-TEST(hyper_hammer_network_forges_mjolnir_from_eternal_fragments) {
+TEST(hyper_hammer_network_forges_mjolnir_from_five_eternal_hammers) {
     const auto dir=titanWorld("hyper-hammer-network");
-    Harness h("hyper-hammer-network",[](const std::string& path){seedAccount(path,"smith");seedStack(path,"smith","petal_fragment",Rarity::Unique,5);},dir,0);
+    Harness h("hyper-hammer-network",[](const std::string& path){seedAccount(path,"smith");seedStack(path,"smith","petal_timed_mjolnir",Rarity::Unique,5);},dir,0);
     CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient client;CHECK(joinAs(h,client,"smith"));std::vector<NetClient*> clients{&client};h.step(3,clients);standAtTitan(h,clients,"smith");
-    client.requestTitanForge(content().petalIndex("fragment"),true);TitanForgeOutcome out;CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
+    client.requestTitanForge(content().petalIndex("timed_mjolnir"),true);TitanForgeOutcome out;CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
     CHECK_EQ(out.petalIndex,content().petalIndex("mjolnir"));
-    CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("fragment"),Rarity::Unique)==0;}));removeDataDir(dir);
+    CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique)==0;}));removeDataDir(dir);
 }

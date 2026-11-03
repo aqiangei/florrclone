@@ -3511,7 +3511,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     }
 
     const auto& petal = content().petal(petalIndex);
-    if (!titanForgeEligible(petal.id)) {
+    if (!(hyper ? hyperForgeEligible(petal.id) : titanForgeEligible(petal.id))) {
         reply(false, "血祭不能用于泰坦锻造。");
         return;
     }

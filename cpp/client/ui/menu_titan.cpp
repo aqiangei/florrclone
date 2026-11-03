@@ -144,7 +144,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     // the ring under its own animation.
     if (phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
         (forgeInputOwned(profile, stagedPetal_, hyper_) < static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_, hyper_)) ||
-         !titanForgeEligible(content().petal(stagedPetal_).id))) {
+         !(hyper_?hyperForgeEligible(content().petal(stagedPetal_).id):titanForgeEligible(content().petal(stagedPetal_).id)))) {
         stagedPetal_ = kNoPetal;
     }
 
@@ -196,7 +196,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
-            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"5个同种永恒锻造1个超凡，同种全服唯一。","被抢后返还4个永恒；首保15小时，每次减1小时。","最低保护1小时；到期后其他玩家可再次锻造争夺。"}[i]:kLines[i]);
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需5把永恒锤；其他需5个同种永恒。","被抢返4个原材料；锤子同样首保15小时。","每次争夺减1小时，最低1小时；碎片不能换超凡锤。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;
@@ -230,8 +230,7 @@ bool TitanPanel::render(MenuContext& ctx) {
                 cell.count = owned > staged ? owned - staged : 0;
             }
             cell.greyed = cell.count < static_cast<std::uint32_t>(forgeCost(profile, petalIndex, hyper_)) ||
-                          !titanForgeEligible(content().petal(petalIndex).id) ||
-                          (hyper_&&(content().petal(petalIndex).id=="mjolnir"||content().petal(petalIndex).id=="timed_mjolnir"));
+                          !(hyper_?hyperForgeEligible(content().petal(petalIndex).id):titanForgeEligible(content().petal(petalIndex).id));
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             return cell;
@@ -287,11 +286,16 @@ bool TitanPanel::render(MenuContext& ctx) {
         askedPetal_ = hovered->petalIndex;
         askedAt_ = -1.0;
         ctx.net.forgetTitanHolder(askedPetal_);
-        // A grey stack goes nowhere, quietly: its grey is the whole answer.
+        // Explain a disabled stack; colour alone cannot explain a recipe.
         // Any other one REPLACES the ring -- one forge takes five of one petal.
         if (!hovered->greyed) {
             stagedPetal_ = hovered->petalIndex;
             refusal_.clear();
+        } else {
+            const auto& id=content().petal(hovered->petalIndex).id;
+            refusal_=hyper_&&id=="fragment"?"超凡锤子需要5把永恒锤子，不能用碎片。":
+                "材料不足或不可锻造；超凡需5个未装备的同种永恒。";
+            refusalUntil_=now+kRefusalSeconds;
         }
     }
     return true;

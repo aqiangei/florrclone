@@ -1,5 +1,6 @@
 #pragma once
 #include "server/db.h"
+#include "server/timed_hammers.h"
 #include "shared/game/npc.h"
 #include <map>
 
@@ -18,6 +19,9 @@ struct HyperForgeResult {
 inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
                                    const std::string& input,std::int64_t now) {
     HyperForgeResult out;
+    if(!hyperForgeEligible(input)){
+        out.reason="超凡锤子需要5把未装备的永恒锤子，不能使用碎片。";return out;
+    }
     const std::string petal=hyperForgeOutput(input);
     const auto state=hyperForgeState(db,petal);
     if(state.owner==userId){out.reason="你已经持有该超凡花瓣。";return out;}
@@ -25,10 +29,10 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
         std::to_string((state.protectedUntil-now+59999)/60000)+"分钟。";return out;}
     const auto* original=db.findProgress(userId);const std::string key="petal_"+petal;
     const std::string material="petal_"+input;
-    if(!original || original->itemCount(Rarity::Unique,material)<kHyperForgeCost){
+    PlayerRecord available=original?*original:PlayerRecord{};
+    if(input=="timed_mjolnir")expireHammerLeases(available,static_cast<double>(now));
+    if(!original || available.itemCount(Rarity::Unique,material)<kHyperForgeCost){
         out.reason="需要5个未装备的同种永恒花瓣。";return out;}
-    if(input=="timed_mjolnir"||input=="mjolnir"||!titanForgeEligible(input)){
-        out.reason="该花瓣不参与超凡争夺锻造。";return out;}
     std::map<std::string,PlayerRecord> before;before[userId]=*original;
     for(const auto& id:db.playerIds()){
         const auto* record=db.findProgress(id);if(!record)continue;
@@ -40,6 +44,9 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
         before[id]=*record;
     }
     const Json oldTable=db.storedTable("hyperForges");
+    const auto previousInput=oldTable[petal]["input"].asString(
+        petal=="mjolnir"?"fragment":petal);
+    const std::string refundMaterial="petal_"+previousInput;
     for(const auto& [id,record]:before){
         if(id==userId)continue;
         auto& changed=db.progress(id);int lost=changed.itemCount(Rarity::Apex,key);
@@ -47,12 +54,18 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
         for(auto& slot:changed.loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal){slot.reset();++lost;}
         for(auto& [name,slots]:changed.loadoutPresets)
             for(auto& slot:slots)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal)slot.reset();
-        changed.addItem(Rarity::Unique,material,static_cast<int>(std::min<std::int64_t>(
-            static_cast<std::int64_t>(lost)*kHyperForgeRefund,kMaxStackCount)));
+        const int refund=static_cast<int>(std::min<std::int64_t>(
+            static_cast<std::int64_t>(lost)*kHyperForgeRefund,kMaxStackCount));
+        if(previousInput=="timed_mjolnir"){
+            expireHammerLeases(changed,static_cast<double>(now));
+            for(int n=0;n<refund;++n)addHammerLease(changed,static_cast<double>(now));
+        }else changed.addItem(Rarity::Unique,refundMaterial,refund);
         out.affected.push_back(id);
     }
     auto& winner=db.progress(userId);
+    if(input=="timed_mjolnir")winner=available;
     winner.addItem(Rarity::Unique,material,-kHyperForgeCost);winner.addItem(Rarity::Apex,key,1);
+    if(input=="timed_mjolnir")expireHammerLeases(winner,static_cast<double>(now));
     Json entry=Json::object();entry["owner"]=userId;
     const int claims=std::min(1000000,state.claims+1);
     entry["claims"]=claims;entry["protectedUntil"]=Json(static_cast<double>(now+hyperProtectionMillis(claims)));

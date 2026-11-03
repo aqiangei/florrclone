@@ -134,7 +134,10 @@ inline constexpr int titanForgeCost(unsigned completed, const std::string& input
 inline constexpr int kHyperForgeCost=5;
 inline constexpr int kHyperForgeRefund=4;
 inline std::string hyperForgeOutput(const std::string& input) {
-    return input=="fragment"?"mjolnir":input;
+    return input=="timed_mjolnir"?"mjolnir":input;
+}
+inline bool hyperForgeEligible(const std::string& input) {
+    return input!="fragment" && input!="blood_sacrifice" && input!="sacrifice";
 }
 inline constexpr std::int64_t hyperProtectionMillis(int claims) {
     return static_cast<std::int64_t>(claims<15?16-std::max(1,claims):1)*3600000;
