@@ -1648,6 +1648,7 @@ FLIX_COMPONENT(flix::NetId);
 FLIX_COMPONENT(flix::Replicated);
 FLIX_COMPONENT(flix::TotemRegeneration);
 FLIX_COMPONENT(flix::WebFlight);
+FLIX_COMPONENT(flix::PoisonImmune);
 
 namespace flix {
 
