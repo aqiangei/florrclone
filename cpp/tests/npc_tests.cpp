@@ -3051,7 +3051,7 @@ TEST(permanent_titan_forge_broadcasts_eternal_theme_to_other_accounts) {
 }
 
 TEST(timed_hammer_leases_expire_equipped_and_bag_copies_independently) {
-    PlayerRecord record;addHammerLease(record,1000);addHammerLease(record,1001000);
+    PlayerRecord record;record.loadout.resize(kLoadoutSlots);addHammerLease(record,1000);addHammerLease(record,1001000);
     CHECK_EQ(record.itemCount(kTitanOutputRarity,"petal_timed_mjolnir"),2);
     StoredItem item;item.petalType="timed_mjolnir";item.rarity=kTitanOutputRarity;
     record.loadout[0]=item;record.addItem(kTitanOutputRarity,"petal_timed_mjolnir",-1);
