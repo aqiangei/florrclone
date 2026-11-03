@@ -3289,3 +3289,32 @@ TEST(hyper_operator_exchange_waits_for_cutover_and_broadcasts_once_without_doubl
     CHECK_EQ(messages,1);
     std::remove(ready.c_str());removeDataDir(dir);ui::setLanguage(oldLanguage);
 }
+
+TEST(hyper_operator_temporary_grant_keeps_five_materials_and_the_other_protected_owner){
+    const auto oldLanguage=ui::language();ui::setLanguage(ui::Language::En);
+    const auto dir=titanWorld("temporary-hammer");std::string id,owner;
+    Harness h("temporary-hammer",[&](const std::string& path){
+        seedAccount(path,"smith");seedAccount(path,"owner");
+        seedStack(path,"smith","petal_timed_mjolnir",Rarity::Unique,5);
+        seedStack(path,"owner","petal_timed_mjolnir",Rarity::Unique,5);
+        Database db;std::string error;CHECK(db.load(path,error));id=db.findUser("smith")->id;owner=db.findUser("owner")->id;
+        CHECK(forgeHyper(db,owner,"timed_mjolnir",db.nowMillis()).ok);
+        Json job=Json::object();job["id"]="temporary-once";job["userId"]=id;job["mode"]="temporary15h";job["status"]="pending";
+        db.rawTable("operatorHyperForgeRequest")=job;db.markDirty();CHECK(db.save());
+    },dir,0);
+    CHECK(h.ready);if(!h.ready)return;
+    NetClient client;CHECK(joinAs(h,client,"smith"));std::vector<NetClient*> clients{&client};
+    CHECK(h.stepUntil(clients,[&]{return sawText(client,"has been forged by");},60));
+    h.step(5,clients);Json saved;std::string error;CHECK(Json::parseFile(h.dbPath,saved,error));
+    CHECK_EQ(saved["operatorHyperForgeRequest"]["status"].asString(),std::string("done"));
+    CHECK(saved["operatorHyperForgeRequest"]["announced"].asBool());
+    CHECK_EQ(saved["players"][id]["inventory"]["unique"]["petal_timed_mjolnir"].asInt(),5);
+    CHECK_EQ(saved["players"][id]["inventory"]["apex"]["petal_mjolnir"].asInt(),1);
+    CHECK(saved["players"][id]["temporaryHyperHammer"]["active"].asBool());
+    const auto expires=saved["players"][id]["temporaryHyperHammer"]["expiresAt"].asInt64();
+    CHECK(expires-saved["operatorHyperForgeRequest"]["completedAt"].asInt64()<=15LL*3600000);
+    CHECK(expires-saved["operatorHyperForgeRequest"]["completedAt"].asInt64()>15LL*3600000-1000);
+    CHECK_EQ(saved["hyperForges"]["mjolnir"]["owner"].asString(),owner);
+    CHECK_EQ(saved["players"][owner]["inventory"]["apex"]["petal_mjolnir"].asInt(),1);
+    ui::setLanguage(oldLanguage);removeDataDir(dir);
+}

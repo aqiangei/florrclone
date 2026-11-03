@@ -14,6 +14,23 @@ inline HyperForgeState hyperForgeState(const Database& db,const std::string& pet
 struct HyperForgeResult {
     bool ok=false;std::string reason;std::vector<std::string> affected;
 };
+inline HyperForgeResult grantTemporaryHyperHammer(Database& db,const std::string& userId,
+                                                 std::int64_t now,const std::string& request) {
+    HyperForgeResult out;const auto* original=db.findProgress(userId);
+    if(!original){out.reason="账号不存在。";return out;}
+    if(original->extra["temporaryHyperHammer"]["request"].asString()==request){out.ok=true;return out;}
+    if(original->itemCount(Rarity::Apex,"petal_mjolnir")>0){out.reason="账号已有超凡锤子，未重复补发。";return out;}
+    for(const auto& slot:original->loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType=="mjolnir"){
+        out.reason="账号已装备超凡锤子，未重复补发。";return out;
+    }
+    const auto before=*original;auto& record=db.progress(userId);
+    record.addItem(Rarity::Apex,"petal_mjolnir",1);
+    Json lease=Json::object();lease["request"]=request;lease["active"]=true;lease["slot"]=-1;
+    lease["expiresAt"]=Json(static_cast<double>(now+15LL*3600000));
+    record.extra["temporaryHyperHammer"]=lease;db.markDirty();
+    if(!db.save()){db.progress(userId)=before;db.markDirty();out.reason="存档失败，未补发。";return out;}
+    out.ok=true;out.affected.push_back(userId);return out;
+}
 // Caller first persists all live records. Inventory is the BAG internally;
 // worn slots are accounted separately, while presets are references only.
 inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
@@ -37,6 +54,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     std::map<std::string,PlayerRecord> before;before[userId]=*original;
     for(const auto& id:db.playerIds()){
         const auto* record=db.findProgress(id);if(!record)continue;
+        if(petal=="mjolnir"&&id!=userId&&id!=state.owner&&record->extra["temporaryHyperHammer"]["active"].asBool(false))continue;
         int count=record->itemCount(Rarity::Apex,key);
         for(const auto& slot:record->loadout)
             if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal)++count;

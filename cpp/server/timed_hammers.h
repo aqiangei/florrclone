@@ -5,6 +5,24 @@
 #include "shared/game/npc.h"
 
 namespace flix {
+// Operator compensation is independent of the protected, unique forge owner.
+inline bool expireTemporaryHyperHammer(PlayerRecord& record,double now) {
+    auto& lease=record.extra["temporaryHyperHammer"];
+    if(!lease["active"].asBool(false))return false;
+    const auto isHammer=[](const std::optional<StoredItem>& s){return s&&s->rarity==Rarity::Apex&&s->petalType=="mjolnir";};
+    int slot=lease["slot"].asInt(-1);
+    if(slot<0||slot>=static_cast<int>(record.loadout.size())||!isHammer(record.loadout[slot])) {
+        slot=-1;
+        if(record.itemCount(Rarity::Apex,"petal_mjolnir")==0)
+            for(int i=0;i<static_cast<int>(record.loadout.size());++i)if(isHammer(record.loadout[i])){slot=i;break;}
+    }
+    lease["slot"]=slot;
+    if(now<lease["expiresAt"].asDouble(0))return false;
+    if(slot>=0)record.loadout[slot].reset();
+    else if(record.itemCount(Rarity::Apex,"petal_mjolnir")>0)record.addItem(Rarity::Apex,"petal_mjolnir",-1);
+    for(auto& [name,slots]:record.loadoutPresets)for(auto& s:slots)if(isHammer(s))s.reset();
+    lease["active"]=false;return true;
+}
 // Each lease represents one physical hammer; a slot association survives
 // saves, so an older equipped hammer expires without deleting a newer copy.
 inline int expireHammerLeases(PlayerRecord& record, double now) {

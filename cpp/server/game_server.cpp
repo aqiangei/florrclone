@@ -927,7 +927,9 @@ void GameServer::tick(double nowMillis) {
                 if(completed)result.ok=true;
                 else if(database_.findUserById(userId)) {
                     persistAll();
-                    result=forgeHyper(database_,userId,"timed_mjolnir",database_.nowMillis(),requestId);
+                    if(job["mode"].asString()=="temporary15h")
+                        result=grantTemporaryHyperHammer(database_,userId,database_.nowMillis(),requestId);
+                    else result=forgeHyper(database_,userId,"timed_mjolnir",database_.nowMillis(),requestId);
                 }else result.reason="指定账号不存在，未兑换。";
                 auto& receipt=database_.rawTable("operatorHyperForgeRequest");
                 receipt["status"]=result.ok?"done":"failed";
@@ -946,7 +948,9 @@ void GameServer::tick(double nowMillis) {
                 const Account* account=database_.findUserById(userId);
                 if(listeners&&account){
                     Session credit;credit.userId=userId;credit.username=account->username;
-                    announceRareCraft(credit,content().petalIndex("mjolnir"),Rarity::Apex,1,kHyperForgeCost,true);
+                    const bool temporary=receipt["mode"].asString()=="temporary15h";
+                    announceRareCraft(credit,content().petalIndex("mjolnir"),Rarity::Apex,1,temporary?0:kHyperForgeCost,true);
+                    if(temporary)broadcastChat(net::ChatChannel::System,"",account->username+" 获得补发的超凡锤子，限时15小时；未消耗永恒锤子。 ");
                     database_.rawTable("operatorHyperForgeRequest")["announced"]=true;
                     database_.markDirty();database_.save();
                 }
@@ -6806,7 +6810,9 @@ void GameServer::servicePyramidMaps(double now) {
 
 
 bool GameServer::expireTimedHammer(PlayerRecord& record) {
-    const bool expired=expireHammerLeases(record,static_cast<double>(database_.nowMillis()))>0;
+    const double now=static_cast<double>(database_.nowMillis());
+    const bool temporary=expireTemporaryHyperHammer(record,now);
+    const bool expired=expireHammerLeases(record,now)>0||temporary;
     database_.markDirty();return expired;
 }
 void GameServer::serviceTimedHammers(double now) {
@@ -6815,7 +6821,8 @@ void GameServer::serviceTimedHammers(double now) {
         if(!session.authenticated())continue;
         auto& record=database_.progress(session.userId);
         if(record.extra["titanHammerLeases"].size()==0 &&
-           !(record.extra["titanHammerExpiresAt"].asDouble(0)>0))continue;
+           !(record.extra["titanHammerExpiresAt"].asDouble(0)>0)&&
+           !record.extra["temporaryHyperHammer"]["active"].asBool(false))continue;
         liveRecord(session);
         if(!expireTimedHammer(record))continue;
         if(session.playing())applyAccountToSession(session);

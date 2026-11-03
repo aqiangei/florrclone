@@ -16,6 +16,26 @@ struct Fixture {
     void give(const std::string& id,const std::string& petal,int n=5){db.progress(id).addItem(Rarity::Unique,"petal_"+petal,n);}
 };
 }
+TEST(hyper_temporary_hammer_preserves_protected_owner_and_materials_expires_and_cannot_regrant){
+    Fixture f;f.give(f.a,"timed_mjolnir");f.give(f.b,"timed_mjolnir");
+    CHECK(forgeHyper(f.db,f.a,"timed_mjolnir",1000).ok);
+    const auto protectedState=f.db.storedTable("hyperForges").dump();
+    CHECK(grantTemporaryHyperHammer(f.db,f.b,2000,"compensation").ok);
+    CHECK_EQ(f.db.storedTable("hyperForges").dump(),protectedState);
+    CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Unique,"petal_timed_mjolnir"),5);
+    CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Apex,"petal_mjolnir"),1);
+    CHECK(grantTemporaryHyperHammer(f.db,f.b,3000,"compensation").ok);
+    CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Apex,"petal_mjolnir"),1);
+    auto& record=f.db.progress(f.b);record.addItem(Rarity::Apex,"petal_mjolnir",-1);
+    StoredItem hammer;hammer.petalType="mjolnir";hammer.rarity=Rarity::Apex;
+    record.loadout.resize(20);record.loadout[4]=hammer;record.loadoutPresets["K1"]={hammer};
+    CHECK(!expireTemporaryHyperHammer(record,2000+15LL*3600000-1));
+    CHECK(expireTemporaryHyperHammer(record,2000+15LL*3600000));
+    CHECK(!record.loadout[4]);CHECK(!record.loadoutPresets["K1"][0]);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),1);
+    CHECK(grantTemporaryHyperHammer(f.db,f.b,2000+16LL*3600000,"compensation").ok);
+    CHECK_EQ(record.itemCount(Rarity::Apex,"petal_mjolnir"),0);
+}
 TEST(hyper_forge_price_and_protection_curve_match_the_requested_progression){
     CHECK_EQ(titanForgeCost(0,"rose"),10);CHECK_EQ(titanForgeCost(1,"rose"),15);CHECK_EQ(titanForgeCost(2000,"rose"),15);
     CHECK_EQ(titanForgeCost(0,"fragment"),5);CHECK_EQ(titanForgeCost(2000,"fragment"),5);
