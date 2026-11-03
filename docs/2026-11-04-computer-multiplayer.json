@@ -1,0 +1,179 @@
+{
+  "spawnChoices": [
+    "garden:spawn",
+    "desert:spawn",
+    "computer:spawn",
+    "ocean:spawn",
+    "jungle:spawn",
+    "hel:spawn",
+    "ant_hell:spawn",
+    "sewers:spawn",
+    "pyramid:spawn",
+    "cyberspace:spawn"
+  ],
+  "clients": 20,
+  "durationSeconds": 30,
+  "movingWithAttackInput": true,
+  "results": [
+    {
+      "client": 0,
+      "snapshots": 600,
+      "bytes": 127343,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 1,
+      "snapshots": 600,
+      "bytes": 126890,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 2,
+      "snapshots": 600,
+      "bytes": 82853,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 3,
+      "snapshots": 600,
+      "bytes": 54909,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 4,
+      "snapshots": 600,
+      "bytes": 54317,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 5,
+      "snapshots": 600,
+      "bytes": 207704,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 6,
+      "snapshots": 600,
+      "bytes": 46942,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 7,
+      "snapshots": 600,
+      "bytes": 37246,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 8,
+      "snapshots": 600,
+      "bytes": 44577,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 9,
+      "snapshots": 600,
+      "bytes": 63165,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 10,
+      "snapshots": 600,
+      "bytes": 121653,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 11,
+      "snapshots": 600,
+      "bytes": 99164,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 12,
+      "snapshots": 600,
+      "bytes": 84626,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 13,
+      "snapshots": 600,
+      "bytes": 63265,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 14,
+      "snapshots": 600,
+      "bytes": 61524,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 15,
+      "snapshots": 600,
+      "bytes": 180102,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 16,
+      "snapshots": 600,
+      "bytes": 54660,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 17,
+      "snapshots": 600,
+      "bytes": 37258,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 18,
+      "snapshots": 600,
+      "bytes": 43471,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    },
+    {
+      "client": 19,
+      "snapshots": 600,
+      "bytes": 87140,
+      "p95ServerGapMs": 66.68999599999734,
+      "maxServerGapMs": 87.60146800000075,
+      "closed": false
+    }
+  ]
+}
