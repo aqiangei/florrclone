@@ -58,7 +58,7 @@ async function main(){
     // Preserve the original migration snapshot's fixed TP debt without
     // changing passwords, progress or inventory earned since the cutover.
     const baseline=path.join(root,'migrate/latest-final-cpp.json');
-    const next=path.join(local,'inventory.reconciled.json');
+    let next=path.join(local,'inventory.reconciled.json');
     const report=JSON.parse(run(process.execPath,[path.join(__dirname,'reconcile-migrated-tp.js'),baseline,path.join(local,'inventory.json'),next]));
     const compare=JSON.parse(fs.readFileSync(next));
     for(const [id,p]of Object.entries(compare.players||{}))for(const k of ['talentPointBonus','talentPointReconciledAt']){
@@ -66,6 +66,12 @@ async function main(){
     }
     assert.deepEqual(compare,before);
     fs.writeFileSync(path.join(local,'tp-reconciliation.json'),JSON.stringify(report,null,2));
+    if(process.env.FLORR_REFUND_ETERNAL_PRICE==='1'){
+      const refunded=path.join(local,'inventory.refunded.json');
+      report.eternalRefund=JSON.parse(run(process.execPath,[path.join(__dirname,'refund-eternal-forging.cjs'),next,refunded]));
+      fs.writeFileSync(path.join(local,'eternal-refund.json'),JSON.stringify(report.eternalRefund,null,2));
+      next=refunded;
+    }
     scp(next,host+':'+remote+'/inventory.next.json');
     // All validation and the local backup gate have completed at this point.
     ssh('install -o florrclone -g florrclone -m 600 '+q(remote+'/inventory.next.json')+' /var/lib/florrclone/cpp-state/inventory.next.json');
