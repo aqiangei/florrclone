@@ -82,7 +82,7 @@ inline bool shopSellsPetal(std::uint16_t petalIndex) {
 /// How long one set of offers stands. The panel counts down to the next
 /// rotation against this and the server prices a purchase by the rotation the
 /// clock is in, so the number is shared rather than spelled out twice.
-inline constexpr std::int64_t kShopRotationSeconds = 6 * 3600;
+inline constexpr std::int64_t kShopRotationSeconds = 3600;
 
 /// Two rows of five. The panel's grid is built to this.
 inline constexpr int kShopOfferCount = 10;
@@ -154,14 +154,14 @@ inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
         // player can read at a glance instead of ten prices in no order.
         const bool dear = slot >= kShopOfferColumns && half > 0;
         const int lowest = dear ? half : 0;
-        const int highest = dear ? static_cast<int>(tiers.size()) - 1 : std::max(0, half - 1);
+        const int highest = dear ? std::min(static_cast<int>(tiers.size()) - 1,
+                                            rarityIndex(Rarity::Ultra)) : std::max(0, half - 1);
 
         ShopOffer offer;
         offer.petalIndex = pool[taken];
         offer.rarity = tiers[static_cast<std::size_t>(rng.rangeInt(lowest, highest))];
-        // Reserve the last high-tier card for Super so a six-hour rotation
-        // cannot leave the whole server without a Super offer.
-        if (slot == count - 1 && shopSellsRarity(Rarity::Super)) offer.rarity = Rarity::Super;
+        // Two fixed Super positions; the other eight cards roll below Super.
+        if (slot >= count - 2 && shopSellsRarity(Rarity::Super)) offer.rarity = Rarity::Super;
         // A petal that only comes from some tier up is offered there at the
         // least. Lifted after the draw, so the rotation's stream -- and every
         // other card in it -- is what it was.
