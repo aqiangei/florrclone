@@ -368,9 +368,10 @@ inline constexpr Rarity kAnnouncedRarity = Rarity::Super;
 /// and a player's pets are not wild at all.
 inline constexpr double kUniqueSpawnCooldownMillis = 5.0 * 60.0 * 1000.0;
 inline constexpr int kEternalPopulationTarget = 3;
+inline constexpr int kHyperPopulationTarget = 1;
 // AshFlor BJ: no apex time gate — one per biome may stand; when it dies the
 // next upgrade may place another immediately (cooldown was 2h upstream).
-inline constexpr double kApexSpawnCooldownMillis = 0.0;
+inline constexpr double kApexSpawnCooldownMillis = 30.0 * 60.0 * 1000.0;
 inline constexpr double kBossUpgradeChance = 0.10;
 
 /// The sacrifice (petalIsSacrifice): what a flower that dies wearing one
@@ -1048,6 +1049,8 @@ private:
     std::vector<SuperMapState> superPopulations_;
     struct EternalMapState { Realm realm; int previousLiving = 0; };
     std::vector<EternalMapState> eternalPopulations_;
+    std::vector<EternalMapState> hyperPopulations_;
+    void stockHypers(World&,const Terrain&,const ContentRegistry&,const std::vector<Viewer>&,Rng&,double);
     void stockEternals(World&, const Terrain&, const ContentRegistry&,
                        const std::vector<Viewer>&, Rng&, double);
 

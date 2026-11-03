@@ -56,12 +56,13 @@ constexpr double kForgeTimeoutSeconds = 8.0;
 constexpr double kRefusalSeconds = 3.0;
 
 /// An apex stack as the staging counts it, held below what an int holds.
-int forgeCost(const Profile& profile, std::uint16_t index) {
+int forgeCost(const Profile& profile, std::uint16_t index, bool hyper=false) {
+    if(hyper)return kHyperForgeCost;
     return titanForgeCost(profile.titanForgeCount(index),
         index < content().petalCount() ? content().petal(index).id : std::string());
 }
-std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex) {
-    return std::min<std::uint32_t>(profile.stackCount(petalIndex, kTitanInputRarity),
+std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex, bool hyper=false) {
+    return std::min<std::uint32_t>(profile.stackCount(petalIndex, hyper?Rarity::Unique:kTitanInputRarity),
                                    static_cast<std::uint32_t>(kMaxStackCount));
 }
 
@@ -69,7 +70,7 @@ std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex) 
 
 Vec2 TitanPanel::size(const Profile& profile) {
     const std::size_t rows =
-        std::max<std::size_t>(1, SlotTierGrid::rows(profile, kTitanInputRarity, kColumns));
+        std::max<std::size_t>(1, std::max(SlotTierGrid::rows(profile, kTitanInputRarity, kColumns),SlotTierGrid::rows(profile,Rarity::Unique,kColumns)));
     return {slotCardColumnsWidth(kColumns),
             std::min(kMaxHeight,
                      kGridTop + kGridPadding * 2.0 + static_cast<double>(rows) * kGridPitch)};
@@ -91,6 +92,8 @@ bool TitanPanel::render(MenuContext& ctx) {
     const Profile& profile = ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
     const double now = ctx.timeSeconds;
+    const Rarity inputTier=hyper_?Rarity::Unique:kTitanInputRarity;
+    const Rarity outputTier=hyper_?Rarity::Apex:kTitanOutputRarity;
     const double dtMs = std::max(0.0, ctx.dt) * 1000.0;
 
     // A result the server sent while this face of the menu was not showing
@@ -140,13 +143,17 @@ bool TitanPanel::render(MenuContext& ctx) {
     // server's, and a profile landing a frame ahead of the result would empty
     // the ring under its own animation.
     if (phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
-        (forgeInputOwned(profile, stagedPetal_) < static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_)) ||
+        (forgeInputOwned(profile, stagedPetal_, hyper_) < static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_, hyper_)) ||
          !titanForgeEligible(content().petal(stagedPetal_).id))) {
         stagedPetal_ = kNoPetal;
     }
 
-    const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin, "泰坦锻造", "Forge", mouse);
+    const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin,
+                                            hyper_?"超凡争夺锻造":"永久永恒锻造", "Forge", mouse);
     const Rect panel = card.panel;
+    const Rect mode{panel.x+20,panel.y+62,160,32};
+    drawSlotButton(canvas,mode,hyper_?"切换：永久永恒":"切换：超凡争夺",rarityColor(outputTier),mode.contains(mouse),mode.contains(mouse)&&ctx.window.mouseDown(MouseButton::Left));
+    if(ctx.pressed()&&mode.contains(mouse)&&phase_!=Phase::Forging){hyper_=!hyper_;reset();return true;}
 
     // --- the slot ----------------------------------------------------------
     // The five, staged or out with the titan, as one apex tile counting them;
@@ -154,15 +161,15 @@ bool TitanPanel::render(MenuContext& ctx) {
     const std::uint16_t shown = phase_ == Phase::Forging ? offeredPetal_ : stagedPetal_;
     ItemTile shownTile;
     shownTile.petalIndex = shown;
-    shownTile.rarity = kTitanInputRarity;
-    shownTile.badge = "x" + std::to_string(phase_ == Phase::Forging ? offeredCost_ : forgeCost(profile, shown));
+    shownTile.rarity = inputTier;
+    shownTile.badge = "x" + std::to_string(phase_ == Phase::Forging ? offeredCost_ : forgeCost(profile, shown, hyper_));
     shownTile.timeSeconds = now;
     // Lit under the cursor only while the slot is at rest.
     shownTile.hovered =
         motion_.spin() < 0.05 && phase_ == Phase::Idle && card.slotRect.contains(mouse);
     ItemTile forgedTile;
     forgedTile.petalIndex = resultPetal_;
-    forgedTile.rarity = kTitanOutputRarity;
+    forgedTile.rarity = outputTier;
     forgedTile.timeSeconds = now;
     motion_.drawSlotScene(canvas, ctx.sprites, card, kTitanSkin, (now - phaseStarted_) * 1000.0,
                           dtMs, !forged && knownPetal(shown) ? &shownTile : nullptr, shown,
@@ -173,9 +180,12 @@ bool TitanPanel::render(MenuContext& ctx) {
     // The colour of the tier it forges toward once five are in the slot --
     // florr's forge wears its top tier's grey.
     const Rect button = card.button;
-    const bool canForge = phase_ == Phase::Idle && knownPetal(stagedPetal_);
+    const auto* holder=knownPetal(stagedPetal_)?ctx.net.titanHolder(stagedPetal_):nullptr;
+    const bool canForge = phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
+        (!hyper_ || (ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
+                     (!holder||*holder!=profile.username)));
     drawSlotButton(canvas, button, "锻造",
-                   canForge ? std::optional<std::uint32_t>(rarityColor(kTitanOutputRarity))
+                   canForge ? std::optional<std::uint32_t>(rarityColor(outputTier))
                             : std::nullopt,
                    button.contains(mouse),
                    button.contains(mouse) && ctx.window.mouseDown(MouseButton::Left));
@@ -186,7 +196,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
-            drawSlotLine(canvas, line, kLines[i]);
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"5个同种永恒锻造1个超凡，同种全服唯一。","被抢后返还4个永恒；首保15小时，每次减1小时。","最低保护1小时；到期后其他玩家可再次锻造争夺。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;
@@ -197,22 +207,31 @@ bool TitanPanel::render(MenuContext& ctx) {
     if (knownPetal(stagedPetal_)) {
         SlotCardLayout line = card;
         line.lineY = (card.slotRect.bottom() + panel.y + kFirstLineY - kLinePitch * 0.5) * 0.5;
-        drawSlotLine(canvas, line, "本次消耗：" + std::to_string(forgeCost(profile, stagedPetal_)) + " 个同种超级，成功率100%");
+        drawSlotLine(canvas, line, "本次消耗：" + std::to_string(forgeCost(profile, stagedPetal_, hyper_)) + (hyper_?" 个同种永恒，成功率100%":" 个同种超级，成功率100%"));
+    }
+
+    if(hyper_&&knownPetal(stagedPetal_)){
+        if(now-askedAt_>1){ctx.net.requestTitanHolder(stagedPetal_);askedAt_=now;}
+        const auto* holder=ctx.net.titanHolder(stagedPetal_);
+        SlotCardLayout line=card;line.lineY=panel.y+113;
+        const auto wait=ctx.net.hyperProtectionLeft(stagedPetal_);
+        drawSlotLine(canvas,line,std::string("持有者：")+(holder&&!holder->empty()?*holder:"暂无")+"  保护剩余："+std::to_string(static_cast<int>(std::ceil(wait/60000)))+"分钟");
     }
 
     // --- the grid ----------------------------------------------------------
     // Same-kind Super stacks; each cell uses its own persistent forge price.
     const std::optional<SlotTierGrid::Pick> hovered = grid_.render(
-        ctx, card, kTitanSkin, kTitanInputRarity, kColumns, kGridTop,
+        ctx, card, kTitanSkin, inputTier, kColumns, kGridTop,
         [&](std::uint16_t petalIndex, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;
             if (petalIndex == stagedPetal_) {
-                const std::uint32_t staged = static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_));
+                const std::uint32_t staged = static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_, hyper_));
                 cell.count = owned > staged ? owned - staged : 0;
             }
-            cell.greyed = cell.count < static_cast<std::uint32_t>(forgeCost(profile, petalIndex)) ||
-                          !titanForgeEligible(content().petal(petalIndex).id);
+            cell.greyed = cell.count < static_cast<std::uint32_t>(forgeCost(profile, petalIndex, hyper_)) ||
+                          !titanForgeEligible(content().petal(petalIndex).id) ||
+                          (hyper_&&(content().petal(petalIndex).id=="mjolnir"||content().petal(petalIndex).id=="timed_mjolnir"));
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             return cell;
@@ -245,10 +264,10 @@ bool TitanPanel::render(MenuContext& ctx) {
             phase_ = Phase::Forging;
             phaseStarted_ = now;
             offeredPetal_ = stagedPetal_;
-            offeredCost_ = forgeCost(profile, stagedPetal_);
+            offeredCost_ = forgeCost(profile, stagedPetal_, hyper_);
             resultPending_ = false;
             refusal_.clear();
-            ctx.net.requestTitanForge(stagedPetal_);
+            ctx.net.requestTitanForge(stagedPetal_,hyper_);
             // Handed over: the ring draws the offer from here, and a refusal
             // is what puts it back.
             stagedPetal_ = kNoPetal;

@@ -1,6 +1,7 @@
 #include "server/timed_hammers.h"
 #include "server/daily_drop_bonus.h"
 #include "server/game_server.h"
+#include "server/hyper_forge.h"
 
 #include "shared/core/process_stats.h"
 
@@ -3316,7 +3317,7 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     }
     // Universal is forged at the titan and nowhere else: an assembler an
     // operator stood at universal makes nothing.
-    if (rarityIndex(rarity) >= kLadderRarityCount) {
+    if (rarityIndex(rarity) >= rarityIndex(Rarity::Apex)) {
         reply(0, "The assembler cannot work at that rarity.");
         return;
     }
@@ -3477,6 +3478,7 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
 void GameServer::handleTitanForge(Session& session, net::Connection& connection,
                                   ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
+    const bool hyper=reader.boolean();
     if (!reader.ok() || !session.authenticated()) return;
 
     std::uint16_t outputIndex = petalIndex;
@@ -3512,6 +3514,32 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     if (!titanForgeEligible(petal.id)) {
         reply(false, "血祭不能用于泰坦锻造。");
         return;
+    }
+    if(hyper) {
+        outputIndex=content().petalIndex(hyperForgeOutput(petal.id));
+        if(outputIndex>=content().petalCount()){reply(false,"超凡产物不存在。");return;}
+        const auto state=hyperForgeState(database_,hyperForgeOutput(petal.id));
+        if(state.owner==session.userId){reply(false,"你已经持有该超凡花瓣。");return;}
+        if(state.protectedUntil>database_.nowMillis()){
+            reply(false,"保护期尚未结束，剩余"+std::to_string((state.protectedUntil-database_.nowMillis()+59999)/60000)+"分钟。");return;
+        }
+        if(liveRecord(session).itemCount(Rarity::Unique,inventoryKey(petalIndex))<kHyperForgeCost){
+            reply(false,"需要5个未装备的同种永恒花瓣。");return;
+        }
+        persistAll();
+        const auto result=forgeHyper(database_,session.userId,petal.id,database_.nowMillis());
+        if(!result.ok){reply(false,result.reason);return;}
+        for(auto& [id,other]:sessions_) {
+            if(!other.authenticated()||std::find(result.affected.begin(),result.affected.end(),other.userId)==result.affected.end())continue;
+            if(other.playing())applyAccountToSession(other);
+            if(auto* peer=listener_.find(id)){
+                sendProfile(other,*peer);
+                if(other.userId!=session.userId)sendNotice(*peer,net::NoticeSeverity::Warning,
+                    "你的超凡"+petal.name+"已被其他玩家锻造夺取，已返还4个同种永恒花瓣。");
+            }
+        }
+        announceRareCraft(session,outputIndex,Rarity::Apex,1,kHyperForgeCost,true);
+        reply(true,"");return;
     }
     outputIndex = petal.id == "fragment" ? content().petalIndex("timed_mjolnir") : petalIndex;
     if (outputIndex >= content().petalCount()) { reply(false, "锻造产物不存在。"); return; }
@@ -3563,7 +3591,10 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanHolder));
     w.u16(petalIndex);
-    w.str(universalHolderName(petalIndex));
+    const auto state=hyperForgeState(database_,hyperForgeOutput(content().petal(petalIndex).id));
+    const auto* owner=database_.findUserById(state.owner);
+    w.str(owner?owner->username:"");
+    w.u32(static_cast<std::uint32_t>(std::max<std::int64_t>(0,state.protectedUntil-database_.nowMillis())));
     connection.send(w);
 }
 

@@ -394,6 +394,7 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
     const auto push = [&](const DropDef& drop, Rarity rarity, double probability,
                           int floorTier = 0) {
         if (probability <= 0) return;
+        rarity=payoutDropRarity(rarity,mobRarity);
         int column = dropTier(rarity);
         if (column < 0) return;
         if (column < floorTier) column = floorTier;

@@ -664,7 +664,7 @@ public:
     void requestAbsorb(const std::vector<AbsorbStack>& stacks);
     /// Forges kTitanForgeCost apex of this petal into one universal at the
     /// titan the body is standing at.
-    void requestTitanForge(std::uint16_t petalIndex);
+    void requestTitanForge(std::uint16_t petalIndex, bool hyper=false);
     /// Asks the titan the body is standing at who holds this petal at
     /// universal. The answer lands in titanHolder(); the server drops a query
     /// that comes too soon after the last, so a caller asks again until one
@@ -675,6 +675,7 @@ public:
     const std::string* titanHolder(std::uint16_t petalIndex) const;
     /// Forgets the answer for this petal, so the next look asks again.
     void forgetTitanHolder(std::uint16_t petalIndex) { titanHolders_.erase(petalIndex); }
+    double hyperProtectionLeft(std::uint16_t index) const;
     void requestRespawn();
     void requestDungeonEntry();
     void sendPing();
@@ -1214,6 +1215,7 @@ private:
     AbsorbOutcome absorbOutcome_;
     /// The titan's answers, by petal: who holds it at universal.
     std::unordered_map<std::uint16_t, std::string> titanHolders_;
+    std::unordered_map<std::uint16_t,double> hyperProtectedUntil_;
     ShopOutcome shopOutcome_;
     PasswordOutcome passwordOutcome_;
     UsernameOutcome usernameOutcome_;

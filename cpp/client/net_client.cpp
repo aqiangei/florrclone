@@ -332,6 +332,7 @@ void NetClient::forgetAccount() {
     assembleOutcome_ = AssembleOutcome{};
     absorbOutcome_ = AbsorbOutcome{};
     titanHolders_.clear();
+    hyperProtectedUntil_.clear();
     shopOutcome_ = ShopOutcome{};
     passwordOutcome_ = PasswordOutcome{};
     usernameOutcome_ = UsernameOutcome{};
@@ -518,10 +519,11 @@ void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks) {
     send(w);
 }
 
-void NetClient::requestTitanForge(std::uint16_t petalIndex) {
+void NetClient::requestTitanForge(std::uint16_t petalIndex,bool hyper) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::TitanForge);
     w.u16(petalIndex);
+    w.boolean(hyper);
     send(w);
 }
 
@@ -1562,8 +1564,14 @@ void NetClient::handleAbsorbResult(ByteReader& reader) {
 void NetClient::handleTitanHolder(ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
     std::string holder = reader.str();
+    const auto remaining=reader.u32();
     if (!reader.ok()) return;
     titanHolders_[petalIndex] = std::move(holder);
+    hyperProtectedUntil_[petalIndex]=renderClockMillis()+remaining;
+}
+double NetClient::hyperProtectionLeft(std::uint16_t index) const {
+    const auto it=hyperProtectedUntil_.find(index);
+    return it==hyperProtectedUntil_.end()?0:std::max(0.0,it->second-renderClockMillis());
 }
 
 void NetClient::handleShopResult(ByteReader& reader) {

@@ -131,6 +131,14 @@ inline constexpr int titanForgeCost(unsigned completed, const std::string& input
     if (inputId == "fragment") return 5;
     return completed == 0 ? 10 : 15;
 }
+inline constexpr int kHyperForgeCost=5;
+inline constexpr int kHyperForgeRefund=4;
+inline std::string hyperForgeOutput(const std::string& input) {
+    return input=="fragment"?"mjolnir":input;
+}
+inline constexpr std::int64_t hyperProtectionMillis(int claims) {
+    return static_cast<std::int64_t>(claims<15?16-std::max(1,claims):1)*3600000;
+}
 inline constexpr Rarity kTitanInputRarity = Rarity::Super;
 inline constexpr Rarity kTitanOutputRarity = Rarity::Unique; // next rung, displayed Eternal
 inline bool titanForgeEligible(const std::string& id) {

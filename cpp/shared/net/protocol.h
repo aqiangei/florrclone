@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 81;
+inline constexpr std::uint16_t kProtocolVersion = 82;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -164,7 +164,8 @@ enum class ClientMessage : std::uint8_t {
     GuildEdit,          ///< str displayName, str description -- both replace
                         ///< what the guild has. Leader only; the tag is the
                         ///< guild's key and cannot be edited. (Version 45.)
-    TitanForge,         ///< u16 input petal. 10/25/55 same-kind Super -> one
+    TitanForge,         ///< u16 input petal, u8 hyper. Normal: 10 then 15 Super;
+                        ///< Hyper: 5 Eternal -> globally contested Hyper (v82).
                         ///< permanent next-tier petal, Fragment -> Mjolnir.
                         ///< Per-account/per-petal price ledger; never takes
                         ///< items from another account. Requires live body
@@ -395,7 +396,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< petal that was forged, or offered on a refusal;
                         ///< a success is always one universal of it. Its own
                         ///< reply for OracleResult's reason. (Version 47.)
-    TitanHolder,        ///< u16 itemType, str username -- the answer to
+    TitanHolder,        ///< u16 itemType, str username, u32 protection remainingMs (v82).
                         ///< ClientMessage::TitanHolder: the account holding that
                         ///< petal at universal, or empty for nobody. (Version 47.)
     AdminDashboard,     ///< u8 AdminDashboardReply, then that reply's payload --

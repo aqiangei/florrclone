@@ -1,6 +1,7 @@
 #include "shared/game/shop.h"
 #include "server/daily_drop_bonus.h"
 #include "server/timed_hammers.h"
+#include "server/hyper_forge.h"
 // NPCs, and the first two with a service: the oracle and the trader.
 //
 // An NPC is a mob's config standing in the world without being a mob
@@ -158,7 +159,7 @@ TEST(the_oracle_charges_the_stated_price_for_every_tier) {
     // The design's own numbers, tier by tier -- "unusual" is this game's
     // uncommon. Apex and universal cost nothing because nothing crafts out of
     // either.
-    const int expected[] = {7, 11, 19, 34, 65, 128, 253, 506, 1012, 0, 0, 0};
+    const int expected[] = {7, 11, 19, 34, 65, 128, 253, 506, 0, 0, 0, 0};
     static_assert(sizeof(expected) / sizeof(expected[0]) == kRarityCount);
     for (int i = 0; i < kRarityCount; ++i) {
         CHECK_EQ(oracleCraftCost(static_cast<Rarity>(i)), expected[i]);
@@ -3220,4 +3221,37 @@ TEST(row_swap_keeps_primary_when_reserve_is_empty_and_equips_nonempty_reserves){
     CHECK_EQ(c.profile().loadout[0].petalIndex,basic);CHECK_EQ(c.profile().loadout[2].petalIndex,stinger);
     CHECK_EQ(c.profile().loadout[11].petalIndex,leaf);CHECK(c.profile().loadout[10].empty());CHECK(c.profile().loadout[12].empty());
     removeDataDir(dir);
+}
+
+namespace { std::int64_t hyperForgeTestNow=1000; }
+TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) {
+    const auto dir=titanWorld("hyper-network");
+    Harness h("hyper-network",[](const std::string& path){
+        seedAccount(path,"alpha");seedStack(path,"alpha","petal_rose",Rarity::Unique,5);
+        seedAccount(path,"beta");seedStack(path,"beta","petal_rose",Rarity::Unique,5);
+    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient alpha,beta;CHECK(joinAs(h,alpha,"alpha"));CHECK(joinAs(h,beta,"beta"));
+    std::vector<NetClient*> both{&alpha,&beta};h.step(3,both);standAtTitan(h,both,"alpha");standAtTitan(h,both,"beta");
+    auto& db=const_cast<Database&>(h.server.database());hyperForgeTestNow=1000;
+    db.setClock(+[](){return hyperForgeTestNow;});const auto rose=content().petalIndex("rose");
+    TitanForgeOutcome out;alpha.requestTitanForge(rose,true);CHECK(awaitForge(h,both,alpha,out));CHECK(out.success);
+    CHECK(awaitProfile(h,alpha,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
+    beta.requestTitanHolder(rose);CHECK(h.stepUntil(both,[&]{const auto* holder=beta.titanHolder(rose);return holder&&*holder=="alpha";},120));
+    CHECK(beta.hyperProtectionLeft(rose)>14LL*3600000);
+    beta.requestTitanForge(rose,true);CHECK(awaitForge(h,both,beta,out));CHECK(!out.success);
+    CHECK_EQ(beta.profile().stackCount(rose,Rarity::Unique),5u);
+    hyperForgeTestNow=1000+15LL*3600000;
+    beta.requestTitanForge(rose,true);CHECK(awaitForge(h,both,beta,out));CHECK(out.success);
+    CHECK(awaitProfile(h,alpha,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==0&&p.stackCount(rose,Rarity::Unique)==4;}));
+    CHECK(awaitProfile(h,beta,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
+    removeDataDir(dir);
+}
+TEST(hyper_hammer_network_forges_mjolnir_from_eternal_fragments) {
+    const auto dir=titanWorld("hyper-hammer-network");
+    Harness h("hyper-hammer-network",[](const std::string& path){seedAccount(path,"smith");seedStack(path,"smith","petal_fragment",Rarity::Unique,5);},dir,0);
+    CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient client;CHECK(joinAs(h,client,"smith"));std::vector<NetClient*> clients{&client};h.step(3,clients);standAtTitan(h,clients,"smith");
+    client.requestTitanForge(content().petalIndex("fragment"),true);TitanForgeOutcome out;CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
+    CHECK_EQ(out.petalIndex,content().petalIndex("mjolnir"));
+    CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("fragment"),Rarity::Unique)==0;}));removeDataDir(dir);
 }

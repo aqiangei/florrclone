@@ -1103,6 +1103,7 @@ private:
     /// them until the answer comes back.
     enum class Phase : std::uint8_t { Idle, Forging, Result };
 
+    bool hyper_ = false;
     SlotTierGrid grid_;
     SlotMotion motion_;
     /// The petal in the slot: five of it at apex, which is what one forge

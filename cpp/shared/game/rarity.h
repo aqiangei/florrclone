@@ -146,13 +146,13 @@ inline constexpr Rarity minionRarity(Rarity asked) {
 /// wall, not a gentle step, so a common-tier loadout cannot chip down a
 /// legendary by patience alone.
 inline constexpr std::array<double, kLadderRarityCount> kMobHealthScale = {
-    1.0, 3.75, 13.5, 54.0, 324.0, 3159.0, 126830.0, 2374000.0, 7122000.0, 2e8,
+    1.0, 3.75, 13.5, 54.0, 324.0, 3159.0, 126830.0, 2374000.0, 7122000.0, 21366000.0,
 };
 
 /// Mob damage per tier -- a clean 3x ladder, so a tier above you roughly
 /// triples what one touch costs.
 inline constexpr std::array<double, kLadderRarityCount> kMobDamageScale = {
-    1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 2187.0, 6561.0, 1968300.0,
+    1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 2187.0, 6561.0, 19683.0,
 };
 
 /// Mob armour per tier: a flat amount subtracted from every DIRECT hit.
@@ -354,7 +354,7 @@ inline double craftSuccessChance(Rarity from) {
 /// Not apex, which has no rung above it, and not universal, which is only
 /// ever given.
 inline constexpr bool craftsOutOf(Rarity from) {
-    return rarityIndex(from) < rarityIndex(kTopLadderRarity);
+    return rarityIndex(from) < rarityIndex(Rarity::Unique);
 }
 
 /// What an oracle charges for ONE guaranteed upgrade out of `from`: this many
@@ -381,7 +381,7 @@ inline constexpr std::array<int, kRarityCount> kOracleCraftCost = {
 };
 
 inline constexpr int oracleCraftCost(Rarity from) {
-    return rarityIndex(from) < kRarityCount ? kOracleCraftCost[rarityIndex(from)] : 0;
+    return craftsOutOf(from) ? kOracleCraftCost[rarityIndex(from)] : 0;
 }
 
 /// Chance a drop rolls one tier above the mob that dropped it.

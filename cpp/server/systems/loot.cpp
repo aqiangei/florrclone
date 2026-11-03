@@ -566,8 +566,10 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         if (!item.singleCopy && !item.humansOnly && item.pickedUpBy.empty() &&
             life && life->remainingSeconds > 0) stackable.push_back(e);
     });
+    bool hyperKill=false;
     const auto stackDrop = [&](std::uint16_t petal, Rarity rarity, Vec2 at, Realm realm,
                                const std::vector<Entity>& eligible) {
+        rarity=payoutDropRarity(rarity,hyperKill?Rarity::Apex:Rarity::Common);
         for (Entity e : stackable) {
             auto& item = world.get<DropItem>(e);
             const auto& position = world.get<Transform>(e);
@@ -598,6 +600,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const MobType* type = world.tryGet<MobType>(corpse);
         const Transform* transform = world.tryGet<Transform>(corpse);
         if (type == nullptr || transform == nullptr) continue;
+        hyperKill=type->rarity==Rarity::Apex;
 
         // Read the corpse out in full first. Everything below is a structural
         // change, and these pointers are into an archetype column. The realm

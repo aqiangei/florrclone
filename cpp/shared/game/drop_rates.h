@@ -7,6 +7,11 @@
 
 namespace flix {
 struct DropRate { Rarity rarity=Rarity::Common; double probability=0; };
+inline Rarity payoutDropRarity(Rarity rolled,Rarity mob) {
+    if(mob==Rarity::Apex)
+        return rarityIndex(rolled)>=rarityIndex(Rarity::Super)?Rarity::Unique:Rarity::Super;
+    return rarityIndex(rolled)>=rarityIndex(Rarity::Apex)?Rarity::Unique:rolled;
+}
 using DropRates = std::vector<std::vector<DropRate>>;
 
 inline bool parseDropRates(const Json& json, DropRates& out) {
@@ -34,7 +39,10 @@ inline bool parseDropRates(const Json& json, DropRates& out) {
 }
 inline const std::vector<DropRate>& ratesFor(const DropRates& rates,Rarity mob) {
     static const std::vector<DropRate> none;
-    return rates.empty()?none:rates[std::min(rates.size()-1,static_cast<std::size_t>(rarityIndex(mob)))];
+    // Hyper material drops promote Eternal's authored S tail to Eternal;
+    // the old unused Hyper row has no such tail and is not the new policy.
+    const auto tier=mob==Rarity::Apex?Rarity::Unique:mob;
+    return rates.empty()?none:rates[std::min(rates.size()-1,static_cast<std::size_t>(rarityIndex(tier)))];
 }
 inline int rollDropRates(const DropRates& rates,Rarity mob,double sample) {
     if(sample<0)return -1;

@@ -2028,6 +2028,51 @@ void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
     }
 }
 
+void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
+                                const ContentRegistry& content, const std::vector<Viewer>& viewers,
+                                Rng& rng, double nowMillis) {
+    if(!worldMaps)return;
+    for(const auto& map:worldMaps->maps()) {
+        const auto& id=map.id();
+        if(worldMaps->isPrestige(map.realm()) || !map.usesReferenceSpawnCurve() ||
+           (id!="garden"&&id!="desert"&&id!="computer"&&id!="ocean"&&id!="jungle"&&
+            id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"))continue;
+        auto state=std::find_if(hyperPopulations_.begin(),hyperPopulations_.end(),
+                               [&](const EternalMapState& v){return v.realm==map.realm();});
+        if(state==hyperPopulations_.end()) {
+            hyperPopulations_.push_back({map.realm(),0});state=std::prev(hyperPopulations_.end());
+        }
+        int living=0;
+        ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob&){
+            if(at.realm==map.realm() && type.rarity==Rarity::Apex &&
+               !world.has<Dead>(e) && isWholeAnimal(world,e))++living;
+        });
+        if(state->previousLiving>living){
+            chargeBossClock(Rarity::Apex,map.realm(),nowMillis);
+        }
+        state->previousLiving=living;
+        if(living>=kHyperPopulationTarget)continue;
+        if(bossCooldownLeft(Rarity::Apex,map.realm(),nowMillis)>0)continue;
+        double highest=-1e9;
+        for(const auto& zone:zones_)if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0)
+            highest=std::max(highest,zone.difficulty);
+        std::vector<std::uint16_t> candidates;
+        const double floor=std::min(highest,std::max(45.0,highest-20.0));
+        for(std::size_t n=0;n<zones_.size();++n) {
+            const auto& zone=zones_[n];
+            if(zone.realm==map.realm()&&!zone.prestige&&!zone.singular&&zone.forceRarity<0&&zone.difficulty>=floor)
+                candidates.push_back(static_cast<std::uint16_t>(n));
+        }
+        for(int attempt=0;attempt<240&&!candidates.empty()&&living<kHyperPopulationTarget;++attempt) {
+            const auto n=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
+            if(stockZone(world,terrain,content,zones_[n],n,viewers,rng,nowMillis,
+                         Slot::TopUp,{},true,Rarity::Apex)) {
+                ++living;state->previousLiving=living;
+            }
+        }
+    }
+}
+
 void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
                                   const ContentRegistry& content,
                                   const std::vector<Viewer>& viewers, Rng& rng,
@@ -2037,6 +2082,7 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
     if (zones_.empty()) return;
     stockSupers(world, terrain, content, viewers, rng, nowMillis);
     stockEternals(world, terrain, content, viewers, rng, nowMillis);
+    stockHypers(world, terrain, content, viewers, rng, nowMillis);
 
     for (std::size_t index = 0; index < zones_.size(); ++index) {
         SpawnZone& zone = zones_[index];
@@ -2166,7 +2212,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     type = rollStandIn(content, type, rarity, rng);
 
     if (fixedSuper && content.mob(type).neverAmbient) return false;
-    if (fixedSuper && managedTier == Rarity::Unique &&
+    if (fixedSuper && rarityIndex(managedTier) >= rarityIndex(Rarity::Unique) &&
         (content.mob(type).dungeon.present || content.mob(type).intangible)) return false;
 
     // A super may come out a unique or an apex instead, if its biome's clock
