@@ -1415,7 +1415,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::SwapLoadoutRows:
         case net::ClientMessage::SaveLoadoutPreset:
         case net::ClientMessage::LoadLoadoutPreset:
-        case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
+        case net::ClientMessage::BulkCraft:
         case net::ClientMessage::Craft:
         case net::ClientMessage::OracleCraft:
         case net::ClientMessage::Trade:
@@ -1447,6 +1447,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::Input:         handleInput(*session, reader); break;
         case net::ClientMessage::Chat:          handleChat(*session, connection, reader); break;
         case net::ClientMessage::SetLoadout:    handleSetLoadout(*session, reader); break;
+        case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
         case net::ClientMessage::ProfileCheck:  handleProfileCheck(*session, connection, reader); break;
         case net::ClientMessage::SwapLoadout:   handleSwapLoadout(*session, reader); break;
         case net::ClientMessage::SwapLoadoutRows: handleSwapLoadoutRows(*session, connection); break;
