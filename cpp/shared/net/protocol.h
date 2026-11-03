@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 76;
+inline constexpr std::uint16_t kProtocolVersion = 77;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -449,7 +449,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< top-right roster and whole-map dots. `location` is
                         ///< the biome label (empty on title / death). Readers
                         ///< must consume placed/coords, u8 insideDungeon, optional exterior
-                        ///< {u8 realm,f32 x,f32 y}, and f32 healthRatio (version 76).
+                        ///< {u8 realm,f32 x,f32 y}, and f32 healthRatio (version 77).
     SquadInviteReceived, ///< str fromUsername, u8 fromGuild (0/1). Pending
                         ///< squad invite for the top-left Accept/Decline toast.
                         ///< Additive; older clients skip an unknown id.

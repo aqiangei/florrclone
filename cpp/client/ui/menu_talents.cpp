@@ -246,8 +246,8 @@ std::uint32_t mixChannels(std::uint32_t c, double k, double toward) {
 }
 
 /// A tier's own colour from its rarity ladder index.
-std::uint32_t tierColor(SkillId /*skill*/, int tier) {
-    return rarityColor(clampRarity(tier));
+std::uint32_t tierColor(SkillId skill, int tier) {
+    return rarityColor(clampRarity(skillTierRarityIndex(skill,tier)));
 }
 
 /// florr's labels: white unless told, black outline at 0.12 of the size, round
@@ -353,15 +353,8 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                       {" " + fromTo(kHealthTalentScale, tier)}});
             break;
         case SkillId::SharpEdges:
-            if (cn) {
-                row({{"提升"}, {"体伤", kStatDamage}, {" " + fromTo(kHealthTalentScale, tier)}});
-                row({{"提升花瓣"}, {"伤害", kStatDamage}, {" " + fromTo(kMedicTalentScale, tier)}});
-            } else {
-                row({{"Increases "}, {"Body Damage", kStatDamage},
-                     {" " + fromTo(kHealthTalentScale, tier)}});
-                row({{"Increases petal "}, {"Damage", kStatDamage},
-                     {" " + fromTo(kMedicTalentScale, tier)}});
-            }
+            row({{cn ? "仅提升花朵体伤：" : "Body damage only: "},
+                 {percent(std::pow(1.38,tier))+" → "+percent(std::pow(1.38,tier+1)),kStatDamage}});
             break;
         case SkillId::PetalHealth:
             if (cn) row({{"提升"}, {"花瓣生命", kStatHealth},
@@ -371,9 +364,9 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             break;
         case SkillId::Summoner:
             if (cn) row({{"提升召唤物"}, {"生命", kStatHealth},
-                         {" " + fromTo(kPetalHealthTalentScale, tier)}});
+                         {" " + fromTo(kSummonerScale, tier)}});
             else row({{"Increases "}, {"Health", kStatHealth},
-                      {" of summoned mobs " + fromTo(kPetalHealthTalentScale, tier)}});
+                      {" of summoned mobs " + fromTo(kSummonerScale, tier)}});
             break;
         case SkillId::Medic:
             if (cn) row({{"提升花瓣"}, {"治疗", kStatHeal},
@@ -382,18 +375,20 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                       {" from your petals " + fromTo(kMedicTalentScale, tier)}});
             break;
         case SkillId::Luck:
-            if (cn) row({{"提升吸收经验 " + fromTo(kLuckTalent, tier)}});
-            else row({{"Increases absorb XP " + fromTo(kLuckTalent, tier)}});
-            break;
+            std::snprintf(buffer,sizeof buffer,cn?"幸运：%.2f → %.2f（不增加吸收经验）":"Luck: %.2f → %.2f (does not increase absorb XP)",tier>0?kLuckTalent[tier-1]:0,kLuckTalent[tier]);
+            row({{buffer}});break;
         case SkillId::Reload: {
-            const double before = tier > 0 ? 1.0 - scaleAt(kReloadReduce, tier - 1) : 0.0;
-            const double after = 1.0 - scaleAt(kReloadReduce, tier);
+            const double before = tier > 0 ? scaleAt(kReloadReduce, tier - 1) : 0.0;
+            const double after = scaleAt(kReloadReduce, tier);
             if (cn) {
                 row({{"将花瓣装填时间从 -" + percent(before) + " 降至 -" + percent(after) + "。"}});
             } else {
                 row({{"Decreases the reload time for petals from -" + percent(before) + " to -" +
                       percent(after) + "."}});
             }
+            SkillSet preview;preview.set(SkillId::Reload,tier);
+            std::snprintf(buffer,sizeof buffer,cn?"切换装备最短冷却：%.1f秒":"Minimum equip cooldown: %.1fs",preview.equipReloadFloorMillis()/1000.0);
+            row({{buffer}});
             break;
         }
         case SkillId::SecondChance: {
@@ -437,6 +432,21 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             row({{buffer}});
             break;
         }
+        case SkillId::Loadout:
+            row({{std::string(cn?"可装备花瓣槽位：":"Active loadout slots: ")+std::to_string(6+tier)}});break;
+        case SkillId::Rotation:
+            std::snprintf(buffer,sizeof buffer,cn?"基础旋转速度：%.1f rad/s":"Base rotation: %.1f rad/s",kRotationRad[tier]);row({{buffer}});break;
+        case SkillId::Antennae:
+            row({{std::string(cn?"视野增加：":"Vision increase: ")+percent(kAntennaeFov[tier])}});
+            row({{cn?"与触角花瓣取更强效果，不相乘叠加。":"Uses the stronger of this talent and Antennae; does not multiply."}});break;
+        case SkillId::Reach:
+            row({{std::string(cn?"攻击范围增加：":"Attack reach bonus: ")+std::to_string(static_cast<int>(kReachBonus[tier]))}});break;
+        case SkillId::Poison:
+            row({{std::string(cn?"剧毒伤害增加：":"Poison damage bonus: ")+percent(kPoisonBonus[tier])}});break;
+        case SkillId::BodyToxicity:
+            row({{cn?"碰撞额外造成体伤60%的剧毒，持续1秒。":"Contact adds 60% body damage as poison over one second."}});break;
+        case SkillId::ConcentratedPoison:
+            row({{cn?"剧毒每秒伤害×1.2，持续时间÷1.2，总伤害不变。":"Poison DPS ×1.2 and duration ÷1.2; total damage unchanged."}});break;
         default: break;
     }
     return rows;
@@ -448,7 +458,7 @@ std::vector<TipRow> tooltipRows(SkillId skill, int tier) {
     std::vector<TipRow> rows;
     rows.push_back({kTipNameSize, {{skillTr(skill, tier)}}});
     {
-        const Rarity rarity = clampRarity(tier);
+        const Rarity rarity = clampRarity(skillTierRarityIndex(skill,tier));
         rows.push_back({kTipBodySize, {{rarityTr(rarity), rarityColor(rarity)}}});
     }
     std::vector<TipRow> body = description(skill, tier);

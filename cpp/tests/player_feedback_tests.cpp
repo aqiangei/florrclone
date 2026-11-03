@@ -3,6 +3,7 @@
 #include "client/ui/menus.h"
 #include "server/systems/combat.h"
 #include "server/systems/dungeons.h"
+#include "server/systems/petals.h"
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
 #include "shared/game/config.h"
@@ -101,4 +102,22 @@ TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {
         Vec2 marker;bool outside=false;CHECK(row.mapPosition(static_cast<std::uint8_t>(home),marker,outside));CHECK(outside);CHECK_NEAR(distance(marker,entrance),0,.01);
         CHECK(row.mapPosition(static_cast<std::uint8_t>(inside),marker,outside));CHECK(!outside);CHECK_NEAR(marker.x,100,1e-6);
     }
+}
+
+TEST(feedback_talent_effects_reach_live_petals_and_locked_slots_stay_owned) {
+    CHECK(feedbackContent());World w;CommandBuffer commands{w};PetalSystem petals;const auto player=w.create();
+    w.add<PlayerTag>(player);w.add<Transform>(player,Transform{{10000,10000},0});w.add<Motion>(player);w.add<Body>(player,Body{25,1});
+    w.add<Health>(player,Health{1000,1000});w.add<Faction>(player,Faction{Team::Players,false});w.add<PlayerProgress>(player);
+    w.add<PlayerInput>(player);w.add<PlayerModifiers>(player);w.add<Loadout>(player);w.add<PetalRing>(player);w.add<Afflictions>(player);w.add<HitCooldowns>(player);w.add<PlayerSkillTree>(player);
+    const auto basic=content().petalIndex("basic");w.get<Loadout>(player).slots[0].configIndex=basic;w.get<Loadout>(player).slots[5].configIndex=basic;
+    double now=1000;auto tick=[&](int count){for(int i=0;i<count;++i){now+=net::kTickMillis;petals.run(w,content(),now,net::kTickSeconds,commands);commands.flush();}};
+    auto countSlot=[&](int slot){int n=0;Query<PetalInstance> q{w};q.each([&](Entity,PetalInstance& p){if(p.owner==player&&p.slot==slot)++n;});return n;};
+    tick(100);CHECK(countSlot(0)>0);CHECK_EQ(countSlot(5),0);CHECK_EQ(w.get<Loadout>(player).slots[5].configIndex,basic);
+    w.get<PlayerSkillTree>(player).skills.set(SkillId::Loadout,0);tick(100);CHECK(countSlot(5)>0);
+    auto& skills=w.get<PlayerSkillTree>(player).skills;skills.set(SkillId::Loadout,4);skills.set(SkillId::Magnetism,0);skills.set(SkillId::Rotation,0);skills.set(SkillId::Reach,2);skills.set(SkillId::Luck,8);skills.set(SkillId::SharpEdges,0);
+    const auto spin=w.get<PetalRing>(player).spin;tick(1);
+    const auto mods=w.get<PlayerModifiers>(player);CHECK_NEAR(mods.damageScale,1.38,1e-8);CHECK_NEAR(mods.luck,3.7,1e-8);CHECK_NEAR(mods.attackRange,150,1e-8);
+    CHECK_NEAR(mods.magnetism-kBaseMagnetism,1000,1e-8);CHECK_NEAR(wrapAngle(w.get<PetalRing>(player).spin-spin),3.1*net::kTickSeconds,1e-8);
+    w.get<PlayerSkillTree>(player).skills.set(SkillId::PetalHealth,8);const auto stinger=content().petalIndex("stinger");w.get<Loadout>(player).slots[0].configIndex=stinger;tick(100);
+    int checked=0;Query<PetalInstance,Health> q{w};q.each([&](Entity,PetalInstance& p,Health& health){if(p.owner==player&&p.configIndex==stinger){++checked;CHECK_NEAR(health.max,1,1e-8);}});CHECK(checked>0);
 }

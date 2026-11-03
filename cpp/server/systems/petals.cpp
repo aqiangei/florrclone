@@ -775,6 +775,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         tree ? tree->skills.healthScale(SkillId::PetalHealth) : 1.0;
     const double reloadScale = reloadScaleOf(world, registry, player);
     const SkillSet* skills = tree ? &tree->skills : nullptr;
+    const int activeSlots=world.has<PlayerTag>(player) && skills ? skills->loadoutSlots() : kLoadoutActiveSlots;
 
     // What every sponge on the bar is still holding. One figure for the whole
     // flower, because the stored hits are the FLOWER's -- combat defers a hit
@@ -826,7 +827,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         PetalSlotState::Slot& slotState = state.slots[index];
         std::vector<Entity>& live = bySlot_[index];
 
-        if (slot.empty()) {
+        if (slot.empty() || i>=activeSlots) {
             if (slotState.configIndex != kNoPetal) {
                 destroySlotPetals(world, loadout, slotId);
                 recallPets(world, slotState);
@@ -1510,7 +1511,9 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     if (const Loadout* loadout = world.tryGet<Loadout>(player)) {
         // Storage grants nothing: the browser breaks out of this same sum at
         // PRIMARY_LOADOUT_SLOTS, so a stashed clover is not a worn one.
-        for (int i = 0; i < kLoadoutActiveSlots; ++i) {
+        const auto* activeTree=world.tryGet<PlayerSkillTree>(player);
+        const int activeSlots=world.has<PlayerTag>(player)&&activeTree?activeTree->skills.loadoutSlots():kLoadoutActiveSlots;
+        for (int i = 0; i < activeSlots; ++i) {
             const LoadoutSlot& slot = loadout->slots[static_cast<std::size_t>(i)];
             // A mimic grants what the petal it copies grants, at its own tier.
             const EquippedPetal equipped = equippedPetal(registry, *loadout, i);
@@ -1975,7 +1978,7 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
     const SkillSet* skills = tree ? &tree->skills : nullptr;
     std::array<int, kLoadoutActiveSlots> ordinal{};
     int occupied = 0;
-    for (int i = 0; i < kLoadoutActiveSlots; ++i) {
+    for (int i = 0; i < (world.has<PlayerTag>(player)&&skills?skills->loadoutSlots():kLoadoutActiveSlots); ++i) {
         ordinal[static_cast<std::size_t>(i)] = occupied;
         const EquippedPetal slot = equippedPetal(registry, *loadout, i);
         if (slot.empty()) continue;

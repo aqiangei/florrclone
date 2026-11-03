@@ -2058,6 +2058,9 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                           : slotReloadProgress(net, entry.slot);
         tile.health = slotHealthFraction(net, entry.slot);
         tile.counter = slotCounterLabel(net, entry.slot);
+        if(entry.slot%kLoadoutActiveSlots>=profile.skills.loadoutSlots()) {
+            tile.greyed=true;tile.badge=language()==Language::Zh?"锁定":"Locked";
+        }
         if (inGame_ && entry.slot < kLoadoutActiveSlots) {
             const double left = net.view().self().slotReloadRemainingMillis[static_cast<std::size_t>(entry.slot)];
             if (left > 0) tile.counter = std::to_string(static_cast<int>(std::ceil(left / 1000.0))) + "s";
@@ -3314,7 +3317,7 @@ double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry
     // how much world is on screen.
     double zoom = 1.0 / (1.0 + profile.skills.antennaeFovBonus());
     const std::size_t worn =
-        std::min(profile.loadout.size(), static_cast<std::size_t>(kLoadoutActiveSlots));
+        std::min(profile.loadout.size(), static_cast<std::size_t>(profile.skills.loadoutSlots()));
     for (std::size_t i = 0; i < worn; ++i) {
         // Resolved, as the server resolves it when it bounds the viewport.
         const EquippedPetal slot = profile.equipped(registry, static_cast<int>(i));

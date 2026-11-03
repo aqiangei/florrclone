@@ -76,7 +76,7 @@ Vec2 claimableViewport(World& world, Entity body, const ContentRegistry& content
     const auto* talents = world.tryGet<PlayerSkillTree>(body);
     double zoom = talents ? 1.0 / (1.0 + talents->skills.antennaeFovBonus()) : 1.0;
     if (const Loadout* loadout = world.tryGet<Loadout>(body)) {
-        for (int i = 0; i < kLoadoutActiveSlots; ++i) {
+        for (int i = 0; i < (world.has<PlayerTag>(body)&&talents?talents->skills.loadoutSlots():kLoadoutActiveSlots); ++i) {
             // Resolved, as the client resolves it: a mimic beside a third eye
             // pulls the camera out as one at the mimic's tier.
             const EquippedPetal slot = equippedPetal(content, *loadout, i);
@@ -275,7 +275,7 @@ struct PresetLoad {
 /// step down could take the very petal a later slot was saved with, and the
 /// later slot would step down too. A petal owned at no rarity at or below its
 /// saved one leaves its slot empty.
-PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<StoredItem>>& preset) {
+PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<StoredItem>>& preset, int unlockedSlots=10) {
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
     const std::vector<std::optional<StoredItem>> previous = record.loadout;
     for (const std::optional<StoredItem>& worn : previous) {
@@ -291,7 +291,7 @@ PresetLoad equipPreset(PlayerRecord& record, const std::vector<std::optional<Sto
     PresetLoad result;
     const std::size_t slots = std::min<std::size_t>(preset.size(), kLoadoutSlots);
     for (std::size_t i = 0; i < slots; ++i) {
-        if (!preset[i]) continue;
+        if (!preset[i] || static_cast<int>(i%kLoadoutActiveSlots)>=unlockedSlots) continue;
         const std::uint16_t index = content().petalIndex(preset[i]->petalType);
         if (index == kInvalidIndex) {
             ++result.missing;
@@ -2733,6 +2733,10 @@ void GameServer::handleSetLoadout(Session& session, ByteReader& reader) {
     if (loadoutLockedInMaze(session)) return;
 
     PlayerRecord& record = liveRecord(session);
+    if(petalIndex!=kNoPetal && slot%kLoadoutActiveSlots>=record.skills.loadoutSlots()) {
+        if(auto* peer=listener_.find(session.connection))sendNotice(*peer,net::NoticeSeverity::Warning,"请先解锁对应的槽位天赋。");
+        return;
+    }
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
 
     // Equipping must come out of the inventory, or a client can name any petal
@@ -2904,7 +2908,7 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
     const std::vector<std::optional<StoredItem>> slots =
         saved != record.loadoutPresets.end() ? saved->second
                                              : std::vector<std::optional<StoredItem>>(kLoadoutSlots);
-    const PresetLoad result = equipPreset(record, slots);
+    const PresetLoad result = equipPreset(record, slots, record.skills.loadoutSlots());
     database_.markDirty();
 
     if (session.playing()) applyAccountToSession(session);

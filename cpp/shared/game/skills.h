@@ -116,6 +116,16 @@ inline const SkillGate* skillGate(SkillId id) {
     return nullptr;
 }
 
+inline int skillTierRarityIndex(SkillId id,int tier) {
+    static constexpr int antennae[]={2,3,4},reach[]={2,5,7},duplicate[]={4,6,7,8},second[]={4,5};
+    if(tier<0)return 0;
+    switch(id){case SkillId::Antennae:return antennae[std::min(tier,2)];
+    case SkillId::Reach:return reach[std::min(tier,2)];case SkillId::Duplicator:return duplicate[std::min(tier,3)];
+    case SkillId::SecondChance:return second[std::min(tier,1)];case SkillId::Magnetism:return 5;
+    case SkillId::BodyToxicity:return 6;case SkillId::ConcentratedPoison:return 7;
+    case SkillId::Poison:return std::min(tier,2);default:return tier;}
+}
+
 inline const char* skillTierLabel(SkillId id, int /*tier*/) {
     const std::size_t i = static_cast<std::size_t>(id);
     return i < kSkillLabels.size() ? kSkillLabels[i] : "";
@@ -129,11 +139,11 @@ inline constexpr std::array<double, 9> kHealthTalentScale = {
 };
 /// Medic / petal healing multiplier.
 inline constexpr std::array<double, 9> kMedicTalentScale = {
-    1.15, 1.322, 1.521, 1.749, 2.011, 2.313, 2.66, 3.059, 4.046,
+    1.15, 1.3225, 1.5209, 1.749, 2.0114, 2.3132, 2.66, 3.059, 4.0456,
 };
 /// Petal Health multiplier (same curve as medic in florrclone).
 inline constexpr std::array<double, 9> kPetalHealthTalentScale = {
-    1.15, 1.322, 1.521, 1.749, 2.011, 2.313, 2.66, 3.059, 4.046,
+    1.15, 1.3225, 1.5209, 1.749, 2.0114, 2.3132, 2.66, 3.059, 4.0456,
 };
 /// Reload time reduction fractions; cooldown *= (1 - value).
 inline constexpr std::array<double, 9> kReloadReduce = {
