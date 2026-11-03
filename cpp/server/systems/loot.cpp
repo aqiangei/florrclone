@@ -566,10 +566,11 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         if (!item.singleCopy && !item.humansOnly && item.pickedUpBy.empty() &&
             life && life->remainingSeconds > 0) stackable.push_back(e);
     });
-    bool hyperKill=false;
+    bool hyperKill=false,hyperEternalRoll=false;
     const auto stackDrop = [&](std::uint16_t petal, Rarity rarity, Vec2 at, Realm realm,
                                const std::vector<Entity>& eligible) {
         rarity=payoutDropRarity(rarity,hyperKill?Rarity::Apex:Rarity::Common);
+        if(hyperKill&&rarity==Rarity::Unique&&!hyperEternalRoll)return;
         for (Entity e : stackable) {
             auto& item = world.get<DropItem>(e);
             const auto& position = world.get<Transform>(e);
@@ -690,6 +691,11 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // from everybody else. kRarityCount is "no orb worn", which is almost
         // every flower in the game, and then nothing splits.
         const auto baseEligible=eligible_;
+        std::vector<std::uint16_t> hyperEternalPool;
+        if(hyperKill)for(const auto& entry:table)
+            if(entry.petalIndex!=kInvalidIndex&&petalComesAt(content.petal(entry.petalIndex),Rarity::Unique)&&
+               std::find(hyperEternalPool.begin(),hyperEternalPool.end(),entry.petalIndex)==hyperEternalPool.end())
+                hyperEternalPool.push_back(entry.petalIndex);
         std::vector<int> bonuses;int maxBonus=1;
         for(const auto claimant:baseEligible) {
             const int bonus=bonusMultiplier
@@ -709,6 +715,19 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 eligible_.push_back(baseEligible[i]);
                 const int tier=visibleGarbage?kRarityCount:wornOrbTier(world,content,baseEligible[i],magicOrb);
                 eligibleOrbs_.push_back(tier);anyOrb=anyOrb||tier!=kRarityCount;
+            }
+            // One shared budget for the entire corpse, not 0.5 per drop row.
+            // 30 independent trials at 1/60 yield 0.5 Eternal per entitled player.
+            if(hyperKill&&!hyperEternalPool.empty()&&rng.chance(0.5/baseTrials)){
+                const auto petal=hyperEternalPool[std::min(hyperEternalPool.size()-1,static_cast<std::size_t>(rng.unit()*hyperEternalPool.size()))];
+                hyperEternalRoll=true;
+                const auto magic=visibleGarbage?kInvalidIndex:content.magicFormOf(petal);
+                for(std::size_t i=0;i<eligible_.size();++i){
+                    const int tier=eligibleOrbs_[i];
+                    const bool convert=magic!=kInvalidIndex&&tier!=kRarityCount&&tier>=rarityIndex(content.petal(magic).minRarity);
+                    stackDrop(convert?magic:petal,convert?clampRarity(std::min(tier,rarityIndex(Rarity::Unique))):Rarity::Unique,at,realm,std::vector<Entity>{eligible_[i]});
+                }
+                hyperEternalRoll=false;
             }
             selected_.clear();
             rollTable(table, mobRarity, rng);

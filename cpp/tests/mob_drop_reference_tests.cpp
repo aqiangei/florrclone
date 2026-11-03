@@ -22,6 +22,13 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1){
 }
 int total(const Counts& counts,const std::string& name){int n=0;for(const auto&[key,value]:counts)if(key.first==name)n+=value;return n;}
 }
+TEST(hyper_drop_budget_is_half_an_eternal_per_corpse_not_per_drop_row){
+    for(const auto id:{"ladybug","bee","beetle"}){
+        const auto result=kills(id,Rarity::Apex,2000);int eternal=0;
+        for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
+        CHECK(eternal>880&&eternal<1120);
+    }
+}
 TEST(reference_pharaoh_crown_really_drops_at_unique_from_super_and_eternal_beetles){
     for(const auto tier:{Rarity::Super,Rarity::Unique}){
         const auto result=kills("pharaoh_beetle",tier,1000);
