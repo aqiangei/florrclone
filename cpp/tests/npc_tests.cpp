@@ -2082,9 +2082,9 @@ TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_acco
     const std::string dir = titanWorld("titan-permanent");
     Harness h("titan-permanent", [](const std::string& path) {
         seedAccount(path, "smith");
-        seedStack(path, "smith", "petal_rose", Rarity::Super, 1650);
-        seedStack(path, "smith", "petal_wing", Rarity::Super, 150);
-        seedStack(path, "smith", "petal_fragment", Rarity::Super, 150);
+        seedStack(path, "smith", "petal_rose", Rarity::Super, 145);
+        seedStack(path, "smith", "petal_wing", Rarity::Super, 10);
+        seedStack(path, "smith", "petal_fragment", Rarity::Super, 10);
         seedAccount(path, "rival");
         seedStack(path, "rival", "petal_rose", Rarity::Unique, 3);
         seedWorn(path, "rival", 0, "rose", Rarity::Unique);
@@ -2097,7 +2097,7 @@ TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_acco
     h.step(3, both); standAtTitan(h, both, "smith");
     const auto rose = content().petalIndex("rose");
     const auto wing = content().petalIndex("wing");
-    const int remaining[] = {1500, 1200, 600, 0};
+    const int remaining[] = {135, 110, 55, 0};
     for (unsigned n = 0; n < 4; ++n) {
         client.requestTitanForge(rose); TitanForgeOutcome out;
         CHECK(awaitForge(h, both, client, out)); CHECK(out.success);
@@ -2133,9 +2133,9 @@ TEST(permanent_titan_forge_refuses_far_dead_invalid_short_and_blood_sacrifice) {
     const std::string dir = titanWorld("titan-permanent-refuse");
     Harness h("titan-permanent-refuse", [](const std::string& path) {
         seedAccount(path, "smith");
-        seedStack(path, "smith", "petal_rose", Rarity::Super, 149);
+        seedStack(path, "smith", "petal_rose", Rarity::Super, 9);
         seedStack(path, "smith", "petal_blood_sacrifice", Rarity::Super, 600);
-        seedStack(path, "smith", "petal_wing", Rarity::Super, 150);
+        seedStack(path, "smith", "petal_wing", Rarity::Super, 10);
         seedStack(path, "smith", "petal_wing", Rarity::Unique, kMaxStackCount);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
@@ -2149,9 +2149,9 @@ TEST(permanent_titan_forge_refuses_far_dead_invalid_short_and_blood_sacrifice) {
     CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
     const auto wing = content().petalIndex("wing");
     client.requestTitanForge(wing); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
-    CHECK_EQ(client.profile().stackCount(wing, Rarity::Super), 150u);
+    CHECK_EQ(client.profile().stackCount(wing, Rarity::Super), 10u);
     CHECK_EQ(client.profile().titanForgeCount(wing), 0u);
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Super), 149u);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Super), 9u);
     CHECK_EQ(client.profile().titanForgeCount(rose), 0u);
     const auto body = bodyNamed(h.server.world(), "smith");
     h.server.world().add<Dead>(body);
@@ -2168,8 +2168,8 @@ TEST(permanent_titan_forge_ledger_survives_save_reload) {
     { Database db; std::string error; CHECK(db.load(path, error));
       CHECK_EQ(db.progress("ledger-account").extra["titanForgeCounts"]["rose"].asInt(), 2); }
     std::remove(path.c_str());
-    CHECK_EQ(titanForgeCost(0), 150); CHECK_EQ(titanForgeCost(1), 300);
-    CHECK_EQ(titanForgeCost(2), 600); CHECK_EQ(titanForgeCost(2000), 600);
+    CHECK_EQ(titanForgeCost(0), 10); CHECK_EQ(titanForgeCost(1), 25);
+    CHECK_EQ(titanForgeCost(2), 55); CHECK_EQ(titanForgeCost(2000), 55);
 }
 
 TEST(the_titans_ring_orbits_it_as_a_flowers_does_and_kills_mobs_but_spares_flowers) {

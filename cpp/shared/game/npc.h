@@ -128,7 +128,7 @@ inline constexpr int kTitanForgeCost = 5;
 
 /// 30 independent loot rolls: each petal has its own permanent progression.
 inline constexpr int titanForgeCost(unsigned completed) {
-    return completed == 0 ? 150 : completed == 1 ? 300 : 600;
+    return completed == 0 ? 10 : completed == 1 ? 25 : 55;
 }
 inline constexpr Rarity kTitanInputRarity = Rarity::Super;
 inline constexpr Rarity kTitanOutputRarity = Rarity::Unique; // next rung, displayed Eternal

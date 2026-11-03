@@ -162,7 +162,7 @@ enum class ClientMessage : std::uint8_t {
     GuildEdit,          ///< str displayName, str description -- both replace
                         ///< what the guild has. Leader only; the tag is the
                         ///< guild's key and cannot be edited. (Version 45.)
-    TitanForge,         ///< u16 input petal. 150/300/600 same-kind Super -> one
+    TitanForge,         ///< u16 input petal. 10/25/55 same-kind Super -> one
                         ///< permanent next-tier petal, Fragment -> Mjolnir.
                         ///< Per-account/per-petal price ledger; never takes
                         ///< items from another account. Requires live body
