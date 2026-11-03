@@ -391,10 +391,12 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
     // it is the one thing the floor must not lift.
     const int minTier = tier >= 3 ? tier - 2 : (tier == 2 ? 1 : 0);
 
+    bool hyperEternalCell=false;
     const auto push = [&](const DropDef& drop, Rarity rarity, double probability,
                           int floorTier = 0) {
         if (probability <= 0) return;
         rarity=payoutDropRarity(rarity,mobRarity);
+        if(mobRarity==Rarity::Apex&&rarity==Rarity::Unique&&!hyperEternalCell)return;
         int column = dropTier(rarity);
         if (column < 0) return;
         if (column < floorTier) column = floorTier;
@@ -423,6 +425,14 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         usedTiers[static_cast<std::size_t>(column)] = true;
     };
 
+    if(mobRarity==Rarity::Apex){
+        std::vector<const DropDef*> pool;
+        for(const auto& drop:table)if(drop.petalIndex!=kInvalidIndex&&petalComesAt(content().petal(drop.petalIndex),Rarity::Unique)&&
+            std::none_of(pool.begin(),pool.end(),[&](const DropDef* other){return other->petalIndex==drop.petalIndex;}))pool.push_back(&drop);
+        hyperEternalCell=true;
+        for(const auto* drop:pool)push(*drop,Rarity::Unique,100.0*0.5/(30.0*pool.size()));
+        hyperEternalCell=false;
+    }
     // Exact reference tables are per independent trial, without the legacy
     // featured/chaff pipeline. Both payout and tooltip use this shared CDF.
     if(std::any_of(table.begin(),table.end(),[](const DropDef& d){return !d.rates.empty();})){
