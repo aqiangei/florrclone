@@ -10,6 +10,19 @@
 #include "shared/game/shop.h"
 #include "client/camera.h"
 using namespace flix;
+TEST(feedback_golden_leaf_duplicate_reduces_real_shared_reload_multiplicatively) {
+    std::string error;CHECK(loadContent(testsupport::dataDir(),error));
+    const auto leaf=content().petalIndex("golden_leaf");
+    EquippedPetal equipped;equipped.configIndex=leaf;equipped.rarity=Rarity::Super;
+    auto at=[&](int i){return i==0?equipped:EquippedPetal{};};
+    const double single=barReloadCut(content(),at);
+    SkillSet skills;skills.set(SkillId::Loadout,4);skills.set(SkillId::Duplicator,2);
+    CHECK_NEAR(barReloadCut(content(),at,&skills),1-(1-single)*(1-single),1e-12);
+    skills.set(SkillId::Duplicator,1);
+    CHECK_NEAR(barReloadCut(content(),at,&skills),single,1e-12);
+    CHECK_EQ(content().petal(content().petalIndex("magic_stick")).petCount,2);
+    CHECK_NEAR(content().petal(content().petalIndex("magic_stick")).petLifetimeMillis,20000,1e-9);
+}
 TEST(feedback_public_guild_tags_follow_roster_and_zoom_reaches_quarter_scale) {
     WorldView view;RemoteEntity player;player.netId=9;player.name="Visitor";
     player.kind=net::EntityKind::Player;
