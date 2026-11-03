@@ -22,6 +22,9 @@ TEST(feedback_computer_is_a_separate_map_with_art_spawn_bands_and_assembler){
     const auto factory=maps.realmOfId("computer",found);CHECK(found);CHECK(factory!=realm);
     CHECK_EQ(maps.forRealm(factory)->displayName(),std::string("Factory"));
     const auto& c=testsupport::shippedContent();const auto assembler=c.mobIndex("cyber_assembler");CHECK(assembler!=kInvalidIndex);
+    const auto& cyber=c.mobGroup(c.mobGroupIndex("cyberspace"));CHECK_EQ(cyber.members.size(),std::size_t(8));
+    for(const auto& member:cyber.members){const auto& id=c.mob(member.mob).id;
+        CHECK(id=="javascript"||id=="c++"||id=="dust"||id=="glitch"||id=="glitch_flower"||id=="cube"||id=="sun"||id=="server");}
     if(assembler!=kInvalidIndex){CHECK(c.mob(assembler).npc.still);CHECK(c.mob(assembler).npc.recipes.size()>=10);}
     NpcSystem npcs;std::vector<std::string> warnings;npcs.loadSites(maps,c,warnings);World world;npcs.placeMissing(world,terrain,c,0);
     int converters=0;Query<Npc,Transform> services{world};services.each([&](Entity e,Npc& npc,Transform& at){
