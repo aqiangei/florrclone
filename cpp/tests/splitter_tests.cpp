@@ -271,7 +271,7 @@ TEST(one_persons_two_bodies_rank_and_are_paid_as_one) {
     CHECK_EQ(contenderSize(index.groups[0]), 1);
 
     std::vector<Bounty::Share> shares;
-    shares.push_back({left, 50.0});
+    shares.push_back({left, 7, 50.0});
     std::vector<Entity> paid;
     selectLootRecipients(shares, 4, &index, paid);
     // One slot spent, on the half that did the work.
