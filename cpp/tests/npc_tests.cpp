@@ -2055,6 +2055,8 @@ TEST(the_shipped_titan_stands_in_clear_jungle_space_with_next_tier_petals) {
         }
         ++titans;
         CHECK(site.realm == jungle);
+        CHECK_NEAR(site.position.x, 27080.0, 1e-6);
+        CHECK_NEAR(site.position.y, 28040.0, 1e-6);
         // Universal on its plate, as florr's titan is the top tier on its.
         CHECK(site.rarity == Rarity::Unique);
         // On open ground, body AND ring, as far as its cruise takes it -- the
