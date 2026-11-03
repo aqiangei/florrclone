@@ -3121,5 +3121,9 @@ TEST(urgent_inventory_messages_do_not_run_bulk_crafting_or_consume_payload) {
     client.setLoadoutSlot(1,basic,Rarity::Common);
     CHECK(awaitProfile(h,client,[&](const Profile& p){return p.loadout[1].petalIndex==basic && p.stackCount(basic,Rarity::Common)==99;}));
     CHECK_EQ(client.profile().stackCount(basic,Rarity::Uncommon),0u);
+    client.requestBulkCraft(Rarity::Uncommon);
+    CHECK(awaitProfile(h,client,[&](const Profile& p){return p.stackCount(basic,Rarity::Common)<5;}));
+    CHECK_EQ(client.profile().loadout[0].petalIndex,basic);
+    CHECK_EQ(client.profile().loadout[1].petalIndex,basic);
     removeDataDir(dir);
 }
