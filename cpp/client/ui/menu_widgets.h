@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "canvas.h"
+#include "shared/core/types.h"
 
 #include "client/ui/draw.h"
 #include "client/ui/menu_style.h"
@@ -132,6 +133,28 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 /// The 200 ms the browser waits before a tooltip appears, and the mouse-down
 /// that cancels it. One per hoverable grid; `update` is called every frame
 /// with whatever is under the pointer.
+/// Touch inspection coexists with dragging: holding still shows the card,
+/// and releasing that inspection must not equip, swap, or remove the item.
+struct TouchInspectDelay {
+    int target = -1;
+    double since = 0;
+    flix::Vec2 start{};
+    bool downBefore = false, held = false, blocked = false, consumedRelease = false;
+    bool update(int index, flix::Vec2 point, double now, bool down, bool scrolling = false) {
+        consumedRelease = false;
+        if (!down) {
+            consumedRelease = downBefore && held && !blocked;
+            downBefore = false; held = false; target = -1; blocked = false;
+            return false;
+        }
+        if (!downBefore) { downBefore=true;target=index;since=now;start=point;held=false;blocked=index<0; }
+        if (scrolling || index != target || (point-start).length() > 8.0) {blocked=true;held=false;}
+        if (!blocked && now-since >= 0.4) held=true;
+        return held;
+    }
+    void reset() { *this = TouchInspectDelay{}; }
+};
+
 struct TooltipDelay {
     static constexpr double kDelaySeconds = 0.2;
     int hovered = -1;

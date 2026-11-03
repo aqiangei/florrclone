@@ -131,6 +131,7 @@ struct Grid {
 /// declared in menus.h, which this file does not own -- and there is exactly
 /// one inventory panel in the client, so one timer is the right number.
 TooltipDelay tooltipDelay;
+TouchInspectDelay touchInspect;
 
 bool matchesSearch(std::uint16_t petalIndex, const std::string& needle) {
     if (needle.empty()) return true;
@@ -743,6 +744,7 @@ void InventoryPanel::reset() {
     // a window onto the account, not a wizard that starts over.
     searchField_.blur();
     tooltipDelay.reset();
+    touchInspect.reset();
     thumbDrag() = {};
 }
 
@@ -945,10 +947,10 @@ bool InventoryPanel::render(MenuContext& ctx) {
     // painted when those are idle.
     const bool pointerDown = ctx.window.mouseDown(MouseButton::Left) ||
                              ctx.window.mousePressed(MouseButton::Left) || ctx.drag.active();
-    const bool showTooltip =
-        hovered >= 0 &&
-        (touchPointer ? (!pointerDown && !touchScrolling)
-                      : tooltipDelay.update(hovered, ctx.timeSeconds, pointerDown));
+    const bool holdTip = touchInspect.update(hovered,mouse,ctx.timeSeconds,
+        touchPointer && ctx.window.mouseDown(MouseButton::Left),touchScrolling);
+    const bool showTooltip = hovered >= 0 && (holdTip ||
+        (!touchPointer && tooltipDelay.update(hovered,ctx.timeSeconds,pointerDown)));
     if (showTooltip) {
         const Cell& cell = grid.cells[static_cast<std::size_t>(hovered)];
         // The reload the bar would actually run, as the slot wedge times it.
@@ -1014,6 +1016,10 @@ bool InventoryPanel::render(MenuContext& ctx) {
         }
     }
 
+    if (ctx.released() && touchInspect.consumedRelease) {
+        if(ctx.drag.source==DragState::Source::Inventory)ctx.drag.clear();
+        return true;
+    }
     if (ctx.released() && hovered >= 0 && ctx.drag.source == DragState::Source::Inventory &&
         ctx.drag.petalIndex == grid.cells[static_cast<std::size_t>(hovered)].petalIndex &&
         ctx.drag.rarity == grid.cells[static_cast<std::size_t>(hovered)].rarity) {

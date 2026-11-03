@@ -202,7 +202,7 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
                 // the spawner rolls against: a band reads as the tier a player
                 // will actually meet in it, and a band between two tiers takes the
                 // one it mostly produces. See shared/game/difficulty.h.
-                const Rarity tier = dominantTierForDifficulty(element.difficulty);
+                const Rarity tier = (annotations->usesReferenceSpawnCurve() ? static_cast<Rarity>(referenceSpawnTier(element.difficulty)) : dominantTierForDifficulty(element.difficulty));
                 setFill(map, kMinimapSpawnColors[static_cast<std::size_t>(rarityIndex(tier))], 0.4);
                 // The zone's outline, so the minimap shows the band the spawner
                 // actually uses rather than the box around it. The bounding box

@@ -310,6 +310,7 @@ void MapData::reset(Realm realm) {
     biome_.clear();
     defaultMobGroup_.clear();
     minimap_ = true;
+    referenceSpawnCurve_ = false;
     dark_ = false;
     darkColor_ = 0;
     artFiles_.clear();
@@ -346,6 +347,7 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
     // florr's own property, and its default: a map has a minimap unless it
     // says otherwise.
     minimap_ = properties["minimap"].asBool(true);
+    referenceSpawnCurve_ = properties["spawnCurve"].asString() == "florrclone";
     dark_ = parseColor(properties["darkness"], darkColor_);
     // There is deliberately NO map-wide difficulty property. Difficulty is a
     // band's, and a band is the only thing that spawns anything: a number for

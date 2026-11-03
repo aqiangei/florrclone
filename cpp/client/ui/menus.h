@@ -1859,6 +1859,7 @@ private:
     /// Where the pointer was when a petal was lifted off the bar, so a release
     /// that barely moved can still be told from a drag. See drawLoadoutBar.
     Vec2 loadoutGrabAt_{};
+    ui::TouchInspectDelay loadoutTouchInspect_;
     /// Which slots a press would actually lift a petal out of, as of the last
     /// paint. The bar swallows a click for those and for nothing else -- an
     /// empty slot, the trash and the gaps all fall through and fire an attack.

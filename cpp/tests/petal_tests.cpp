@@ -1362,78 +1362,6 @@ int batteryCharges(Rig& rig, int slotIndex = 0) {
     return rig.world.get<PetalInstance>(petal).charges;
 }
 
-TEST(a_battery_arrives_with_three_charges_and_spends_one_per_slam) {
-    if (!contentLoaded()) return;
-    Rig rig;
-    rig.equip(0, "battery");
-    rig.settleEquips();
-    CHECK_EQ(batteryCharges(rig), kBatteryCharges);
-
-    // Nothing to ram: the charges are not a timer and must not tick away on
-    // an empty field.
-    rig.tick(40);
-    CHECK_EQ(countStrikes(rig), std::size_t(0));
-    CHECK_EQ(batteryCharges(rig), kBatteryCharges);
-
-    ramMob(rig);
-    rig.tick();
-    CHECK_EQ(countStrikes(rig), std::size_t(1));
-    CHECK_EQ(batteryCharges(rig), kBatteryCharges - 1);
-}
-
-TEST(a_battery_paces_its_strikes_half_a_second_apart) {
-    if (!contentLoaded()) return;
-    Rig rig;
-    rig.equip(0, "battery");
-    rig.settleEquips();
-    ramMob(rig);
-
-    rig.tick();
-    CHECK_EQ(countStrikes(rig), std::size_t(1));
-    const double first = rig.now;
-
-    // Held against the mob the whole time: without the limiter this is one
-    // strike per tick and the battery is flat in three of them.
-    CHECK(rig.tickUntil([&] { return countStrikes(rig) > 1; }, 60));
-    CHECK(rig.now - first >= kBatteryIntervalMillis);
-    CHECK(rig.now - first < kBatteryIntervalMillis + 2.0 * net::kTickMillis);
-}
-
-TEST(a_battery_reloads_once_its_third_charge_is_gone) {
-    if (!contentLoaded()) return;
-    Rig rig;
-    rig.equip(0, "battery");
-    rig.settleEquips();
-    const Entity mob = ramMob(rig);
-
-    // Three strikes, and the petal is off the ring: it has no health pool, so
-    // spending the last charge is the only thing that can ever retire it.
-    CHECK(rig.tickUntil([&] { return countStrikes(rig) >= std::size_t(kBatteryCharges); }, 120));
-    CHECK(rig.tickUntil([&] { return liveBattery(rig) == NULL_ENTITY; }, 5));
-    CHECK(rig.slot(0).broken);
-
-    // Still against the mob, and still silent: a flat battery is a reload, not
-    // a petal that keeps firing for free.
-    const std::size_t spent = countStrikes(rig);
-    rig.tick(40);
-    CHECK_EQ(countStrikes(rig), spent);
-
-    // Stepped off the mob before the reload lands, so what is measured is the
-    // battery that arrives rather than the charge it would spend on the tick
-    // it arrived.
-    rig.world.destroy(mob);
-    CHECK(rig.tickUntil([&] { return !rig.slot(0).broken && liveBattery(rig) != NULL_ENTITY; },
-                        200));
-    CHECK_EQ(batteryCharges(rig), kBatteryCharges);
-
-    // And it is a working one.
-    ramMob(rig);
-    CHECK(rig.tickUntil([&] { return countStrikes(rig) > spent; }, 60));
-}
-
-/// What the last strike left on the field. A strike's damage is not a number
-/// on the wire: it is a one-tick damage field, and this is the only place it
-/// can be read before combat resolves and destroys it.
 double lastStrikeDamage(Rig& rig) {
     double damage = -1.0;
     Query<GroundEffectTag, GroundEffect> query{rig.world};
@@ -1443,86 +1371,29 @@ double lastStrikeDamage(Rig& rig) {
     return damage;
 }
 
-/// PetalSystem's own kLightningFallbackDamage, which is private to it. The
-/// battery declares `damage: 0` -- it does not hit anything with its body --
-/// so this is what its shock is worth at common.
-constexpr double kFallbackStrike = 25.0;
 
-TEST(a_strike_is_paid_at_the_petal_damage_rate) {
-    if (!contentLoaded()) return;
-    Rig plain;
-    plain.equip(0, "battery");
-    plain.settleEquips();
-    ramMob(plain);
-    CHECK(plain.tickUntil([&] { return countStrikes(plain) > 0; }, 60));
-    // An untalented common flower is the baseline the multiplier below is
-    // measured against.
-    CHECK_NEAR(lastStrikeDamage(plain), kFallbackStrike, 1e-9);
-
-    // The same slam under the Damage talent. A strike is something a PETAL
-    // does, so it rides the steep effect curve every other petal effect does
-    // rather than arriving as the raw stat.
-    Rig talented;
-    talented.world.add<PlayerSkillTree>(talented.player);
-    talented.world.get<PlayerSkillTree>(talented.player)
-        .skills.set(SkillId::Damage, rarityIndex(Rarity::Legendary));
-    talented.equip(0, "battery");
-    talented.settleEquips();
-    ramMob(talented);
-    CHECK(talented.tickUntil([&] { return countStrikes(talented) > 0; }, 60));
-
-    const double scale = talented.modifiers().petalDamageScale;
-    CHECK(scale > 1.0);
-    CHECK_NEAR(lastStrikeDamage(talented), kFallbackStrike * scale, 1e-9);
+TEST(a_battery_arrives_with_three_charges_and_spends_only_on_damage) {
+    CHECK(contentLoaded()); Rig rig; rig.equip(0,"battery");rig.settleEquips();
+    CHECK_EQ(batteryCharges(rig),3);const auto source=ramMob(rig);rig.tick(40);
+    CHECK_EQ(countStrikes(rig),0u);CHECK_EQ(batteryCharges(rig),3);
+    CombatSystem combat;combat.applyDamage(rig.world,rig.player,source,1,rig.now);rig.tick();
+    CHECK_EQ(countStrikes(rig),1u);CHECK_EQ(batteryCharges(rig),2);
+    CHECK_NEAR(lastStrikeDamage(rig),12,1e-9);
 }
-
-TEST(a_strike_climbs_the_rarity_ladder_with_the_petal) {
-    if (!contentLoaded()) return;
-    // A petal whose own damage stat carries the tier: petalStats has already
-    // put it up the 3x ladder, and the strike spends exactly that.
-    Rig bolt;
-    bolt.equip(0, "lightning", Rarity::Apex);
-    bolt.settleEquips();
-    bolt.settleRing();
-    addMob(bolt, bolt.world.get<Transform>(bolt.petals(0).front()).position);
-    CHECK(bolt.tickUntil([&] { return countStrikes(bolt) > 0; }, 120));
-    CHECK_NEAR(lastStrikeDamage(bolt), 25.0 * petalStatScale(Rarity::Apex), 1e-6);
-
-    // And a petal with NO damage stat climbs the same ladder. A flat fallback
-    // is what made an apex battery shock for a common battery's number.
-    Rig cell;
-    cell.equip(0, "battery", Rarity::Apex);
-    cell.settleEquips();
-    ramMob(cell);
-    CHECK(cell.tickUntil([&] { return countStrikes(cell) > 0; }, 60));
-    CHECK_NEAR(lastStrikeDamage(cell), kFallbackStrike * petalStatScale(Rarity::Apex), 1e-6);
-
-    // Which is the whole point: the tier has to change the number.
-    Rig common;
-    common.equip(0, "battery");
-    common.settleEquips();
-    ramMob(common);
-    CHECK(common.tickUntil([&] { return countStrikes(common) > 0; }, 60));
-    CHECK(lastStrikeDamage(cell) > lastStrikeDamage(common) * 1000.0);
+TEST(a_battery_spends_three_charges_then_reloads_full_without_auto_firing) {
+    CHECK(contentLoaded());Rig rig;rig.equip(0,"battery");rig.settleEquips();const auto source=ramMob(rig);CombatSystem combat;
+    for(int i=0;i<3;++i){rig.world.get<Health>(rig.player).hitCooldownUntilMillis=0;
+        combat.applyDamage(rig.world,rig.player,source,1,rig.now);rig.tick();if(i<2)rig.tick(16);}
+    CHECK_EQ(countStrikes(rig),3u);CHECK(rig.tickUntil([&]{return batteryCharges(rig)==3;},120));
+    rig.tick(20);CHECK_EQ(countStrikes(rig),3u);
 }
-
-TEST(a_battery_ignores_a_mob_that_only_touches_the_ring) {
-    if (!contentLoaded()) return;
-    Rig rig;
-    rig.equip(0, "battery");
-    rig.freezeRing();
-    rig.settleEquips();
-    rig.settleRing();
-
-    // On the petal, well clear of the flower. The battery discharges on what
-    // the FLOWER rams; a mob the ring sweeps across is not that.
-    const Vec2 orbit = rig.world.get<Transform>(rig.petals(0).front()).position;
-    CHECK((orbit - rig.world.get<Transform>(rig.player).position).length() >
-          kPlayerBaseRadius + 20.0);
-    addMob(rig, orbit);
-    rig.tick(40);
-    CHECK_EQ(countStrikes(rig), std::size_t(0));
-    CHECK_EQ(batteryCharges(rig), kBatteryCharges);
+TEST(a_battery_ignores_self_damage_and_invulnerability) {
+    CHECK(contentLoaded());Rig rig;rig.equip(0,"battery");rig.settleEquips();const auto source=ramMob(rig);CombatSystem combat;
+    rig.world.get<Health>(rig.player).invulnerableUntilMillis=rig.now+1000;
+    combat.applyDamage(rig.world,rig.player,source,1,rig.now);rig.tick();
+    rig.world.get<Health>(rig.player).invulnerableUntilMillis=0;
+    combat.applyDamage(rig.world,rig.player,rig.player,1,rig.now);rig.tick();
+    CHECK_EQ(countStrikes(rig),0u);CHECK_EQ(batteryCharges(rig),3);
 }
 
 // ---------------------------------------------------------------------------
@@ -6038,4 +5909,27 @@ TEST(a_nearer_crown_of_another_tier_lends_its_own) {
     const PetalInstance& unique = rig.world.get<PetalInstance>(lentTo(rig, other).front());
     CHECK(unique.creditTo == rig.player);
     CHECK(unique.rarity == Rarity::Unique);
+}
+
+TEST(wiki_mechanism_battery_requires_real_damage_and_bounds_chain_targets) {
+    CHECK(contentLoaded()); Rig rig; rig.equip(0,"battery"); rig.settleEquips();
+    const auto at=rig.world.get<Transform>(rig.player).position;
+    const auto source=addMob(rig,at+Vec2{30,0});
+    for(int n=1;n<=5;++n)addMob(rig,at+Vec2{100.0*n,0});
+    rig.tick(); CHECK_EQ(countStrikes(rig),0u); // touching alone is not damage
+    CombatSystem combat;
+    const auto hit=combat.applyDamage(rig.world,rig.player,source,1,rig.now);
+    CHECK(hit.applied>0);rig.tick();
+    CHECK_EQ(countStrikes(rig),1u); CHECK_EQ(batteryCharges(rig),2);
+    int targets=0;Query<LightningTarget> q{rig.world};q.each([&](Entity,LightningTarget&){++targets;});
+    CHECK_EQ(targets,3); // initial target plus two Common bounces
+    rig.tick(); CHECK_EQ(countStrikes(rig),1u);
+}
+TEST(wiki_mechanism_lightning_bypasses_armor_and_dodge) {
+    CHECK(contentLoaded());Rig rig;const auto victim=addMob(rig,{1100,1000});
+    rig.world.add<Armor>(victim,Armor{1e9});rig.world.add<Evasion>(victim,Evasion{1.0});
+    const auto before=rig.world.get<Health>(victim).current;
+    CombatSystem combat;const auto hit=combat.applyDamage(rig.world,victim,rig.player,12,rig.now,DamageKind::Lightning);
+    CHECK(!hit.dodged);CHECK_NEAR(hit.applied,12,1e-8);
+    CHECK_NEAR(rig.world.get<Health>(victim).current,before-12,1e-8);
 }

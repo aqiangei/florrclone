@@ -2060,7 +2060,9 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     }
     const int forcedTier = roster->forceRarity >= 0 ? roster->forceRarity : zone.forceRarity;
     Rarity rarity = forcedTier >= 0 ? clampLadderRarity(forcedTier)
-                                   : rollSpawnRarity(zone.difficulty, luck, rng);
+                                   : (worldMaps && worldMaps->forRealm(zone.realm) && worldMaps->forRealm(zone.realm)->usesReferenceSpawnCurve()
+                                      ? rollReferenceSpawnRarity(zone.difficulty,luck,rng)
+                                      : rollSpawnRarity(zone.difficulty, luck, rng));
     if (rarityIndex(rarity) > rarityIndex(Rarity::Super)) rarity = Rarity::Super;
     if (fixedSuper) rarity = Rarity::Super;
     // A prestige twin's band grows what the plain band would, a tier up --

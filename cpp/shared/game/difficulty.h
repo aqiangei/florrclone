@@ -330,4 +330,22 @@ inline Rarity dominantTierForDifficulty(double difficulty) {
     return mix.upperChance > 0.5 ? mix.upper : mix.lower;
 }
 
+
+inline int referenceSpawnTier(double difficulty) {
+    if (difficulty < 0) return 0;
+    if (difficulty <= 5) return 1;
+    if (difficulty <= 17) return 2;
+    if (difficulty <= 25) return 3;
+    if (difficulty < 45) return 4;
+    if (difficulty < 65) return 5;
+    return 6;
+}
+inline Rarity rollReferenceSpawnRarity(double difficulty, double luck, Rng& rng) {
+    const int centre=referenceSpawnTier(difficulty+std::max(0.0,luck-1.0));
+    double total=0; for(int i=0;i<=6;++i) total+=std::pow(0.2,std::abs(i-centre));
+    double pick=rng.unit()*total; int result=6;
+    for(int i=0;i<=6;++i) if((pick-=std::pow(0.2,std::abs(i-centre)))<0){result=i;break;}
+    return result==6 && rng.unit()<0.002 ? Rarity::Super : static_cast<Rarity>(result);
+}
+
 } // namespace flix

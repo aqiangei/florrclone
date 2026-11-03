@@ -1227,7 +1227,7 @@ inline constexpr const char* kMoonPetalId = "moon";
 /// Wax and the moon are the two. Both grow 30 units a tier
 /// (kLoosePetalRadiusPerTier).
 inline bool petalIsLooseBody(const PetalConfig& config) {
-    return config.id == kWaxPetalId || config.id == kMoonPetalId;
+    return config.id == kWaxPetalId || config.id == kMoonPetalId || config.id == "moon_rock";
 }
 
 /// Whether this petal is the body its flower's RING orbits -- the moon.
@@ -1242,7 +1242,7 @@ inline bool petalIsLooseBody(const PetalConfig& config) {
 /// The highest tier among them is the one that comes out (the leftmost of
 /// equals) and the others hold nothing (liveMoonSlotOf in
 /// server/systems/petals.cpp).
-inline bool petalAnchorsRing(const PetalConfig& config) { return config.id == kMoonPetalId; }
+inline bool petalAnchorsRing(const PetalConfig& config) { return config.id == kMoonPetalId || config.id == "moon_rock"; }
 
 /// The petal that becomes whatever is equipped to its left, by id.
 inline constexpr const char* kMimicPetalId = "mimic";

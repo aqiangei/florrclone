@@ -545,7 +545,8 @@ PetalStats instanceStats(const ContentRegistry& registry, const PetalInstance& i
 } // namespace
 
 int liveMoonSlotOf(const ContentRegistry& registry, const Loadout& loadout) {
-    return bestCopySlot(registry.petalIndex(kMoonPetalId),
+    const auto modern = registry.petalIndex("moon_rock");
+    return bestCopySlot(modern == kInvalidIndex ? registry.petalIndex(kMoonPetalId) : modern,
                         [&](int i) { return equippedPetal(registry, loadout, i); });
 }
 

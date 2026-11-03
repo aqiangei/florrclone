@@ -24,6 +24,8 @@ function roster(raw,biome,sourceTypes){
 const report=[],plans=[];
 for(const [biome,id]of Object.entries(files)){
   const file=path.join(root,'maps',id+'.tmj'),map=JSON.parse(fs.readFileSync(file));
+  map.properties=(map.properties||[]).filter(p=>p.name!=='spawnCurve');
+  map.properties.push({name:'spawnCurve',type:'string',value:'florrclone'});
   const layer=map.layers.find(l=>l.name==='spawns');assert(layer,biome+' has no spawns layer');
   const previous=layer.objects;
   const regions=api.spawnRegions[biome]||(biome==='Pyramid'?[{

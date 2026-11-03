@@ -384,6 +384,7 @@ public:
     /// Whether the minimap is shown on this map: florr's own `minimap` map
     /// property, true unless the map says false. The pyramid hides it.
     bool showsMinimap() const { return minimap_; }
+    bool usesReferenceSpawnCurve() const { return referenceSpawnCurve_; }
 
     /// Whether this map is dark: it names a `darkness` colour. Everywhere but
     /// round what gives off light -- flowers, pets, emissive petals, drops and
@@ -518,6 +519,7 @@ private:
     std::string biome_;
     std::string defaultMobGroup_;
     bool minimap_ = true;
+    bool referenceSpawnCurve_ = false;
     bool dark_ = false;
     std::uint32_t darkColor_ = 0;
     /// The map's art, straight out of the file. Copied rather than referenced

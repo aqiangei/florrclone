@@ -3,16 +3,18 @@
 #include "client/ui/menu_widgets.h"
 #include "client/ui/i18n.h"
 #include "shared/game/config.h"
+#include "server/systems/petals.h"
 using namespace flix;
 using namespace flix::testsupport;
 namespace {
+bool loadWikiStats() { std::string error; return loadContent(dataDir(),error); }
 bool hasLine(std::uint16_t id,Rarity r,const std::string& text) {
     for(const auto& line:ui::petalTooltipLines(id,r,{},1)) if(line.text.find(text)!=std::string::npos)return true;
     return false;
 }
 }
 TEST(wiki_stat_leaf_keeps_server_three_times_and_shows_base) {
-    CHECK(ensureShippedContent()); ui::setLanguage(ui::Language::Zh);
+    CHECK(loadWikiStats()); ui::setLanguage(ui::Language::Zh);
     const auto leaf=content().petalIndex("leaf");
     CHECK_NEAR(content().petalStats(leaf,Rarity::Super).passiveHealPerSecond,729,1e-8);
     CHECK_NEAR(kPlayerHealMultiplier,3,1e-12);
@@ -20,7 +22,7 @@ TEST(wiki_stat_leaf_keeps_server_three_times_and_shows_base) {
     CHECK(hasLine(leaf,Rarity::Super,"本服治疗倍率：x3"));
 }
 TEST(wiki_stat_battery_and_lightning_share_damage_chain_and_description) {
-    CHECK(ensureShippedContent()); ui::setLanguage(ui::Language::Zh);
+    CHECK(loadWikiStats()); ui::setLanguage(ui::Language::Zh);
     for(const auto* id:{"battery","lightning"}) {
         const auto i=content().petalIndex(id); const auto s=content().petalStats(i,Rarity::Mythic);
         CHECK_NEAR(s.lightningDamagePerHit,2916,1e-8); CHECK_EQ(s.lightningBounces,7);
@@ -31,14 +33,14 @@ TEST(wiki_stat_battery_and_lightning_share_damage_chain_and_description) {
     CHECK_NEAR(content().petalStats(content().petalIndex("lightning"),Rarity::Super).health,43740,1e-8);
 }
 TEST(wiki_stat_root_fang_clover_use_their_special_scaling) {
-    CHECK(ensureShippedContent());
+    CHECK(loadWikiStats());
     CHECK_NEAR(content().petalStats(content().petalIndex("root"),Rarity::Super).armorPerStack,1822.5,1e-8);
     CHECK_NEAR(content().petalStats(content().petalIndex("fang"),Rarity::Super).lifesteal,0.35/3,1e-10);
     CHECK_NEAR(content().petalStats(content().petalIndex("clover"),Rarity::Common).modifiers.luck,0.1,1e-10);
     CHECK_NEAR(content().petalStats(content().petalIndex("clover"),Rarity::Super).modifiers.luck,0.8,1e-10);
 }
 TEST(wiki_stat_all_petals_have_finite_values_and_no_phantom_luck) {
-    CHECK(ensureShippedContent()); ui::setLanguage(ui::Language::Zh); int checked=0;
+    CHECK(loadWikiStats()); ui::setLanguage(ui::Language::Zh); int checked=0;
     for(std::uint16_t i=0;i<content().petalCount();++i)for(int t=0;t<kLadderRarityCount;++t) {
         const auto r=static_cast<Rarity>(t);const auto s=content().petalStats(i,r);
         const double values[]={s.damage,s.health,s.heal,s.passiveHealPerSecond,s.armorPerStack,
@@ -50,4 +52,20 @@ TEST(wiki_stat_all_petals_have_finite_values_and_no_phantom_luck) {
         ++checked;
     }
     std::printf("  checked %d petal/tier stat and tooltip combinations\n",checked);
+}
+
+TEST(wiki_stat_moon_rock_uses_existing_loose_body_and_ring_anchor) {
+    CHECK(loadWikiStats());const auto moon=content().petalIndex("moon_rock");CHECK(moon!=kInvalidIndex);
+    CHECK(petalAnchorsRing(content().petal(moon)));CHECK(petalIsLooseBody(content().petal(moon)));
+    Loadout loadout;loadout.slots[0].configIndex=moon;loadout.slots[0].rarity=Rarity::Common;
+    loadout.slots[1].configIndex=moon;loadout.slots[1].rarity=Rarity::Super;
+    CHECK_EQ(liveMoonSlotOf(content(),loadout),1);
+}
+TEST(wiki_stat_touch_hold_inspects_without_click_and_drag_still_cancels) {
+    ui::TouchInspectDelay h;
+    CHECK(!h.update(2,{10,10},1,true)); CHECK(h.update(2,{11,10},1.5,true));
+    CHECK(!h.update(2,{11,10},1.6,false)); CHECK(h.consumedRelease);
+    CHECK(!h.update(2,{10,10},2,true));CHECK(!h.update(2,{30,10},2.5,true));
+    CHECK(!h.update(2,{30,10},2.6,false));CHECK(!h.consumedRelease);
+    CHECK(!h.update(2,{10,10},3,true));CHECK(!h.update(2,{10,10},3.2,false));CHECK(!h.consumedRelease);
 }

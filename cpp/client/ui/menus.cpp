@@ -2094,8 +2094,11 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     const bool tipSlot =
         hovered >= 0 && hovered < owned && hovered < kLoadoutBarSlots &&
         !(secondaryHidden && hovered >= kLoadoutBarPrimary) && !shown[static_cast<std::size_t>(hovered)].empty();
-    const bool showTip =
-        tipSlot && loadoutTooltipDelay.update(hovered, timeSeconds, pointerDown);
+    const bool touchTip = loadoutTouchInspect_.update(tipSlot ? hovered : -1,
+        {window.mouseX(),window.mouseY()},timeSeconds,
+        window.pointerIsTouch() && window.mouseDown(MouseButton::Left));
+    const bool showTip = tipSlot && (touchTip ||
+        (!window.pointerIsTouch() && loadoutTooltipDelay.update(hovered,timeSeconds,pointerDown)));
     if (showTip) {
         const Profile::Slot& slot = shown[static_cast<std::size_t>(hovered)];
         const double reloadScale =
@@ -2251,6 +2254,9 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
         loadoutPressSaved_ = true;
     }
 
+    if (window.mouseReleased(MouseButton::Left) && loadoutTouchInspect_.consumedRelease) {
+        drag_.clear(); loadoutPressSlot_=-1; loadoutPressSaved_=false; return;
+    }
     if (!window.mouseReleased(MouseButton::Left)) return;
 
     // Tap on an empty slot: no drag was started, but the column still swaps.

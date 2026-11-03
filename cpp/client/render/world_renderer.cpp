@@ -3349,13 +3349,13 @@ const std::vector<std::uint16_t>& WorldRenderer::droppablePetals() const {
 }
 
 void WorldRenderer::drawGarbagePile(Canvas& canvas, Vec2 at, double baseSize,
-                                    double timeSeconds) const {
+                                    double timeSeconds, std::uint32_t stableId) const {
     const std::vector<std::uint16_t>& eligible = droppablePetals();
     if (eligible.empty() || !sprites_ || !content_) return;
 
     // Seeded on where the pile stands, so every client builds the same pile out
     // of the same petals without a byte of it crossing the wire.
-    const long long seed = static_cast<long long>(std::floor(at.x * 1000.0 + at.y * 1000.0));
+    const long long seed = stableId != 0 ? stableId * 104729LL : static_cast<long long>(std::floor(at.x / 256.0) * 1009 + std::floor(at.y / 256.0));
     const int count = 5 + static_cast<int>(((seed % 5) + 5) % 5);
     for (int i = 0; i < count; ++i) {
         const long long petalSeed = ((seed + i * 1000LL) % 1000000LL + 1000000LL) % 1000000LL;
@@ -3372,7 +3372,7 @@ void WorldRenderer::drawGarbagePile(Canvas& canvas, Vec2 at, double baseSize,
         const PetalConfig& config = content_->petal(index);
         const double size = baseSize * (0.6 + static_cast<double>(petalSeed % 200) / 1000.0) *
                             config.size * petalArtScale(&config);
-        sprites_->drawPetal(canvas, index, Rarity::Common, x, y, size, rotation, timeSeconds);
+        sprites_->drawPetal(canvas, index, Rarity::Common, x, y, size, rotation, 0.0);
     }
 }
 
@@ -3570,7 +3570,7 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
     // Everything from here is the body, and flashes when it is hit; the glow
     // above is light, not body. A dying mob keeps its net id, so the killing
     // blow flashes on through the death animation.
-    const ScopedColorTint flash(canvas, hitTint(mob.netId));
+    const ScopedColorTint flash(canvas, config && config->id == "garbage" ? Color{0,0,0,0} : hitTint(mob.netId));
 
     // Before the body, so the sting comes out from under it. Off the HITBOX
     // centre rather than the art's: it is the server's muzzle.
@@ -3590,7 +3590,7 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
         canvas.save();
         canvas.translate(static_cast<float>(art.x), static_cast<float>(art.y));
         canvas.scale(static_cast<float>(mirrored ? -zoom : zoom), static_cast<float>(zoom));
-        drawGarbagePile(canvas, mob.position, mob.radius * 2.0, timeSeconds);
+        drawGarbagePile(canvas, mob.position, mob.radius * 2.0, 0.0, mob.netId);
         canvas.restore();
     } else if (id == "digger") {
         // A flower carrying a cutter rather than a bug, the way gardn draws it.
