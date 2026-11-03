@@ -251,7 +251,9 @@ void App::updateLobby() {
     } else if (chatOpen_) {
         editChatLine();
     } else if (nameField_.focused) {
+        const auto previousName=playerName_;
         editText(playerName_, 20, nameField_);
+        if(playerName_!=previousName){playerNameChosen_=true;playerNameAccount_=net_.profile().username;saveSession();}
         ui::trackTextMouse(window_, nameField_, nameBox_,
                            ui::inputFieldRun(nameBox_, playerName_, nameField_), playerName_,
                            timeSeconds_);

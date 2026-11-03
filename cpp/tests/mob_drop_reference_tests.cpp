@@ -5,6 +5,11 @@
 #include <map>
 
 using namespace flix;
+TEST(hyper_drop_payout_preserves_rolled_rarity_instead_of_promoting_super_to_eternal){
+    for(int i=0;i<rarityIndex(Rarity::Apex);++i){const auto rarity=static_cast<Rarity>(i);CHECK_EQ(payoutDropRarity(rarity,Rarity::Apex),rarity);}
+    CHECK_EQ(payoutDropRarity(Rarity::Apex,Rarity::Apex),Rarity::Unique);
+    CHECK_EQ(payoutDropRarity(Rarity::Super,Rarity::Super),Rarity::Super);
+}
 namespace {
 const ContentRegistry& registry(){static ContentRegistry c;static bool loaded=false;if(!loaded){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));loaded=true;}return c;}
 using Counts=std::map<std::pair<std::string,int>,int>;

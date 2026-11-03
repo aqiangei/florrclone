@@ -186,7 +186,6 @@ void App::updateConnecting() {
         // the token, handleAuthResult clears its own copy and the login form
         // is already the screen we are on, so there is nothing to unwind.
         net_.resumeSession(storedToken_);
-        storedToken_.clear();
         autoAuthSentAt_ = timeSeconds_;
     } else if (!config_.forceLogin) {
         // A first visit -- nothing stored -- plays straight away on a guest

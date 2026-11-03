@@ -429,7 +429,12 @@ void App::pollNetwork() {
             autoLogin_ = AutoLogin::Done;
             focusedField_ = -1;
             // A successful sign-in defaults the flower name to this account.
-            playerName_ = net_.profile().username;
+            if(!playerNameChosen_ || (!playerNameAccount_.empty() && playerNameAccount_!=net_.profile().username)) {
+                playerName_ = net_.profile().username;
+                playerNameChosen_ = false;
+            }
+            playerNameAccount_=net_.profile().username;
+            storedToken_=net_.sessionToken();
             saveSession();
             // A sign-in from the Account panel in the middle of a run: the
             // server has already taken the body out (leaveWorld) and the
@@ -446,6 +451,7 @@ void App::pollNetwork() {
             // strength of that token; without it this is the form's screen.
             screen_ = Screen::Login;
         }
+        if(net_.authStatus==net::AuthStatus::SessionExpired){storedToken_.clear();saveSession();}
     }
     if (net_.sessionTokenRenewed) {
         // A password change reissued this session's token. Written out now
@@ -1162,7 +1168,6 @@ void App::onReconnected() {
     } else {
         net_.addSystemMessage("Reconnected to the server. Please log in again.");
     }
-    storedToken_.clear();
 }
 
 void App::leaveToTitle() {
@@ -1484,12 +1489,16 @@ void App::loadSession() {
     // has only the first line, which reads back as an empty name.
     std::getline(in, storedToken_);
     std::getline(in, playerName_);
+    std::string chosen;std::getline(in,chosen);
+    playerNameChosen_=chosen=="chosen" || (chosen.empty()&&!playerName_.empty());
+    std::getline(in,playerNameAccount_);
 }
 
 void App::saveSession() const {
     if (net_.sessionToken().empty() && playerName_.empty()) return;
     std::ofstream out(config_.sessionFile, std::ios::trunc);
-    if (out) out << net_.sessionToken() << "\n" << playerName_ << "\n";
+    const auto& token=net_.sessionToken().empty()?storedToken_:net_.sessionToken();
+    if (out) out << token << "\n" << playerName_ << "\n" << (playerNameChosen_?"chosen":"default") << "\n" << playerNameAccount_ << "\n";
 }
 
 std::string App::settingsPath() const {

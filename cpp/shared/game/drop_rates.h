@@ -8,8 +8,8 @@
 namespace flix {
 struct DropRate { Rarity rarity=Rarity::Common; double probability=0; };
 inline Rarity payoutDropRarity(Rarity rolled,Rarity mob) {
-    if(mob==Rarity::Apex)
-        return rarityIndex(rolled)>=rarityIndex(Rarity::Super)?Rarity::Unique:Rarity::Super;
+    // A Hyper kill must not promote every Super roll into an Eternal.
+    // Preserve the authored roll; Hyper petals remain forge-only.
     return rarityIndex(rolled)>=rarityIndex(Rarity::Apex)?Rarity::Unique:rolled;
 }
 using DropRates = std::vector<std::vector<DropRate>>;

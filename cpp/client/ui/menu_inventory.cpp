@@ -464,9 +464,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (stats.modifiers.attackRange > 0) special("攻击范围：+", "Attack range: +", stats.modifiers.attackRange);
     if (stats.modifiers.magnetism > 0) special("拾取范围：+", "Pickup range: +", stats.modifiers.magnetism);
     if (config.petMobIndex != kInvalidIndex) {
+        const auto& summon=content().mob(config.petMobIndex);
+        const bool apex=ladderRarity(rarity)==Rarity::Apex;
+        const auto summonRarity=apex?Rarity::Unique:rarity;
+        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
-            " x" + std::to_string(config.petCount),12.0};lines.push_back(pet);
+            " x" + std::to_string(config.petCount*(apex?3:1)),12.0};lines.push_back(pet);
+        special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*skills.healthScale(SkillId::Summoner));
+        special("召唤物伤害：", "Summon damage: ",summon.damage*summonScale*summon.petDamageScale);
+        if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
         if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
     }

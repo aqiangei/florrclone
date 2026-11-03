@@ -669,6 +669,8 @@ private:
     /// between runs beside the session token, which is where the browser build
     /// keeps it too (localStorage, not the account).
     std::string playerName_;
+    bool playerNameChosen_ = false;
+    std::string playerNameAccount_;
     /// When the join now waiting for its answer went out, which is what the
     /// loading screen's give-up is measured from. See NetClient::joinPending.
     double joinStartedSeconds_ = 0;
