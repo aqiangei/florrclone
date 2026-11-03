@@ -3098,3 +3098,28 @@ TEST(feedback_expired_timed_hammer_is_removed_on_login_without_touching_permanen
     CHECK_EQ(client.profile().stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique),0u);
     CHECK_EQ(client.profile().stackCount(content().petalIndex("mjolnir"),Rarity::Unique),1u);removeDataDir(dir);
 }
+
+TEST(urgent_inventory_messages_do_not_run_bulk_crafting_or_consume_payload) {
+    const auto dir=titanWorld("urgent-loadout-dispatch");
+    Harness h("urgent-loadout-dispatch",[](const std::string& path){
+        seedAccount(path,"switcher");
+        seedStack(path,"switcher","petal_basic",Rarity::Common,100);
+        seedWorn(path,"switcher",0,"basic",Rarity::Common);
+        seedWorn(path,"switcher",10,"rose",Rarity::Common);
+    },dir,0);
+    CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient client;CHECK(joinAs(h,client,"switcher"));
+    const auto basic=content().petalIndex("basic"),rose=content().petalIndex("rose");
+    client.saveLoadoutPreset(0);h.step(5,{&client});
+    client.swapLoadoutSlots(0,10);
+    CHECK(awaitProfile(h,client,[&](const Profile& p){return p.loadout[0].petalIndex==rose;}));
+    client.swapLoadoutRows();
+    CHECK(awaitProfile(h,client,[&](const Profile& p){return p.loadout[0].petalIndex==basic;}));
+    client.swapLoadoutSlots(0,10);h.step(5,{&client});
+    client.loadLoadoutPreset(0);
+    CHECK(awaitProfile(h,client,[&](const Profile& p){return p.loadout[0].petalIndex==basic && p.loadout[10].petalIndex==rose;}));
+    client.setLoadoutSlot(1,basic,Rarity::Common);
+    CHECK(awaitProfile(h,client,[&](const Profile& p){return p.loadout[1].petalIndex==basic && p.stackCount(basic,Rarity::Common)==99;}));
+    CHECK_EQ(client.profile().stackCount(basic,Rarity::Uncommon),0u);
+    removeDataDir(dir);
+}
