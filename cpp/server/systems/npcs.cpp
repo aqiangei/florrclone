@@ -7,9 +7,25 @@
 #include "shared/net/protocol.h"
 
 namespace flix {
+namespace {
+std::vector<std::uint8_t> availableRecipes(const MobConfig& config,
+                                          const ContentRegistry& content,Rarity rarity) {
+    std::vector<std::uint8_t> result;
+    for(std::size_t i=0;i<config.npc.recipes.size();++i) {
+        const auto& recipe=config.npc.recipes[i];bool valid=true;
+        for(const auto& input:recipe.inputs)
+            valid=valid&&petalComesAt(content.petal(input.petal),rarity);
+        for(const auto& output:recipe.outputs)
+            valid=valid&&petalComesAt(content.petal(output.petal),rarity);
+        if(valid)result.push_back(static_cast<std::uint8_t>(i));
+    }
+    return result;
+}
+}
 
 void NpcSystem::bind(World& world) {
     if (boundWorld_ == &world) return;
+    assemblerRefreshAt_.clear();
     boundWorld_ = &world;
     npcs_.emplace(world);
 }
@@ -99,6 +115,7 @@ Vec2 NpcSystem::pickRoamingSpot(const Terrain& terrain, const ContentRegistry& c
 Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRegistry& content,
                            std::uint16_t mobIndex, Rarity rarity, Vec2 at, Realm realm,
                            double nowMillis, std::optional<Team> side) {
+    bind(world);
     if (mobIndex >= content.mobCount()) return NULL_ENTITY;
     const MobConfig& config = content.mob(mobIndex);
     // The mob's own size ladder and floor, exactly as a wild one of the same
@@ -168,9 +185,9 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
     npc.still = still;
     // One recipe each, rolled here: a replaced assembler may well make
     // something else. Off the NPCs' own stream, so it moves no spawn.
-    if (!config.npc.recipes.empty()) {
-        npc.recipe = static_cast<std::uint8_t>(
-            rng_.below(static_cast<std::uint32_t>(config.npc.recipes.size())));
+    const auto recipes=availableRecipes(config,content,rarity);
+    if (!recipes.empty()) {
+        npc.recipe = recipes[rng_.below(static_cast<std::uint32_t>(recipes.size()))];
     }
     npc.cruises = !still && config.beeFlight && stats.speed > 0.0;
     const BeeCruiseDrive cruise = beeCruiseDrive(stats.speed, stats.cruiseSpeed);
@@ -180,6 +197,8 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
     npc.cruise.headingPickedMillis = nowMillis;
     npc.cruise.phase = rng_.angle();
     world.add<Npc>(e, npc);
+    if(npc.service==NpcService::Assembler && recipes.size()>1)
+        assemblerRefreshAt_[e]=nowMillis+kAssemblerRecipeRefreshMillis;
 
     world.add<Replicated>(e, Replicated{net::EntityKind::Npc, 0, mobIndex, rarity, 0});
     if (netIds != nullptr) world.add<NetId>(e, NetId{netIds->next()});
@@ -203,6 +222,40 @@ void NpcSystem::run(World& world, const Terrain& terrain, const ContentRegistry&
     bind(world);
     // Before the query walk, never inside it: a create relocates rows.
     placeMissing(world, terrain, content, nowMillis);
+
+    // Replace the station to publish its new recipe through the existing NPC
+    // spawn record. A recipe is not an update field; editing it in place would
+    // leave clients displaying the old recipe until they reconnect.
+    std::vector<Entity> refresh;
+    for(auto it=assemblerRefreshAt_.begin();it!=assemblerRefreshAt_.end();) {
+        if(!world.isAlive(it->first)||!world.has<Npc>(it->first)) {
+            it=assemblerRefreshAt_.erase(it);continue;
+        }
+        if(nowMillis>=it->second) {
+            const auto* at=world.tryGet<Transform>(it->first);
+            const auto* body=world.tryGet<Body>(it->first);
+            bool busy=false;
+            if(at && body)for(const auto& player:players)
+                if(player.realm==at->realm && distance(player.position,at->position)<=
+                   body->radius+kNpcServiceReach+kNpcServiceSlack) {busy=true;break;}
+            if(!busy)refresh.push_back(it->first);
+        }
+        ++it;
+    }
+    for(const auto old:refresh) {
+        const auto npc=world.get<Npc>(old);
+        const auto at=world.get<Transform>(old);
+        const auto side=world.get<Faction>(old).team;
+        auto recipes=availableRecipes(content.mob(npc.configIndex),content,npc.rarity);
+        recipes.erase(std::remove(recipes.begin(),recipes.end(),npc.recipe),recipes.end());
+        if(recipes.empty()){assemblerRefreshAt_.erase(old);continue;}
+        const auto recipe=recipes[rng_.below(static_cast<std::uint32_t>(recipes.size()))];
+        world.destroy(old);assemblerRefreshAt_.erase(old);
+        const auto replacement=spawnNpc(world,terrain,content,npc.configIndex,npc.rarity,
+                                         at.position,at.realm,nowMillis,side);
+        if(replacement!=NULL_ENTITY)world.get<Npc>(replacement).recipe=static_cast<std::uint8_t>(recipe);
+        for(auto& site:sites_)if(site.entity==old)site.entity=replacement;
+    }
 
     npcs_->each([&](Entity e, NpcTag&, Npc& npc, Transform& transform) {
         // Neither moves nor turns: it stands where it was put down, facing

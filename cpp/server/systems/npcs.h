@@ -41,6 +41,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "server/replication.h"
 #include "shared/core/types.h"
@@ -59,6 +60,7 @@ namespace flix {
 /// than an about-face.
 inline constexpr double kNpcLeashRadius = 260.0;
 inline constexpr double kNpcLeashTurn = 0.08;
+inline constexpr double kAssemblerRecipeRefreshMillis = 20.0 * 60.0 * 1000.0;
 
 class NpcSystem {
 public:
@@ -148,6 +150,7 @@ private:
     Rng rng_{0x0DAC1E5EED5ull};
     World* boundWorld_ = nullptr;
     std::optional<Query<NpcTag, Npc, Transform>> npcs_;
+    std::unordered_map<Entity,double> assemblerRefreshAt_;
 };
 
 } // namespace flix

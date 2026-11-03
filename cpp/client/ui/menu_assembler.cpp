@@ -373,7 +373,7 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
     } else {
         refusal_.clear();
         drawSlotLine(canvas, card, trEnZh(kAssemblerInstructions,
-                     "按配方转换同稀有度花瓣；长按左右箭头可加速调整数量。"));
+                     "每20分钟换配方，使用时延后；长按箭头加速调整数量。"));
     }
 
     // Tiles on their way out go over everything.

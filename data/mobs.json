@@ -2152,7 +2152,7 @@
         },
         {
           "from": [
-            "moon"
+            "moon_rock"
           ],
           "to": {
             "petal": "rock",
@@ -2166,7 +2166,7 @@
               "count": 100000
             }
           ],
-          "to": "moon"
+          "to": "moon_rock"
         },
         {
           "from": [
@@ -2211,22 +2211,6 @@
             }
           ],
           "to": "cutter"
-        },
-        {
-          "from": [
-            "mimic",
-            "ram"
-          ],
-          "to": "sawblade"
-        },
-        {
-          "from": [
-            {
-              "petal": "square",
-              "count": 2
-            }
-          ],
-          "to": "pentagon"
         }
       ]
     },
