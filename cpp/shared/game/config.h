@@ -1261,6 +1261,13 @@ inline constexpr const char* kMoonPetalId = "moon";
 ///
 /// Wax and the moon are the two. Both grow 30 units a tier
 /// (kLoosePetalRadiusPerTier).
+// Sawblade stays close while attacking, but is still an offensive petal.
+// Its defendOnly orbit must not suppress Lentil attraction like utility petals.
+inline bool petalCanBeAttracted(const PetalConfig& config) {
+    return !config.noPhysics && !config.hasFixedDirection && !config.ignoresMobs &&
+           (!config.defendOnly || config.id == "sawblade");
+}
+
 inline bool petalIsLooseBody(const PetalConfig& config) {
     return config.id == kWaxPetalId || config.id == kMoonPetalId || config.id == "moon_rock";
 }

@@ -608,7 +608,7 @@ std::string localizeMarkupAware(std::string text) {
 
 std::string localizeChatText(std::string text) {
     if (!zh() || text.empty()) return text;
-    for (const auto& pair : {Pair{"crafted x", "合成 ×"}, Pair{"consumed x", "消耗 ×"}}) {
+    for (const auto& pair : {Pair{"crafted x", "合成 ×"}, Pair{"forged x", "锻造 ×"}, Pair{"consumed x", "消耗 ×"}}) {
         std::size_t at = 0;
         while ((at = text.find(pair.en, at)) != std::string::npos) {
             text.replace(at, std::char_traits<char>::length(pair.en), pair.zh);

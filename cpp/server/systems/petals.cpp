@@ -2088,12 +2088,11 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
         // so the pearl goes out and comes in with the ring: attack and defend
         // held together is an extended ring, and so an extended pearl.
         const bool extended = (config.defendOnly ? defendOnlyGap : ring->gap) > kPetalOrbitRestGap;
-        // A defendOnly petal stays in its place on the ring. Attraction would
-        // draw it out toward a mob, which is the swing it never makes -- and a
-        // petal that ignores mobs has no business being drawn to one either.
-        // With a radius of zero it is drawn to nothing.
+        // Utility petals stay close; Sawblade is an offensive exception even
+        // though its attack orbit also uses defendOnly. Mimics inherit the
+        // effective copied config, so a copied Sawblade follows the same rule.
         const double petalAttraction =
-            config.defendOnly || config.ignoresMobs ? 0.0 : attractionRadius;
+            petalCanBeAttracted(config) ? attractionRadius : 0.0;
         if (instance->ricochet.active &&
             flyRicochetPetal(world, petal, *instance, *transform, orbit, committedFlower,
                              instanceStats(registry, *instance).reloadMillis, nowMillis, dt)) {

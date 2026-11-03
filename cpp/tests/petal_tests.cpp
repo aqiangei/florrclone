@@ -21,6 +21,7 @@ namespace {
 // allowed to change.
 
 const char* const kPetalsJson = R"JSON({
+  "lentil":{"name":"Lentil","damage":13,"health":12,"size":1,"cooldown":2000,"count":1,"attractionForce":2000,"playerModifiers":{"petalAttractionRadius":20}},
   "basic":    {"name":"Basic","damage":10,"health":10,"size":2,"cooldown":1200,"count":1,"color":"#90EE90"},
   "icosahedron":{"name":"Icosahedron","damage":10,"health":10,"size":2,"cooldown":2500,"count":1,"color":"#8B5CF6"},
   "sandy":    {"name":"Sandy","damage":4,"health":12,"size":1,"cooldown":800,"count":4,"clumped":true,"color":"#8B0000"},
@@ -5954,4 +5955,18 @@ TEST(wiki_mechanism_battery_chains_between_large_touching_bodies) {
     ricochetCombatTick(rig,combat);
     CHECK(rig.world.get<Health>(first).current<10000);
     CHECK(rig.world.get<Health>(second).current<10000);
+}
+
+TEST(wiki_mechanism_lentil_attracts_close_sawblade_and_its_mimic) {
+    CHECK(contentLoaded());
+    for (int slot : {0,1}) {
+        Rig rig;rig.equip(0,"sawblade");rig.equip(1,"mimic");rig.equip(2,"lentil");rig.freezeRing();
+        rig.settleEquips();rig.settleRing();
+        const auto petal=rig.petals(slot).front();const auto orbit=rig.position(petal);
+        const auto away=(orbit-rig.position(rig.player)).normalized();
+        const auto mob=addAttractor(rig,orbit+away*60,20);
+        rig.tick(90);
+        CHECK(rig.world.get<PetalInstance>(petal).attractedTo==mob);
+        CHECK(distance(rig.position(petal),orbit)>20);
+    }
 }

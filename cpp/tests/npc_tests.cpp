@@ -3021,3 +3021,25 @@ TEST(pyramid_map_scrolls_reveal_one_visit_without_inventory_and_refill) {
     CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::Playing;}));
     CHECK(!explorer.pyramidMapRevealed);
 }
+
+TEST(permanent_titan_forge_broadcasts_eternal_theme_to_other_accounts) {
+    const auto dir=titanWorld("titan-broadcast");
+    Harness h("titan-broadcast",[](const std::string& path){
+        seedAccount(path,"smith");seedAccount(path,"watcher");
+        seedStack(path,"smith","petal_rose",Rarity::Super,10);
+    },dir,0);
+    CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient smith,watcher;CHECK(joinAs(h,smith,"smith"));CHECK(joinAs(h,watcher,"watcher"));
+    const std::vector<NetClient*> both{&smith,&watcher};h.step(3,both);standAtTitan(h,both,"smith");
+    const auto before=watcher.chat().size();smith.requestTitanForge(content().petalIndex("rose"));
+    TitanForgeOutcome out;CHECK(awaitForge(h,both,smith,out));CHECK(out.success);
+    CHECK(h.stepUntil(both,[&]{for(std::size_t n=before;n<watcher.chat().size();++n)
+        if(watcher.chat()[n].text.find("has been forged by")!=std::string::npos)return true;return false;},60));
+    char color[8];std::snprintf(color,sizeof color,"#%06x",rarityColor(Rarity::Unique));
+    bool seen=false;for(std::size_t n=before;n<watcher.chat().size();++n){const auto& text=watcher.chat()[n].text;
+        if(text.find("has been forged by")==std::string::npos)continue;seen=true;
+        CHECK(text.find(color)!=std::string::npos);CHECK(text.find("Eternal")!=std::string::npos);
+        CHECK(text.find("@smith")!=std::string::npos);CHECK(text.find("forged x1")!=std::string::npos);
+        CHECK(text.find("consumed x10")!=std::string::npos);}
+    CHECK(seen);removeDataDir(dir);
+}

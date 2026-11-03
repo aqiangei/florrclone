@@ -97,3 +97,10 @@ TEST(wiki_stat_moon_rock_actually_spawns_and_becomes_the_ring_anchor) {
     q.each([&](Entity e,RingAnchor&,PetalInstance& p){if(p.owner==player&&!world.has<Dead>(e))++anchors;});
     CHECK_EQ(anchors,1);
 }
+
+TEST(wiki_stat_lentil_keeps_functional_petals_excluded) {
+    CHECK(loadWikiStats());
+    CHECK(petalCanBeAttracted(content().petal(content().petalIndex("sawblade"))));
+    for(const auto* id : {"sponge","poo","root","cotton","rose","shell","battery"})
+        CHECK(!petalCanBeAttracted(content().petal(content().petalIndex(id))));
+}

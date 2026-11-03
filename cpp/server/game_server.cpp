@@ -3450,7 +3450,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
     record.extra["titanForgeCounts"][petal.id] = std::min(2, completed + 1);
     database_.markDirty();
-    announceRareCraft(session, outputIndex, kTitanOutputRarity, 1, cost);
+    announceRareCraft(session, outputIndex, kTitanOutputRarity, 1, cost, true);
 
     reply(true, "");
     sendProfile(session, connection);
@@ -3577,12 +3577,12 @@ int GameServer::takeUniversals(std::uint16_t petalIndex, const std::string& keep
 }
 
 void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIndex,
-                                   Rarity made, std::uint32_t quantity, std::uint32_t consumed) {
+                                   Rarity made, std::uint32_t quantity, std::uint32_t consumed, bool titanForge) {
     // The top three tiers only, and ONE line however many the batch produced:
     // the reference announces the craft, not each petal it yielded. A
     // universal is never crafted -- it is forged at a titan, one at a time --
     // and says so.
-    const bool forged = made == Rarity::Universal;
+    const bool forged = titanForge || made == Rarity::Universal;
     if (made != Rarity::Super && made != Rarity::Unique && made != Rarity::Apex && !forged) return;
     if (petalIndex >= content().petalCount()) return;
 
@@ -3606,7 +3606,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // Two renderings of one sentence: chat gets the marked-up one, and the
     // feed stores the flat one, because the panel draws glyph outlines and has
     // no parser to hand a tag to.
-    const std::string details = " (crafted x" + std::to_string(quantity) +
+    const std::string details = std::string(forged ? " (forged x" : " (crafted x") + std::to_string(quantity) +
         (consumed ? ", consumed x" + std::to_string(consumed) : "") + ")";
     const std::string plain = article + " " + tier + " " + petal + verb + "@" +
                               session.username + " [" + playerName + "]" + details;
@@ -3616,7 +3616,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
                       session.username + "</b> [<b style=\"color: yellow;\">" + playerName +
                       "</b>]</b>" + details);
 
-    addNotification(forged                   ? "universal_craft"
+    addNotification(made == Rarity::Universal ? "universal_craft"
                     : made == Rarity::Apex   ? "apex_craft"
                     : made == Rarity::Unique ? "unique_craft"
                                              : "super_craft",
