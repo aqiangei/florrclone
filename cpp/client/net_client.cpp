@@ -321,6 +321,7 @@ void NetClient::forgetAccount() {
     squadInvite_ = SquadInvite{};
     craftOutcome_ = CraftOutcome{};
     craftAttemptCount_ = 0;
+    pyramidMapRevealed = false;
     oracleOutcome_ = OracleOutcome{};
     oracleReadyAtMillis_ = 0;
     tradeOutcome_ = TradeOutcome{};
@@ -379,6 +380,7 @@ void NetClient::leaveGame() {
 }
 
 void NetClient::forgetWorld() {
+    pyramidMapRevealed = false;
     if (status_ == Status::Playing) status_ = Status::LoggedIn;
     view_.clear();
     chatBubbles_.clear();
@@ -1136,6 +1138,11 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
     switch (id) {
         case net::ServerMessage::Welcome:      handleWelcome(reader); break;
         case net::ServerMessage::AuthResult:   handleAuthResult(reader); break;
+        case net::ServerMessage::PyramidMapState: {
+            const auto realm = static_cast<Realm>(reader.u8()); const bool revealed = reader.boolean();
+            if (reader.ok() && realm == view_.realm()) pyramidMapRevealed = revealed;
+            break;
+        }
         case net::ServerMessage::Profile:      handleProfile(reader); break;
         case net::ServerMessage::ProfileDelta: handleProfileDelta(reader); break;
         case net::ServerMessage::JoinAccepted: handleJoinAccepted(reader); break;
@@ -1835,6 +1842,7 @@ void NetClient::handleRealmChange(ByteReader& reader) {
     installLocalCollision(realm);
     // The view holds entities in the realm it was streaming; every one of them
     // is in another coordinate space now and none of them will be restated.
+    pyramidMapRevealed = false;
     view_.clear();
     chatBubbles_.clear();
     view_.setRealm(realm);

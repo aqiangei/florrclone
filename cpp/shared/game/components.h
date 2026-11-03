@@ -1406,6 +1406,7 @@ enum class GroundEffectKind : std::uint8_t {
     Sacrifice = 3,
     /// What is left of a tomb once it is broken open: see MobRemains.
     OpenTomb = 4,
+    PyramidMap = 5, // public one-use map scroll, not an inventory petal
 };
 
 /// What is left lying where a mob with `remains_ms` died -- florr's opened

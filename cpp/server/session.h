@@ -44,6 +44,8 @@ struct Session {
     /// is keyed on.
     std::string clientAddress;
 
+    bool pyramidMapRevealed = false;
+    Realm pyramidMapRealm = static_cast<Realm>(255);
     std::string userId;
     std::string username;
     std::string token;

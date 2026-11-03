@@ -524,6 +524,8 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // but a stream of its own -- see botRng_.
     botRng_.reseed(config.worldSeed ^ 0x80757331B07B07ull);
     sacrificeRng_.reseed(config.worldSeed ^ 0x5AC21F1CEull);
+    pyramidMapRng_.reseed(config.worldSeed ^ 0x505952414D4944ull);
+    pyramidMaps_.clear();
     terrain_ = std::make_unique<Terrain>();
     // Every map the data directory stages, in manifest order: each one gets a
     // realm, a tile grid inside `terrain_` and an annotation layer inside
@@ -926,6 +928,7 @@ void GameServer::tick(double nowMillis) {
 
     runSystems(nowMillis, smoothedDeltaSeconds_);
     persistBossClocks();
+    servicePyramidMaps(nowMillis);
     serviceSacrificeSpawn(nowMillis);
     serviceSacrificeRituals(nowMillis);
 
@@ -2427,6 +2430,9 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     // ceiling; it is the same grid collision runs on and cannot drift from it.
     writeMapGrid(w, *terrain_, world_.get<Transform>(entity).realm);
     connection.send(w);
+    if (session.pyramidMapRealm != session.realm) session.pyramidMapRevealed = false;
+    session.pyramidMapRealm = session.realm;
+    sendPyramidMapState(session);
     // The client's profile is the account's, and a body in the ring plays on
     // the arena kit instead; the maze body is on its own track. Restated here
     // so the panels show what the flower actually has from the first frame.
@@ -2434,6 +2440,7 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
 }
 
 void GameServer::handleLeave(Session& session, net::Connection& connection) {
+    session.pyramidMapRevealed = false;
     if (!session.playing()) return;
     leaveWorld(session);
     sendProfile(session, connection);
@@ -6048,6 +6055,7 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     health.current = health.max;
     health.invulnerableUntilMillis = monotonicMillis() + kRespawnInvulnerabilitySeconds * 1000.0;
 
+    if (session.stage != SessionStage::Playing) session.pyramidMapRevealed = false;
     session.entity = entity;
     session.stage = SessionStage::Playing;
     // A fresh body has a death of its own still to announce.
@@ -6362,6 +6370,9 @@ void GameServer::sendRealmChange(Session& session, Vec2 position) {
     w.position(position);
     writeMapGrid(w, *terrain_, session.realm);
     connection->send(w);
+    if (session.pyramidMapRealm != session.realm) session.pyramidMapRevealed = false;
+    session.pyramidMapRealm = session.realm;
+    sendPyramidMapState(session);
 }
 
 void GameServer::sendTeleported(Entity entity) {
@@ -6523,6 +6534,74 @@ void GameServer::broadcastMazeInfo() {
         if (!entry.second.authenticated()) continue;
         if (net::Connection* connection = listener_.find(entry.second.connection)) {
             sendMazeInfo(*connection);
+        }
+    }
+}
+
+
+void GameServer::sendPyramidMapState(Session& session) {
+    if (auto* connection = listener_.find(session.connection)) {
+        ByteWriter w; w.u8(static_cast<std::uint8_t>(net::ServerMessage::PyramidMapState));
+        w.u8(static_cast<std::uint8_t>(session.realm)); w.boolean(session.pyramidMapRevealed);
+        connection->send(w);
+    }
+}
+
+void GameServer::servicePyramidMaps(double now) {
+    // Separate RNG and bounded stock: these are navigation aids, never 30x loot rolls.
+    for (const auto& map : worldMaps_.maps()) {
+        if (map.id() != "pyramid") continue;
+        const Realm realm = map.realm();
+        auto& stock = pyramidMaps_[static_cast<unsigned>(realm)];
+        auto& scrolls = stock.scrolls;
+        scrolls.erase(std::remove_if(scrolls.begin(), scrolls.end(),
+            [&](Entity e) { return !world_.isAlive(e); }), scrolls.end());
+        if (now >= stock.refillAt && scrolls.size() < 40) {
+            stock.refillAt = now + 30000.0;
+            const auto extent = terrain_->realmExtent(realm);
+            const auto doors = map.playerSpawns();
+            for (int tries = 0; scrolls.size() < 40 && tries < 3000; ++tries) {
+                Vec2 at{pyramidMapRng_.unit() * extent.x, pyramidMapRng_.unit() * extent.y};
+                if (scrolls.size() < 8 && !doors.empty()) {
+                    const auto& door = doors.front()->bounds;
+                    at = Vec2{door.x + door.w * 0.5, door.y + door.h * 0.5} +
+                         Vec2::fromAngle(pyramidMapRng_.angle(), 100.0 + pyramidMapRng_.unit() * 1600.0);
+                }
+                if (at.x < 32 || at.y < 32 || at.x > extent.x - 32 || at.y > extent.y - 32 ||
+                    terrain_->blocked(at, realm) || terrain_->inWater(at, realm) ||
+                    distance(terrain_->resolveCircle(at, 30.0, realm), at) > 0.01) continue;
+                bool crowded = false;
+                for (Entity e : scrolls) if (distance(world_.get<Transform>(e).position, at) < 140) { crowded = true; break; }
+                if (crowded) continue;
+                const Entity e = world_.create();
+                world_.add<Transform>(e, Transform{at, 0, realm});
+                world_.add<Body>(e, Body{26.0, 0.0});
+                world_.add<Replicated>(e, Replicated{net::EntityKind::Effect, 0,
+                    static_cast<std::uint16_t>(GroundEffectKind::PyramidMap), Rarity::Common});
+                world_.add<NetId>(e, NetId{netIds_.next()});
+                scrolls.push_back(e);
+            }
+        }
+    }
+    for (auto& [id, session] : sessions_) {
+        if (!session.playing() || !world_.isAlive(session.entity)) continue;
+        const auto* at = world_.tryGet<Transform>(session.entity);
+        if (!at) continue;
+        if (session.pyramidMapRealm != at->realm) {
+            session.pyramidMapRealm = at->realm; session.pyramidMapRevealed = false;
+        }
+        if (session.pyramidMapRevealed || world_.has<Dead>(session.entity)) continue;
+        auto found = pyramidMaps_.find(static_cast<unsigned>(at->realm));
+        if (found == pyramidMaps_.end()) continue;
+        const double reach = 70.0 + world_.get<Body>(session.entity).radius;
+        for (Entity e : found->second.scrolls) {
+            if (!world_.isAlive(e) || distance(at->position, world_.get<Transform>(e).position) > reach) continue;
+            session.pyramidMapRevealed = true; world_.destroy(e);
+            found->second.refillAt = now + 30000.0;
+            sendPyramidMapState(session);
+            if (auto* peer = listener_.find(id)) sendNotice(*peer, net::NoticeSeverity::Info,
+                "已找到金字塔地图！本次探索可查看小地图，离开后失效。");
+            break;
         }
     }
 }

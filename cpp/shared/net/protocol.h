@@ -22,7 +22,7 @@ namespace flix::net {
 using ConnectionId = std::uint32_t;
 
 /// Bumped whenever any message layout in this file changes.
-inline constexpr std::uint16_t kProtocolVersion = 73;
+inline constexpr std::uint16_t kProtocolVersion = 74;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -451,6 +451,7 @@ enum class ServerMessage : std::uint8_t {
     SquadInviteReceived, ///< str fromUsername, u8 fromGuild (0/1). Pending
                         ///< squad invite for the top-left Accept/Decline toast.
                         ///< Additive; older clients skip an unknown id.
+    PyramidMapState,    ///< u8 realm, u8 revealed; visit-only, never saved (v74).
 };
 
 // ---------------------------------------------------------------------------

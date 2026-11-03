@@ -2977,3 +2977,45 @@ TEST(the_assembler_painter_draws_florrs_machine_and_turns_its_gears) {
     CHECK(gearChanged > 20);
     CHECK_EQ(bodyChanged, 0);
 }
+
+TEST(pyramid_map_scrolls_reveal_one_visit_without_inventory_and_refill) {
+    Harness h("pyramid-scrolls", [](const std::string& path) {
+        seedAccount(path, "watcher"); seedAccount(path, "explorer");
+    }, dataDir(), 0);
+    CHECK(h.ready); if (!h.ready) return;
+    NetClient watcher, explorer; CHECK(joinAs(h, watcher, "watcher"));
+    h.step(3, {&watcher});
+    bool found = false; const auto realm = h.server.worldMaps().realmOfId("pyramid", found); CHECK(found);
+    auto scrolls = [&] {
+        std::vector<Entity> result; Query<Replicated,Transform> q{h.server.world()};
+        q.each([&](Entity e, Replicated& r, Transform& t) {
+            if(t.realm==realm && r.kind==net::EntityKind::Effect &&
+               r.typeIndex==static_cast<std::uint16_t>(GroundEffectKind::PyramidMap)) result.push_back(e);
+        }); return result;
+    };
+    CHECK_EQ(scrolls().size(), 40u);
+    for (auto e : scrolls()) {
+        const auto at = h.server.world().get<Transform>(e).position;
+        CHECK(!h.server.terrain().blocked(at, realm));
+        CHECK_NEAR(distance(h.server.terrain().resolveCircle(at,30,realm),at), 0, 0.01);
+    }
+    CHECK(connectClient(h, explorer)); explorer.requestLogin("explorer", "password7");
+    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::LoggedIn;}));
+    explorer.joinGame(1280,720,"pyramid:spawn","explorer");
+    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::Playing;}));
+    const auto before = explorer.profile().inventory;
+    auto& world=h.server.world(); const auto body=bodyNamed(world,"explorer"); CHECK(body!=NULL_ENTITY);
+    if(body==NULL_ENTITY)return;
+    CHECK(!explorer.pyramidMapRevealed);
+    const auto picked=scrolls().front();
+    world.get<Transform>(body).position=world.get<Transform>(picked).position;
+    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.pyramidMapRevealed;}));
+    CHECK(!world.isAlive(picked)); CHECK_EQ(scrolls().size(),39u);
+    CHECK(!watcher.pyramidMapRevealed);
+    CHECK_EQ(explorer.profile().inventory.size(),before.size());
+    h.step(900,{&watcher,&explorer}); CHECK_EQ(scrolls().size(),40u);
+    explorer.leaveGame(); h.step(4,{&watcher,&explorer}); CHECK(!explorer.pyramidMapRevealed);
+    explorer.joinGame(1280,720,"pyramid:spawn","explorer");
+    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::Playing;}));
+    CHECK(!explorer.pyramidMapRevealed);
+}

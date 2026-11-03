@@ -789,6 +789,7 @@ public:
     // -- state -------------------------------------------------------------
     WorldView& view() { return view_; }
     const WorldView& view() const { return view_; }
+    bool pyramidMapRevealed = false;
     /// The map grid the server sent, plus the collision SHAPES this client
     /// read out of its own copy of the map. See setWorldMaps().
     const Terrain& terrain() const { return terrain_; }

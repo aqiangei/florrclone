@@ -4017,6 +4017,21 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             switch (static_cast<GroundEffectKind>(entity.typeIndex)) {
                 // Drawn in a pass of its own, over the mobs: see
                 // drawSacrificeRituals.
+                case GroundEffectKind::PyramidMap: {
+                    canvas.save();
+                    canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
+                    const float r = static_cast<float>(std::max(12.0, radius));
+                    ui::setFill(canvas, 0xF4D58Bu); ui::setStroke(canvas, 0x8B612Fu);
+                    canvas.setLineWidth(std::max(1.5f, r * 0.09f));
+                    canvas.beginPath(); canvas.rect(-r, -r * 0.75f, r * 2, r * 1.5f); canvas.fill(); canvas.stroke();
+                    ui::setStroke(canvas, 0xA78042u);
+                    canvas.beginPath(); canvas.moveTo(-r * 0.35f, -r * 0.75f); canvas.lineTo(-r * 0.35f, r * 0.75f);
+                    canvas.moveTo(r * 0.35f, -r * 0.75f); canvas.lineTo(r * 0.35f, r * 0.75f); canvas.stroke();
+                    ui::setFill(canvas, 0xB4873Cu);
+                    canvas.beginPath(); canvas.moveTo(-r * 0.5f, r * 0.4f); canvas.lineTo(0, -r * 0.45f);
+                    canvas.lineTo(r * 0.5f, r * 0.4f); canvas.closePath(); canvas.fill();
+                    canvas.restore(); break;
+                }
                 case GroundEffectKind::Sacrifice:
                     break;
                 case GroundEffectKind::Web: {

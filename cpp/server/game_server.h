@@ -1760,6 +1760,15 @@ private:
     /// The sacrifice clock's and placement's own stream, so dealing a wait
     /// never moves what rng_ hands every other spawn.
     Rng sacrificeRng_;
+    struct PyramidMapStock {
+        std::vector<Entity> scrolls;
+        double refillAt = 0;
+    };
+    std::unordered_map<unsigned, PyramidMapStock> pyramidMaps_;
+    Rng pyramidMapRng_;
+    void servicePyramidMaps(double now);
+    void sendPyramidMapState(Session&);
+
     ByteWriter scratch_;
 
     /// One line broadcastChat sent, kept for sendChatHistory.
