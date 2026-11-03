@@ -153,7 +153,10 @@ EM_JS(void, web_clipboard_init, (), {
   // page is between frames is still delivered to the frame that follows.
   Module.cppCanvasPasteSeq = 0;
   addEventListener('paste', (event) => {
-    Module.cppCanvasClipboard = (event.clipboardData || window.clipboardData).getData('text') || '';
+    const clipboard = event.clipboardData || window.clipboardData;
+    if (!clipboard || !clipboard.getData) return;
+    Module.cppCanvasClipboard = clipboard.getData('text') || '';
+    Module.cppCanvasPasteAt = performance.now();
     Module.cppCanvasPasteSeq = (Module.cppCanvasPasteSeq | 0) + 1;
   });
 });
@@ -271,7 +274,9 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
       node.__last = ' ';
     };
     node.addEventListener('compositionstart', () => { node.__composing = true; });
-    node.addEventListener('compositionend', () => { node.__composing = false; settle(); });
+    // Safari can deliver the final input AFTER compositionend. Trimming here
+    // would erase that committed word before its input event can read it.
+    node.addEventListener('compositionend', () => { node.__composing = false; });
     node.addEventListener('input', (event) => {
       const before = Array.from(node.__last);
       const after = Array.from(node.value);
@@ -283,7 +288,9 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
       const keyed = kind === 'insertText' && event.data === Module.cppSoftKeyed &&
                     performance.now() - (Module.cppSoftKeyedAt || 0) < 100;
       Module.cppSoftKeyed = null;
-      if (kind !== 'insertFromPaste' && kind !== 'insertFromDrop' && !keyed) {
+      const pastedByPage = kind === 'insertFromPaste' &&
+          performance.now() - (Module.cppCanvasPasteAt || -10000) < 250;
+      if (!pastedByPage && !keyed) {
         let same = 0;
         while (same < before.length && same < after.length && before[same] === after[same]) ++same;
         let erase = before.length - same;
