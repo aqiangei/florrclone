@@ -30,7 +30,7 @@ inline double shopPrice(std::uint16_t petalIndex, Rarity rarity) {
     const double affordable=clamp(1.0+std::log(base/20.0)*0.10,0.75,1.50);
     // The previous 1.5 ceiling priced a 99999-base Mimic almost like a basic
     // item. Respect authored acquisition costs without lowering cheap petals.
-    const double variety=std::max(affordable,std::sqrt(std::max(1.0,base/20.0)));
+    const double variety=std::max(affordable,std::min(6.0,std::sqrt(base/20.0)));
     return std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
 }
 

@@ -105,9 +105,9 @@ TEST(feedback_scarce_shop_petals_keep_their_authored_price_premium) {
     const auto mimic=content().petalIndex("mimic");
     const auto basic=content().petalIndex("basic");
     const double price=shopPrice(mimic,Rarity::Super);
-    CHECK(price>=40000);CHECK(price>shopPrice(basic,Rarity::Super)*40);
+    CHECK_NEAR(price,3600,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*4);
     CHECK(!shopSellsRarity(Rarity::Unique));
-    CHECK(shopPrice(mimic,Rarity::Ultra)>shopPrice(basic,Rarity::Ultra)*40);
+    CHECK(shopPrice(mimic,Rarity::Ultra)>shopPrice(basic,Rarity::Ultra)*4);
 }
 TEST(feedback_talent_wiki_values_and_duplicator_eligibility) {
     SkillSet s;s.set(SkillId::Loadout,4);s.set(SkillId::Magnetism,0);CHECK_NEAR(s.magnetismBonus(),1000,1e-9);
