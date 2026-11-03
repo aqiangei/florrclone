@@ -3527,6 +3527,10 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
     sendProfile(session, connection);
 }
 
+static std::string titanForgeScope(const WorldMaps& maps,Realm realm){
+    const auto* map=maps.forRealm(realm);
+    return map&&map->templateId()=="garden"?"garden":"";
+}
 void GameServer::handleTitanForge(Session& session, net::Connection& connection,
                                   ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
@@ -3568,9 +3572,10 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         return;
     }
     if(hyper) {
+        const auto titan=titanForgeScope(worldMaps_,body->realm);
         outputIndex=content().petalIndex(hyperForgeOutput(petal.id));
         if(outputIndex>=content().petalCount()){reply(false,"超凡产物不存在。");return;}
-        const auto state=hyperForgeState(database_,hyperForgeOutput(petal.id));
+        const auto state=hyperForgeState(database_,hyperForgeOutput(petal.id),titan);
         if(state.owner==session.userId){reply(false,"你已经持有该超凡花瓣。");return;}
         if(state.protectedUntil>database_.nowMillis()){
             reply(false,"保护期尚未结束，剩余"+std::to_string((state.protectedUntil-database_.nowMillis()+59999)/60000)+"分钟。");return;
@@ -3580,7 +3585,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
             reply(false,"需要"+std::to_string(cost)+"个未装备的同种永恒材料。");return;
         }
         persistAll();
-        const auto result=forgeHyper(database_,session.userId,petal.id,database_.nowMillis());
+        const auto result=forgeHyper(database_,session.userId,petal.id,database_.nowMillis(),{},titan);
         if(!result.ok){reply(false,result.reason);return;}
         for(auto& [id,other]:sessions_) {
             if(!other.authenticated()||std::find(result.affected.begin(),result.affected.end(),other.userId)==result.affected.end())continue;
@@ -3644,7 +3649,7 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanHolder));
     w.u16(petalIndex);
-    const auto state=hyperForgeState(database_,hyperForgeOutput(content().petal(petalIndex).id));
+    const auto state=hyperForgeState(database_,hyperForgeOutput(content().petal(petalIndex).id),titanForgeScope(worldMaps_,body->realm));
     const auto* owner=database_.findUserById(state.owner);
     w.str(owner?owner->username:"");
     w.u32(static_cast<std::uint32_t>(std::max<std::int64_t>(0,state.protectedUntil-database_.nowMillis())));

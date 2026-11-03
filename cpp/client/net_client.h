@@ -677,6 +677,7 @@ public:
     void forgetTitanHolder(std::uint16_t petalIndex) { titanHolders_.erase(petalIndex); }
     double hyperProtectionLeft(std::uint16_t index) const;
     int hyperInputCost(std::uint16_t index) const {const auto i=hyperInputCosts_.find(index);return i==hyperInputCosts_.end()?5:i->second;}
+    void clearTitanQuotes(){titanHolders_.clear();hyperProtectedUntil_.clear();hyperInputCosts_.clear();}
     void requestRespawn();
     void requestDungeonEntry();
     void sendPing();

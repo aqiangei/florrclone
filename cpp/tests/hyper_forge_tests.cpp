@@ -60,6 +60,38 @@ TEST(hyper_forge_prices_increase_per_type_and_refund_the_previous_actual_payment
     }
     CHECK_EQ(hyperForgeState(f.db,"leaf").claims,0);
 }
+TEST(hyper_two_titans_are_independent_even_when_one_account_owns_both_copies){
+    Fixture f;f.give(f.a,"rose",30);f.give(f.b,"rose",10);
+    CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);
+    const auto jungle=f.db.storedTable("hyperForges")["rose"].dump();
+    CHECK(forgeHyper(f.db,f.a,"rose",1000,{},"garden").ok);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_rose"),2);
+    CHECK_EQ(f.db.storedTable("hyperForges")["rose"].dump(),jungle);
+    CHECK_EQ(hyperForgeCost(hyperForgeState(f.db,"rose","garden").claims),6);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),20);
+    const auto until=hyperForgeState(f.db,"rose","garden").protectedUntil;
+    CHECK(forgeHyper(f.db,f.b,"rose",until,{},"garden").ok);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_rose"),1);
+    CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Apex,"petal_rose"),1);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),23);
+    CHECK_EQ(f.db.storedTable("hyperForges")["rose"].dump(),jungle);
+    CHECK_EQ(hyperForgeState(f.db,"rose","garden").claims,2);
+    CHECK_EQ(hyperForgeState(f.db,"rose").claims,1);
+    Database restored;std::string error;CHECK(restored.load(f.path,error));
+    CHECK_EQ(hyperForgeState(restored,"rose").owner,f.a);
+    CHECK_EQ(hyperForgeState(restored,"rose","garden").owner,f.b);
+}
+TEST(hyper_two_titans_only_remove_one_equipped_copy_and_keep_presets_for_the_other){
+    Fixture f;f.give(f.a,"rose",10);f.give(f.b,"rose",6);
+    CHECK(forgeHyper(f.db,f.a,"rose",0).ok);CHECK(forgeHyper(f.db,f.a,"rose",0,{},"garden").ok);
+    auto& owner=f.db.progress(f.a);owner.addItem(Rarity::Apex,"petal_rose",-2);
+    StoredItem item;item.petalType="rose";item.rarity=Rarity::Apex;
+    owner.loadout.resize(20);owner.loadout[0]=item;owner.loadout[1]=item;owner.loadoutPresets["K1"]={item};
+    CHECK(forgeHyper(f.db,f.b,"rose",15LL*3600000,{},"garden").ok);
+    int worn=0;for(const auto& slot:owner.loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType=="rose")++worn;
+    CHECK_EQ(worn,1);CHECK(owner.loadoutPresets["K1"][0].has_value());
+    CHECK_EQ(hyperForgeState(f.db,"rose").owner,f.a);CHECK_EQ(hyperForgeState(f.db,"rose","garden").owner,f.b);
+}
 TEST(hyper_forge_is_unique_blocks_early_theft_and_refunds_four_inputs){
     Fixture f;f.give(f.a,"rose");f.give(f.b,"rose",6);
     CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);
@@ -131,7 +163,7 @@ TEST(hyper_hammer_legacy_holder_receives_the_material_they_originally_paid){
 TEST(hyper_forge_requires_five_inputs_and_keeps_unrelated_inventory_intact){
     Fixture f;f.give(f.a,"rose",4);f.give(f.a,"leaf",20);
     CHECK(!forgeHyper(f.db,f.a,"rose",0).ok);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),3);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),4);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_leaf"),20);
     CHECK_EQ(hyperForgeState(f.db,"rose").claims,0);
 }

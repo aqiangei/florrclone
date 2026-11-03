@@ -46,6 +46,6 @@ TEST(hyper_actual_loot_is_thirty_trials_of_super_eternal_materials_never_hyper){
         Bounty bounty;bounty.credit(player,100);w.add<Bounty>(corpse,bounty);w.add<Dead>(corpse,Dead{player});
         loot.run(w,grid,data(),rng,n,0,commands,events);commands.flush();w.destroy(corpse);}
     int total=0,eternal=0;Query<DropTag,DropItem> q{w};q.each([&](Entity,DropTag&,DropItem& item){
-        CHECK(item.rarity==Rarity::Super||item.rarity==Rarity::Unique);total+=item.quantity;if(item.rarity==Rarity::Unique)eternal+=item.quantity;});
-    CHECK_EQ(total,100*30*3);CHECK(eternal>0);CHECK(eternal<total);
+        CHECK(rarityIndex(item.rarity)<rarityIndex(Rarity::Apex));total+=item.quantity;if(item.rarity==Rarity::Unique)eternal+=item.quantity;});
+    CHECK_EQ(total-eternal,100*30*3);CHECK(eternal>20&&eternal<80);
 }

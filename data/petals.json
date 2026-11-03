@@ -7006,7 +7006,7 @@
     "size": 1,
     "cooldown": 8000,
     "price": 10,
-    "description": "争夺型超凡雷神之锤：全服首次用5把永恒锤子锻造，此后每次加1把、最高10把，不按小时到期。首保15小时，每次被争夺减1小时，最低1小时；被夺取返还原投入减2把。",
+    "description": "争夺型超凡雷神之锤：每处泰坦首次用5把永恒锤子锻造，此后每次加1把、最高10把，不按小时到期。首保15小时，每次被争夺减1小时，最低1小时；被夺取返还原投入减2把。",
     "color": "#90EE90",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g transform=\"rotate(-28 32 32)\"><path d=\"M28 26h8v30h-8z\" fill=\"#976435\" stroke=\"#493e34\" stroke-width=\"3\"/><path d=\"M9 10h46v23H9z\" fill=\"#a5b4c2\" stroke=\"#45576a\" stroke-width=\"4\" stroke-linejoin=\"round\"/><path d=\"M34 12l-10 12h9l-4 7 13-13h-9z\" fill=\"#b4f8ff\"/></g></svg>",

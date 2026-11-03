@@ -6,8 +6,9 @@
 
 namespace flix {
 struct HyperForgeState {std::string owner;int claims=0;std::int64_t protectedUntil=0;};
-inline HyperForgeState hyperForgeState(const Database& db,const std::string& petal) {
-    const auto& row=db.storedTable("hyperForges")[petal];
+inline std::string hyperForgeKey(const std::string& petal,const std::string& titan={}){return titan.empty()?petal:titan+":"+petal;}
+inline HyperForgeState hyperForgeState(const Database& db,const std::string& petal,const std::string& titan={}) {
+    const auto& row=db.storedTable("hyperForges")[hyperForgeKey(petal,titan)];
     return {row["owner"].asString(),std::max(0,row["claims"].asInt()),
             row["protectedUntil"].asInt64()};
 }
@@ -35,13 +36,14 @@ inline HyperForgeResult grantTemporaryHyperHammer(Database& db,const std::string
 // worn slots are accounted separately, while presets are references only.
 inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
                                    const std::string& input,std::int64_t now,
-                                   const std::string& operatorRequest = {}) {
+                                   const std::string& operatorRequest = {},const std::string& titan={}) {
     HyperForgeResult out;
     if(!hyperForgeEligible(input)){
         out.reason="超凡锤子需要5把未装备的永恒锤子，不能使用碎片。";return out;
     }
     const std::string petal=hyperForgeOutput(input);
-    const auto state=hyperForgeState(db,petal);
+    const auto forgeKey=hyperForgeKey(petal,titan);
+    const auto state=hyperForgeState(db,petal,titan);
     const int cost=hyperForgeCost(state.claims);
     if(state.owner==userId){out.reason="你已经持有该超凡花瓣。";return out;}
     if(state.protectedUntil>now){out.reason="保护期尚未结束，剩余"+
@@ -53,27 +55,22 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     if(!original || available.itemCount(Rarity::Unique,material)<cost){
         out.reason="需要"+std::to_string(cost)+"个未装备的同种永恒材料。";return out;}
     std::map<std::string,PlayerRecord> before;before[userId]=*original;
-    for(const auto& id:db.playerIds()){
-        const auto* record=db.findProgress(id);if(!record)continue;
-        if(petal=="mjolnir"&&id!=userId&&id!=state.owner&&record->extra["temporaryHyperHammer"]["active"].asBool(false))continue;
-        int count=record->itemCount(Rarity::Apex,key);
-        for(const auto& slot:record->loadout)
-            if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal)++count;
-        if(!count)continue;
-        if(id==userId){out.reason="你已经持有该超凡花瓣。";return out;}
-        before[id]=*record;
-    }
+    // Only this titan's registered owner loses ONE copy. Another titan's
+    // copy (including one held by the same account) is independent.
+    if(!state.owner.empty())if(const auto* record=db.findProgress(state.owner))before[state.owner]=*record;
     const Json oldTable=db.storedTable("hyperForges");
-    const auto previousInput=oldTable[petal]["input"].asString(
+    const auto previousInput=oldTable[forgeKey]["input"].asString(
         petal=="mjolnir"?"fragment":petal);
     const std::string refundMaterial="petal_"+previousInput;
-    const int refundPerCopy=hyperForgeRefund(clamp(oldTable[petal]["paid"].asInt(5),5,10));
+    const int refundPerCopy=hyperForgeRefund(clamp(oldTable[forgeKey]["paid"].asInt(5),5,10));
     for(const auto& [id,record]:before){
         if(id==userId)continue;
-        auto& changed=db.progress(id);int lost=changed.itemCount(Rarity::Apex,key);
-        changed.addItem(Rarity::Apex,key,-lost);
-        for(auto& slot:changed.loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal){slot.reset();++lost;}
-        for(auto& [name,slots]:changed.loadoutPresets)
+        auto& changed=db.progress(id);int lost=0;
+        if(changed.itemCount(Rarity::Apex,key)>0){changed.addItem(Rarity::Apex,key,-1);lost=1;}
+        else for(auto& slot:changed.loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal){slot.reset();lost=1;break;}
+        bool remaining=changed.itemCount(Rarity::Apex,key)>0;
+        for(const auto& slot:changed.loadout)remaining=remaining||(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal);
+        if(!remaining)for(auto& [name,slots]:changed.loadoutPresets)
             for(auto& slot:slots)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal)slot.reset();
         const int refund=static_cast<int>(std::min<std::int64_t>(
             static_cast<std::int64_t>(lost)*refundPerCopy,kMaxStackCount));
@@ -93,7 +90,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     entry["input"]=input;
     entry["paid"]=cost;
     if(!operatorRequest.empty())entry["operatorRequest"]=operatorRequest;
-    db.rawTable("hyperForges")[petal]=entry;db.markDirty();
+    db.rawTable("hyperForges")[forgeKey]=entry;db.markDirty();
     if(!db.save()){
         for(const auto& [id,record]:before)db.progress(id)=record;
         db.rawTable("hyperForges")=oldTable.isObject()?oldTable:Json::object();db.markDirty();

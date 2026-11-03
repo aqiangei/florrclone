@@ -88,6 +88,7 @@ void TitanPanel::reset() {
 }
 
 bool TitanPanel::render(MenuContext& ctx) {
+    if(askedAt_<0&&askedPetal_==kNoPetal&&phase_==Phase::Idle)ctx.net.clearTitanQuotes();
     Canvas& canvas = ctx.canvas;
     const Profile& profile = ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
@@ -182,8 +183,8 @@ bool TitanPanel::render(MenuContext& ctx) {
     const Rect button = card.button;
     const auto* holder=knownPetal(stagedPetal_)?ctx.net.titanHolder(stagedPetal_):nullptr;
     const bool canForge = phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
-        (!hyper_ || (ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
-                     (!holder||*holder!=profile.username)));
+        (!hyper_ || (holder&&ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
+                     *holder!=profile.username));
     drawSlotButton(canvas, button, "锻造",
                    canForge ? std::optional<std::uint32_t>(rarityColor(outputTier))
                             : std::nullopt,
@@ -196,7 +197,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
-            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"每种超凡全服首次5个永恒，此后+1，封顶10。","被抢按原投入返还，损失2个；锤子同规则。","每次争夺减1小时，最低1小时；碎片不能换超凡锤。"}[i]:kLines[i]);
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"每处泰坦同种超凡首次5个，此后+1至10。","被抢按原投入返还，损失2个；锤子同规则。","每次争夺减1小时，最低1小时；碎片不能换超凡锤。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;

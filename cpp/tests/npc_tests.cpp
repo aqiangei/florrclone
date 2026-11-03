@@ -3257,6 +3257,25 @@ TEST(hyper_hammer_network_forges_mjolnir_from_five_eternal_hammers) {
     CHECK_EQ(out.petalIndex,content().petalIndex("mjolnir"));
     CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique)==0;}));removeDataDir(dir);
 }
+TEST(hyper_garden_and_jungle_network_quotes_and_holdings_are_independent){
+    const double cell=kTileSize;
+    const auto map=fixtureMap(24,24,fixtureDoor("spawn","Spawn",cell*2,cell*2,cell,cell,true,0.0),
+        std::string(),std::string(),{},{},{},fixtureNpc(kTitanX,kTitanY,"titan","unique"));
+    const auto dir=stageDataDir("two-titans",{{"garden",map},{"jungle",map}});
+    Harness h("two-titans",[](const std::string& path){seedAccount(path,"smith");seedStack(path,"smith","petal_rose",Rarity::Unique,10);},dir,0);
+    CHECK(h.ready);if(!h.ready)return;NetClient client;CHECK(joinAs(h,client,"smith"));std::vector<NetClient*> clients{&client};
+    standAtTitan(h,clients,"smith");const auto rose=content().petalIndex("rose");TitanForgeOutcome out;
+    client.requestTitanForge(rose,true);CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
+    CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1;}));
+    client.requestTitanHolder(rose);CHECK(h.stepUntil(clients,[&]{return client.hyperInputCost(rose)==6;},120));
+    client.leaveGame();h.step(4,clients);client.joinGame(1280,720,"jungle:spawn","smith");
+    CHECK(h.stepUntil(clients,[&]{return client.status()==NetClient::Status::Playing;},200));standAtTitan(h,clients,"smith");
+    client.requestTitanHolder(rose);CHECK(h.stepUntil(clients,[&]{const auto* holder=client.titanHolder(rose);return holder&&holder->empty()&&client.hyperInputCost(rose)==5;},120));
+    client.requestTitanForge(rose,true);CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
+    CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==2&&p.stackCount(rose,Rarity::Unique)==0;}));
+    const auto& db=h.server.database();CHECK_EQ(hyperForgeState(db,"rose").claims,1);CHECK_EQ(hyperForgeState(db,"rose","garden").claims,1);
+    removeDataDir(dir);
+}
 TEST(hyper_operator_exchange_waits_for_cutover_and_broadcasts_once_without_double_charging) {
     const auto oldLanguage=ui::language();ui::setLanguage(ui::Language::En);
     const auto dir=titanWorld("operator-hammer");
