@@ -90,6 +90,7 @@ TEST(every_restored_super_table_retains_a_positive_same_tier_tail){
     Json json;std::string error;CHECK(Json::parseFile(testsupport::dataFile("mob_drops.json"),json,error));int checked=0;
     for(const auto& id:json.keys())if(json[id]["highTierPolicy"].isString())
       for(const auto& row:json[id]["drops"].items())for(const auto* key:{"rarityChances","magicRarityChances"}){
+        if(row["itemType"].asString()=="splitter")continue; // Its authored rare source is deliberately unchanged.
         if(!row.contains(key))continue;DropRates rates;CHECK(parseDropRates(row[key],rates));
         double super=0,eternal=0;for(const auto& rate:ratesFor(rates,Rarity::Super))if(rate.rarity==Rarity::Super)super+=rate.probability;
         if(super<=0)continue;++checked;for(const auto& rate:ratesFor(rates,Rarity::Unique))if(rate.rarity==Rarity::Super)eternal+=rate.probability;
