@@ -38,6 +38,7 @@ const char* const kPetalsJson = R"JSON({
   "sponge":   {"name":"Sponge","damage":10,"health":10,"size":1,"cooldown":2000,"count":1,"spongeDamageDuration":1000,"color":"#FF96E0"},
   "root":     {"name":"Root","damage":10,"health":10,"size":1,"cooldown":1000,"count":1,"armorPerStack":12,"defendOnly":true,"color":"#B86C32"},
   "peas":     {"name":"Peas","damage":6,"health":5,"size":1,"cooldown":1000,"count":1,"projectile":{"count":3,"spreadAngle":0.5,"speed":800,"distance":1000},"color":"#00FF00"},
+  "magic_peas":{"name":"Blueberries","damage":0,"health":5,"size":1,"cooldown":1000,"count":1,"lightningDamage":true,"projectile":{"count":1,"speed":800,"distance":1000}},
   "pod":      {"name":"Pod","damage":2.5,"health":10,"size":1,"cooldown":1000,"count":4,"clumped":true,"defendOnly":true,"projectile":{"count":1,"spreadAngle":1.5708,"speed":800,"distance":1000},"color":"#8AC255"},
   "peaclump": {"name":"Peaclump","damage":6,"health":5,"size":1,"cooldown":1000,"count":4,"clumped":true,"projectile":{"count":1,"spreadAngle":0,"speed":800,"distance":1000},"color":"#00FF00"},
   "emitter":  {"name":"Emitter","damage":2,"health":null,"size":1,"cooldown":1000,"count":1,"projectile":{"count":2,"spreadAngle":0.3,"speed":400,"distance":400},"color":"#00FF00"},
@@ -5941,6 +5942,12 @@ TEST(wiki_mechanism_lightning_bypasses_armor_and_dodge) {
     CombatSystem combat;const auto hit=combat.applyDamage(rig.world,victim,rig.player,12,rig.now,DamageKind::Lightning);
     CHECK(!hit.dodged);CHECK_NEAR(hit.applied,12,1e-8);
     CHECK_NEAR(rig.world.get<Health>(victim).current,before-12,1e-8);
+}
+TEST(wiki_mechanism_blueberry_projectiles_use_lightning_instead_of_zero_physical_damage){
+    CHECK(contentLoaded());Rig rig;rig.equip(0,"magic_peas");rig.freezeRing();rig.settleEquips();rig.settleRing();
+    rig.setFlags(net::InputAttack);rig.tick();int seen=0;
+    Query<ProjectileTag,Projectile> shots{rig.world};shots.each([&](Entity,ProjectileTag&,Projectile& shot){++seen;CHECK_NEAR(shot.damage,30,1e-8);});
+    CHECK_EQ(seen,1);
 }
 
 TEST(wiki_mechanism_battery_chains_between_large_touching_bodies) {
