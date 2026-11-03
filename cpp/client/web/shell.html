@@ -229,7 +229,9 @@
         const options={...fetchOptions,signal:controller.signal};
         let packed=canInflate;
         let response=await networkFetch(name+(packed?'.bin':''),options);
-        if(packed&&!response.ok){packed=false;response=await networkFetch(name,options);}
+        if(packed&&(response.status===404||response.status===410)){
+          packed=false;response=await networkFetch(name,options);
+        }
         if(!response.ok)throw Error('HTTP '+response.status);
         const expected=Number(response.headers.get('content-length'))||0;
         const reader=response.body.getReader();let received=0;

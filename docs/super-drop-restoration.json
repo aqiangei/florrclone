@@ -1,0 +1,1276 @@
+[
+  {
+    "mob": "bee",
+    "item": "stinger",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "bee",
+    "item": "honey",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "bee",
+    "item": "pollen",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "ladybug",
+    "item": "light",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "ladybug",
+    "item": "rose",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "soldier_ant",
+    "item": "clover",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "soldier_ant",
+    "item": "glass",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "worker_ant",
+    "item": "leaf",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "worker_ant",
+    "item": "corn",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "baby_ant",
+    "item": "light",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "baby_ant",
+    "item": "leaf",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "baby_ant",
+    "item": "rice",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "ant_hole",
+    "item": "soil",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "ant_hole",
+    "item": "shovel",
+    "table": "rarityChances",
+    "superPercent": 0.281,
+    "eternalSuperPercent": 0.843
+  },
+  {
+    "mob": "fire_ant_hole",
+    "item": "magnet",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "fire_ant_hole",
+    "item": "disc",
+    "table": "rarityChances",
+    "superPercent": 0.355,
+    "eternalSuperPercent": 1.065
+  },
+  {
+    "mob": "rock",
+    "item": "rock",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "rock",
+    "item": "heavy",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "rock",
+    "item": "moon_rock",
+    "table": "rarityChances",
+    "superPercent": 0.0025,
+    "eternalSuperPercent": 0.0075
+  },
+  {
+    "mob": "dandelion",
+    "item": "dandelion",
+    "table": "rarityChances",
+    "superPercent": 0.355,
+    "eternalSuperPercent": 1.065
+  },
+  {
+    "mob": "soldier_fire_ant",
+    "item": "yucca",
+    "table": "rarityChances",
+    "superPercent": 0.355,
+    "eternalSuperPercent": 1.065
+  },
+  {
+    "mob": "soldier_fire_ant",
+    "item": "triangle",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "sandstorm",
+    "item": "sand",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "sandstorm",
+    "item": "mysterious_stick",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "sandstorm",
+    "item": "glass",
+    "table": "rarityChances",
+    "superPercent": 0.355,
+    "eternalSuperPercent": 1.065
+  },
+  {
+    "mob": "cactus",
+    "item": "cactus",
+    "table": "rarityChances",
+    "superPercent": 0.46549999999999997,
+    "eternalSuperPercent": 1.3964999999999999
+  },
+  {
+    "mob": "scorpion",
+    "item": "iris",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "scorpion",
+    "item": "pincer",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "beetle",
+    "item": "beetle_egg",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "beetle",
+    "item": "privet_berry",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "hel_beetle",
+    "item": "beetle_egg",
+    "table": "rarityChances",
+    "superPercent": 0.0395,
+    "eternalSuperPercent": 0.1185
+  },
+  {
+    "mob": "hel_beetle",
+    "item": "dice",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "hel_beetle",
+    "item": "dark_mark",
+    "table": "rarityChances",
+    "superPercent": 0.02,
+    "eternalSuperPercent": 0.06
+  },
+  {
+    "mob": "jellyfish",
+    "item": "lightning",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "jellyfish",
+    "item": "jelly",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "bubble",
+    "item": "bubble",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "bubble",
+    "item": "air",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "starfish",
+    "item": "salt",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "starfish",
+    "item": "sand",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "starfish",
+    "item": "starfish",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "sponge",
+    "item": "sponge",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "sponge",
+    "item": "coral",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "hornet",
+    "item": "missile",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "hornet",
+    "item": "antennae",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "hornet",
+    "item": "orange",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "leafbug",
+    "item": "leaf",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "leafbug",
+    "item": "root",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "golden_leafbug",
+    "item": "golden_leaf",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "golden_leafbug",
+    "item": "golden_leaf",
+    "table": "magicRarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "golden_leafbug",
+    "item": "root",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "bush",
+    "item": "cotton",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "bush",
+    "item": "monstera",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "bush",
+    "item": "golden_leaf",
+    "table": "rarityChances",
+    "superPercent": 0.01,
+    "eternalSuperPercent": 0.03
+  },
+  {
+    "mob": "mantis",
+    "item": "peas",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "mantis",
+    "item": "bur",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "firefly",
+    "item": "wing",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "firefly",
+    "item": "bulb",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "firefly",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "magic_firefly",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "magic_firefly",
+    "item": "mana_orb",
+    "table": "rarityChances",
+    "superPercent": 0.3425,
+    "eternalSuperPercent": 1.0274999999999999
+  },
+  {
+    "mob": "wasp",
+    "item": "missile",
+    "table": "rarityChances",
+    "superPercent": 0.47750000000000004,
+    "eternalSuperPercent": 1.4324999999999999
+  },
+  {
+    "mob": "wasp",
+    "item": "antennae",
+    "table": "rarityChances",
+    "superPercent": 0.281,
+    "eternalSuperPercent": 0.843
+  },
+  {
+    "mob": "wasp",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "wasp",
+    "item": "blood_stinger",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "fly",
+    "item": "wing",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "fly",
+    "item": "poo",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "fly",
+    "item": "talisman_of_evasion",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "moth",
+    "item": "wing",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "moth",
+    "item": "bulb",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "garbage",
+    "item": "poo",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "garbage",
+    "item": "broccoli",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "roach",
+    "item": "antennae",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "roach",
+    "item": "lotus",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "spider",
+    "item": "faster",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "spider",
+    "item": "web",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "spider",
+    "item": "third_eye",
+    "table": "rarityChances",
+    "superPercent": 0.02,
+    "eternalSuperPercent": 0.06
+  },
+  {
+    "mob": "spider",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "desert_centipede",
+    "item": "salt",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "desert_centipede",
+    "item": "mysterious_powder",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "desert_centipede_body",
+    "item": "salt",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "desert_centipede_body",
+    "item": "mysterious_powder",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "centipede",
+    "item": "leaf",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "centipede",
+    "item": "peas",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "centipede_body",
+    "item": "leaf",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "centipede_body",
+    "item": "peas",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "shell",
+    "item": "magnet",
+    "table": "rarityChances",
+    "superPercent": 0.02,
+    "eternalSuperPercent": 0.06
+  },
+  {
+    "mob": "shell",
+    "item": "shell",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "shell",
+    "item": "pearl",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "queen_ant",
+    "item": "basil",
+    "table": "rarityChances",
+    "superPercent": 0.355,
+    "eternalSuperPercent": 1.065
+  },
+  {
+    "mob": "queen_ant",
+    "item": "egg",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "digger",
+    "item": "cutter",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "digger",
+    "item": "uranium",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "leech",
+    "item": "faster",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "leech",
+    "item": "fang",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "crab",
+    "item": "sand",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "crab",
+    "item": "claw",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "crab",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "bumble_bee",
+    "item": "pollen",
+    "table": "rarityChances",
+    "superPercent": 0.47750000000000004,
+    "eternalSuperPercent": 1.4324999999999999
+  },
+  {
+    "mob": "bumble_bee",
+    "item": "honey",
+    "table": "rarityChances",
+    "superPercent": 0.281,
+    "eternalSuperPercent": 0.843
+  },
+  {
+    "mob": "bumble_bee",
+    "item": "wax",
+    "table": "rarityChances",
+    "superPercent": 0.44799999999999995,
+    "eternalSuperPercent": 1.3439999999999999
+  },
+  {
+    "mob": "termite_mound",
+    "item": "soil",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "termite_mound",
+    "item": "mysterious_relic",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "termite_mound",
+    "item": "rubber",
+    "table": "rarityChances",
+    "superPercent": 0.281,
+    "eternalSuperPercent": 0.843
+  },
+  {
+    "mob": "baby_termite",
+    "item": "mysterious_relic",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "baby_termite",
+    "item": "carrot",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "worker_termite",
+    "item": "mysterious_relic",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "worker_termite",
+    "item": "plank",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "soldier_termite",
+    "item": "mysterious_relic",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "soldier_termite",
+    "item": "bone",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "termite_overmind",
+    "item": "mysterious_relic",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "termite_overmind",
+    "item": "tomato",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "termite_overmind",
+    "item": "compass",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "ant_egg",
+    "item": "egg",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "fire_ant_egg",
+    "item": "egg",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "termite_egg",
+    "item": "egg",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "termite_egg",
+    "item": "amulet",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "mummy_beetle",
+    "item": "ankh",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "mummy_beetle",
+    "item": "lentil",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "mummy_beetle",
+    "item": "bandage",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "pharaoh_beetle",
+    "item": "ankh",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "pharaoh_beetle",
+    "item": "bandage",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "desert_ladybug",
+    "item": "rose",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "desert_ladybug",
+    "item": "dahlia",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "desert_ladybug",
+    "item": "yggdrasil",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "fire_ant_burrow",
+    "item": "magnet",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "fire_ant_burrow",
+    "item": "disc",
+    "table": "rarityChances",
+    "superPercent": 0.355,
+    "eternalSuperPercent": 1.065
+  },
+  {
+    "mob": "nazar_beetle",
+    "item": "beetle_egg",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "nazar_beetle",
+    "item": "ankh",
+    "table": "rarityChances",
+    "superPercent": 0.076,
+    "eternalSuperPercent": 0.22799999999999998
+  },
+  {
+    "mob": "nazar_beetle",
+    "item": "bean",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "nazar_beetle",
+    "item": "nazar_amulet",
+    "table": "rarityChances",
+    "superPercent": 0.005,
+    "eternalSuperPercent": 0.015
+  },
+  {
+    "mob": "soldier_diver_ant",
+    "item": "bubble",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "soldier_diver_ant",
+    "item": "dead_leaf",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "jungle_centipede",
+    "item": "grapes",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "jungle_centipede",
+    "item": "iris",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "jungle_ladybug",
+    "item": "yin_yang",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "jungle_ladybug",
+    "item": "dahlia",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "hel_spider",
+    "item": "third_eye",
+    "table": "rarityChances",
+    "superPercent": 0.02,
+    "eternalSuperPercent": 0.06
+  },
+  {
+    "mob": "hel_spider",
+    "item": "dark_mark",
+    "table": "rarityChances",
+    "superPercent": 0.02,
+    "eternalSuperPercent": 0.06
+  },
+  {
+    "mob": "hel_spider",
+    "item": "card",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "hel_centipede",
+    "item": "dark_mark",
+    "table": "rarityChances",
+    "superPercent": 0.002,
+    "eternalSuperPercent": 0.006
+  },
+  {
+    "mob": "hel_centipede",
+    "item": "domino",
+    "table": "rarityChances",
+    "superPercent": 0.02,
+    "eternalSuperPercent": 0.06
+  },
+  {
+    "mob": "hel_wasp",
+    "item": "missile",
+    "table": "rarityChances",
+    "superPercent": 0.47750000000000004,
+    "eternalSuperPercent": 1.4324999999999999
+  },
+  {
+    "mob": "hel_wasp",
+    "item": "poker_chip",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "hel_wasp",
+    "item": "dark_mark",
+    "table": "rarityChances",
+    "superPercent": 0.02,
+    "eternalSuperPercent": 0.06
+  },
+  {
+    "mob": "gambler",
+    "item": "dice",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "gambler",
+    "item": "poker_chip",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "gambler",
+    "item": "domino",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "gambler",
+    "item": "card",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "gambler",
+    "item": "corruption",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "queen_fire_ant",
+    "item": "basil",
+    "table": "rarityChances",
+    "superPercent": 0.355,
+    "eternalSuperPercent": 1.065
+  },
+  {
+    "mob": "queen_fire_ant",
+    "item": "egg",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "worm",
+    "item": "soil",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "worm",
+    "item": "shovel",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "silverfish",
+    "item": "dust",
+    "table": "rarityChances",
+    "superPercent": 0.47750000000000004,
+    "eternalSuperPercent": 1.4324999999999999
+  },
+  {
+    "mob": "silverfish",
+    "item": "clay",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "mecha_flower",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "mecha_flower",
+    "item": "cogwheel",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "mecha_flower",
+    "item": "fragment",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "mecha_flower",
+    "item": "mimic",
+    "table": "rarityChances",
+    "superPercent": 0.004,
+    "eternalSuperPercent": 0.012
+  },
+  {
+    "mob": "mecha_wasp",
+    "item": "observer",
+    "table": "rarityChances",
+    "superPercent": 0.42200000000000004,
+    "eternalSuperPercent": 1.266
+  },
+  {
+    "mob": "mecha_wasp",
+    "item": "fragment",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "mecha_wasp",
+    "item": "mecha_missile",
+    "table": "rarityChances",
+    "superPercent": 0.47750000000000004,
+    "eternalSuperPercent": 1.4324999999999999
+  },
+  {
+    "mob": "mecha_wasp",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "mecha_spider",
+    "item": "paranormal_goggles",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "mecha_spider",
+    "item": "fragment",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "mecha_spider",
+    "item": "electric_web",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "mecha_spider",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "mecha_crab",
+    "item": "magnet",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "mecha_crab",
+    "item": "fragment",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "mecha_crab",
+    "item": "laser",
+    "table": "rarityChances",
+    "superPercent": 0.355,
+    "eternalSuperPercent": 1.065
+  },
+  {
+    "mob": "mecha_crab",
+    "item": "battery",
+    "table": "rarityChances",
+    "superPercent": 0.09300000000000001,
+    "eternalSuperPercent": 0.279
+  },
+  {
+    "mob": "barrel",
+    "item": "uranium",
+    "table": "rarityChances",
+    "superPercent": 0.38200000000000006,
+    "eternalSuperPercent": 1.1460000000000001
+  },
+  {
+    "mob": "barrel",
+    "item": "fragment",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "ghost",
+    "item": "basic",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "baby_fire_ant",
+    "item": "light",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  },
+  {
+    "mob": "baby_fire_ant",
+    "item": "yucca",
+    "table": "rarityChances",
+    "superPercent": 0.16899999999999998,
+    "eternalSuperPercent": 0.5069999999999999
+  },
+  {
+    "mob": "baby_fire_ant",
+    "item": "broccoli",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "worker_fire_ant",
+    "item": "corn",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "worker_fire_ant",
+    "item": "yucca",
+    "table": "rarityChances",
+    "superPercent": 0.2305,
+    "eternalSuperPercent": 0.6915
+  },
+  {
+    "mob": "tomb",
+    "item": "ankh",
+    "table": "rarityChances",
+    "superPercent": 0.49200000000000005,
+    "eternalSuperPercent": 1.476
+  },
+  {
+    "mob": "tomb",
+    "item": "dust",
+    "table": "rarityChances",
+    "superPercent": 0.4365,
+    "eternalSuperPercent": 1.3094999999999999
+  },
+  {
+    "mob": "tomb",
+    "item": "totem",
+    "table": "rarityChances",
+    "superPercent": 0.3215,
+    "eternalSuperPercent": 0.9644999999999999
+  }
+]

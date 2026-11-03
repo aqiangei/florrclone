@@ -75,6 +75,15 @@ for(const [name,mob]of Object.entries(api.mobs)){
 }
 // The old Fire Ant Hole name is still a spawnable alias of Fire Ant Burrow.
 after.fire_ant_hole=structuredClone(after.fire_ant_burrow);mapped.add('fire_ant_hole');
+// Keep explicitly authored server-only sources through a reference refresh.
+for(const [id,table]of Object.entries(before))for(const row of table.drops||[])
+  if(row.itemType==='splitter'&&after[id]&&!after[id].drops.some(r=>r.itemType==='splitter'))
+    after[id].drops.push(structuredClone(row));
+for(const [body,head]of [['centipede_body','centipede'],['desert_centipede_body','desert_centipede']]){
+  after[body]=structuredClone(after[head]);mapped.add(body);
+}
+require('./restore-high-tier-drops').restoreHighTierDrops(after);
+report.notes.push('Server override: Super restores a 0.5% promotion of its Ultra mass; Eternal uses 1.5%, without removing lower-tier or no-drop probability.');
 for(const id of Object.keys(mobs))if(!mapped.has(id))report.preservedCustomMobs.push(id);
 // A legacy table with no mob cannot ever pay out; keep it out of the active file.
 for(const id of Object.keys(after))if(!mobs[id])delete after[id];

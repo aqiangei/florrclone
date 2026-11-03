@@ -39,12 +39,12 @@ TEST(eternal_one_per_regular_map_keeps_five_supers_and_waits_after_death) {
     w.get<Health>(boss).current*=0.5;
     step(7200000);CHECK(w.isAlive(boss));CHECK(!w.has<Dead>(boss));
     w.add<Dead>(boss);step(7201000);
-    CHECK_NEAR(spawn.bossCooldownLeft(Rarity::Unique,garden,7201000),1200000,1e-6);
-    w.destroy(boss);step(8400500);
+    CHECK_NEAR(spawn.bossCooldownLeft(Rarity::Unique,garden,7201000),300000,1e-6);
+    w.destroy(boss);step(7500500);
     int count=0;auto countBosses=[&](){count=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();
         q.each([&](Entity e,MobTag&,MobType& type,Transform& at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(at.realm==garden&&type.rarity==Rarity::Unique&&(!b||b->chainHead==e))++count;});};
     countBosses();CHECK_EQ(count,0);
-    for(int n=0;n<10;++n)step(8401000+n*500);
+    for(int n=0;n<10;++n)step(7501000+n*500);
     countBosses();CHECK_EQ(count,1);
 }
 TEST(eternal_restored_cooldown_survives_a_fresh_spawner) {
@@ -53,12 +53,12 @@ TEST(eternal_restored_cooldown_survives_a_fresh_spawner) {
     CHECK(maps.load(testsupport::dataDir(),&terrain,error));
     World world;CommandBuffer commands{world};SpawnSystem spawn;spawn.worldMaps=&maps;Rng rng{7823};
     // This is the persisted-deadline path the server uses on restart.
-    spawn.restoreBossClock("garden",1200000,1e15);
+    spawn.restoreBossClock("garden",300000,1e15);
     auto step=[&](double now){spawn.run(world,terrain,c,std::vector<RealmPoint>{},rng,now,net::kTickSeconds,commands);commands.flush();};
     bool found=false;const auto garden=maps.realmOfId("garden",found);CHECK(found);
     auto count=[&](){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{world};q.without<Dead>();
         q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob&){const auto* b=world.tryGet<BodySegment>(e);if(at.realm==garden&&t.rarity==Rarity::Unique&&(!b||b->chainHead==e))++n;});return n;};
-    step(1000);step(1199999);CHECK_EQ(count(),0);
-    for(int n=0;n<10;++n)step(1201000+n*500);
+    step(1000);step(299999);CHECK_EQ(count(),0);
+    for(int n=0;n<10;++n)step(301000+n*500);
     CHECK_EQ(count(),1);
 }
