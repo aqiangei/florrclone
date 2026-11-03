@@ -35,7 +35,7 @@ constexpr double kFirstLineY = kBodyTop + 250.0 + 11.2;
 constexpr double kLinePitch = 22.4;
 constexpr std::array<const char*, 3> kLines = {
     "普通花瓣永久保留；每5个超级碎片兑换1把锤子。",
-    "普通花瓣首次10、第二次25、之后55个超级。",
+    "普通花瓣首次10、之后固定15个超级。",
     "锤子可持有多把，每把独立计时1小时，离线计时。",
 };
 

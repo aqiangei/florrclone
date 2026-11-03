@@ -2103,7 +2103,7 @@ TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_acco
     h.step(3, both); standAtTitan(h, both, "smith");
     const auto rose = content().petalIndex("rose");
     const auto wing = content().petalIndex("wing");
-    const int remaining[] = {135, 110, 55, 0};
+    const int remaining[] = {135, 120, 105, 90};
     for (unsigned n = 0; n < 4; ++n) {
         client.requestTitanForge(rose); TitanForgeOutcome out;
         CHECK(awaitForge(h, both, client, out)); CHECK(out.success);
@@ -2177,8 +2177,8 @@ TEST(permanent_titan_forge_ledger_survives_save_reload) {
     { Database db; std::string error; CHECK(db.load(path, error));
       CHECK_EQ(db.progress("ledger-account").extra["titanForgeCounts"]["rose"].asInt(), 2); }
     std::remove(path.c_str());
-    CHECK_EQ(titanForgeCost(0), 10); CHECK_EQ(titanForgeCost(1), 25);
-    CHECK_EQ(titanForgeCost(2), 55); CHECK_EQ(titanForgeCost(2000), 55);
+    CHECK_EQ(titanForgeCost(0), 10); CHECK_EQ(titanForgeCost(1), 15);
+    CHECK_EQ(titanForgeCost(2), 15); CHECK_EQ(titanForgeCost(2000), 15);
 }
 
 TEST(the_titans_ring_orbits_it_as_a_flowers_does_and_kills_mobs_but_spares_flowers) {
@@ -3069,7 +3069,7 @@ TEST(timed_hammer_leases_expire_equipped_and_bag_copies_independently) {
     CHECK_EQ(expireHammerLeases(record,4601001),1);
     CHECK_EQ(record.itemCount(kTitanOutputRarity,"petal_timed_mjolnir"),0);
     CHECK_EQ(titanForgeCost(0,"fragment"),5);CHECK_EQ(titanForgeCost(1,"fragment"),5);CHECK_EQ(titanForgeCost(2000,"fragment"),5);
-    CHECK_EQ(titanForgeCost(0,"rose"),10);CHECK_EQ(titanForgeCost(2,"rose"),55);
+    CHECK_EQ(titanForgeCost(0,"rose"),10);CHECK_EQ(titanForgeCost(2,"rose"),15);
 }
 TEST(timed_hammer_legacy_deadline_and_offline_expiry_are_preserved) {
     PlayerRecord record;record.addItem(kTitanOutputRarity,"petal_timed_mjolnir",1);
