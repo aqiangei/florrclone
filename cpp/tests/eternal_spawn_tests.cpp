@@ -35,7 +35,7 @@ TEST(eternal_three_per_regular_map_keeps_five_supers_and_waits_after_death) {
         std::printf("  %s: E=%d S=%d\n",map.id().c_str(),eternal,supers);
         CHECK_EQ(eternal,3);CHECK_EQ(supers,5);++mapsChecked;
     }
-    CHECK_EQ(mapsChecked,9);CHECK(boss!=NULL_ENTITY);if(boss==NULL_ENTITY)return;
+    CHECK_EQ(mapsChecked,10);CHECK(boss!=NULL_ENTITY);if(boss==NULL_ENTITY)return;
     w.get<Health>(boss).current*=0.5;
     step(7200000);CHECK(w.isAlive(boss));CHECK(!w.has<Dead>(boss));
     w.add<Dead>(boss);step(7201000);

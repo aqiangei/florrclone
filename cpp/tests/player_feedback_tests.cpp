@@ -6,6 +6,7 @@
 #include "server/systems/petals.h"
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
+#include "server/systems/npcs.h"
 #include "server/loot_eligibility.h"
 #include "shared/game/config.h"
 #include "shared/game/shop.h"
@@ -22,6 +23,13 @@ TEST(feedback_computer_is_a_separate_map_with_art_spawn_bands_and_assembler){
     CHECK_EQ(maps.forRealm(factory)->displayName(),std::string("Factory"));
     const auto& c=testsupport::shippedContent();const auto assembler=c.mobIndex("cyber_assembler");CHECK(assembler!=kInvalidIndex);
     if(assembler!=kInvalidIndex){CHECK(c.mob(assembler).npc.still);CHECK(c.mob(assembler).npc.recipes.size()>=10);}
+    NpcSystem npcs;std::vector<std::string> warnings;npcs.loadSites(maps,c,warnings);World world;npcs.placeMissing(world,terrain,c,0);
+    int converters=0;Query<Npc,Transform> services{world};services.each([&](Entity e,Npc& npc,Transform& at){
+        if(at.realm!=realm||npc.configIndex!=assembler)return;++converters;
+        CHECK(!terrain.blocked(at.position,realm));CHECK(npc.recipe<c.mob(assembler).npc.recipes.size());
+        const auto attacker=world.create();world.add<PlayerTag>(attacker);world.add<Faction>(attacker,Faction{Team::Players,false});
+        CombatSystem combat;CHECK(combat.applyDamage(world,e,attacker,1e20,0).refused);
+    });CHECK_EQ(converters,kLadderRarityCount);
     for(const char* id:{"javascript","c++","bomb","glitch","ram","cursor","computer_chip","cube","icosahedron","spaceship","capacitor","ruby"})
         CHECK(c.petalIndex(id)!=kInvalidIndex);
 }
