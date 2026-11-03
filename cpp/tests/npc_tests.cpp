@@ -17,6 +17,7 @@
 #include "test.h"
 
 #include <cmath>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -3254,4 +3255,36 @@ TEST(hyper_hammer_network_forges_mjolnir_from_five_eternal_hammers) {
     client.requestTitanForge(content().petalIndex("timed_mjolnir"),true);TitanForgeOutcome out;CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
     CHECK_EQ(out.petalIndex,content().petalIndex("mjolnir"));
     CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique)==0;}));removeDataDir(dir);
+}
+TEST(hyper_operator_exchange_waits_for_cutover_and_broadcasts_once_without_double_charging) {
+    const auto dir=titanWorld("operator-hammer");
+    const auto gate=testsupport::tempUnique("operator-gate",".flag");
+    const auto ready=testsupport::tempUnique("operator-ready",".flag");
+    {std::ofstream marker(gate);marker<<"maintenance";}
+    std::string id;
+    Harness h("operator-hammer",[&](const std::string& path){
+        seedAccount(path,"smith");seedStack(path,"smith","petal_timed_mjolnir",Rarity::Unique,5);
+        Database db;std::string error;CHECK(db.load(path,error));id=db.findUser("smith")->id;
+        Json job=Json::object();job["id"]="test-once";job["userId"]=id;
+        job["status"]="pending";job["maintenanceGate"]=gate;job["readyFile"]=ready;
+        db.rawTable("operatorHyperForgeRequest")=job;db.markDirty();CHECK(db.save());
+    },dir,0);
+    CHECK(h.ready);if(!h.ready)return;
+    auto saved=[&](){Json value;std::string error;CHECK(Json::parseFile(h.dbPath,value,error));return value;};
+    h.step(3,{});CHECK_EQ(saved()["operatorHyperForgeRequest"]["status"].asString(),std::string("pending"));
+    std::remove(gate.c_str());h.step(3,{});
+    CHECK_EQ(saved()["operatorHyperForgeRequest"]["status"].asString(),std::string("pending"));
+    {std::ofstream marker(ready);marker<<"ready";}
+    h.step(3,{});auto result=saved();
+    CHECK_EQ(result["operatorHyperForgeRequest"]["status"].asString(),std::string("done"));
+    CHECK_EQ(result["players"][id]["inventory"]["apex"]["petal_mjolnir"].asInt(),1);
+    CHECK_EQ(result["players"][id]["inventory"]["unique"]["petal_timed_mjolnir"].asInt(),0);
+    NetClient client;CHECK(joinAs(h,client,"smith"));std::vector<NetClient*> clients{&client};
+    CHECK(h.stepUntil(clients,[&]{return sawText(client,"has been forged by");},60));
+    h.step(5,clients);result=saved();
+    CHECK(result["operatorHyperForgeRequest"]["announced"].asBool());
+    CHECK_EQ(result["players"][id]["inventory"]["apex"]["petal_mjolnir"].asInt(),1);
+    int messages=0;for(const auto& message:client.chat())if(message.text.find("has been forged by")!=std::string::npos)++messages;
+    CHECK_EQ(messages,1);
+    std::remove(ready.c_str());removeDataDir(dir);
 }

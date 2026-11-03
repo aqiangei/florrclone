@@ -72,6 +72,13 @@ async function main(){
       fs.writeFileSync(path.join(local,'eternal-refund.json'),JSON.stringify(report.eternalRefund,null,2));
       next=refunded;
     }
+    if(process.env.FLORR_OPERATOR_HYPER_USER){
+      const queued=path.join(local,'inventory.operator.json');
+      const ready='/var/www/florrclone-maintenance/operator-ready-'+stamp;
+      report.operatorRequest=JSON.parse(run(process.execPath,[path.join(__dirname,'prepare-operator-hyper-forge.cjs'),next,queued,process.env.FLORR_OPERATOR_HYPER_USER,'hammer-'+stamp,marker,ready]));
+      fs.writeFileSync(path.join(local,'operator-request.json'),JSON.stringify(report.operatorRequest,null,2));
+      next=queued;
+    }
     scp(next,host+':'+remote+'/inventory.next.json');
     // All validation and the local backup gate have completed at this point.
     ssh('install -o florrclone -g florrclone -m 600 '+q(remote+'/inventory.next.json')+' /var/lib/florrclone/cpp-state/inventory.next.json');
@@ -89,6 +96,7 @@ async function main(){
     ssh('PORT=8788 /opt/florrclone/runtime/bin/node '+q(probe));
     ssh('rm '+q(marker));
     ssh('PORT=8088 /opt/florrclone/runtime/bin/node '+q(probe));
+    if(report.operatorRequest)ssh('touch '+q(report.operatorRequest.readyFile)+' && chmod 644 '+q(report.operatorRequest.readyFile));
     fs.writeFileSync(path.join(local,'deployment-result.json'),JSON.stringify({...metadata,...report,status:'deployed'},null,2));
     console.log(JSON.stringify({status:'deployed',backup:local,...report}));
   }catch(error){

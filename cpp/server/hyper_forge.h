@@ -17,7 +17,8 @@ struct HyperForgeResult {
 // Caller first persists all live records. Inventory is the BAG internally;
 // worn slots are accounted separately, while presets are references only.
 inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
-                                   const std::string& input,std::int64_t now) {
+                                   const std::string& input,std::int64_t now,
+                                   const std::string& operatorRequest = {}) {
     HyperForgeResult out;
     if(!hyperForgeEligible(input)){
         out.reason="超凡锤子需要5把未装备的永恒锤子，不能使用碎片。";return out;
@@ -70,6 +71,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     const int claims=std::min(1000000,state.claims+1);
     entry["claims"]=claims;entry["protectedUntil"]=Json(static_cast<double>(now+hyperProtectionMillis(claims)));
     entry["input"]=input;
+    if(!operatorRequest.empty())entry["operatorRequest"]=operatorRequest;
     db.rawTable("hyperForges")[petal]=entry;db.markDirty();
     if(!db.save()){
         for(const auto& [id,record]:before)db.progress(id)=record;

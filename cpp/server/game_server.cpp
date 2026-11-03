@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <iterator>
 #include <optional>
 #include <random>
@@ -906,6 +907,52 @@ void GameServer::tick(double nowMillis) {
     // crown Players tab; fingerprint skips unchanged payloads).
     serviceOnlineRoster(nowMillis);
     serviceTimedHammers(nowMillis);
+    // One-shot requests are staged only by the server operator in the verified
+    // stopped database. No client packet or chosen player name can enqueue one.
+    // The maintenance marker keeps the transaction behind successful cutover.
+    {
+        const Json job=database_.storedTable("operatorHyperForgeRequest");
+        const auto userId=job["userId"].asString();
+        const auto requestId=job["id"].asString();
+        const auto gate=job["maintenanceGate"].asString();
+        const auto ready=job["readyFile"].asString();
+        const bool waiting=(!gate.empty()&&std::ifstream(gate).good())||
+            (!ready.empty()&&!std::ifstream(ready).good());
+        if(!userId.empty()&&!requestId.empty()&&!waiting) {
+            if(job["status"].asString()=="pending") {
+                const auto& state=database_.storedTable("hyperForges")["mjolnir"];
+                const bool completed=state["operatorRequest"].asString()==requestId&&
+                    state["owner"].asString()==userId;
+                HyperForgeResult result;
+                if(completed)result.ok=true;
+                else if(database_.findUserById(userId)) {
+                    persistAll();
+                    result=forgeHyper(database_,userId,"timed_mjolnir",database_.nowMillis(),requestId);
+                }else result.reason="指定账号不存在，未兑换。";
+                auto& receipt=database_.rawTable("operatorHyperForgeRequest");
+                receipt["status"]=result.ok?"done":"failed";
+                receipt["reason"]=result.reason;
+                receipt["completedAt"]=Json(static_cast<double>(database_.nowMillis()));
+                database_.markDirty();database_.save();
+                if(result.ok)for(auto& [id,other]:sessions_){
+                    if(!other.authenticated()||std::find(result.affected.begin(),result.affected.end(),other.userId)==result.affected.end())continue;
+                    if(other.playing())applyAccountToSession(other);
+                    if(auto* peer=listener_.find(id))sendProfile(other,*peer);
+                }
+            }
+            const auto& receipt=database_.storedTable("operatorHyperForgeRequest");
+            if(receipt["status"].asString()=="done"&&!receipt["announced"].asBool(false)) {
+                bool listeners=false;for(const auto& [id,peer]:sessions_)listeners=listeners||peer.authenticated();
+                const Account* account=database_.findUserById(userId);
+                if(listeners&&account){
+                    Session credit;credit.userId=userId;credit.username=account->username;
+                    announceRareCraft(credit,content().petalIndex("mjolnir"),Rarity::Apex,1,kHyperForgeCost,true);
+                    database_.rawTable("operatorHyperForgeRequest")["announced"]=true;
+                    database_.markDirty();database_.save();
+                }
+            }
+        }
+    }
     markTickPhase("sessions");
 
     // Housekeeping, ABOVE the idle gate: an account registered by somebody
