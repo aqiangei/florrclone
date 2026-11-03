@@ -146,9 +146,13 @@ inline constexpr Rarity minionRarity(Rarity asked) {
 /// wall, not a gentle step, so a common-tier loadout cannot chip down a
 /// legendary by patience alone.
 /// Hyper health is 6x Eternal; its damage and rewards keep their existing scale.
-inline constexpr std::array<double, kLadderRarityCount> kMobHealthScale = {
-    1.0, 3.75, 13.5, 54.0, 324.0, 3159.0, 126830.0, 2374000.0, 14244000.0, 21366000.0,
-};
+inline constexpr std::array<double, kLadderRarityCount> kMobHealthScale = [] {
+    std::array<double, kLadderRarityCount> scale = {
+        1.0, 3.75, 13.5, 54.0, 324.0, 3159.0, 126830.0, 2374000.0, 7122000.0, 21366000.0,
+    };
+    scale[static_cast<std::size_t>(Rarity::Apex)] *= 2.0;
+    return scale;
+}();
 
 /// Mob damage per tier -- a clean 3x ladder, so a tier above you roughly
 /// triples what one touch costs.

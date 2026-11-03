@@ -10,10 +10,12 @@ int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,T
 TEST(hyper_health_is_six_times_eternal_without_other_stat_inflation){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto e=data().mobStats(i,Rarity::Unique),h=data().mobStats(i,Rarity::Apex);
         CHECK_NEAR(h.health,e.health*6,1e-5);CHECK_NEAR(h.damage,e.damage*3,1e-5);
+        CHECK_NEAR(e.health,data().mob(i).health*7122000.0,1e-5);
+        CHECK_NEAR(data().mobStats(i,Rarity::Super).health,data().mob(i).health*2374000.0,1e-5);
         CHECK_NEAR(h.xp,e.xp*3,1e-5);
         CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor,1e-9);}
     const auto pollen=data().petalStats(data().petalIndex("pollen"),Rarity::Apex);
-    CHECK_NEAR(pollen.damage,83106,1e-9);CHECK_NEAR(pollen.health,10935,1e-9);
+    CHECK_NEAR(pollen.damage,249318,1e-9);CHECK_NEAR(pollen.health,32805,1e-9);
     CHECK_EQ(pollen.count,3);CHECK_NEAR(pollen.reloadMillis,2000,1e-9);
 }
 TEST(hyper_one_per_regular_map_preserves_supers_eternals_and_waits_thirty_minutes){
