@@ -600,6 +600,7 @@ Entity MobAiSystem::acquireTarget(World& world, const Terrain& terrain, const Sp
     for (const Entity candidate : gridScratch_) {
         if (candidate == self) continue;
         if (!world.has<PlayerTag>(candidate)) continue;
+        if (!canNoticeBurrowed(world,self,candidate)) continue;
         if (!isStanding(world, candidate)) continue;
         const Transform* transform = world.tryGet<Transform>(candidate);
         if (transform == nullptr) continue;
@@ -1482,7 +1483,7 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
     // walks up to it for as long as the clock says, which reads as the whole
     // field lagging behind the flower. The LOD stride is what bounds this.
     if (ai.target != NULL_ENTITY &&
-        !holdTarget(world, terrain, transform.position, transform.realm, ai, range, nowMillis)) {
+        (!canNoticeBurrowed(world,self,ai.target)||!holdTarget(world, terrain, transform.position, transform.realm, ai, range, nowMillis))) {
         ai.target = NULL_ENTITY;
         // A later chase of the same flower gets a grace of its own.
         ai.unseenTarget = NULL_ENTITY;

@@ -146,11 +146,12 @@ std::uint8_t computeEntityState(World& world, Entity e, double nowMillis) {
 PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis) {
     PlayerVisualState out;
     if (!world.has<PlayerTag>(e)) return out;
+    if(const auto* burrow=world.tryGet<BurrowState>(e))if(burrow->active&&nowMillis<burrow->untilMillis)out.renderFlags|=PlayerRenderBurrowed;
 
     if (const PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(e)) {
         out.faceFlags = visuals->faceFlags;
         out.equipFlags = visuals->equipFlags;
-        out.renderFlags = visuals->renderFlags;
+        out.renderFlags |= visuals->renderFlags;
         // Borrowed, not copied; see PlayerVisualState::equippedSkinId.
         if (!visuals->equippedSkinId.empty()) out.equippedSkinId = &visuals->equippedSkinId;
         if (visuals->glitched) out.renderFlags |= PlayerRenderGlitch;

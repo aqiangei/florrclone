@@ -645,6 +645,8 @@ struct PlayerModifiers {
     /// The share of every heal past max health that becomes shield: the best
     /// worn amulet's figure. Zero without one.
     double overhealShield = 0.0;
+    double lightningRepeatChance=0.0;
+    int maxLightningRepeats=0;
     /// What every heal this flower receives is scaled up by, less one: every
     /// worn basil's Heal Bonus, stacked harmonically (best + second / 2 +
     /// third / 3 ...). Zero without one.
@@ -1500,6 +1502,10 @@ struct LightningClock {
 /// on the number.
 struct LightningBurst {};
 struct LightningTarget { Entity victim = NULL_ENTITY; };
+struct BurrowState {
+    double untilMillis=0;bool active=false;
+    std::uint16_t wormIndex=UINT16_MAX,desertCentipedeIndex=UINT16_MAX;
+};
 
 struct WebFlight {
     Vec2 from; Vec2 to;
@@ -1650,6 +1656,7 @@ FLIX_COMPONENT(flix::Replicated);
 FLIX_COMPONENT(flix::TotemRegeneration);
 FLIX_COMPONENT(flix::WebFlight);
 FLIX_COMPONENT(flix::PoisonImmune);
+FLIX_COMPONENT(flix::BurrowState);
 
 namespace flix {
 
@@ -1663,6 +1670,17 @@ inline bool isStanding(const World& world, Entity e) {
     if (!world.isAlive(e) || world.has<Dead>(e)) return false;
     const Health* health = world.tryGet<Health>(e);
     return health == nullptr || health->alive();
+}
+inline bool canNoticeBurrowed(const World& world,Entity observer,Entity target){
+    const auto* burrow=world.tryGet<BurrowState>(target);
+    if(!burrow||!burrow->active)return true;
+    for(int n=0;n<4&&world.isAlive(observer);++n){
+        if(const auto* mob=world.tryGet<MobType>(observer))return mob->configIndex==burrow->wormIndex||mob->configIndex==burrow->desertCentipedeIndex;
+        if(const auto* shot=world.tryGet<Projectile>(observer)){observer=shot->owner;continue;}
+        if(const auto* field=world.tryGet<GroundEffect>(observer)){observer=field->owner;continue;}
+        break;
+    }
+    return false;
 }
 
 } // namespace flix

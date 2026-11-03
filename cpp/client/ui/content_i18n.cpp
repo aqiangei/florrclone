@@ -9,6 +9,8 @@ namespace {
 bool zh() { return language() == Language::Zh; }
 struct Pair { const char* id; const char* zh; };
 constexpr Pair kPetals[] = {
+    {"ruby", "红宝石"},
+    {"cyber_assembler", "电脑转换机"},
     {"dust", "尘埃"},
     {"mysterious_stick", "神秘木棍"},
     {"mana_orb", "法力宝珠"},
@@ -267,6 +269,8 @@ constexpr Pair kMobs[] = {
     {"desert_centipede", "沙漠蜈蚣"},
     {"desert_centipede_body", "沙漠蜈蚣身体"},
     {"digger", "挖掘者"},
+    {"ruby", "红宝石"},
+    {"cyber_assembler", "电脑转换机"},
     {"dust", "尘埃"},
     {"evil_centipede", "邪恶蜈蚣"},
     {"evil_centipede_body", "邪恶蜈蚣身体"},
@@ -652,6 +656,7 @@ constexpr Pair kBiomes[] = {
     {"garden", "花园"},
     {"desert", "沙漠"},
     {"computer", "工厂"},
+    {"cyberspace", "电脑"},
     {"factory", "工厂"},
     {"ocean", "海洋"},
     {"jungle", "丛林"},

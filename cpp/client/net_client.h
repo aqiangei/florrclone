@@ -678,6 +678,7 @@ public:
     double hyperProtectionLeft(std::uint16_t index) const;
     int hyperInputCost(std::uint16_t index) const {const auto i=hyperInputCosts_.find(index);return i==hyperInputCosts_.end()?5:i->second;}
     void clearTitanQuotes(){titanHolders_.clear();hyperProtectedUntil_.clear();hyperInputCosts_.clear();}
+    int hyperHoldings() const {return hyperHoldings_;}
     void requestRespawn();
     void requestDungeonEntry();
     void sendPing();
@@ -1219,6 +1220,7 @@ private:
     std::unordered_map<std::uint16_t, std::string> titanHolders_;
     std::unordered_map<std::uint16_t,double> hyperProtectedUntil_;
     std::unordered_map<std::uint16_t,int> hyperInputCosts_;
+    int hyperHoldings_=0;
     ShopOutcome shopOutcome_;
     PasswordOutcome passwordOutcome_;
     UsernameOutcome usernameOutcome_;

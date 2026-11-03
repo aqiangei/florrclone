@@ -1307,6 +1307,9 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     // is legal -- gardn's mythic fang heals three times what it deals -- and
     // the bound only keeps a typo from reading as a full heal on every graze.
     p.lifesteal = ctx.range(src, "lifesteal", 0.0, 0.0, 100.0);
+    p.burrowDurationMillis=ctx.range(src,"burrowDurationMillis",0.0,0.0,10000.0);
+    p.burrowChargeMillis=ctx.range(src,"burrowChargeMillis",0.0,0.0,60000.0);
+    p.lightningRepeatChance=ctx.range(src,"lightningRepeatChance",0.0,0.0,0.55);
     p.equipFlags = parseEquipFlags(ctx.text(src, "equipFlags"));
     // The lightning cutter carries a second bit so the client can tell the two
     // blades apart and paint the cyan one. It is derived from the id rather
@@ -1928,6 +1931,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     s.critDamage = c.clawCritDamage * strength;
     // Fang uses healing/damage scaling, so its percentage falls at Ultra+.
     s.lifesteal = c.lifesteal * heal / stat;
+    if(c.lightningRepeatChance>0){s.lightningRepeatChance=std::min(0.55,c.lightningRepeatChance+0.025*ladderIndex(tier));s.maxLightningRepeats=1+ladderIndex(tier)/4;}
     s.reloadMillis = c.cooldownMillis;
     if (c.id == "yggdrasil") {
         // TypeScript overrides every row: it is always a 1/1 petal and its

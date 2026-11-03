@@ -42,6 +42,7 @@ namespace {
 /// authored without a colour used to fall through as grey (#ccc); the tab
 /// row wore that grey too.
 std::uint32_t biomePickerColor(const std::string& biome) {
+    if (biome == "cyberspace") return 0x246B48u;
     if (biome == "garden") return 0x1EA660u;
     if (biome == "desert") return 0xD4B86Bu;
     if (biome == "ocean") return 0x459DB4u;
@@ -65,7 +66,7 @@ bool biomeOnPicker(const std::string& biome) {
     return biome == "garden" || biome == "desert" || biome == "computer" ||
            biome == "factory" || biome == "ocean" || biome == "jungle" ||
            biome == "hel" || biome == "ant_hell" || biome == "sewers" ||
-           biome == "pyramid";
+           biome == "pyramid" || biome == "cyberspace";
 }
 
 /// The spawn picker's two rows. A row is sized so all of its buttons fit the
@@ -617,7 +618,7 @@ std::vector<App::PickerTab> App::pickerTabs() const {
             // florrclone names this biome Factory; our map id is still computer.
             const std::string en = (biome == "computer" || biome == "factory")
                                        ? "Factory"
-                                       : titleCaseId(biome);
+                                       : biome == "cyberspace" ? "Computer" : titleCaseId(biome);
             tabs.push_back(PickerTab{biome, biomeTr(biome, en.c_str()),
                                      biomePickerColor(biome), {}});
             tab = &tabs.back();

@@ -844,6 +844,9 @@ private:
     /// when the victim has a chance to dodge, so a fight with no evasion in
     /// it rolls nothing.
     Rng rng_;
+    Rng rubyRng_;
+    bool resolvingRuby_=false;
+    DamageResult applyDamageOnce(World& world,Entity victim,Entity source,double amount,double nowMillis,DamageKind kind);
 
     std::uint64_t tick_ = 0;
 };

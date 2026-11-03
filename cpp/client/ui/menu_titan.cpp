@@ -183,7 +183,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     const Rect button = card.button;
     const auto* holder=knownPetal(stagedPetal_)?ctx.net.titanHolder(stagedPetal_):nullptr;
     const bool canForge = phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
-        (!hyper_ || (holder&&ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
+        (!hyper_ || (holder&&ctx.net.hyperHoldings()<kMaxHyperHoldings&&ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
                      *holder!=profile.username));
     drawSlotButton(canvas, button, "锻造",
                    canForge ? std::optional<std::uint32_t>(rarityColor(outputTier))
@@ -197,7 +197,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
-            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"每处泰坦同种超凡首次5个，此后+1至10。","被抢按原投入返还，损失2个；锤子同规则。","每次争夺减1小时，最低1小时；碎片不能换超凡锤。"}[i]:kLines[i]);
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"每处泰坦同种超凡固定需5个永恒。","被抢返原投入减1个；每账号最多5份超凡。","每次争夺减1小时，最低1小时；碎片不能换超凡锤。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;
@@ -216,7 +216,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         const auto* holder=ctx.net.titanHolder(stagedPetal_);
         SlotCardLayout line=card;line.lineY=panel.y+113;
         const auto wait=ctx.net.hyperProtectionLeft(stagedPetal_);
-        drawSlotLine(canvas,line,std::string("持有者：")+(holder&&!holder->empty()?*holder:"暂无")+"  保护剩余："+std::to_string(static_cast<int>(std::ceil(wait/60000)))+"分钟");
+        drawSlotLine(canvas,line,std::string("持有者：")+(holder&&!holder->empty()?*holder:"暂无")+"  保护剩余："+std::to_string(static_cast<int>(std::ceil(wait/60000)))+"分钟  已持有 "+std::to_string(ctx.net.hyperHoldings())+"/5");
     }
 
     // --- the grid ----------------------------------------------------------
@@ -294,8 +294,8 @@ bool TitanPanel::render(MenuContext& ctx) {
             refusal_.clear();
         } else {
             const auto& id=content().petal(hovered->petalIndex).id;
-            refusal_=hyper_&&id=="fragment"?"超凡锤子需要5至10把永恒锤子，不能用碎片。":
-                "材料不足或不可锻造；超凡需5至10个未装备的同种永恒。";
+            refusal_=hyper_&&id=="fragment"?"超凡锤子需要5把永恒锤子，不能用碎片。":
+                "材料不足或不可锻造；超凡需5个未装备的同种永恒。";
             refusalUntil_=now+kRefusalSeconds;
         }
     }

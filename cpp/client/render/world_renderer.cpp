@@ -2329,6 +2329,12 @@ void WorldRenderer::drawFlower(Canvas& canvas, const RemoteEntity& entity, const
                                Vec2 at, double timeSeconds) const {
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
+    if(entity.renderFlags&PlayerRenderBurrowed){
+        const float r=static_cast<float>(kFlowerArtRadius*playerSizeMultiplier(entity)*zoom);
+        canvas.save();canvas.translate(static_cast<float>(screen.x),static_cast<float>(screen.y));
+        ui::setFill(canvas,0x735239);canvas.beginPath();canvas.ellipse(0,0,r*1.2f,r*.6f,0,0,static_cast<float>(kTau));canvas.fill();
+        ui::setFill(canvas,0x35291f);canvas.beginPath();canvas.ellipse(0,0,r*.85f,r*.35f,0,0,static_cast<float>(kTau));canvas.fill();canvas.restore();return;
+    }
     // The drawn flower is 25 world units times the petal-driven size
     // multiplier, and nothing else. entity.radius is the gameplay hitbox,
     // which grows with level; using it here made a high level flower visibly

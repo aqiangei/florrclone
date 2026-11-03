@@ -2672,7 +2672,7 @@
     "ai_type": "passive",
     "range": 100,
     "replace_chance": {
-      "common": 1e-05,
+      "common": 0.00001,
       "super": 0.0001
     },
     "noEggDrop": false
@@ -3261,5 +3261,126 @@
       "garden"
     ],
     "florrclonePort": true
+  },
+  "cyber_assembler": {
+    "name": "Computer Assembler",
+    "damage": 0,
+    "health": 100,
+    "size": 1.2939,
+    "speed": 0,
+    "cooldown": 2000,
+    "xp": {
+      "common": 0,
+      "uncommon": 0,
+      "rare": 0,
+      "epic": 0,
+      "legendary": 0,
+      "mythic": 0,
+      "ultra": 0,
+      "super": 0,
+      "unique": 0
+    },
+    "description": "电脑世界的转换机；靠近后按 C 查看对应配方。",
+    "color": "#999999",
+    "image": "$assembler",
+    "ai_type": "passive",
+    "range": 100,
+    "npc": {
+      "service": "assembler",
+      "still": true,
+      "recipes": [
+        {
+          "from": [
+            "glass"
+          ],
+          "to": "sand"
+        },
+        {
+          "from": [
+            "sand"
+          ],
+          "to": "glass"
+        },
+        {
+          "from": [
+            {
+              "petal": "air",
+              "count": 10
+            }
+          ],
+          "to": "bubble"
+        },
+        {
+          "from": [
+            "moon_rock"
+          ],
+          "to": {
+            "petal": "rock",
+            "count": 15
+          }
+        },
+        {
+          "from": [
+            {
+              "petal": "rock",
+              "count": 100000
+            }
+          ],
+          "to": "moon_rock"
+        },
+        {
+          "from": [
+            {
+              "petal": "honey",
+              "count": 3
+            }
+          ],
+          "to": "wax"
+        },
+        {
+          "from": [
+            "rose",
+            "light"
+          ],
+          "to": "dahlia"
+        },
+        {
+          "from": [
+            {
+              "petal": "battery",
+              "count": 3
+            }
+          ],
+          "to": [
+            "battery",
+            "lightning"
+          ]
+        },
+        {
+          "from": [
+            "honey",
+            "light"
+          ],
+          "to": "pollen"
+        },
+        {
+          "from": [
+            {
+              "petal": "triangle",
+              "count": 10
+            }
+          ],
+          "to": "cutter"
+        },
+        {
+          "from": [
+            "mimic",
+            "ram"
+          ],
+          "to": "sawblade"
+        }
+      ]
+    },
+    "noEggDrop": true
   }
 }

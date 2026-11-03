@@ -452,6 +452,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         line.alpha = 0.72;line.labelColor = kStatGeneric;lines.push_back(line);
     };
     if (stats.flowerHealthBonus > 0) special("增加花朵生命：+", "Flower health: +", stats.flowerHealthBonus);
+    if(config.burrowDurationMillis>0){
+        special("潜地准备：", "Burrow charge: ",config.burrowChargeMillis/1000.0,"s");
+        special("潜地持续：", "Burrow duration: ",config.burrowDurationMillis/1000.0,"s");
+        lines.push_back({chinese?"准备后按防御潜地；仍会被Worm和沙漠蜈蚣命中，不可穿墙。":"Defend after charging to burrow. Worms and Desert Centipedes can still hit you; walls remain solid.",12.0});
+    }
     if (stats.flowerRadiusBonus > 0) special("增加花朵半径：+", "Flower radius: +", stats.flowerRadiusBonus);
     if (!petalSharesFlowerDamage(config) && stats.modifiers.maxHealth != 1.0)
         special("最大生命：", "Max health: ", (stats.modifiers.maxHealth - 1.0) * 100.0, "%");
@@ -537,6 +542,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 "Discharges on damage taken; reloads after 3 charges. No trigger on contact alone, fully shielded hits, self-damage or invulnerability.",12.0};
             mechanism.maxWidth=kTooltipWrapWidth; lines.push_back(mechanism);
         }
+    }
+    if(stats.lightningRepeatChance>0){
+        special("闪电重复概率：", "Lightning repeat chance: ",stats.lightningRepeatChance*100.0,"%");
+        special("最多追加电击：", "Maximum extra strikes: ",stats.maxLightningRepeats);
+        lines.push_back({chinese?"只取最强红宝石；每次追加重新判定，不额外开启新连锁。":"Only the strongest Ruby applies. Extra strikes roll independently without starting another chain.",12.0});
     }
 
     // Relic. The whole petal is this one number.

@@ -100,6 +100,10 @@
     {
       "file": "termite_mound_t11.tmj",
       "copies": 8
+    },
+    {
+      "file": "cyberspace.tmj",
+      "prestige": true
     }
   ]
 }

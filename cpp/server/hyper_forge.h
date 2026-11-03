@@ -15,11 +15,25 @@ inline HyperForgeState hyperForgeState(const Database& db,const std::string& pet
 struct HyperForgeResult {
     bool ok=false;int consumed=0;std::string reason;std::vector<std::string> affected;
 };
+inline int hyperHoldingCount(const Database& db,const std::string& userId){
+    std::map<std::string,std::int64_t> physical,claims;
+    if(const auto* record=db.findProgress(userId)){
+        for(const auto& [key,value]:record->inventory["apex"].members())if(key.rfind("petal_",0)==0)physical[key.substr(6)]+=std::max(0,value.asInt());
+        for(const auto& slot:record->loadout)if(slot&&slot->rarity==Rarity::Apex)++physical[slot->petalType];
+    }
+    for(const auto& [key,row]:db.storedTable("hyperForges").members())if(row["owner"].asString()==userId){
+        const auto colon=key.find(':');++claims[colon==std::string::npos?key:key.substr(colon+1)];
+    }
+    for(const auto& [petal,count]:claims)physical[petal]=std::max(physical[petal],count);
+    std::int64_t total=0;for(const auto& [petal,count]:physical)total+=count;
+    return static_cast<int>(std::min<std::int64_t>(kMaxStackCount,total));
+}
 inline HyperForgeResult grantTemporaryHyperHammer(Database& db,const std::string& userId,
                                                  std::int64_t now,const std::string& request) {
     HyperForgeResult out;const auto* original=db.findProgress(userId);
     if(!original){out.reason="账号不存在。";return out;}
     if(original->extra["temporaryHyperHammer"]["request"].asString()==request){out.ok=true;return out;}
+    if(hyperHoldingCount(db,userId)>=kMaxHyperHoldings){out.reason="账号超凡持有已达5份上限，未新增。";return out;}
     if(original->itemCount(Rarity::Apex,"petal_mjolnir")>0){out.reason="账号已有超凡锤子，未重复补发。";return out;}
     for(const auto& slot:original->loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType=="mjolnir"){
         out.reason="账号已装备超凡锤子，未重复补发。";return out;
@@ -44,6 +58,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     const std::string petal=hyperForgeOutput(input);
     const auto forgeKey=hyperForgeKey(petal,titan);
     const auto state=hyperForgeState(db,petal,titan);
+    if(hyperHoldingCount(db,userId)>=kMaxHyperHoldings){out.reason="账号超凡持有已达5份上限；已有物品保留，数量降低后才能继续锻造。";return out;}
     const int cost=hyperForgeCost(state.claims);
     if(state.owner==userId){out.reason="你已经持有该超凡花瓣。";return out;}
     if(state.protectedUntil>now){out.reason="保护期尚未结束，剩余"+
@@ -62,7 +77,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     const auto previousInput=oldTable[forgeKey]["input"].asString(
         petal=="mjolnir"?"fragment":petal);
     const std::string refundMaterial="petal_"+previousInput;
-    const int refundPerCopy=hyperForgeRefund(clamp(oldTable[forgeKey]["paid"].asInt(5),5,10));
+    const int refundPerCopy=kHyperForgeRefund;
     for(const auto& [id,record]:before){
         if(id==userId)continue;
         auto& changed=db.progress(id);int lost=0;

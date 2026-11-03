@@ -39,6 +39,9 @@ const char* const kPetalsJson = R"JSON({
   "root":     {"name":"Root","damage":10,"health":10,"size":1,"cooldown":1000,"count":1,"armorPerStack":12,"defendOnly":true,"color":"#B86C32"},
   "peas":     {"name":"Peas","damage":6,"health":5,"size":1,"cooldown":1000,"count":1,"projectile":{"count":3,"spreadAngle":0.5,"speed":800,"distance":1000},"color":"#00FF00"},
   "magic_peas":{"name":"Blueberries","damage":0,"health":5,"size":1,"cooldown":1000,"count":1,"lightningDamage":true,"projectile":{"count":1,"speed":800,"distance":1000}},
+  "mecha_missile":{"name":"Mecha Missile","damage":35,"health":2,"size":1,"cooldown":1500,"count":1,"projectile":{"count":1,"spreadAngle":0,"speed":600,"distance":2400}},
+  "antennae":{"name":"Antennae","damage":0,"health":1,"count":0,"noPhysics":true,"equipFlags":"Antennae"},
+  "shovel":{"name":"Shovel","damage":0,"health":null,"count":1,"cooldown":3000,"burrowChargeMillis":2000,"burrowDurationMillis":2000},
   "pod":      {"name":"Pod","damage":2.5,"health":10,"size":1,"cooldown":1000,"count":4,"clumped":true,"defendOnly":true,"projectile":{"count":1,"spreadAngle":1.5708,"speed":800,"distance":1000},"color":"#8AC255"},
   "peaclump": {"name":"Peaclump","damage":6,"health":5,"size":1,"cooldown":1000,"count":4,"clumped":true,"projectile":{"count":1,"spreadAngle":0,"speed":800,"distance":1000},"color":"#00FF00"},
   "emitter":  {"name":"Emitter","damage":2,"health":null,"size":1,"cooldown":1000,"count":1,"projectile":{"count":2,"spreadAngle":0.3,"speed":400,"distance":400},"color":"#00FF00"},
@@ -5949,6 +5952,18 @@ TEST(wiki_mechanism_blueberry_projectiles_use_lightning_instead_of_zero_physical
     Query<ProjectileTag,Projectile> shots{rig.world};shots.each([&](Entity,ProjectileTag&,Projectile& shot){++seen;CHECK_NEAR(shot.damage,30,1e-8);});
     CHECK_EQ(seen,1);
 }
+TEST(wiki_mechanism_mecha_missile_fires_straight_with_or_without_antennae){
+    CHECK(contentLoaded());
+    for(const bool antennae:{false,true}){
+        Rig rig;rig.equip(0,"mecha_missile");if(antennae)rig.equip(1,"antennae");
+        rig.freezeRing();rig.settleEquips();rig.settleRing();
+        rig.setFlags(net::InputAttack);rig.tick();int seen=0;
+        Query<ProjectileTag,Projectile,Motion> shots{rig.world};
+        shots.each([&](Entity,ProjectileTag&,Projectile& shot,Motion& motion){++seen;
+            CHECK_NEAR(motion.velocity.length(),600,1e-8);CHECK_NEAR(shot.remainingDistance,2400,1e-8);CHECK_NEAR(shot.damage,35,1e-8);
+        });CHECK_EQ(seen,1);
+    }
+}
 
 TEST(wiki_mechanism_battery_chains_between_large_touching_bodies) {
     CHECK(contentLoaded()); Rig rig; rig.equip(0,"battery");rig.settleEquips();
@@ -5960,6 +5975,33 @@ TEST(wiki_mechanism_battery_chains_between_large_touching_bodies) {
     ricochetCombatTick(rig,combat);
     CHECK(rig.world.get<Health>(first).current<10000);
     CHECK(rig.world.get<Health>(second).current<10000);
+}
+TEST(wiki_mechanism_lightning_resolves_once_even_after_a_slow_tick_and_target_movement){
+    CHECK(contentLoaded());Rig rig;rig.equip(0,"battery");rig.settleEquips();
+    const auto target=addMob(rig,rig.position(rig.player)+Vec2{100,0});CombatSystem combat;
+    combat.applyDamage(rig.world,rig.player,target,1,rig.now);rig.tick();
+    rig.world.get<Transform>(target).position+=Vec2{600,0};
+    SpatialGrid grid;grid.insert(target,Realm::Overworld,rig.position(target),10);
+    const auto hp=rig.world.get<Health>(target).current;
+    combat.run(rig.world,grid,fixture().registry,rig.now,.25,rig.commands,rig.events);rig.commands.flush();
+    CHECK(rig.world.get<Health>(target).current<hp);
+    const auto after=rig.world.get<Health>(target).current;
+    combat.run(rig.world,grid,fixture().registry,rig.now+250,.25,rig.commands,rig.events);rig.commands.flush();
+    CHECK_NEAR(rig.world.get<Health>(target).current,after,1e-8);
+}
+TEST(wiki_mechanism_shovel_charges_spends_reload_and_expires_without_permanent_invulnerability){
+    CHECK(contentLoaded());Rig rig;rig.equip(0,"shovel");rig.settleEquips();
+    CHECK(!rig.world.has<BurrowState>(rig.player));rig.tick(65);rig.setFlags(net::InputDefend);rig.tick();
+    const auto* state=rig.world.tryGet<BurrowState>(rig.player);CHECK(state&&state->active);if(!state)return;
+    CHECK(rig.slot(0).broken);const auto target=addMob(rig,rig.position(rig.player)+Vec2{60,0});CombatSystem combat;
+    const auto hp=rig.world.get<Health>(rig.player).current;
+    CHECK(combat.applyDamage(rig.world,rig.player,target,10,rig.now).refused);
+    CHECK_NEAR(rig.world.get<Health>(rig.player).current,hp,1e-8);
+    // The explicit underground predator exception remains hittable.
+    rig.world.get<BurrowState>(rig.player).wormIndex=fixture().registry.mobIndex("critter");
+    CHECK(combat.applyDamage(rig.world,rig.player,target,1,rig.now).applied>0);
+    rig.setFlags(0);rig.tick(65);CHECK(!rig.world.get<BurrowState>(rig.player).active);
+    CHECK(combat.applyDamage(rig.world,rig.player,target,1,rig.now).applied>0);
 }
 
 TEST(wiki_mechanism_lentil_attracts_close_sawblade_and_its_mimic) {

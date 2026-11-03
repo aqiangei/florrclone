@@ -1989,7 +1989,7 @@ void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
         const auto& id=map.id();
         if(worldMaps->isPrestige(map.realm()) || !map.usesReferenceSpawnCurve() ||
            (id!="garden"&&id!="desert"&&id!="computer"&&id!="ocean"&&id!="jungle"&&
-            id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"))continue;
+            id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"&&id!="cyberspace"))continue;
         auto state=std::find_if(eternalPopulations_.begin(),eternalPopulations_.end(),
                                [&](const EternalMapState& v){return v.realm==map.realm();});
         if(state==eternalPopulations_.end()) {
@@ -2036,7 +2036,7 @@ void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
         const auto& id=map.id();
         if(worldMaps->isPrestige(map.realm()) || !map.usesReferenceSpawnCurve() ||
            (id!="garden"&&id!="desert"&&id!="computer"&&id!="ocean"&&id!="jungle"&&
-            id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"))continue;
+            id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"&&id!="cyberspace"))continue;
         auto state=std::find_if(hyperPopulations_.begin(),hyperPopulations_.end(),
                                [&](const EternalMapState& v){return v.realm==map.realm();});
         if(state==hyperPopulations_.end()) {

@@ -3593,7 +3593,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
             if(auto* peer=listener_.find(id)){
                 sendProfile(other,*peer);
                 if(other.userId!=session.userId)sendNotice(*peer,net::NoticeSeverity::Warning,
-                    "你的超凡"+petal.name+"已被其他玩家夺取，已返还原投入材料，净损失2个永恒材料。");
+                    "你的超凡"+petal.name+"已被其他玩家夺取，已返还原投入材料，净损失1个永恒材料。");
             }
         }
         announceRareCraft(session,outputIndex,Rarity::Apex,1,result.consumed,true);
@@ -3654,6 +3654,7 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
     w.str(owner?owner->username:"");
     w.u32(static_cast<std::uint32_t>(std::max<std::int64_t>(0,state.protectedUntil-database_.nowMillis())));
     w.u8(static_cast<std::uint8_t>(hyperForgeCost(state.claims)));
+    w.u8(static_cast<std::uint8_t>(std::min(255,hyperHoldingCount(database_,session.userId))));
     connection.send(w);
 }
 

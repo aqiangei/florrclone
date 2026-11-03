@@ -30,6 +30,12 @@ TEST(wiki_stat_blueberries_have_real_lightning_damage_and_nonzero_tooltip){
     CHECK_EQ(content().petalStats(id,Rarity::Unique).lightningBounces,0);
     CHECK(hasLine(id,Rarity::Unique,"196830"));CHECK(hasLine(id,Rarity::Unique,"不会连锁"));
 }
+TEST(wiki_stat_mecha_missile_has_a_straight_projectile_without_antennae){
+    CHECK(loadWikiStats());const auto& config=content().petal(content().petalIndex("mecha_missile"));
+    CHECK(config.projectile.present);CHECK_EQ(config.projectile.count,1);
+    CHECK_NEAR(config.projectile.speed,600,1e-8);CHECK_NEAR(config.projectile.distance,2400,1e-8);
+    CHECK_NEAR(config.projectile.spreadAngle,0,1e-8);
+}
 TEST(wiki_stat_battery_and_lightning_share_damage_chain_and_description) {
     CHECK(loadWikiStats()); ui::setLanguage(ui::Language::Zh);
     for(const auto* id:{"battery","lightning"}) {

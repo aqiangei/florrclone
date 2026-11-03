@@ -11,6 +11,20 @@
 #include "shared/game/shop.h"
 #include "client/camera.h"
 using namespace flix;
+TEST(feedback_computer_is_a_separate_map_with_art_spawn_bands_and_assembler){
+    WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    bool found=false;const auto realm=maps.realmOfId("cyberspace",found);CHECK(found);if(!found)return;
+    const auto* map=maps.forRealm(realm);CHECK(map!=nullptr);if(!map)return;
+    CHECK_EQ(map->displayName(),std::string("Computer"));CHECK_EQ(map->width(),108);CHECK_EQ(map->height(),108);
+    CHECK(map->usesReferenceSpawnCurve());CHECK(!map->playerSpawns().empty());CHECK(!map->artFiles().empty());
+    CHECK(!terrain.blocked({25984,2240},realm));
+    const auto factory=maps.realmOfId("computer",found);CHECK(found);CHECK(factory!=realm);
+    CHECK_EQ(maps.forRealm(factory)->displayName(),std::string("Factory"));
+    const auto& c=testsupport::shippedContent();const auto assembler=c.mobIndex("cyber_assembler");CHECK(assembler!=kInvalidIndex);
+    if(assembler!=kInvalidIndex){CHECK(c.mob(assembler).npc.still);CHECK(c.mob(assembler).npc.recipes.size()>=10);}
+    for(const char* id:{"javascript","c++","bomb","glitch","ram","cursor","computer_chip","cube","icosahedron","spaceship","capacitor","ruby"})
+        CHECK(c.petalIndex(id)!=kInvalidIndex);
+}
 TEST(feedback_splitter_rewards_keep_the_contributing_body_and_refresh_only_after_removal) {
     World world;
     const Entity left=world.create(),right=world.create();

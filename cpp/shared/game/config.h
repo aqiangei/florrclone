@@ -913,6 +913,8 @@ struct PetalConfig {
     /// to its flower as health. Fang's. Flat across the ladder: the damage it
     /// is a fraction OF already climbs it.
     double lifesteal = 0;
+    double burrowDurationMillis=0,burrowChargeMillis=0;
+    double lightningRepeatChance=0;
     /// What a worn cutter adds to the flower's BODY damage, before rarity.
     /// Scaled on the damage ladder, so it is stated at the common tier like
     /// every other damage figure. Not `damage` itself: nothing about this
@@ -1191,6 +1193,8 @@ struct PetalStats {
     /// bar, itself included: 2.5% a tier. Zero for every other petal. See
     /// barReloadCut.
     double reloadCut = 0;
+    double lightningRepeatChance=0;
+    int maxLightningRepeats=0;
     /// The share a disc takes off every body collision its flower suffers:
     /// florr's 1 - 0.91^(tier+1), 9% at common. Zero for every other petal.
     double collisionResist = 0;

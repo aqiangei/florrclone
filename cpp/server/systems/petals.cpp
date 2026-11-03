@@ -378,13 +378,13 @@ bool flyThrownPetal(PetalInstance& instance, Transform& transform, Vec2 flower, 
 }
 
 bool hasTimedAction(const PetalConfig& config, const PetalStats& stats) {
-    return config.projectile.present || stats.heal > 0.0 || stats.shield > 0.0 ||
+    return config.burrowDurationMillis>0 || config.projectile.present || stats.heal > 0.0 || stats.shield > 0.0 ||
            config.radiation.present || config.petMobIndex != kInvalidIndex ||
            behaviourOf(config.id).intervalMillis > 0.0;
 }
 
 bool hasNonProjectileAction(const PetalConfig& config, const PetalStats& stats) {
-    return stats.heal > 0.0 || stats.shield > 0.0 || config.radiation.present ||
+    return config.burrowDurationMillis>0 || stats.heal > 0.0 || stats.shield > 0.0 || config.radiation.present ||
            config.petMobIndex != kInvalidIndex || behaviourOf(config.id).intervalMillis > 0.0;
 }
 
@@ -394,6 +394,7 @@ bool hasNonProjectileAction(const PetalConfig& config, const PetalStats& stats) 
 /// a one-millisecond cooldown from becoming a per-tick emitter.
 double actionIntervalMillis(const PetalConfig& config, const PetalStats& stats) {
     double interval = 0;
+    if(config.burrowDurationMillis>0)interval=config.burrowChargeMillis;
     if (stats.heal > 0.0 || stats.shield > 0.0) {
         interval = std::max(interval, stats.healChargeMillis);
     }
@@ -571,6 +572,7 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
     bindTo(world);
     events_ = events;
     terrain_ = terrain;
+    Query<BurrowState> burrows{world};burrows.each([&](Entity e,BurrowState& burrow){if(nowMillis>=burrow.untilMillis||world.has<Dead>(e))burrow.active=false;});
     std::vector<Entity> landedWebs;
     Query<WebFlight, Transform, GroundEffect, Body> flyingWebs{world};
     flyingWebs.each([&](Entity e, WebFlight& flight, Transform& at, GroundEffect& field, Body& body) {
@@ -1648,6 +1650,8 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // rather than out, like the cutter above -- the flower is light
             // because of what it is wearing, not because the petal is up.
             aggregate.modifiers.knockbackTakenScale += stats.flowerKnockback;
+            aggregate.modifiers.lightningRepeatChance=std::max(aggregate.modifiers.lightningRepeatChance,stats.lightningRepeatChance);
+            aggregate.modifiers.maxLightningRepeats=std::max(aggregate.modifiers.maxLightningRepeats,stats.maxLightningRepeats);
             // Amulet, worn like the rubber and maximised like the lotus: a
             // second amulet is a spare, not a second share of the same heal.
             aggregate.modifiers.overhealShield =
@@ -2527,6 +2531,18 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         }
 
         if (!hasTimedAction(config, stats)) continue;
+        if(config.burrowDurationMillis>0){
+            if(defending&&nowMillis>=instance->nextActionMillis){
+                const auto* existing=world.tryGet<BurrowState>(player);
+                if(!existing||!existing->active){
+                    const auto slot=instance->slot,sub=instance->subIndex;
+                    auto& burrow=world.ensure<BurrowState>(player);burrow.active=true;burrow.untilMillis=nowMillis+config.burrowDurationMillis;
+                    burrow.wormIndex=registry.mobIndex("worm");burrow.desertCentipedeIndex=registry.mobIndex("desert_centipede");
+                    spendPetal(world,registry,player,petal,slot,sub,stats,nowMillis);
+                }
+            }
+            continue;
+        }
 
         // A projectile is asked before the defend-only gate below, because a
         // defend-only shooter fires on EITHER input: peas and grapes split on

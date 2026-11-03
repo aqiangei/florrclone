@@ -37,14 +37,14 @@ TEST(hyper_temporary_hammer_preserves_protected_owner_and_materials_expires_and_
     CHECK_EQ(record.itemCount(Rarity::Apex,"petal_mjolnir"),0);
 }
 TEST(hyper_forge_price_and_protection_curve_match_the_requested_progression){
-    for(int n=0;n<20;++n)CHECK_EQ(hyperForgeCost(n),std::min(10,5+n));
-    CHECK_EQ(hyperForgeRefund(5),3);CHECK_EQ(hyperForgeRefund(6),4);CHECK_EQ(hyperForgeRefund(10),8);
+    for(int n=0;n<20;++n)CHECK_EQ(hyperForgeCost(n),5);
+    CHECK_EQ(hyperForgeRefund(5),4);CHECK_EQ(hyperForgeRefund(6),4);CHECK_EQ(hyperForgeRefund(10),4);
     CHECK_EQ(titanForgeCost(0,"rose"),10);CHECK_EQ(titanForgeCost(1,"rose"),15);CHECK_EQ(titanForgeCost(2000,"rose"),15);
     CHECK_EQ(titanForgeCost(0,"fragment"),5);CHECK_EQ(titanForgeCost(2000,"fragment"),5);
     CHECK_EQ(hyperProtectionMillis(1),15LL*3600000);CHECK_EQ(hyperProtectionMillis(2),14LL*3600000);
     CHECK_EQ(hyperProtectionMillis(15),3600000);CHECK_EQ(hyperProtectionMillis(10000),3600000);
 }
-TEST(hyper_forge_prices_increase_per_type_and_refund_the_previous_actual_payment){
+TEST(hyper_forge_fixed_five_cost_and_four_refund_preserve_one_net_loss){
     Fixture f;f.give(f.a,"rose",200);f.give(f.b,"rose",200);
     std::string winner=f.a;std::int64_t now=0;int previousPaid=0;
     for(int n=0;n<10;++n){
@@ -52,9 +52,9 @@ TEST(hyper_forge_prices_increase_per_type_and_refund_the_previous_actual_payment
         const auto oldWinner=f.db.progress(winner).itemCount(Rarity::Unique,"petal_rose");
         const auto oldLoser=f.db.progress(previous).itemCount(Rarity::Unique,"petal_rose");
         const auto result=forgeHyper(f.db,winner,"rose",now);CHECK(result.ok);
-        CHECK_EQ(result.consumed,std::min(10,5+n));
+        CHECK_EQ(result.consumed,5);
         CHECK_EQ(f.db.progress(winner).itemCount(Rarity::Unique,"petal_rose"),oldWinner-result.consumed);
-        if(n>0)CHECK_EQ(f.db.progress(previous).itemCount(Rarity::Unique,"petal_rose"),oldLoser+previousPaid-2);
+        if(n>0)CHECK_EQ(f.db.progress(previous).itemCount(Rarity::Unique,"petal_rose"),oldLoser+4);
         CHECK_EQ(f.db.storedTable("hyperForges")["rose"]["paid"].asInt(),result.consumed);
         previousPaid=result.consumed;now=hyperForgeState(f.db,"rose").protectedUntil;winner=previous;
     }
@@ -67,13 +67,13 @@ TEST(hyper_two_titans_are_independent_even_when_one_account_owns_both_copies){
     CHECK(forgeHyper(f.db,f.a,"rose",1000,{},"garden").ok);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_rose"),2);
     CHECK_EQ(f.db.storedTable("hyperForges")["rose"].dump(),jungle);
-    CHECK_EQ(hyperForgeCost(hyperForgeState(f.db,"rose","garden").claims),6);
+    CHECK_EQ(hyperForgeCost(hyperForgeState(f.db,"rose","garden").claims),5);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),20);
     const auto until=hyperForgeState(f.db,"rose","garden").protectedUntil;
     CHECK(forgeHyper(f.db,f.b,"rose",until,{},"garden").ok);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_rose"),1);
     CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Apex,"petal_rose"),1);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),23);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),24);
     CHECK_EQ(f.db.storedTable("hyperForges")["rose"].dump(),jungle);
     CHECK_EQ(hyperForgeState(f.db,"rose","garden").claims,2);
     CHECK_EQ(hyperForgeState(f.db,"rose").claims,1);
@@ -102,7 +102,7 @@ TEST(hyper_forge_is_unique_blocks_early_theft_and_refunds_four_inputs){
     CHECK_EQ(before,f.db.serialise());
     CHECK(forgeHyper(f.db,f.b,"rose",until).ok);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_rose"),0);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),3);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),4);
     CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Apex,"petal_rose"),1);
     CHECK_EQ(hyperForgeState(f.db,"rose").protectedUntil,until+14LL*3600000);
     CHECK(!forgeHyper(f.db,f.b,"rose",until+100000000).ok);
@@ -114,7 +114,7 @@ TEST(hyper_forge_removes_equipped_and_preset_copies_without_duplicate_refunds){
     record.loadout.resize(20);record.loadout[0]=item;record.loadoutPresets["K1"]={item};
     CHECK(forgeHyper(f.db,f.b,"rose",15LL*3600000).ok);
     CHECK(!f.db.progress(f.a).loadout[0]);CHECK(!f.db.progress(f.a).loadoutPresets["K1"][0]);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),3);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),4);
 }
 TEST(hyper_forge_persists_owner_counter_and_protection_across_restart){
     Fixture f;f.give(f.a,"rose");f.give(f.b,"rose",6);CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);
@@ -137,7 +137,7 @@ TEST(hyper_hammer_uses_five_eternal_hammers_and_does_not_share_their_expiry){
     for(int n=0;n<6;++n)addHammerLease(f.db.progress(f.b),15LL*3600000);
     CHECK(forgeHyper(f.db,f.b,"timed_mjolnir",15LL*3600000).ok);
     CHECK_EQ(hyperForgeState(f.db,"mjolnir").protectedUntil,29LL*3600000);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_timed_mjolnir"),3);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_timed_mjolnir"),4);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),0);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),0);
     CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Apex,"petal_mjolnir"),1);
@@ -157,7 +157,7 @@ TEST(hyper_hammer_legacy_holder_receives_the_material_they_originally_paid){
     f.db.rawTable("hyperForges")["mjolnir"]=entry;
     for(int n=0;n<6;++n)addHammerLease(f.db.progress(f.b),15LL*3600000);
     CHECK(forgeHyper(f.db,f.b,"timed_mjolnir",15LL*3600000).ok);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),3);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),4);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_timed_mjolnir"),0);
 }
 TEST(hyper_forge_requires_five_inputs_and_keeps_unrelated_inventory_intact){
@@ -166,6 +166,29 @@ TEST(hyper_forge_requires_five_inputs_and_keeps_unrelated_inventory_intact){
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),4);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_leaf"),20);
     CHECK_EQ(hyperForgeState(f.db,"rose").claims,0);
+}
+TEST(hyper_account_cap_counts_both_titans_equipment_and_unmatched_claims){
+    Fixture f;f.give(f.a,"rose",50);
+    CHECK(forgeHyper(f.db,f.a,"rose",0).ok);
+    CHECK(forgeHyper(f.db,f.a,"rose",0,{},"garden").ok);
+    CHECK_EQ(hyperHoldingCount(f.db,f.a),2);
+    auto& record=f.db.progress(f.a);record.addItem(Rarity::Apex,"petal_leaf",2);
+    StoredItem item;item.petalType="basic";item.rarity=Rarity::Apex;record.loadout.resize(20);record.loadout[11]=item;
+    CHECK_EQ(hyperHoldingCount(f.db,f.a),5);
+    f.give(f.a,"basic");const auto before=f.db.serialise();
+    CHECK(!forgeHyper(f.db,f.a,"basic",0).ok);CHECK_EQ(before,f.db.serialise());
+    // Discarding physical copies cannot erase a still-owned titan claim.
+    record.addItem(Rarity::Apex,"petal_rose",-2);CHECK_EQ(hyperHoldingCount(f.db,f.a),5);
+    record.addItem(Rarity::Apex,"petal_stinger",4);const auto old=f.db.serialise();
+    CHECK_EQ(hyperHoldingCount(f.db,f.a),9);CHECK(!forgeHyper(f.db,f.a,"basic",0).ok);CHECK_EQ(old,f.db.serialise());
+}
+TEST(hyper_cap_reopens_after_one_copy_is_stolen_and_preserves_existing_five){
+    Fixture f;f.give(f.a,"rose",10);f.give(f.a,"basic");f.give(f.b,"rose");
+    CHECK(forgeHyper(f.db,f.a,"rose",0).ok);f.db.progress(f.a).addItem(Rarity::Apex,"petal_leaf",4);
+    CHECK(!forgeHyper(f.db,f.a,"basic",0).ok);
+    CHECK(forgeHyper(f.db,f.b,"rose",15LL*3600000).ok);CHECK_EQ(hyperHoldingCount(f.db,f.a),4);
+    CHECK(forgeHyper(f.db,f.a,"basic",15LL*3600000).ok);CHECK_EQ(hyperHoldingCount(f.db,f.a),5);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_leaf"),4);
 }
 TEST(hyper_forge_race_has_one_winner_and_steals_reach_the_one_hour_floor){
     Fixture f;f.give(f.a,"rose",100);f.give(f.b,"rose",100);

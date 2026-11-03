@@ -3229,7 +3229,7 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     const auto dir=titanWorld("hyper-network");
     Harness h("hyper-network",[](const std::string& path){
         seedAccount(path,"alpha");seedStack(path,"alpha","petal_rose",Rarity::Unique,5);
-        seedAccount(path,"beta");seedStack(path,"beta","petal_rose",Rarity::Unique,6);
+        seedAccount(path,"beta");seedStack(path,"beta","petal_rose",Rarity::Unique,5);
     },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient alpha,beta;CHECK(joinAs(h,alpha,"alpha"));CHECK(joinAs(h,beta,"beta"));
     std::vector<NetClient*> both{&alpha,&beta};h.step(3,both);standAtTitan(h,both,"alpha");standAtTitan(h,both,"beta");
@@ -3239,12 +3239,12 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     CHECK(awaitProfile(h,alpha,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
     beta.requestTitanHolder(rose);CHECK(h.stepUntil(both,[&]{const auto* holder=beta.titanHolder(rose);return holder&&*holder=="alpha";},120));
     CHECK(beta.hyperProtectionLeft(rose)>14LL*3600000);
-    CHECK_EQ(beta.hyperInputCost(rose),6);
+    CHECK_EQ(beta.hyperInputCost(rose),5);
     beta.requestTitanForge(rose,true);CHECK(awaitForge(h,both,beta,out));CHECK(!out.success);
-    CHECK_EQ(beta.profile().stackCount(rose,Rarity::Unique),6u);
+    CHECK_EQ(beta.profile().stackCount(rose,Rarity::Unique),5u);
     hyperForgeTestNow=1000+15LL*3600000;
     beta.requestTitanForge(rose,true);CHECK(awaitForge(h,both,beta,out));CHECK(out.success);
-    CHECK(awaitProfile(h,alpha,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==0&&p.stackCount(rose,Rarity::Unique)==3;}));
+    CHECK(awaitProfile(h,alpha,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==0&&p.stackCount(rose,Rarity::Unique)==4;}));
     CHECK(awaitProfile(h,beta,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
     removeDataDir(dir);
 }
@@ -3267,7 +3267,7 @@ TEST(hyper_garden_and_jungle_network_quotes_and_holdings_are_independent){
     standAtTitan(h,clients,"smith");const auto rose=content().petalIndex("rose");TitanForgeOutcome out;
     client.requestTitanForge(rose,true);CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
     CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1;}));
-    client.requestTitanHolder(rose);CHECK(h.stepUntil(clients,[&]{return client.hyperInputCost(rose)==6;},120));
+    client.requestTitanHolder(rose);CHECK(h.stepUntil(clients,[&]{const auto* holder=client.titanHolder(rose);return holder&&!holder->empty()&&client.hyperHoldings()==1;},120));
     client.leaveGame();h.step(4,clients);client.joinGame(1280,720,"jungle:spawn","smith");
     CHECK(h.stepUntil(clients,[&]{return client.status()==NetClient::Status::Playing;},200));standAtTitan(h,clients,"smith");
     client.requestTitanHolder(rose);CHECK(h.stepUntil(clients,[&]{const auto* holder=client.titanHolder(rose);return holder&&holder->empty()&&client.hyperInputCost(rose)==5;},120));

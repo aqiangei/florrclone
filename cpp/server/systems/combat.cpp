@@ -599,7 +599,52 @@ bool CombatSystem::canHit(const World& world, Entity victim, Entity source, doub
 
 DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity source,
                                        double amount, double nowMillis, DamageKind kind) {
+    if (kind != DamageKind::Lightning || resolvingRuby_ || amount <= 0.0 ||
+        !world.has<MobTag>(victim) || world.has<Pet>(victim)) {
+        return applyDamageOnce(world, victim, source, amount, nowMillis, kind);
+    }
+    const Entity dealer = creditedPlayer(world, source);
+    const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(dealer);
+    const double chance = modifiers != nullptr ? modifiers->lightningRepeatChance : 0.0;
+    const int limit = modifiers != nullptr ? std::clamp(modifiers->maxLightningRepeats, 0, 3) : 0;
+    if (chance <= 0.0 || limit == 0) {
+        return applyDamageOnce(world, victim, source, amount, nowMillis, kind);
+    }
+    // Hold the guard across the initial hit too: colony sharing and reflected
+    // damage must not multiply the repeat budget. Never retain ECS pointers
+    // across a hit, which can move both victim and dealer to new archetypes.
+    struct RepeatGuard {
+        bool& flag;
+        explicit RepeatGuard(bool& value) : flag(value) { flag = true; }
+        ~RepeatGuard() { flag = false; }
+    } guard(resolvingRuby_);
+    DamageResult result = applyDamageOnce(world, victim, source, amount, nowMillis, kind);
+    if (result.refused || result.dodged) return result;
+    for (int repeat = 0; repeat < limit && !result.killed; ++repeat) {
+        if (!rubyRng_.chance(clamp(chance, 0.0, 1.0))) break;
+        const DamageResult extra = applyDamageOnce(world, victim, source, amount, nowMillis, kind);
+        if (extra.refused || extra.dodged) break;
+        result.applied += extra.applied;
+        result.killed = extra.killed;
+        if (events_ != nullptr) {
+            const Transform* target = world.tryGet<Transform>(victim);
+            const Transform* origin = world.tryGet<Transform>(source);
+            if (target != nullptr && origin != nullptr) {
+                events_->lightning(origin->position, (target->position - origin->position).length(),
+                                   target->realm, {target->position});
+            }
+        }
+    }
+    return result;
+}
+
+DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity source,
+                                       double amount, double nowMillis, DamageKind kind) {
     DamageResult result;
+    if(const auto* burrow=world.tryGet<BurrowState>(victim))
+        if(burrow->active&&nowMillis<burrow->untilMillis&&(kind==DamageKind::Direct||kind==DamageKind::Lightning)&&!canNoticeBurrowed(world,source,victim)){
+            result.refused=true;return result;
+        }
     if (kind == DamageKind::Poison && world.has<PoisonImmune>(victim)) {
         result.refused = true;
         return result;
@@ -2057,6 +2102,13 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
 
     for (const FieldSource& field : fields_) {
         if (!world.isAlive(field.effect)) continue;
+        if(const auto* target=world.tryGet<LightningTarget>(field.effect)){
+            if(world.has<Dead>(field.effect))continue;
+            const Entity victim=target->victim;
+            const auto* at=world.tryGet<Transform>(victim);
+            if(at&&at->realm==field.realm&&isStanding(world,victim))applyDamage(world,victim,field.effect,field.damagePerHit,nowMillis,DamageKind::Lightning);
+            world.add<Dead>(field.effect);continue;
+        }
         if (Lifetime* lifetime = world.tryGet<Lifetime>(field.effect)) {
             lifetime->remainingSeconds -= dt;
             if (lifetime->remainingSeconds <= 0.0) {
