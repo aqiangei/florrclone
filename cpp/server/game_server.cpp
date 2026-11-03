@@ -1,5 +1,5 @@
 #include "server/timed_hammers.h"
-﻿#include "server/game_server.h"
+#include "server/game_server.h"
 
 #include "shared/core/process_stats.h"
 
