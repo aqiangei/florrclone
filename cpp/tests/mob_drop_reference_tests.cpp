@@ -29,6 +29,13 @@ TEST(hyper_drop_budget_is_half_an_eternal_per_corpse_not_per_drop_row){
         CHECK(eternal>880&&eternal<1120);
     }
 }
+TEST(hyper_drop_budget_bonus_preserves_existing_one_point_five_and_double_rates){
+    for(int bonus=2;bonus<=3;++bonus){
+        const auto result=kills("ladybug",Rarity::Apex,2000,false,bonus);int eternal=0;
+        for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
+        CHECK_NEAR(eternal/2000.0,bonus==2?0.75:1.0,0.1);
+    }
+}
 TEST(reference_pharaoh_crown_really_drops_at_unique_from_super_and_eternal_beetles){
     for(const auto tier:{Rarity::Super,Rarity::Unique}){
         const auto result=kills("pharaoh_beetle",tier,1000);
