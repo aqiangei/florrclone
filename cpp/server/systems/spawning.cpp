@@ -2161,6 +2161,8 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     type = rollStandIn(content, type, rarity, rng);
 
     if (fixedSuper && content.mob(type).neverAmbient) return false;
+    if (fixedSuper && managedTier == Rarity::Unique &&
+        (content.mob(type).dungeon.present || content.mob(type).intangible)) return false;
 
     // A super may come out a unique or an apex instead, if its biome's clock
     // for that tier has run down. After the type roll, which is safe because a
