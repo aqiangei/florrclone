@@ -1909,10 +1909,27 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
             [&](const SuperMapState& state) { return state.realm == zone.realm; });
         if (found == superPopulations_.end()) superPopulations_.push_back({zone.realm, {}});
     }
+    auto antHabitat = [&](std::uint16_t index) {
+        if(index>=zones_.size())return -1;
+        double weights[3]={0,0,0};
+        for(const auto& row:zones_[index].resolved)if(row.mob!=kInvalidIndex && row.mob<content.mobCount()) {
+            const auto& id=content.mob(row.mob).id;
+            const int family=id.find("fire_ant")!=std::string::npos?1:id.find("termite")!=std::string::npos?2:
+                             id.find("ant")!=std::string::npos?0:-1;
+            if(family>=0)weights[family]+=std::max(0.0,row.weight);
+        }
+        int best=-1;for(int n=0;n<3;++n)if(weights[n]>0 && (best<0 || weights[n]>weights[best]))best=n;
+        return best;
+    };
     for (SuperMapState& state : superPopulations_) {
+        const auto* map=worldMaps?worldMaps->forRealm(state.realm):nullptr;
+        const bool antHell=map && map->templateId()=="ant_hell";
+        int habitats[3]={0,0,0};
         int living = 0;
-        ambient_->each([&](Entity e, MobTag&, Transform& transform, Body&, MobType& type, AmbientMob&) {
-            if (transform.realm == state.realm && type.rarity == Rarity::Super && isWholeAnimal(world, e)) ++living;
+        ambient_->each([&](Entity e, MobTag&, Transform& transform, Body&, MobType& type, AmbientMob& ambient) {
+            if (transform.realm == state.realm && type.rarity == Rarity::Super && isWholeAnimal(world, e)) {
+                ++living;const int family=antHabitat(ambient.zone);if(family>=0)++habitats[family];
+            }
         });
         state.population.observe(living, nowMillis);
         std::vector<std::uint16_t> candidates;
@@ -1927,6 +1944,14 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
         for (int attempt = 0; attempt < 80 && state.population.ready(nowMillis) && !candidates.empty(); ++attempt) {
             // Weight habitats by their actual area, not annotation count:
             // a dozen tiny termite plots must not outweigh the jungle floor.
+            int requiredHabitat=-1;
+            if(antHell) {
+                constexpr int quotas[3]={2,2,1};int largest=0;
+                for(int n=0;n<3;++n)if(quotas[n]-habitats[n]>largest &&
+                    std::any_of(candidates.begin(),candidates.end(),[&](auto i){return antHabitat(i)==n;})) {
+                    requiredHabitat=n;largest=quotas[n]-habitats[n];
+                }
+            }
             double totalArea = 0;std::vector<double> areas;
             for (auto candidate : candidates) {
                 const auto& zone = zones_[candidate];
@@ -1940,13 +1965,15 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
                     }
                     area = std::fabs(area) * 0.5;
                 }
-                areas.push_back(std::max(1.0, area));totalArea += areas.back();
+                areas.push_back(requiredHabitat>=0 && antHabitat(candidate)!=requiredHabitat ? 0.0 : std::max(1.0, area));totalArea += areas.back();
             }
             double roll = rng.unit() * totalArea;std::size_t chosen = 0;
             while (chosen + 1 < areas.size() && roll >= areas[chosen]) roll -= areas[chosen++];
             const auto index = candidates[chosen];
             if (stockZone(world, terrain, content, zones_[index], index, viewers, rng, nowMillis,
-                          Slot::TopUp, {}, true)) state.population.spawned();
+                          Slot::TopUp, {}, true)) {
+                state.population.spawned();const int family=antHabitat(index);if(family>=0)++habitats[family];
+            }
         }
     }
 }
