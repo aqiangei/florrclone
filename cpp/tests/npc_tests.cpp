@@ -20,6 +20,7 @@
 #include "client/render/sprites.h"
 #include "client/render/world_renderer.h"
 #include "client/ui/theme.h"
+#include "client/ui/i18n.h"
 #include "client/world_view.h"
 #include "fixture_content.h"
 #include "server/db.h"
@@ -3031,6 +3032,7 @@ TEST(permanent_titan_forge_broadcasts_eternal_theme_to_other_accounts) {
     CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient smith,watcher;CHECK(joinAs(h,smith,"smith"));CHECK(joinAs(h,watcher,"watcher"));
     const std::vector<NetClient*> both{&smith,&watcher};h.step(3,both);standAtTitan(h,both,"smith");
+    const auto oldLanguage=ui::language();ui::setLanguage(ui::Language::En);
     const auto before=watcher.chat().size();smith.requestTitanForge(content().petalIndex("rose"));
     TitanForgeOutcome out;CHECK(awaitForge(h,both,smith,out));CHECK(out.success);
     CHECK(h.stepUntil(both,[&]{for(std::size_t n=before;n<watcher.chat().size();++n)
@@ -3041,5 +3043,5 @@ TEST(permanent_titan_forge_broadcasts_eternal_theme_to_other_accounts) {
         CHECK(text.find(color)!=std::string::npos);CHECK(text.find("Eternal")!=std::string::npos);
         CHECK(text.find("@smith")!=std::string::npos);CHECK(text.find("forged x1")!=std::string::npos);
         CHECK(text.find("consumed x10")!=std::string::npos);}
-    CHECK(seen);removeDataDir(dir);
+    CHECK(seen);ui::setLanguage(oldLanguage);removeDataDir(dir);
 }
