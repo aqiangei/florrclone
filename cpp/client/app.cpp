@@ -620,7 +620,14 @@ void App::frame(double dt) {
     // ones that matter: dying, or a panel opening over a deflected stick, has
     // to drop what it was holding, and neither of those runs updatePlaying at
     // all -- a button left held would still be firing on the next game.
-    if (touchControlsVisible()) mobile_.update(window_.touchEvents(), timeSeconds_);
+    if (touchControlsVisible()) {
+        auto contacts=window_.touchEvents();
+        contacts.erase(std::remove_if(contacts.begin(),contacts.end(),[&](const TouchEvent& event){
+            return event.phase==TouchPhase::Began &&
+                   menus_.capturesMouse({event.point.x,event.point.y});
+        }),contacts.end());
+        mobile_.update(contacts,timeSeconds_);
+    }
     else mobile_.reset();
 
     // Before any screen sees this frame's click. The browser's tutorial box is
