@@ -146,7 +146,7 @@ inline constexpr Rarity minionRarity(Rarity asked) {
 /// wall, not a gentle step, so a common-tier loadout cannot chip down a
 /// legendary by patience alone.
 inline constexpr std::array<double, kLadderRarityCount> kMobHealthScale = {
-    1.0, 3.75, 13.5, 54.0, 324.0, 3159.0, 126830.0, 2374000.0, 7122000.0, 21366000.0,
+    1.0, 3.75, 13.5, 54.0, 324.0, 3159.0, 126830.0, 2374000.0, 14244000.0, 21366000.0,
 };
 
 /// Mob damage per tier -- a clean 3x ladder, so a tier above you roughly

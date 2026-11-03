@@ -7,9 +7,10 @@ namespace {
 const ContentRegistry& data(){static ContentRegistry c;static bool ready=false;if(!ready){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));ready=true;}return c;}
 int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(at.realm==realm&&t.rarity==rarity&&(!b||b->chainHead==e))++n;});return n;}
 }
-TEST(hyper_stats_are_three_times_eternal_without_speed_or_armor_inflation){
+TEST(hyper_health_is_six_times_eternal_without_other_stat_inflation){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto e=data().mobStats(i,Rarity::Unique),h=data().mobStats(i,Rarity::Apex);
-        CHECK_NEAR(h.health,e.health*3,1e-5);CHECK_NEAR(h.damage,e.damage*3,1e-5);
+        CHECK_NEAR(h.health,e.health*6,1e-5);CHECK_NEAR(h.damage,e.damage*3,1e-5);
+        CHECK_NEAR(h.xp,e.xp*3,1e-5);
         CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor,1e-9);}
 }
 TEST(hyper_one_per_regular_map_preserves_supers_eternals_and_waits_thirty_minutes){
