@@ -157,7 +157,7 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
         // Corruption is a FACE, not a skin: the flower that cracked a Flower
         // petal open turns on everyone, and the face is the only warning the
         // players around it get before its ring starts biting them.
-        if (visuals->corrupted) out.faceFlags |= FaceHasCorruption;
+        if (visuals->corrupted || visuals->equippedCorruption) out.faceFlags |= FaceHasCorruption;
     }
     if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
         if (afflictions->poisoned(nowMillis)) out.faceFlags |= FacePoisoned;

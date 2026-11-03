@@ -122,6 +122,9 @@ PetalIconMetric petalIconMetric(std::uint16_t petalIndex, double sizeStat,
 struct ItemTile {
     std::uint16_t petalIndex = kNoPetal;  ///< an empty slot: the plate alone
     Rarity rarity = Rarity::Common;
+    /// Primary equipment slot; inventory and reserve tiles leave this unset.
+    int loadoutSlot = -1;
+    double iconAngle = 0.0;
 
     /// An empty cell: the panel's own colours instead of a rarity, and no
     /// contents. How the crafting grid shows a tier the account does not own.

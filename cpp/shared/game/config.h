@@ -30,6 +30,7 @@
 #include "shared/core/types.h"
 #include "shared/game/components.h"
 #include "shared/game/rarity.h"
+#include "shared/game/drop_rates.h"
 
 namespace flix {
 
@@ -1520,6 +1521,8 @@ public:
     /// read, in a fixed order: mobs.json, petals.json, then (from load())
     /// mob_drops.json and the maps. Compared in the connect handshake.
     std::uint32_t contentHash() const { return hash_; }
+    /// The normal rarity CDF used by visible garbage-chest contents.
+    const DropRates& garbageDropRates() const { return garbageDropRates_; }
 
     /// Everything the loader had to repair, one line each. Empty on clean
     /// data; the shipped data is not clean.
@@ -1598,6 +1601,7 @@ private:
     std::vector<std::array<PetalStats, kRarityCount>> petalStats_;
     std::vector<std::string> warnings_;
     std::uint32_t hash_ = 0;
+    DropRates garbageDropRates_;
 
     /// The maps half of load(): see there.
     void foldMapsIntoHash(const std::string& dataDir);

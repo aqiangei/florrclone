@@ -1513,6 +1513,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     // loadout. Petal healing is added below and talent-scaled separately.
     aggregate.modifiers.passiveHealPerSecond = 1.0;
     std::uint16_t equipFlags = EquipNone;
+    bool equippedCorruption = false;
     // Whether the ring is physically pulled in, by updateRing's rule rather
     // than runActions': with both keys held the ring LUNGES, so a flower doing
     // that is not blocking. This is rysteria's `kDefending && !kAttacking`.
@@ -1544,6 +1545,9 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 // Equipment is worn for the whole loadout, including while a
                 // petal is reloading; this is the same rule as tickBroadcast.
                 equipFlags |= registry.petal(equipped.configIndex).equipFlags;
+                const auto& worn = registry.petal(equipped.configIndex);
+                if (worn.id == "pharaoh_s_crown") equipFlags |= EquipPharaohCrown;
+                if (worn.id == "corruption") equippedCorruption = true;
             }
             // TypeScript derives modifiers from equipped loadout entries, not
             // from their onCooldown flag. A broken body leaves a ring gap but
@@ -1774,6 +1778,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     }
     if (PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(player)) {
         visuals->equipFlags = equipFlags;
+        visuals->equippedCorruption = equippedCorruption;
     }
     aggregate.modifiers.luck += cloverLuck;
     return aggregate;

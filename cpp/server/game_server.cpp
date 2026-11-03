@@ -2889,9 +2889,14 @@ void GameServer::handleSwapLoadoutRows(Session& session, net::Connection& connec
 
     PlayerRecord& record = liveRecord(session);
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
+    bool changed = false;
     for (std::size_t i = 0; i < kLoadoutActiveSlots; ++i) {
+        const auto& reserve = record.loadout[i + kLoadoutActiveSlots];
+        if (!reserve || reserve->petalType.empty()) continue;
         std::swap(record.loadout[i], record.loadout[i + kLoadoutActiveSlots]);
+        changed = true;
     }
+    if (!changed) { sendProfile(session, connection); return; }
     autoSaveActivePreset(record);
     database_.markDirty();
 

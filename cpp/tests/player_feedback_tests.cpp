@@ -13,6 +13,29 @@ bool feedbackContent(){std::string error;return loadContent(testsupport::dataDir
 int antFamily(const std::string& id){return id.find("fire_ant")!=std::string::npos?1:id.find("termite")!=std::string::npos?2:id.find("ant")!=std::string::npos?0:-1;}
 int familyOf(const MapElement& e){double weights[3]={};for(const auto& row:e.mobDistribution){const int f=antFamily(row.name);if(f>=0)weights[f]+=row.weight;}int best=-1;for(int n=0;n<3;++n)if(weights[n]>0&&(best<0||weights[n]>weights[best]))best=n;return best;}
 }
+TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
+    CHECK(feedbackContent());
+    World w; CommandBuffer commands{w}; PetalSystem petals;
+    const auto p=w.create();
+    w.add<PlayerTag>(p);w.add<Transform>(p,Transform{{10000,10000},0});
+    w.add<Motion>(p);w.add<Body>(p,Body{25,1});w.add<Health>(p,Health{1000,1000});
+    w.add<Faction>(p,Faction{Team::Players,false});w.add<PlayerProgress>(p);
+    w.add<PlayerInput>(p);w.add<PlayerModifiers>(p);w.add<Loadout>(p);
+    w.add<PetalRing>(p);w.add<Afflictions>(p);w.add<HitCooldowns>(p);w.add<PlayerVisuals>(p);
+    w.get<PlayerProgress>(p).level=100;
+    auto& load=w.get<Loadout>(p);
+    load.slots[0].configIndex=content().petalIndex("corruption");load.slots[0].rarity=Rarity::Unique;
+    load.slots[1].configIndex=content().petalIndex("pharaoh_s_crown");load.slots[1].rarity=Rarity::Unique;
+    petals.run(w,content(),1000,net::kTickSeconds,commands);commands.flush();
+    CHECK(w.get<PlayerVisuals>(p).equippedCorruption);
+    CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)!=0);
+    load.slots[0]=LoadoutSlot{};load.slots[1]=LoadoutSlot{};
+    w.get<PlayerVisuals>(p).corrupted=true;
+    petals.run(w,content(),2000,net::kTickSeconds,commands);commands.flush();
+    CHECK(!w.get<PlayerVisuals>(p).equippedCorruption);
+    CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)==0);
+    CHECK(w.get<PlayerVisuals>(p).corrupted);
+}
 TEST(feedback_talent_vision_changes_camera_and_does_not_stack_with_antennae) {
     CHECK(feedbackContent());Profile p;
     CHECK_NEAR(loadoutCameraZoom(p,content()),1,1e-9);

@@ -499,7 +499,7 @@ private:
     double glitchFlowerReach(const MobConfig&, const MobPose&) const;
     /// The garbage mob, whose artwork in mobs.json is an empty document: a
     /// deterministic pile of petals seeded on where it stands.
-    void drawGarbagePile(Canvas&, Vec2 at, double baseSize, double timeSeconds, std::uint32_t stableId = 0) const;
+    void drawGarbagePile(Canvas&, Vec2 at, double baseSize, double timeSeconds, std::uint32_t stableId = 0, Rarity rarity = Rarity::Common) const;
     /// The eased eye offset a flower-shaped mob looks along. Keyed by netId so
     /// each mob eases on its own.
     ///
@@ -532,7 +532,7 @@ private:
                          double clockSeconds) const;
     /// The petal types a garbage pile may be built from: the same rule the
     /// server's drop roll uses, so both clients pick the same artwork.
-    const std::vector<std::uint16_t>& droppablePetals() const;
+    const std::vector<std::uint16_t>& droppablePetals(Rarity) const;
 
     /// The spinning saw a worn cutter puts on the flower, in the caller's
     /// radius-25 art space. Drawn before the body so it reads as carried
@@ -733,7 +733,7 @@ private:
 
     /// Built on first use from the content registry; the registry is immutable
     /// after load, so one pass is enough.
-    mutable std::vector<std::uint16_t> droppablePetals_;
+    mutable std::array<std::vector<std::uint16_t>, kRarityCount> droppablePetals_;
 
     /// The mobs drawn this frame, drained into the label pass afterwards. In
     /// the browser build every bar is drawn after every body, so a mob drawn

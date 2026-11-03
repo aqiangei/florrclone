@@ -1,5 +1,6 @@
 #include "client/render/world_renderer.h"
 
+#include "shared/game/garbage_contents.h"
 #include <chrono>
 
 #include <algorithm>
@@ -2697,6 +2698,8 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     const PetalConfig* config = content_ ? &content_->petal(entity.typeIndex) : nullptr;
     // Three entries in petals.json are pure modifiers with no artwork at all.
     if (config && config->hidden) return;
+    // Wearables modify the flower itself; their inventory icon is not a body.
+    if (config && (config->id == "pharaoh_s_crown" || config->id == "corruption")) return;
 
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
@@ -3050,6 +3053,28 @@ void WorldRenderer::drawFace(Canvas& canvas, std::uint8_t faceFlags, std::uint16
     // florr wraps the bandage on after the third eye and before the crown.
     if (wrappedInBandage(faceFlags, equipFlags)) drawUndeadWrap(canvas, timeSeconds);
     if (equipFlags & EquipCrown) drawWornCrown(canvas);
+    if (equipFlags & EquipPharaohCrown) {
+        // A nemes headdress wraps the forehead and sides, leaving the face clear.
+        canvas.save();
+        ui::setFill(canvas, 0xE9B936u); ui::setStroke(canvas, 0x977320u);
+        canvas.setLineWidth(1.4f);
+        for (float side : {-1.0f, 1.0f}) {
+            canvas.beginPath();
+            canvas.moveTo(side * 18, -20); canvas.lineTo(side * 29, -5);
+            canvas.lineTo(side * 31, 28); canvas.lineTo(side * 21, 24);
+            canvas.lineTo(side * 19, -8); canvas.closePath(); canvas.fill(); canvas.stroke();
+            ui::setStroke(canvas, 0x24649Au); canvas.setLineWidth(3.0f);
+            for (float y = -3; y < 25; y += 6) {
+                canvas.beginPath(); canvas.moveTo(side * 22, y);
+                canvas.lineTo(side * 28, y + 1); canvas.stroke();
+            }
+            ui::setStroke(canvas, 0x977320u); canvas.setLineWidth(1.4f);
+        }
+        canvas.beginPath(); canvas.roundRect(-21, -24, 42, 8, 3); canvas.fill(); canvas.stroke();
+        ui::setFill(canvas, 0x24649Au); canvas.beginPath();
+        canvas.roundRect(-3, -28, 6, 14, 2); canvas.fill();
+        canvas.restore();
+    }
 }
 
 void WorldRenderer::drawPumpkin(Canvas& canvas, const RemoteEntity& entity) const {
@@ -3328,53 +3353,33 @@ void WorldRenderer::drawLoadedSting(Canvas& canvas, const MobConfig& config, con
                         clockSeconds);
 }
 
-const std::vector<std::uint16_t>& WorldRenderer::droppablePetals() const {
-    if (!droppablePetals_.empty() || !content_) return droppablePetals_;
-    for (std::uint16_t i = 0; i < content_->petalCount(); ++i) {
-        const PetalConfig& petal = content_->petal(i);
-        // The server's own drop rule: no admin petals, no cutters, nothing
-        // with a source of its own, and no egg for a mob whose config forbids
-        // one.
-        if (petal.isAdminPetal) continue;
-        if (petal.id == "cutter" || petal.id == "lightning_cutter") continue;
-        if (petalHasOwnSource(petal)) continue;
-        const std::string suffix = "_egg";
-        if (petal.id.size() > suffix.size() &&
-            petal.id.compare(petal.id.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            const std::uint16_t mob =
-                content_->mobIndex(petal.id.substr(0, petal.id.size() - suffix.size()));
-            if (mob != kInvalidIndex && content_->mob(mob).noEggDrop) continue;
-        }
-        droppablePetals_.push_back(i);
-    }
-    return droppablePetals_;
+const std::vector<std::uint16_t>& WorldRenderer::droppablePetals(Rarity rarity) const {
+    auto& pool=droppablePetals_[static_cast<std::size_t>(rarityIndex(rarity))];
+    if(pool.empty()&&content_)pool=garbageEligiblePetals(*content_,rarity);
+    return pool;
 }
 
 void WorldRenderer::drawGarbagePile(Canvas& canvas, Vec2 at, double baseSize,
-                                    double timeSeconds, std::uint32_t stableId) const {
-    const std::vector<std::uint16_t>& eligible = droppablePetals();
+                                    double timeSeconds, std::uint32_t stableId, Rarity rarity) const {
+    const std::vector<std::uint16_t>& eligible = droppablePetals(rarity);
     if (eligible.empty() || !sprites_ || !content_) return;
 
-    // Seeded on where the pile stands, so every client builds the same pile out
-    // of the same petals without a byte of it crossing the wire.
-    const long long seed = stableId != 0 ? stableId * 104729LL : static_cast<long long>(std::floor(at.x / 256.0) * 1009 + std::floor(at.y / 256.0));
-    const int count = 5 + static_cast<int>(((seed % 5) + 5) % 5);
+    const auto contents=garbageContents(eligible,stableId,at);
+    const int count=static_cast<int>(contents.size());
     for (int i = 0; i < count; ++i) {
-        const long long petalSeed = ((seed + i * 1000LL) % 1000000LL + 1000000LL) % 1000000LL;
-        const std::size_t pick = static_cast<std::size_t>(
-            static_cast<double>(petalSeed) / 1000000.0 * static_cast<double>(eligible.size()));
-        const std::uint16_t index = eligible[std::min(pick, eligible.size() - 1)];
+        const auto petalSeed=contents[static_cast<std::size_t>(i)].poseSeed;
+        const auto index=contents[static_cast<std::size_t>(i)].index;
 
         const double angle = static_cast<double>(i) / count * kTau;
         const double maxRadius = (baseSize * 0.5) * 0.8;
-        const double radius = maxRadius * (0.7 + static_cast<double>(petalSeed % 300) / 1000.0);
+        const double radius = maxRadius * (0.84 + static_cast<double>(petalSeed % 120) / 1000.0);
         const double x = std::cos(angle) * radius;
         const double y = std::sin(angle) * radius + (i % 3) * 3.0;
         const double rotation = static_cast<double>(petalSeed % 360) * kPi / 180.0;
         const PetalConfig& config = content_->petal(index);
-        const double size = baseSize * (0.6 + static_cast<double>(petalSeed % 200) / 1000.0) *
-                            config.size * petalArtScale(&config);
-        sprites_->drawPetal(canvas, index, Rarity::Common, x, y, size, rotation, 0.0);
+        const double size = baseSize * (0.23 + static_cast<double>(petalSeed % 50) / 1000.0) *
+                            clamp(config.size * petalArtScale(&config),0.7,1.0);
+        sprites_->drawPetal(canvas, index, content_->petal(index).minRarity, x, y, size, rotation, 0.0);
     }
 }
 
@@ -3592,7 +3597,7 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
         canvas.save();
         canvas.translate(static_cast<float>(art.x), static_cast<float>(art.y));
         canvas.scale(static_cast<float>(mirrored ? -zoom : zoom), static_cast<float>(zoom));
-        drawGarbagePile(canvas, mob.position, mob.radius * 2.0, 0.0, mob.netId);
+        drawGarbagePile(canvas, mob.position, mob.radius * 2.0, 0.0, mob.netId, mob.rarity);
         canvas.restore();
     } else if (id == "digger") {
         // A flower carrying a cutter rather than a bug, the way gardn draws it.

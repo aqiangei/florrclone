@@ -521,9 +521,12 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
 
     if (filled) {
         const PetalStats stats = content().petalStats(tile.petalIndex, tile.rarity);
-        const int copies = petalCopies(stats.count, viewerSkills);
+        const PetalConfig& config = content().petal(tile.petalIndex);
+        const int copies = petalCopies(stats.count, viewerSkills, tile.loadoutSlot,
+                                       rarityIndex(tile.rarity), config.stackable);
         canvas.save();
         canvas.translate(0.0f, static_cast<float>(-kItemTileIconRise));
+        canvas.rotate(static_cast<float>(tile.iconAngle));
         canvas.scale(static_cast<float>(kItemTileIconScale),
                      static_cast<float>(kItemTileIconScale));
         // A clump the world draws pointing inward is drawn that way here too
@@ -531,7 +534,6 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         // up into one bigger triangle and are kept that way on purpose. Keyed
         // on the three rather than on the tier: a Duplicator's fourth stinger
         // breaks the triangle, and four outward points read as a star.
-        const PetalConfig& config = content().petal(tile.petalIndex);
         const bool facesInward = config.clumpFacesInward &&
                                  !(config.id == "stinger" && copies == 3);
         // Cap to the face in icon space. gardn-measured petals already fit;

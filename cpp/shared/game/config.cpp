@@ -1525,16 +1525,24 @@ bool ContentRegistry::load(const std::string& dataDir, std::string& errorOut) {
     if (!loadFiles(joinPath(dataDir, "mobs.json"), joinPath(dataDir, "petals.json"), errorOut)) {
         return false;
     }
-    // mob_drops.json is not parsed here -- the server's loot system and the
-    // client's gallery each read it for themselves -- but BOTH sides read it,
+    // The garbage chest shares its rarity range with its visible contents.
+    // The full server/gallery tables are still loaded by their own systems.
+    // BOTH sides read mob_drops.json,
     // so its bytes belong in the hash: a client holding an older drop table
     // would otherwise shake hands and quote drop chances the server no longer
     // rolls. Folded after petals.json and before the maps, always in that
     // order; a directory without the file folds nothing, which still differs
     // from one that has it.
     std::string dropsText;
+    garbageDropRates_.clear();
     if (readFile(joinPath(dataDir, "mob_drops.json"), dropsText)) {
         hash_ = net::contentHash(dropsText, hash_);
+        Json drops; std::string ignored;
+        if (Json::parse(dropsText, drops, ignored)) {
+            for (const auto& row : drops["garbage"]["drops"].items()) {
+                if (row.contains("rarityChances") && parseDropRates(row["rarityChances"], garbageDropRates_)) break;
+            }
+        }
     }
     foldMapsIntoHash(dataDir);
     return true;
@@ -1725,6 +1733,7 @@ bool ContentRegistry::loadFiles(const std::string& mobsPath, const std::string& 
     hash = net::contentHash(petalsText, hash);
 
     mobs_ = std::move(mobs);
+    garbageDropRates_.clear();
     petals_ = std::move(petals);
     mobGroups_ = std::move(mobGroups);
     mobGroupIds_ = std::move(mobGroupIds);

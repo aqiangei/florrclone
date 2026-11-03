@@ -639,7 +639,22 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
 
         // A common mob rolls its authored rows one by one; everything above
         // it leaves one of every drop it has, from the merged table.
-        const std::vector<DropTables::Entry>& table = mobRarity == Rarity::Common
+        std::vector<DropTables::Entry> garbageTable;
+        const bool visibleGarbage = content.mob(mobIndex).id == "garbage" && !content.garbageDropRates().empty();
+        if (visibleGarbage) {
+            const auto* id = world.tryGet<NetId>(corpse);
+            const auto contents = garbageContents(garbageEligiblePetals(content,mobRarity),id ? id->value : 0,at);
+            for (const auto& item : contents) {
+                DropTables::Entry entry;entry.petalIndex=item.index;entry.probability=1;
+                entry.rates=content.garbageDropRates();
+                const auto minimum=content.petal(item.index).minRarity;
+                for(auto& rates:entry.rates)rates.erase(std::remove_if(rates.begin(),rates.end(),
+                    [&](const DropRate& r){return rarityIndex(r.rarity)<rarityIndex(minimum);}),rates.end());
+                garbageTable.push_back(std::move(entry));
+            }
+        }
+        std::vector<std::vector<Entity>> garbagePaid(garbageTable.size());
+        const std::vector<DropTables::Entry>& table = visibleGarbage ? garbageTable : mobRarity == Rarity::Common
                                                           ? tables_.forMob(mobIndex)
                                                           : tables_.guaranteedForMob(mobIndex);
 
@@ -688,7 +703,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 const int claimantTrials=superBonus?baseTrials*(bonuses[i]+1)/2:baseTrials*bonuses[i];
                 if(trial>=claimantTrials)continue;
                 eligible_.push_back(baseEligible[i]);
-                const int tier=wornOrbTier(world,content,baseEligible[i],magicOrb);
+                const int tier=visibleGarbage?kRarityCount:wornOrbTier(world,content,baseEligible[i],magicOrb);
                 eligibleOrbs_.push_back(tier);anyOrb=anyOrb||tier!=kRarityCount;
             }
             selected_.clear();
@@ -706,7 +721,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                         for(const auto& rate:ratesFor(entry->rates,mobRarity))groupOffset+=rate.probability;
                     }
                     const auto ordinary=entry->petalIndex;
-                    const auto magic=entry->magicPetal!=kNoPetal?entry->magicPetal:content.magicFormOf(ordinary);
+                    const auto magic=visibleGarbage?kInvalidIndex:entry->magicPetal!=kNoPetal?entry->magicPetal:content.magicFormOf(ordinary);
                     // Same underlying trial for every claimant. Orb groups
                     // receive their own conditional conversion and cap only.
                     for(std::size_t first=0;first<eligible_.size();++first){
@@ -725,6 +740,10 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                         orbGroup_.clear();
                         for(std::size_t j=first;j<eligible_.size();++j)if(eligibleOrbs_[j]==tier)orbGroup_.push_back(eligible_[j]);
                         stackDrop(petal,rarity,at+Vec2{rng.range(-50.0,50.0),rng.range(-50.0,50.0)},realm,orbGroup_);
+                        if(visibleGarbage) {
+                            auto& paid=garbagePaid[static_cast<std::size_t>(entry-garbageTable.data())];
+                            for(const auto claimant:orbGroup_)if(std::find(paid.begin(),paid.end(),claimant)==paid.end())paid.push_back(claimant);
+                        }
                     }
                     continue;
                 }
@@ -778,6 +797,20 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 }
             }
         }
+        // Each visible type is guaranteed once for each entitled account. The
+        // ordinary 30/60/90 (high-tier 30/45/60) trials run first. Only a type
+        // that missed every trial gets one conditional, normally graded copy.
+        for(std::size_t i=0;i<garbageTable.size();++i) {
+            std::vector<Entity> missing;
+            for(const auto claimant:baseEligible)
+                if(std::find(garbagePaid[i].begin(),garbagePaid[i].end(),claimant)==garbagePaid[i].end())missing.push_back(claimant);
+            if(missing.empty())continue;
+            const auto& entry=garbageTable[i];double total=0;
+            for(const auto& rate:ratesFor(entry.rates,mobRarity))total+=rate.probability;
+            if(total<=0)continue;
+            const int rolled=rollDropRates(entry.rates,mobRarity,rng.unit()*total);
+            if(rolled>=0)stackDrop(entry.petalIndex,clampRarity(rolled),at+Vec2{rng.range(-50.0,50.0),rng.range(-50.0,50.0)},realm,missing);
+        }
     }
 }
 
@@ -820,3 +853,4 @@ std::size_t LootSystem::pickFeatured(Rng& rng) const {
 }
 
 } // namespace flix
+#include "shared/game/garbage_contents.h"

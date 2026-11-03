@@ -3198,3 +3198,20 @@ TEST(loadout_presets_autosave_edits_without_shift_or_manual_save) {
     CHECK_EQ(c.profile().stackCount(basic,Rarity::Common),101u);CHECK_EQ(c.profile().stackCount(rose,Rarity::Common),0u);
     removeDataDir(dir);
 }
+
+TEST(row_swap_keeps_primary_when_reserve_is_empty_and_equips_nonempty_reserves){
+    const auto dir=titanWorld("row-swap-empty");Harness h("row-swap-empty",[](const std::string& path){
+        seedAccount(path,"rows");seedWorn(path,"rows",0,"basic",Rarity::Common);
+        seedWorn(path,"rows",1,"rose",Rarity::Common);seedWorn(path,"rows",11,"leaf",Rarity::Common);
+        seedWorn(path,"rows",12,"stinger",Rarity::Common);
+    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    NetClient c;CHECK(joinAs(h,c,"rows"));
+    const auto basic=content().petalIndex("basic"),rose=content().petalIndex("rose"),leaf=content().petalIndex("leaf"),stinger=content().petalIndex("stinger");
+    c.swapLoadoutRows();CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[1].petalIndex==leaf&&p.loadout[2].petalIndex==stinger;}));
+    CHECK_EQ(c.profile().loadout[0].petalIndex,basic);CHECK(c.profile().loadout[10].empty());
+    CHECK_EQ(c.profile().loadout[11].petalIndex,rose);CHECK(c.profile().loadout[12].empty());
+    c.swapLoadoutRows();CHECK(awaitProfile(h,c,[&](const Profile& p){return p.loadout[1].petalIndex==rose;}));
+    CHECK_EQ(c.profile().loadout[0].petalIndex,basic);CHECK_EQ(c.profile().loadout[2].petalIndex,stinger);
+    CHECK_EQ(c.profile().loadout[11].petalIndex,leaf);CHECK(c.profile().loadout[10].empty());CHECK(c.profile().loadout[12].empty());
+    removeDataDir(dir);
+}

@@ -440,6 +440,9 @@ void App::drawSquadHud(Canvas& canvas, double time) {
     const Vec2 eye = net_.view().self().position;
     for (const SquadState::Member& member : squad.members) {
         if (member.netId == 0) continue;
+        // The locally controlled body is already represented by the main HUD.
+        // Its streamed entity need not carry StateSelf during a respawn/switch.
+        if (member.netId == net_.view().self().netId) continue;
         const auto found = net_.view().entities().find(member.netId);
         // A member whose body is not in this client's world has nothing to
         // draw a bar from. They are streamed however far away they are, so in

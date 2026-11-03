@@ -2050,7 +2050,15 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             if (!copied.empty()) tile.petalIndex = copied.configIndex;
         }
         tile.rarity = anim.rarity;
+        tile.loadoutSlot = entry.slot < kLoadoutActiveSlots ? entry.slot : -1;
         tile.timeSeconds = timeSeconds;
+        if (inGame_ && entry.slot < kLoadoutActiveSlots && tile.petalIndex != kNoPetal &&
+            content().petal(tile.petalIndex).id == "dice") {
+            const auto self = net.view().entities().find(net.view().self().netId);
+            if (self != net.view().entities().end() &&
+                (self->second.state & net::StateAttacking) != 0)
+                tile.iconAngle = std::sin(timeSeconds * 28.0) * 0.24;
+        }
         // An outranked petal wears the wedge whole, as a petal that has just
         // broken does, for as long as the better one is on the bar -- not a
         // sweep, because it is not on its way back.
@@ -2142,6 +2150,7 @@ void MenuSystem::swapLoadoutRows(NetClient& net, double timeSeconds) {
     if (owned < kLoadoutBarSlots) return;
     expectLoadout(net, timeSeconds);
     for (int i = 0; i < kLoadoutBarPrimary; ++i) {
+        if (expectedLoadout_[static_cast<std::size_t>(kLoadoutBarPrimary + i)].empty()) continue;
         std::swap(expectedLoadout_[static_cast<std::size_t>(i)],
                   expectedLoadout_[static_cast<std::size_t>(kLoadoutBarPrimary + i)]);
     }

@@ -577,6 +577,7 @@ struct PlayerVisuals {
     /// corruption turns the flower hostile to everyone rather than only
     /// marking it, which is why it rides faceFlags and not renderFlags.
     bool corrupted = false;
+    bool equippedCorruption = false;
 };
 
 /// Passive bonuses summed from equipped petals each tick.

@@ -74,6 +74,15 @@ bool isCorrupted(const World& world, Entity player) {
     return visuals != nullptr && visuals->corrupted;
 }
 
+bool equippedCorruptionAllowsPvp(const World& world, Entity a, Entity b) {
+    const auto* av = world.tryGet<PlayerVisuals>(a);
+    const auto* bv = world.tryGet<PlayerVisuals>(b);
+    if ((!av || !av->equippedCorruption) && (!bv || !bv->equippedCorruption)) return false;
+    const auto* ap = world.tryGet<PlayerProgress>(a);
+    const auto* bp = world.tryGet<PlayerProgress>(b);
+    return ap && bp && ap->level >= 20 && bp->level >= 20;
+}
+
 /// Whether two flowers are one person: the two bodies a splitter gives one
 /// connection (server/splitter.cpp). False for anything that is not a flower
 /// with an account, and for two bots, whose connection is 0.
@@ -117,7 +126,8 @@ bool mobsDoing(const World& world, Entity e) {
 /// reaches it after an overlap test, and the arena sits far enough from the
 /// world that no pair spanning the two could ever touch.
 bool canPetalsDamagePlayer(const World& world, Entity attacker, Entity victim) {
-    if (isCorrupted(world, attacker) || isCorrupted(world, victim)) return true;
+    if (isCorrupted(world, attacker) || isCorrupted(world, victim) ||
+        equippedCorruptionAllowsPvp(world, attacker, victim)) return true;
     const Faction* attackerFaction = world.tryGet<Faction>(attacker);
     const Faction* victimFaction = world.tryGet<Faction>(victim);
     return attackerFaction != nullptr && attackerFaction->friendlyFireEnabled &&
@@ -523,7 +533,8 @@ bool CombatSystem::canDamage(const World& world, Entity source, Entity victim) {
     // beside it, because a petal is spawned with a copy of its flower's
     // Faction: a flower corrupted after its ring was strung would otherwise
     // keep swinging harmlessly.
-    if (isCorrupted(world, sourcePlayer) || isCorrupted(world, victimPlayer)) return true;
+    if (isCorrupted(world, sourcePlayer) || isCorrupted(world, victimPlayer) ||
+        equippedCorruptionAllowsPvp(world, sourcePlayer, victimPlayer)) return true;
     // Either side being in a PvP region is enough. Requiring both would leave
     // a duellist's pets -- which carry no flag of their own -- unable to fight.
     return attacker.friendlyFire || defender.friendlyFire;

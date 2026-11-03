@@ -74,7 +74,7 @@ constexpr double kBadgeTipSize = 16.0;
 /// florrclone talent-wheel stage is an 880×880 viewBox. Nodes are projected
 /// with Nv(tier, phase, camera); only |phase−camera|<3 are shown.
 constexpr double kWheelSize = 880.0;
-constexpr double kCameraMax = 14.5;
+constexpr double kCameraMax = 16.5;
 constexpr double kPhaseVisible = 3.0;
 constexpr double kFlowerX = 440.0;
 constexpr double kFlowerY = 777.0;
@@ -211,8 +211,8 @@ const std::vector<Branch>& branches() {
         {SkillId::Luck,
          {{4, 11.5}, {5, 12}, {4, 12.5}, {6, 12.5}, {7, 12}, {8, 12.5}, {9, 13}, {7.5, 13}, {6, 13}}},
         {SkillId::Poison,
-         {{4, 13.5}, {5.5, 13.5}, {5, 13}, {5, 14}, {7, 13}, {7, 13.5}, {7, 14}, {9, 13}, {9, 14}}},
-        {SkillId::ConcentratedPoison, {{9, 13.5}}},
+         {{4, 15.5}, {5.5, 15.5}, {5, 15}, {5, 16}, {7, 15}, {7, 15.5}, {7, 16}, {9, 15}, {9, 16}}},
+        {SkillId::ConcentratedPoison, {{9, 15.5}}},
     };
     return kBranches;
 }
