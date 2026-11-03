@@ -703,6 +703,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     std::array<Rect, kShopOfferCount> priceButtons{};
     Rect codeField{};
     Rect redeemButton{};
+    Rect bonusButton{};
 
     if (tab_ == Tab::Offers) {
         const std::int64_t rotation = shopRotation(shopClockNow());
@@ -804,6 +805,25 @@ bool ShopPanel::render(MenuContext& ctx) {
                         usable ? std::nullopt : std::optional<std::uint32_t>(kButtonIdleRim));
         text(canvas, trEnZh("Redeem", "兑换"), redeemButton.x + redeemButton.w * 0.5,
              redeemButton.y + redeemButton.h * 0.5, shopText(kTabSize));
+        const auto now=shopClockNow();
+        const auto left=std::max<std::int64_t>(0,ctx.net.dropBonusUntil-now);
+        const bool ready=ctx.net.dropBonusNextClaim<=now;
+        const int nextDay=ctx.net.dropBonusStreak+1;
+        const int multiplier=left>0?ctx.net.dropBonusMultiplier:(nextDay%4==0?3:2);
+        const double y=box.bottom()+28;
+        text(canvas,trEnZh("Daily Drop Bonus","每日掉落 Bonus"),panel.x+panel.w*.5,y,shopText(20));
+        text(canvas,trEnZh("1 hour: 2x / 2x / 2x / 3x. Ultra and below only.","每日1小时：2倍 / 2倍 / 2倍 / 3倍，仅究极及以下怪物。"),
+            panel.x+panel.w*.5,y+30,shopText(14));
+        text(canvas,trEnZh("Super+ stays at 30 independent rolls; missed days reset the cycle.","超级及以上保持30次独立掉落；漏领重置，每天北京时间0点更新。"),
+            panel.x+panel.w*.5,y+53,shopText(13));
+        bonusButton={panel.x+panel.w*.5-150,y+76,300,42};
+        const bool hot=ready&&bonusButton.contains(under);
+        drawFlorrButton(canvas,bonusButton,ready?0x55B8D4u:kButtonIdle,kButtonBorder,kButtonRadius,hot,ready&&pressing(bonusButton));
+        std::string label;
+        if(left>0) label=std::to_string(multiplier)+"x "+trEnZh("remaining ","剩余 ")+std::to_string(left/60000)+":"+(left/1000%60<10?"0":"")+std::to_string(left/1000%60);
+        else if(ready)label=std::string(trEnZh("Claim ","领取 "))+std::to_string(multiplier)+trEnZh("x bonus for 1 hour","倍掉落1小时");
+        else label=trEnZh("Claimed today","今日已领取");
+        text(canvas,label,bonusButton.x+bonusButton.w*.5,bonusButton.y+bonusButton.h*.5,shopText(16));
     } else {
         text(canvas, trEnZh("Earn Stars by Defeating Mythic+ Mobs", "击败神话及以上怪物获得星星"),
              panel.x + panel.w * 0.5, panel.y + kHeadingMiddle, shopText(kOffersHeadingSize));
@@ -1016,9 +1036,11 @@ bool ShopPanel::render(MenuContext& ctx) {
         // on eating keystrokes from a tab with no field on it.
         if (static_cast<int>(tab_) != i) state.field.blur();
         tab_ = static_cast<Tab>(i);
+        if(tab_==Tab::Bonus)ctx.net.requestDailyDropBonus(false);
         return true;
     }
 
+    if(clicked(bonusButton) && ctx.net.dropBonusNextClaim<=shopClockNow()) {ctx.net.requestDailyDropBonus(true);return true;}
     if (!trimmed(state.code).empty() && clicked(redeemButton)) {
         submitCode();
         return true;

@@ -791,6 +791,10 @@ public:
     WorldView& view() { return view_; }
     const WorldView& view() const { return view_; }
     bool pyramidMapRevealed = false;
+    std::uint32_t dropBonusStreak=0;
+    int dropBonusMultiplier=1;
+    std::int64_t dropBonusUntil=0,dropBonusNextClaim=0;
+    void requestDailyDropBonus(bool claim);
     /// The map grid the server sent, plus the collision SHAPES this client
     /// read out of its own copy of the map. See setWorldMaps().
     const Terrain& terrain() const { return terrain_; }

@@ -61,7 +61,7 @@ for tier in range(12):
  (ROOT/'maps'/tsname).write_text(json.dumps(ts,separators=(',',':')),encoding='utf-8')
  m=copy.deepcopy(base);m['width']=m['height']=side;m['tilesets'].append({'firstgid':2000,'source':tsname})
  bg=m['layers'][0];bg['width']=bg['height']=side;bg['data']=[28+((x*17+y*23)%2) for y in range(side) for x in range(side)]
- m['layers']=[bg,{'id':99,'name':'mound_walls','type':'tilelayer','width':side,'height':side,'x':0,'y':0,'visible':True,'opacity':1,'data':data}]+[l for l in m['layers'] if l.get('type')=='objectgroup']
+ m['layers']=[bg,{'id':99,'name':'mound_walls','properties':[{'name':'has_collision','type':'bool','value':True}],'type':'tilelayer','width':side,'height':side,'x':0,'y':0,'visible':True,'opacity':1,'data':data}]+[l for l in m['layers'] if l.get('type')=='objectgroup']
  for l in m['layers']:
   for o in l.get('objects',[]):
    for k in ['x','y','width','height']:

@@ -1,4 +1,5 @@
 #include "server/timed_hammers.h"
+#include "server/daily_drop_bonus.h"
 #include "server/game_server.h"
 
 #include "shared/core/process_stats.h"
@@ -614,6 +615,10 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // walls it is not standing among, so pads simply do not take bots.
     movement_->takesTeleporters = [this](Entity entity) { return botForEntity(entity) == nullptr; };
     loot_->terrain = terrain_.get();
+    loot_->bonusMultiplier = [this](Entity player) {
+        const auto* session=sessionForEntity(player);
+        return session && session->authenticated() ? activeDropBonus(database_.progress(session->userId),dropBonusNow()) : 1;
+    };
     combat_->terrain = terrain_.get();
 
     // A revived flower has to be un-announced to its own client, and only the
@@ -1416,6 +1421,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::SaveLoadoutPreset:
         case net::ClientMessage::LoadLoadoutPreset:
         case net::ClientMessage::BulkCraft:
+        case net::ClientMessage::DailyDropBonus:
         case net::ClientMessage::Craft:
         case net::ClientMessage::OracleCraft:
         case net::ClientMessage::Trade:
@@ -1448,6 +1454,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::Chat:          handleChat(*session, connection, reader); break;
         case net::ClientMessage::SetLoadout:    handleSetLoadout(*session, reader); break;
         case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
+        case net::ClientMessage::DailyDropBonus: handleDropBonus(*session, connection, reader); break;
         case net::ClientMessage::ProfileCheck:  handleProfileCheck(*session, connection, reader); break;
         case net::ClientMessage::SwapLoadout:   handleSwapLoadout(*session, reader); break;
         case net::ClientMessage::SwapLoadoutRows: handleSwapLoadoutRows(*session, connection); break;
@@ -2197,6 +2204,7 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
 
     connection.send(w);
     clearProfileDue(session);
+    sendDropBonus(session, connection);
 }
 
 void GameServer::clearProfileDue(Session& session) {
@@ -2278,6 +2286,22 @@ void GameServer::sendDueProfiles() {
 
 void GameServer::resyncProfile(Session& session, net::Connection& connection) {
     sendProfile(session, connection);
+}
+
+void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
+    const auto now=dropBonusNow();const auto& record=database_.progress(session.userId);
+    const auto& b=record.extra["dailyDropBonus"];
+    const bool claimed=static_cast<std::int64_t>(b["day"].asDouble(-1))>=dropBonusDay(now);
+    ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::DailyDropBonusState));
+    w.u32(dropBonusStreak(record,now));w.u8(activeDropBonus(record,now));
+    w.u32(static_cast<std::uint32_t>(clamp(b["until"].asDouble()-now,0.0,3600000.0)));
+    w.u32(claimed?static_cast<std::uint32_t>((dropBonusDay(now)+1)*86400000-8LL*3600000-now):0);
+    connection.send(w);
+}
+void GameServer::handleDropBonus(Session& session, net::Connection& connection, ByteReader& reader) {
+    const auto claim=reader.u8();if(!reader.ok()||!session.authenticated()||claim>1)return;
+    if(claim && claimDropBonus(database_.progress(session.userId),dropBonusNow())) database_.markDirty();
+    sendDropBonus(session,connection);
 }
 
 void GameServer::sendDailyStreak(Session& session, net::Connection& connection) {
@@ -6106,7 +6130,8 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     health.current = health.max;
     health.invulnerableUntilMillis = monotonicMillis() + kRespawnInvulnerabilitySeconds * 1000.0;
 
-    if (session.stage != SessionStage::Playing) session.pyramidMapRevealed = false;
+    // Respawning in the same pyramid continues the current visit.
+    if (session.pyramidMapRealm != realm) session.pyramidMapRevealed = false;
     session.entity = entity;
     session.stage = SessionStage::Playing;
     // A fresh body has a death of its own still to announce.

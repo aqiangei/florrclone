@@ -57,6 +57,14 @@ TEST(feedback_mound_interiors_scale_by_rarity_with_safe_spawns) {
         const auto copies=maps.copiesOf(id);CHECK_EQ(copies.size(),8u);if(copies.empty())continue;
         const auto* map=maps.forRealm(copies.front());CHECK(map);if(!map)continue;CHECK_EQ(map->width(),16+4*tier);
         CHECK_NEAR(terrain.realmExtent(copies.front()).x,(16+4*tier)*256.0,1e-8);
+        int blocked=0,open=0;
+        for(int y=1;y<map->width()-1;++y)for(int x=1;x<map->width()-1;++x){
+            const Vec2 probe{(x+.5)*256,(y+.5)*256};
+            if(terrain.blocked(probe,copies.front())){
+                ++blocked;CHECK(distance(terrain.resolveCircle(probe,25,copies.front()),probe)>1);
+            }else ++open;
+        }
+        CHECK(blocked>0);CHECK(open>0);
         const auto at=map->defaultSpawn(rng,terrain);CHECK(!terrain.blocked(at,copies.front()));CHECK_NEAR(distance(terrain.resolveCircle(at,25,copies.front()),at),0,1e-6);
     }
 }

@@ -1,3 +1,4 @@
+#include "server/daily_drop_bonus.h"
 #include "server/timed_hammers.h"
 // NPCs, and the first two with a service: the oracle and the trader.
 //
@@ -3021,6 +3022,11 @@ TEST(pyramid_map_scrolls_reveal_one_visit_without_inventory_and_refill) {
     CHECK(!watcher.pyramidMapRevealed);
     CHECK_EQ(explorer.profile().inventory.size(),before.size());
     h.step(903,{&watcher,&explorer}); CHECK_EQ(scrolls().size(),40u);
+    world.get<Health>(body).current=0;
+    CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.dead();}));
+    explorer.requestRespawn();
+    CHECK(h.stepUntil({&watcher,&explorer},[&]{return !explorer.dead() && explorer.pyramidMapRevealed;}));
+    CHECK(explorer.pyramidMapRevealed);
     explorer.leaveGame(); h.step(4,{&watcher,&explorer}); CHECK(!explorer.pyramidMapRevealed);
     explorer.joinGame(1280,720,"pyramid:spawn","explorer");
     CHECK(h.stepUntil({&watcher,&explorer},[&]{return explorer.status()==NetClient::Status::Playing;}));

@@ -869,6 +869,8 @@ private:
     /// sendProfile: the claim credits stars to the record, and a profile built
     /// first would arrive one day's reward short.
     void sendDailyStreak(Session&, net::Connection&);
+    void sendDropBonus(Session&, net::Connection&);
+    void handleDropBonus(Session&, net::Connection&, ByteReader&);
     void sendNotice(net::Connection&, net::NoticeSeverity, const std::string& text);
     /// The shop's own reply channel. A refused purchase or code is a modal on
     /// the shop card in the reference, not a line in the chat, so it cannot

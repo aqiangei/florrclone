@@ -210,6 +210,7 @@ public:
     /// is enough; the callback exists for a runtime that would rather not walk
     /// the list, the list for one that would rather not own a closure.
     std::function<void(const Pickup&)> onPickup;
+    std::function<int(Entity)> bonusMultiplier; // claimant-specific independent trials; never Super+.
 
     /// Loads the shared JSON table during server startup. A missing or invalid
     /// file is fatal there instead of silently leaving every mob lootless.

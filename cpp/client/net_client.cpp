@@ -322,6 +322,7 @@ void NetClient::forgetAccount() {
     craftOutcome_ = CraftOutcome{};
     craftAttemptCount_ = 0;
     pyramidMapRevealed = false;
+    dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=0;
     oracleOutcome_ = OracleOutcome{};
     oracleReadyAtMillis_ = 0;
     tradeOutcome_ = TradeOutcome{};
@@ -451,6 +452,9 @@ void NetClient::usePetal(int slot) {
     send(w);
 }
 
+void NetClient::requestDailyDropBonus(bool claim) {
+    ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.boolean(claim);send(w);
+}
 void NetClient::requestBulkCraft(Rarity target) {
     ByteWriter w;beginMessage(w,net::ClientMessage::BulkCraft);w.u8(static_cast<std::uint8_t>(target));send(w);
 }
@@ -1142,6 +1146,13 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
     switch (id) {
         case net::ServerMessage::Welcome:      handleWelcome(reader); break;
         case net::ServerMessage::AuthResult:   handleAuthResult(reader); break;
+        case net::ServerMessage::DailyDropBonusState: {
+            const auto streak=reader.u32();const auto multiplier=reader.u8();
+            const auto remaining=reader.u32();const auto next=reader.u32();
+            if(reader.ok()) {dropBonusStreak=streak;dropBonusMultiplier=multiplier;
+                dropBonusUntil=wallClockMillis()+remaining;dropBonusNextClaim=wallClockMillis()+next;}
+            break;
+        }
         case net::ServerMessage::PyramidMapState: {
             const auto realm = static_cast<Realm>(reader.u8()); const bool revealed = reader.boolean();
             if (reader.ok() && realm == view_.realm()) pyramidMapRevealed = revealed;

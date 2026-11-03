@@ -670,21 +670,25 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // -- each reserved for its own group, which replication already hides
         // from everybody else. kRarityCount is "no orb worn", which is almost
         // every flower in the game, and then nothing splits.
-        eligibleOrbs_.clear();
-        bool anyOrb = false;
-        for (const Entity claimant : eligible_) {
-            const int tier = wornOrbTier(world, content, claimant, magicOrb);
-            eligibleOrbs_.push_back(tier);
-            anyOrb = anyOrb || tier != kRarityCount;
+        const auto baseEligible=eligible_;
+        std::vector<int> bonuses;int maxBonus=1;
+        for(const auto claimant:baseEligible) {
+            const int bonus=rarityIndex(mobRarity)<rarityIndex(Rarity::Super) && bonusMultiplier
+                ? clamp(bonusMultiplier(claimant),1,3) : 1;
+            bonuses.push_back(bonus);maxBonus=std::max(maxBonus,bonus);
         }
-
-        // Independent complete trials, including table probability,
-        // featured row selection, base rarity and all later upgrade rolls.
-        const int trials = kLootFeelCopies *
-            (rarityIndex(mobRarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);
+        const int baseTrials=kLootFeelCopies * (rarityIndex(mobRarity)>=rarityIndex(Rarity::Super)?kLootFeelSuperMultiplier:1);
+        const int trials=baseTrials*maxBonus;
         const bool grouped=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rollGroup!=0;});
         const bool legacy=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rates.empty();});
-        for (int trial = 0; trial < trials; ++trial) {
+        for (int trial=0;trial<trials;++trial) {
+            eligible_.clear();eligibleOrbs_.clear();bool anyOrb=false;
+            for(std::size_t i=0;i<baseEligible.size();++i) {
+                if(trial>=baseTrials*bonuses[i])continue;
+                eligible_.push_back(baseEligible[i]);
+                const int tier=wornOrbTier(world,content,baseEligible[i],magicOrb);
+                eligibleOrbs_.push_back(tier);anyOrb=anyOrb||tier!=kRarityCount;
+            }
             selected_.clear();
             rollTable(table, mobRarity, rng);
             const double groupRoll=grouped?rng.unit():0;
