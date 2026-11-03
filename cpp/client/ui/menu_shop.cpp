@@ -156,7 +156,7 @@ constexpr double kDialogTitleSize = 24.0;
 constexpr double kDialogLineSize = 14.0;
 constexpr double kDialogButtonHeight = 28.0;
 constexpr double kDialogButtonGap = 10.0;
-constexpr double kDialogBuyWidth = 80.0;
+constexpr double kDialogBuyWidth = 120.0;
 /// The buy button's row: the star in a 22 box with 3 either side, then the
 /// price at 14.
 constexpr double kDialogStarBox = 28.0;
@@ -893,7 +893,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         const double titleRow = kDialogTitleSize * kLineHeight;
         const double lineRow = kDialogLineSize * kLineHeight;
         const double linesHeight = static_cast<double>(lines.size()) * lineRow;
-        const double boxW = widest + 2.0 * kDialogPad;
+        const double boxW = std::max(widest + 2.0 * kDialogPad, confirming ? 320.0 : 0.0);
         const double boxH = kDialogPad + titleRow + kDialogGap + linesHeight + kDialogGap +
                             (confirming ? kTile + kDialogGap + 44.0 : 0.0) + kDialogButtonHeight +
                             kDialogPad;
