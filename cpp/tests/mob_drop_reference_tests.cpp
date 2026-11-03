@@ -17,6 +17,13 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1){
 }
 int total(const Counts& counts,const std::string& name){int n=0;for(const auto&[key,value]:counts)if(key.first==name)n+=value;return n;}
 }
+TEST(reference_pharaoh_crown_really_drops_at_unique_from_super_and_eternal_beetles){
+    for(const auto tier:{Rarity::Super,Rarity::Unique}){
+        const auto result=kills("pharaoh_beetle",tier,1000);
+        const int crowns=total(result,"pharaoh_s_crown");CHECK(crowns>20&&crowns<110);
+        for(const auto&[key,n]:result)if(key.first=="pharaoh_s_crown")CHECK_EQ(key.second,rarityIndex(Rarity::Unique));
+    }
+}
 
 TEST(reference_drop_cdf_preserves_no_drop_and_clips_rounding_without_renormalizing){
     Json json;std::string error;CHECK(Json::parse("[[[0,59.8],[1,16.4]],[[0,60],[1,40.1]]]",json,error));DropRates rates;CHECK(parseDropRates(json,rates));

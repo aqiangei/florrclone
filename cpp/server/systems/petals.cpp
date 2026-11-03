@@ -2290,6 +2290,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         return anchor != NULL_ENTITY ? anchor : player;
     }();
 
+    bool pharaohSummoned = false;
     for (const Entity petal : actionList_) {
         PetalInstance* instance = world.tryGet<PetalInstance>(petal);
         const Transform* transform = world.tryGet<Transform>(petal);
@@ -2297,6 +2298,22 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
 
         const PetalConfig& config = registry.petal(instance->configIndex);
         const PetalStats stats = instanceStats(registry, *instance);
+        if (config.id == "pharaoh_s_crown") {
+            if (pharaohSummoned) continue;
+            pharaohSummoned = true;
+            auto* crownState = world.tryGet<PetalSlotState>(player);
+            if (!crownState || nowMillis < crownState->nextPharaohSummonMillis) continue;
+            crownState->nextPharaohSummonMillis = nowMillis + 1000.0;
+            const auto mob = registry.mobIndex("mummy_beetle");
+            auto* current = world.tryGet<PetalSlotState>(player);
+            const auto* at = world.tryGet<Transform>(player);
+            if (mob != kInvalidIndex && current && at && countOwnedPets(world,*current) < kMaxPetEntitiesPerPlayer) {
+                const Vec2 position = at->position;
+                const auto slot = instance->slot;
+                summonPets(world,registry,player,slot,mob,Rarity::Mythic,1,position,*current,1.0,nowMillis+6000.0);
+            }
+            continue;
+        }
 
         // Scripted behaviour comes first: a petal that parks until it touches
         // something is armed by contact rather than by a timer, and lightning

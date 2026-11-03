@@ -418,6 +418,15 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
 
     queries_->players.each([&](Entity e, PlayerTag&, Transform& transform, Motion& motion,
                                Body& body, PlayerInput& input) {
+        // Equipment can enlarge a flower while its centre is in a narrow gap.
+        // That is placement, not a movement attempt: repair an already-invalid
+        // hull before the containment guard refuses every possible escape.
+        if (isWorldRealm(transform.realm) &&
+            terrain.resolveWall(transform.position, body.radius, transform.realm).unresolved) {
+            transform.position = terrain.resolveCircle(transform.position, body.radius, transform.realm);
+            motion.velocity = {};
+            if (auto* shove = world.tryGet<Knockback>(e)) shove->impulse = {};
+        }
         // Facing is the WALK heading, and it is frozen while the flower is
         // standing still: it is where the flower went, not where its owner is
         // pointing. Under cursor control the two are the same value, so this

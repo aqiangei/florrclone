@@ -30,6 +30,18 @@ TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
     petals.run(w,content(),1000,net::kTickSeconds,commands);commands.flush();
     CHECK(w.get<PlayerVisuals>(p).equippedCorruption);
     CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)!=0);
+    w.get<Loadout>(p).slots[2]=w.get<Loadout>(p).slots[1];
+    for(int second=2;second<=8;++second){
+        petals.run(w,content(),second*1000.0,net::kTickSeconds,commands);commands.flush();
+    }
+    int mummies=0;
+    Query<Pet,MobType> summoned{w};
+    summoned.each([&](Entity e,Pet& pet,MobType& type){
+        if(pet.owner==p && !w.has<Dead>(e) && type.configIndex==content().mobIndex("mummy_beetle")){
+            ++mummies;CHECK(type.rarity==Rarity::Mythic);CHECK(w.has<RisesUndead>(e));
+        }
+    });
+    CHECK_EQ(mummies,6);
     const auto other=w.create();
     w.add<PlayerTag>(other);w.add<Faction>(other,Faction{Team::Players,false});
     w.add<PlayerProgress>(other);w.add<PlayerVisuals>(other);
@@ -41,8 +53,9 @@ TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
     CHECK(!CombatSystem::canDamage(w,other,p));
     w.get<Loadout>(p).slots[0]=LoadoutSlot{};
     w.get<Loadout>(p).slots[1]=LoadoutSlot{};
+    w.get<Loadout>(p).slots[2]=LoadoutSlot{};
     w.get<PlayerVisuals>(p).corrupted=true;
-    petals.run(w,content(),2000,net::kTickSeconds,commands);commands.flush();
+    petals.run(w,content(),9000,net::kTickSeconds,commands);commands.flush();
     CHECK(!w.get<PlayerVisuals>(p).equippedCorruption);
     CHECK((w.get<PlayerVisuals>(p).equipFlags & EquipPharaohCrown)==0);
     CHECK(w.get<PlayerVisuals>(p).corrupted);
@@ -246,6 +259,28 @@ TEST(feedback_flowers_can_stand_inside_moon_without_shoving_it) {
     for(int i=0;i<120;++i)movement.run(w,terrain,i*net::kTickMillis,net::kTickSeconds);
     CHECK_NEAR(distance(w.get<Transform>(player).position,start),0,1e-6);
     CHECK_NEAR(distance(w.get<Transform>(moon).position,moonAt),0,1e-6);
+}
+TEST(feedback_bubble_momentum_and_changed_equipment_hull_do_not_trap_a_player_in_wall) {
+    World w;Terrain terrain;MovementSystem movement;
+    const double wall=10*kTileSize;
+    for(int y=0;y<terrain.tileRows();++y)terrain.setTile(10,y,Tile::Solid);
+    const auto p=w.create();
+    w.add<PlayerTag>(p);w.add<Transform>(p,Transform{{wall-90,5000},0});
+    w.add<Motion>(p,Motion{{20000,0}});w.add<Body>(p,Body{10,1});
+    w.add<PlayerInput>(p);w.add<PlayerModifiers>(p);w.add<Health>(p,Health{100,100});
+    movement.run(w,terrain,0,net::kTickSeconds);
+    // A different loadout grows the hull while the burst still has momentum.
+    w.get<Body>(p).radius=45;
+    for(int n=1;n<=30;++n){
+        movement.run(w,terrain,n*net::kTickMillis,net::kTickSeconds);
+        const auto at=w.get<Transform>(p).position;
+        CHECK(at.x<=wall-45+1e-6);CHECK(!terrain.resolveWall(at,45,Realm::Overworld).unresolved);
+    }
+    w.get<PlayerInput>(p).current.moveAngle=kPi;
+    w.get<PlayerInput>(p).current.moveStrength=1;
+    const auto before=w.get<Transform>(p).position;
+    for(int n=31;n<=90;++n)movement.run(w,terrain,n*net::kTickMillis,net::kTickSeconds);
+    CHECK(w.get<Transform>(p).position.x<before.x-100);
 }
 
 TEST(feedback_chip_has_independent_ninety_percent_self_evasion_but_not_lightning){

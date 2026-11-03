@@ -4000,7 +4000,12 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     const std::uint16_t petalIndex = reader.u16();
     const Rarity rarity = clampRarity(reader.u8());
     const std::uint8_t offerSlot = reader.u8();
+    const std::uint32_t quantity = reader.u32();
     if (!reader.ok() || !session.authenticated()) return;
+    if (quantity == 0 || quantity > 10000) {
+        sendShopResult(connection, net::ShopResultKind::Purchase, false, 0, "Invalid quantity.");
+        return;
+    }
 
     // The client sends what it wants, never what it costs. A price that came
     // off the wire is a price the client chose.
@@ -4044,11 +4049,16 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     // was refunded by the parked one on the next tick. Levelled before it is
     // read, and the new balance written onto both below.
     syncSplitProgress(session);
+    if (quantity > static_cast<std::uint32_t>(kMaxStackCount - record.itemCount(rarity,inventoryKey(petalIndex)))) {
+        sendShopResult(connection,net::ShopResultKind::Purchase,false,0,"Inventory is full.");
+        return;
+    }
     PlayerProgress* live = session.playing() && world_.isAlive(session.entity)
                                ? world_.tryGet<PlayerProgress>(session.entity)
                                : nullptr;
     const double stars = live ? live->stars : record.stars;
-    if (stars < price) {
+    price *= quantity;
+    if (!std::isfinite(price) || stars < price) {
         sendShopResult(connection, net::ShopResultKind::Purchase, false, 0, "Not enough stars.");
         return;
     }
@@ -4066,7 +4076,7 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
             }
         }
     }
-    giveToInventory(record, petalIndex, rarity, 1);
+    giveToInventory(record, petalIndex, rarity, quantity);
     database_.markDirty();
     sendProfile(session, connection);
     sendShopResult(connection, net::ShopResultKind::Purchase, true, 0, {});
@@ -6263,8 +6273,11 @@ void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity)
     // comes back through here, which is what keeps the two in step.
     world_.ensure<PlayerSkillTree>(entity).skills = skills;
 
+    const bool freshBody = !world_.has<Body>(entity);
     Body& body = world_.ensure<Body>(entity);
-    body.radius = playerRadiusForLevel(level);
+    // A loadout edit must not shrink the collision hull for the movement tick
+    // before petal modifiers are folded again (notably during a bubble dash).
+    if (freshBody) body.radius = playerRadiusForLevel(level);
     body.mass = 1.0;
 
     Health& health = world_.ensure<Health>(entity);

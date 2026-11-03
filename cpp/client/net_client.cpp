@@ -558,13 +558,14 @@ void NetClient::requestResetSkills() {
     send(w);
 }
 
-void NetClient::requestBuyPetal(std::uint16_t petalIndex, Rarity rarity, int offerSlot) {
+void NetClient::requestBuyPetal(std::uint16_t petalIndex, Rarity rarity, int offerSlot, std::uint32_t quantity) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::BuyPetal);
     w.u16(petalIndex);
     w.u8(static_cast<std::uint8_t>(rarity));
     w.u8(offerSlot >= 0 && offerSlot < net::kNoShopOffer ? static_cast<std::uint8_t>(offerSlot)
                                                          : net::kNoShopOffer);
+    w.u32(quantity);
     send(w);
 }
 

@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 80;
+inline constexpr std::uint16_t kProtocolVersion = 81;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -86,7 +86,7 @@ enum class ClientMessage : std::uint8_t {
     Ping,               ///< u64 clientTimeMillis
     UpgradeSkill,       ///< u8 skillId, u8 tier   -- buys ONE tier, the next one
     ResetSkills,        ///< (empty) -- refunds the whole tree
-    BuyPetal,           ///< u16 itemType, u8 rarity, u8 offerSlot -- price is server-side
+    BuyPetal,           ///< u16 itemType, u8 rarity, u8 offerSlot, u32 quantity -- price is server-side
                         ///< only. `offerSlot` names WHICH card of the current
                         ///< rotation was clicked, or kNoShopOffer for a
                         ///< full-price catalogue purchase; it is a claim about

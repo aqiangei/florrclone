@@ -692,7 +692,7 @@ public:
     /// clicked; the default buys at the full ladder price. Either way the
     /// price is the server's to decide -- the slot says which card, not what
     /// it costs.
-    void requestBuyPetal(std::uint16_t petalIndex, Rarity rarity, int offerSlot = -1);
+    void requestBuyPetal(std::uint16_t petalIndex, Rarity rarity, int offerSlot = -1, std::uint32_t quantity = 1);
     /// Redeems a star code. The answer lands in shopOutcome().
     void requestRedeemCode(const std::string& code);
     /// Changes this session's account password. The answer lands in

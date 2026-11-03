@@ -117,6 +117,7 @@ struct PetalSlotState {
     /// Next time a lightning cutter may strike. The reference's limiter is per
     /// PLAYER rather than per petal, so two cutters share one cadence.
     double nextLightningMillis = 0;
+    double nextPharaohSummonMillis = 0;
 
     /// The flower's position at the END of the previous tick, which is the
     /// centre the ring orbits.

@@ -252,6 +252,7 @@ struct ShopState {
     /// and what that card costs, which the box prints on its buy button.
     int pendingSlot = -1;
     double pendingPrice = 0;
+    int pendingQuantity = 1;
     /// The scrim, the stage that holds the box back, and the box's scale.
     double scrim = 0;
     double stage = 0;
@@ -866,6 +867,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     // window's centre: a title, the message, and what can be done about it.
     Rect confirmRect{};
     Rect cancelRect{};
+    Rect lessRect{}, moreRect{}, maxRect{};
     if (state.shown != ShopState::Modal::None) {
         const double alpha = std::floor(kScrimMax * clamp(state.scrim, 0.0, 1.0)) / 255.0;
         if (alpha > 0) fillWindowRect(canvas, panel, kInk, alpha);
@@ -893,7 +895,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         const double linesHeight = static_cast<double>(lines.size()) * lineRow;
         const double boxW = widest + 2.0 * kDialogPad;
         const double boxH = kDialogPad + titleRow + kDialogGap + linesHeight + kDialogGap +
-                            (confirming ? kTile + kDialogGap : 0.0) + kDialogButtonHeight +
+                            (confirming ? kTile + kDialogGap + 44.0 : 0.0) + kDialogButtonHeight +
                             kDialogPad;
         const Vec2 centre{panel.x + panel.w * 0.5, panel.y + panel.h * 0.5};
         const Rect box{centre.x - boxW * 0.5, centre.y - boxH * 0.5, boxW, boxH};
@@ -932,13 +934,27 @@ bool ShopPanel::render(MenuContext& ctx) {
                 tile.petalIndex = state.pendingPetal;
                 tile.rarity = state.pendingRarity;
                 tile.timeSeconds = ctx.timeSeconds;
+                tile.badge = "x" + std::to_string(state.pendingQuantity);
                 drawItemTile(canvas, ctx.sprites, {centre.x - kTile * 0.5, y, kTile, kTile}, tile);
+                const double rowY = y + kTile + 8;
+                lessRect = {centre.x-110,rowY,36,28};
+                moreRect = {centre.x+18,rowY,36,28};
+                maxRect = {centre.x+66,rowY,60,28};
+                for (const auto& control : {lessRect,moreRect,maxRect}) {
+                    drawFlorrButton(canvas,control,kDialogGrey,kButtonBorder,kButtonRadius,
+                                    answering && control.contains(mouse),answering && pressing(control));
+                    if (answering && control.contains(mouse)) cursor=CursorShape::Hand;
+                }
+                text(canvas,"-",lessRect.x+18,rowY+14,shopText(18));
+                text(canvas,std::to_string(state.pendingQuantity),centre.x-28,rowY+14,shopText(16));
+                text(canvas,"+",moreRect.x+18,rowY+14,shopText(18));
+                text(canvas,trEnZh("Max","最多"),maxRect.x+30,rowY+14,shopText(14));
 
                 const bool hovered = answering && confirmRect.contains(mouse);
                 if (hovered) cursor = CursorShape::Hand;
                 drawFlorrButton(canvas, confirmRect, kPriceFace, kButtonBorder, kButtonRadius,
                                 hovered, answering && pressing(confirmRect));
-                drawStarRow(canvas, confirmRect, formatPrice(state.pendingPrice), kDialogStarBox,
+                drawStarRow(canvas, confirmRect, formatPrice(state.pendingPrice * state.pendingQuantity), kDialogStarBox,
                             kDialogStar, kDialogPriceSize);
             }
 
@@ -968,7 +984,8 @@ bool ShopPanel::render(MenuContext& ctx) {
     const auto resolveModal = [&](bool confirmed) {
         if (confirmed && state.modal == ShopState::Modal::Confirm &&
             state.pendingPetal != kNoPetal) {
-            ctx.net.requestBuyPetal(state.pendingPetal, state.pendingRarity, state.pendingSlot);
+            ctx.net.requestBuyPetal(state.pendingPetal, state.pendingRarity, state.pendingSlot,
+                                    static_cast<std::uint32_t>(state.pendingQuantity));
         }
         closeModal();
     };
@@ -1024,7 +1041,13 @@ bool ShopPanel::render(MenuContext& ctx) {
     if (!ctx.released()) return true;
 
     if (modalUp) {
-        if (clicked(confirmRect)) resolveModal(true);
+        if (state.modal == ShopState::Modal::Confirm && clicked(lessRect))
+            state.pendingQuantity=std::max(1,state.pendingQuantity-1);
+        else if (state.modal == ShopState::Modal::Confirm && clicked(moreRect))
+            state.pendingQuantity=std::min(10000,state.pendingQuantity+1);
+        else if (state.modal == ShopState::Modal::Confirm && clicked(maxRect))
+            state.pendingQuantity=static_cast<int>(clamp(std::floor(ctx.net.profile().stars / std::max(1.0,state.pendingPrice)),1.0,10000.0));
+        else if (clicked(confirmRect)) resolveModal(true);
         else if (clicked(cancelRect)) resolveModal(false);
         // The scrim swallows everything else, including the close button.
         return true;
@@ -1060,6 +1083,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         state.pendingRarity = offer.rarity;
         state.pendingSlot = static_cast<int>(i);
         state.pendingPrice = offer.price;
+        state.pendingQuantity = 1;
         break;
     }
     return true;
