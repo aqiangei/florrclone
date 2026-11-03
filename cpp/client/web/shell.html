@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -10,9 +10,6 @@
     <meta name="description" content="florr.io clone">
     <meta name="keywords" content="florr, florr.io, florr clone, flowrix, flowrix pro, flowrix.pro, florrclone cryodome, zorr, zorr.pro, gardn, io games, online game, multiplayer game, browser game, web game">
     <link rel="icon" type="image/x-icon" href="/favicon.ico?v=2">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@700&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -39,41 +36,73 @@
             -webkit-user-select: none;
             -webkit-touch-callout: none;
         }
-        #loadingScreen {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 100vw;
-            text-align: center;
-            font-size: 88px;
-            transform: translate(-50%, -50%);
-            color: #fff;
-        }
-        /* The two lines of the decompression screen, in the browser client's
-           colours -- it showed this same message while it inflated its own
-           bundle. Sized here rather than inheriting the 88px above, which is
-           for the one word the screen otherwise holds. */
-        #loadingScreen .stage {
-            color: #ff0;
-            font-size: 48px;
-            margin-bottom: 20px;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-        }
-        #loadingScreen .detail {
-            color: rgba(255, 255, 255, 0.9);
-            font-size: 20px;
-        }
+        #loadingScreen { position:fixed;inset:0;z-index:5;display:grid;place-items:center;
+            padding:24px;background:radial-gradient(ellipse at 50% 35%,#268954,#125b3f 70%);color:#fff; }
+        #loadingScreen[hidden] { display:none; }
+        .loading-card { width:min(440px,100%);padding:32px 28px;border:1px solid #ffffff26;
+            border-radius:24px;background:#113b2bd9;box-shadow:0 20px 70px #07291d55;text-align:center; }
+        .loading-flower {font-size:52px;line-height:1.2;margin-bottom:14px;}
+        .loading-brand {font-size:14px;letter-spacing:3px;color:#b8e7c9;margin-bottom:20px;}
+        #loading-stage {font-size:23px;margin-bottom:12px;}
+        #loading-detail {font-size:14px;line-height:1.8;color:#d2e8dc;min-height:50px;overflow-wrap:anywhere;}
+        #loading-progress {width:100%;height:9px;accent-color:#b7ec70;margin:20px 0 10px;}
+        #loading-meta {font-size:12px;color:#b8cebf;min-height:20px;}
+        .loading-hint {font-size:12px;line-height:1.8;color:#9bbbaa;border-top:1px solid #ffffff1c;padding-top:18px;margin-top:18px;}
+        #loading-retry {font:inherit;border:0;border-radius:10px;background:#c1ee86;color:#173a27;padding:12px 26px;cursor:pointer;margin-top:18px;}
+        @media(max-width:480px){.loading-card{padding:28px 20px;}#loading-stage{font-size:21px;}}
 
     </style>
 </head>
 <body>
-    <span id="loadingScreen">Loading...</span>
+    <section id="loadingScreen" role="status" aria-live="polite">
+      <div class="loading-card">
+        <div class="loading-flower" aria-hidden="true">🌼</div>
+        <div class="loading-brand">FLORR.CLONE</div>
+        <h1 id="loading-stage">准备进入花园</h1>
+        <p id="loading-detail">正在连接游戏资源，请稍候。</p>
+        <progress id="loading-progress" aria-label="游戏加载进度"></progress>
+        <p id="loading-meta">首次进入需要下载资源，之后会使用缓存。</p>
+        <button id="loading-retry" hidden type="button">重新连接</button>
+        <p class="loading-hint">加载期间无需反复刷新。账号和存档保存在服务器。</p>
+      </div>
+    </section>
     <canvas id="canvas" oncontextmenu="return false;"></canvas>
     <script>
 (function () {
   const query = new URLSearchParams(location.search);
   const status = document.getElementById('loadingScreen');
   const canvas = document.getElementById('canvas');
+  const stage = document.getElementById('loading-stage');
+  const detail = document.getElementById('loading-detail');
+  const progress = document.getElementById('loading-progress');
+  const meta = document.getElementById('loading-meta');
+  const retry = document.getElementById('loading-retry');
+  const began = performance.now();
+  let failed = false, bytes = 0, total = 0, lastProgress = performance.now();
+  const ui = window.flixLoading = {
+    phase(title, message) { if(failed)return; status.hidden=false;stage.textContent=title;detail.textContent=message; },
+    download(received, expected) {
+      if(failed)return; bytes=received;total=expected;lastProgress=performance.now();
+      stage.textContent='正在下载游戏资源';
+      detail.textContent='资源下载后会自动启动，请保持页面打开。';
+      if(total>0){progress.max=total;progress.value=bytes;}else progress.removeAttribute('value');
+    },
+    error(message) {
+      failed=true;status.hidden=false;stage.textContent='暂时未能进入游戏';detail.textContent=message;
+      progress.hidden=true;retry.hidden=false;meta.textContent='你的账号和存档不会因此丢失。';
+    },
+    finish() { if(!failed){status.hidden=true;clearInterval(timer);} }
+  };
+  retry.onclick=()=>location.reload();
+  const timer=setInterval(()=>{
+    if(failed||status.hidden)return;
+    const seconds=Math.floor((performance.now()-began)/1000);
+    const size=bytes ? (bytes/1048576).toFixed(1)+' MB'+(total?' / '+(total/1048576).toFixed(1)+' MB':'')+' · ' : '';
+    meta.textContent=size+'已等待 '+seconds+' 秒';
+    if(bytes && performance.now()-lastProgress>10000 && stage.textContent==='正在下载游戏资源')
+      detail.textContent='网络传输较慢，正在继续下载；超过等待时间会提供重试。';
+  },500);
+
 
   const host = query.get('host') || location.hostname || '127.0.0.1';
   // A page URL with no explicit port was served on its scheme's default,
@@ -109,16 +138,14 @@
     printErr: (text) => console.warn(text),
     setStatus: (text) => {
       if (!text) {
-        status.hidden = true;
+        ui.finish();
         canvas.focus();
         return;
       }
-      status.hidden = false;
-      status.textContent = text;
+      ui.phase('正在启动游戏', '资源已就绪，正在准备画面和本地设置。');
     },
     onAbort: (what) => {
-      status.hidden = false;
-      status.textContent = 'client error: ' + what;
+      ui.error('游戏启动失败，请点击重新连接；若仍失败，请反馈给管理员。');
     },
   };
   window.Module = Module;
@@ -186,57 +213,52 @@
   // a second deflating five megabytes), and DecompressionStream is missing
   // from browsers older than 2023. Either way this falls through to the plain
   // file.
-  const canInflate = typeof DecompressionStream === 'function';
-
-  // Revalidate every load, but reuse the bytes when the build has not moved.
-  // The failure worth designing against is a page still running the build
-  // from before the last deploy: the server refuses that handshake and the
-  // client reloads (client/web/reload.h), which is only an answer if the
-  // reload fetches the new build. A 304 on an unchanged file costs nothing,
-  // which is why this is no-cache where the TypeScript page said no-store --
-  // re-downloading a megabyte of unchanged wasm on every load would give back
-  // more than the compression saves. The 304 needs a validator to revalidate
-  // against, and the server sends two with every file (an ETag from the
-  // file's size and modification time, and Last-Modified; see sendFile in
-  // shared/net/web_channel.cpp): without them a no-cache fetch has nothing to
-  // ask about, and every load was a full download.
-  const fetchOptions = { cache: 'no-cache' };
-
-  // Said while the inflating is going on, which on a first visit over a real
-  // connection is the whole of the wait. The browser client put up this same
-  // message for the same reason. It goes in the page's one status surface, so
-  // nothing has to take it down: the glue's first setStatus ("Running...",
-  // then "") replaces the markup with text and then hides the element.
-  const announceInflating = () => {
-    if (quiet()) return;
-    const stage = document.createElement('div');
-    stage.className = 'stage';
-    stage.textContent = 'Decompressing bundle...';
-    const detail = document.createElement('div');
-    detail.className = 'detail';
-    detail.textContent = 'Please wait while we decompress the bundle...';
-    status.hidden = false;
-    status.textContent = '';
-    status.append(stage, detail);
-  };
-
-  // The named artifact as a Response, inflated from its .bin when there is
-  // one. Streamed rather than buffered, so what reads this Response sees the
-  // bytes as they arrive -- the same thing the browser would hand
-  // compileStreaming if it had fetched an uncompressed .wasm itself.
-  const load = async (name, contentType) => {
-    if (canInflate) {
-      const packed = await networkFetch(name + '.bin', fetchOptions).catch(() => null);
-      if (packed && packed.ok) {
-        announceInflating();
-        const inflating = new DecompressionStream('deflate-raw');
-        return new Response(packed.body.pipeThrough(inflating),
-                            { headers: { 'Content-Type': contentType } });
+  let canInflate=false;
+  try { new DecompressionStream('deflate-raw');canInflate=true; } catch (_) {}
+  const fetchOptions={cache:'no-cache'};
+  const ui=window.flixLoading;
+  // Count compressed transfer bytes, rather than calling the entire wait
+  // "decompressing". An idle transfer is aborted; retry once, then offer an
+  // explicit reconnect instead of leaving the player on an endless spinner.
+  const load=async(name,contentType)=>{
+    for(let attempt=0;attempt<2;attempt++){
+      const controller=new AbortController();let timer;
+      const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>controller.abort(),25000);};
+      try {
+        arm();
+        const options={...fetchOptions,signal:controller.signal};
+        let packed=canInflate;
+        let response=await networkFetch(name+(packed?'.bin':''),options);
+        if(packed&&!response.ok){packed=false;response=await networkFetch(name,options);}
+        if(!response.ok)throw Error('HTTP '+response.status);
+        const expected=Number(response.headers.get('content-length'))||0;
+        const reader=response.body.getReader();let received=0;
+        const stream=new ReadableStream({
+          async pull(out){
+            try {
+              const next=await reader.read();
+              if(next.done){clearTimeout(timer);out.close();return;}
+              arm();received+=next.value.byteLength;
+              if(name==='bundle.wasm'&&!quiet())ui.download(received,expected);
+              out.enqueue(next.value);
+            } catch(error){clearTimeout(timer);out.error(error);}
+          },
+          cancel(reason){clearTimeout(timer);controller.abort();return reader.cancel(reason);}
+        });
+        // Buffer the SMALL compressed artifact once. A failed transfer can be
+        // retried here, never silently downloading the 29 MB plain wasm twice.
+        const bytes=await new Response(stream).arrayBuffer();
+        clearTimeout(timer);
+        if(name==='bundle.wasm'&&!quiet())ui.phase(packed?'正在解压游戏资源':'正在准备游戏资源','下载完成，正在处理本地资源。');
+        let body=new Blob([bytes]).stream();
+        if(packed)body=body.pipeThrough(new DecompressionStream('deflate-raw'));
+        return new Response(body,{headers:{'Content-Type':contentType}});
+      } catch(error){
+        clearTimeout(timer);
+        if(attempt)throw error;
+        if(!quiet())ui.phase('正在重新连接资源','刚才的传输未完成，正在自动重试一次。');
       }
     }
-    const plain = await networkFetch(name, fetchOptions);
-    if (!plain.ok) throw new Error(name + ': HTTP ' + plain.status);
-    return plain;
   };
 
   let loadError = '';
@@ -246,8 +268,7 @@
     if (!loadError) loadError = what;
     if (runtimeFailed) runtimeFailed(new Error(what));
     if (quiet()) return;
-    status.hidden = false;
-    status.textContent = 'client error: ' + what;
+    ui.error('资源加载未完成，请点击重新连接。若多次失败，请检查网络或联系管理员。');
   };
 
   // Everything from here to the boot section below is the game's own load. It
@@ -278,13 +299,16 @@
     // engine that disagrees. A module that simply does not compile fails the
     // retry too, with the same message.
     const compiled = load('bundle.wasm', 'application/wasm')
-      .then((response) => WebAssembly.compileStreaming(response))
-      .catch(async (error) => {
-        console.warn('[loader] streaming compile failed (' + error +
-                     '); buffering');
-        const response = await load('bundle.wasm', 'application/wasm');
-        return WebAssembly.compile(await response.arrayBuffer());
+      .then(async response=>{
+        if(!quiet())ui.phase('正在启动游戏引擎','正在解压并编译资源，手机首次启动可能需要稍等。');
+        // Use the already downloaded bytes if streaming compilation is not
+        // supported. Do not issue a second complete download on any error.
+        return typeof WebAssembly.compileStreaming==='function'
+          ? WebAssembly.compileStreaming(response)
+          : WebAssembly.compile(await response.arrayBuffer());
       });
+    const watchdog=setTimeout(()=>fail('启动等待超时'),90000);
+    compiled.then(()=>clearTimeout(watchdog),()=>clearTimeout(watchdog));
 
     // The glue asks for the module through this hook rather than going looking
     // for bundle.wasm, which is what keeps it off the uncompressed copy.
