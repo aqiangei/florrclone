@@ -805,7 +805,7 @@ bool ShopPanel::render(MenuContext& ctx) {
                         usable ? std::nullopt : std::optional<std::uint32_t>(kButtonIdleRim));
         text(canvas, trEnZh("Redeem", "兑换"), redeemButton.x + redeemButton.w * 0.5,
              redeemButton.y + redeemButton.h * 0.5, shopText(kTabSize));
-        const auto now=shopClockNow();
+        const auto now=shopClockNow()*1000;
         const auto left=std::max<std::int64_t>(0,ctx.net.dropBonusUntil-now);
         const bool ready=ctx.net.dropBonusNextClaim<=now;
         const int nextDay=ctx.net.dropBonusStreak+1;
@@ -1040,7 +1040,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         return true;
     }
 
-    if(clicked(bonusButton) && ctx.net.dropBonusNextClaim<=shopClockNow()) {ctx.net.requestDailyDropBonus(true);return true;}
+    if(clicked(bonusButton) && ctx.net.dropBonusNextClaim<=shopClockNow()*1000) {ctx.net.requestDailyDropBonus(true);return true;}
     if (!trimmed(state.code).empty() && clicked(redeemButton)) {
         submitCode();
         return true;
