@@ -72,6 +72,12 @@ async function main(){
       fs.writeFileSync(path.join(local,'eternal-refund.json'),JSON.stringify(report.eternalRefund,null,2));
       next=refunded;
     }
+    if(process.env.FLORR_PASSWORD_RESET_FILE){
+      const reset=path.join(local,'inventory.password-reset.json');
+      report.passwordReset=JSON.parse(run(process.execPath,[path.join(__dirname,'reset-password-offline.cjs'),next,reset,process.env.FLORR_PASSWORD_RESET_FILE]));
+      fs.writeFileSync(path.join(local,'password-reset.json'),JSON.stringify(report.passwordReset,null,2));
+      next=reset;
+    }
     if(process.env.FLORR_OPERATOR_HYPER_USER){
       const queued=path.join(local,'inventory.operator.json');
       const ready='/var/www/florrclone-maintenance/operator-ready-'+stamp;
