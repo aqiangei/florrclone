@@ -129,6 +129,7 @@ Entity splitWithPetsOnBothHalves(Harness& h, NetClient& client, const char* acco
             if (halves.size() != 2) return false;
             bool both = true;
             for (const Entity half : halves) {
+                world.get<Health>(half).invulnerableUntilMillis=1e18;
                 const std::vector<Entity> pets = petsOf(world, half);
                 for (const Entity pet : pets) {
                     world.get<Health>(pet).invulnerableUntilMillis = 1e18;
@@ -136,7 +137,7 @@ Entity splitWithPetsOnBothHalves(Harness& h, NetClient& client, const char* acco
                 if (pets.empty()) both = false;
             }
             return both;
-        }, 600)) {
+        }, static_cast<int>(std::ceil(content().petalStats(egg,Rarity::Common).reloadMillis*kPetalReloadFeelScale/net::kTickMillis))+600)) {
         return NULL_ENTITY;
     }
 
