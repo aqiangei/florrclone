@@ -1822,6 +1822,7 @@ private:
     /// control is running.
     Rect releaseRect_{};
     Rect dungeonEntryRect_{};
+    bool pendingDungeonEntry_=false;
     /// Invite toast cards as last painted (guild and/or squad), for hits.
     std::array<Rect, 2> inviteToastRects_{};
 

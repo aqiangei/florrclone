@@ -981,6 +981,7 @@ bool MenuSystem::handleKeys(Window& window) {
     // selection, and Cmd+A opens the bestiary. Not the modifier ROW being
     // rebound -- capturingKey above has already claimed the keyboard for that.
     if (window.ctrlHeld()) return false;
+    if(inGame_ && dungeonEntryRect_.w>0 && window.keyPressed(Key::F)){pendingDungeonEntry_=true;return true;}
 
     // Escape gets no special case: it is the settings panel's hotkey and is
     // read from kMenus with the rest of them below, so it toggles that panel
@@ -2941,6 +2942,7 @@ MenuSystem::OpCounts MenuSystem::takeOpCounts() {
 void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const SpriteCache& sprites,
                         const WorldRenderer& renderer, double timeSeconds, double dt,
                         const OverlayFn& overStripUnderBar) {
+    const bool enterDungeon=pendingDungeonEntry_;pendingDungeonEntry_=false;
     wantsText_ = false;
     dungeonEntryRect_ = Rect{};
     panelRect_ = Rect{};
@@ -3092,7 +3094,7 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
         if(near){const Rect entry{canvas.width()*.5-120.0,canvas.height()*.65,240,44};
             dungeonEntryRect_=entry;
             button(canvas,entry,"进入白蚁丘 [F]",entry.contains({window.mouseX(),window.mouseY()}),window.mouseDown(MouseButton::Left));
-            if(window.keyPressed(Key::F)||(window.mouseReleased(MouseButton::Left)&&entry.contains({window.mouseX(),window.mouseY()})))net.requestDungeonEntry();
+            if(enterDungeon||(window.mouseReleased(MouseButton::Left)&&entry.contains({window.mouseX(),window.mouseY()})))net.requestDungeonEntry();
         }
     }
     drawReleaseChip(canvas, window, net);
@@ -3276,6 +3278,7 @@ void MenuSystem::renderStripOnly(Canvas& canvas, Window& window, double timeSeco
     // The login screen has the strip and nothing else. Whatever the last
     // screen left in the panel and bar state is cleared rather than carried
     // over, or a card nobody is painting would still be swallowing clicks.
+    const bool enterDungeon=pendingDungeonEntry_;pendingDungeonEntry_=false;
     wantsText_ = false;
     dungeonEntryRect_ = Rect{};
     panelRect_ = Rect{};
