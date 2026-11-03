@@ -65,6 +65,7 @@ EM_JS(int, flix_settings_fullscreen_active, (), {
     return !!(document.fullscreenElement || document.webkitFullscreenElement);
 });
 EM_JS(void, flix_settings_toggle_fullscreen, (int chinese), {
+    if (window.florrToggleFullscreen) { void window.florrToggleFullscreen(); return; }
     const root = document.documentElement;
     const active = document.fullscreenElement || document.webkitFullscreenElement;
     const toggle = active ? (document.exitFullscreen || document.webkitExitFullscreen) :

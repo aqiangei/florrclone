@@ -62,6 +62,17 @@
         #closeServerNotice{position:absolute;right:8px;top:7px;border:0;background:transparent;
             color:white;font-size:24px;line-height:28px;width:28px;height:28px;cursor:pointer;}
 
+        #landscape-btn{position:fixed;z-index:8;bottom:max(20px,env(safe-area-inset-bottom,0px));left:50%;
+            transform:translateX(-50%);border:2px solid #dfff9b;border-radius:14px;padding:13px 24px;
+            background:#267b3f;color:#fff;font:bold 17px sans-serif;box-shadow:0 3px 18px #0006;
+            cursor:pointer;touch-action:manipulation;animation:landscape-blink .9s ease-in-out infinite;}
+        #landscape-btn[hidden],#landscape-hint[hidden]{display:none;}
+        #landscape-hint{position:fixed;z-index:9;left:50%;bottom:max(85px,env(safe-area-inset-bottom,0px));
+            transform:translateX(-50%);width:min(360px,calc(100vw - 32px));padding:14px;border-radius:12px;
+            color:#fff;background:#123d27f5;font:14px/1.7 sans-serif;box-shadow:0 4px 18px #0006;}
+        #landscape-hint button{float:right;color:white;background:transparent;border:0;font-size:20px;}
+        @keyframes landscape-blink{50%{filter:brightness(1.4);box-shadow:0 0 22px #caff8c99;}}
+        @media(prefers-reduced-motion:reduce){#landscape-btn{animation:none;}}
     </style>
 </head>
 <body>
@@ -83,6 +94,47 @@
       <p>本服为 florr 克隆私服，另有版本访问地址：<a href="https://viepnex.duckdns.org/" target="_blank" rel="noopener noreferrer">https://viepnex.duckdns.org/</a>。</p>
       <p>前端作者：666 &amp; hyper1Qa；服务端：flowrix-io。</p>
     </aside>
+    <button id="landscape-btn" type="button" hidden>横屏游戏 · 全屏</button>
+    <aside id="landscape-hint" role="status" hidden><button type="button" aria-label="关闭横屏提示">×</button><span></span></aside>
+    <script>
+// MOBILE_FULLSCREEN_BEGIN
+(function(){
+  const btn=document.getElementById('landscape-btn'),hint=document.getElementById('landscape-hint');
+  const mobile=/iPhone|iPad|iPod|Android|BlackBerry/i.test(navigator.userAgent)||
+    (navigator.maxTouchPoints>1&&matchMedia('(pointer: coarse)').matches);
+  let clicked=false,hideTimer;
+  const active=()=>!!(document.fullscreenElement||document.webkitFullscreenElement);
+  const landscape=()=>innerWidth>innerHeight;
+  function message(text){hint.querySelector('span').textContent=text;hint.hidden=false;}
+  hint.querySelector('button').onclick=()=>{hint.hidden=true;};
+  async function enter(){
+    const root=document.documentElement;
+    const request=root.requestFullscreen||root.webkitRequestFullscreen||root.webkitRequestFullScreen;
+    let allowed=active();
+    try{if(!allowed&&request){await request.call(root);allowed=active();}}catch(e){}
+    let locked=false;
+    try{if(screen.orientation&&screen.orientation.lock){await screen.orientation.lock('landscape');locked=true;}}catch(e){}
+    if(!allowed){message('当前浏览器未允许网页全屏。iPhone / iPad 可用 Safari“分享 → 添加到主屏幕”后打开游戏；请将设备横过来游玩。');}
+    else if(!locked&&!landscape()){message('已进入全屏，请将设备横过来。当前浏览器不支持自动锁定横屏。');}
+    else hint.hidden=true;
+    return allowed;
+  }
+  window.florrToggleFullscreen=async function(){
+    if(!active())return enter();
+    const exit=document.exitFullscreen||document.webkitExitFullscreen;
+    try{if(exit)await exit.call(document);if(screen.orientation&&screen.orientation.unlock)screen.orientation.unlock();}
+    catch(e){message('退出全屏失败，请使用浏览器的退出全屏按钮。');}
+  };
+  btn.onclick=function(){clicked=true;btn.hidden=true;clearTimeout(hideTimer);void enter();};
+  window.florrMobileReady=function(){
+    if(mobile&&!clicked){btn.hidden=false;clearTimeout(hideTimer);hideTimer=setTimeout(()=>{btn.hidden=true;},10000);}
+  };
+  // Keep the shortcut visible while loading, then for ten seconds in the game.
+  if(mobile)btn.hidden=false;
+  addEventListener('resize',()=>{if(landscape())hint.hidden=true;});
+})();
+// MOBILE_FULLSCREEN_END
+    </script>
     <canvas id="canvas" oncontextmenu="return false;"></canvas>
     <script>
 (function () {
@@ -111,7 +163,7 @@
       failed=true;status.hidden=false;stage.textContent='暂时未能进入游戏';detail.textContent=message;
       progress.hidden=true;retry.hidden=false;meta.textContent='你的账号和存档不会因此丢失。';
     },
-    finish() { if(!failed){status.hidden=true;serverNotice.hidden=noticeDismissed;clearInterval(timer);} }
+    finish() { if(!failed){status.hidden=true;serverNotice.hidden=noticeDismissed;clearInterval(timer);window.florrMobileReady();} }
   };
   retry.onclick=()=>location.reload();
   const timer=setInterval(()=>{
