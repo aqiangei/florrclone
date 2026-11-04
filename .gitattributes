@@ -1,0 +1,3 @@
+# Release artifacts must retain their exact build bytes on every platform.
+# In particular, bundle.js and its .bin must decode to identical contents.
+dist/** -text
