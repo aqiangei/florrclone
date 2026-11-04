@@ -378,6 +378,8 @@ public:
     /// or a touch keyboard, neither of which is a Ctrl+V at all.
     std::string pastedText() const;
 
+    /// Shows or hides the pointer. A hidden pointer stays hidden through the
+    /// shape requests a frame makes; the next present() settles it.
     void setCursorVisible(bool visible);
 
     // The pointer's shape over this window. Records a request; the shape

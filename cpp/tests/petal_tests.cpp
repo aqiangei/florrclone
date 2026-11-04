@@ -6091,6 +6091,19 @@ TEST(ant_and_beetle_egg_summons_gain_health_and_damage_at_every_rarity){
     }
 }
 
+TEST(every_egg_id_takes_the_same_summon_buff){
+    // This build writes only the two hand-made eggs into petals.json; every
+    // other `<mob>_egg` is a name the rule has to recognise all the same.
+    PetalConfig generated;
+    generated.id = "matriarch_egg";
+    CHECK_NEAR(eggSummonCombatScale(generated),1.5,1e-9);
+    CHECK_NEAR(eggSummonHealthScale(generated),2.0,1e-9);
+    PetalConfig ordinary;
+    ordinary.id = "basic";
+    CHECK_NEAR(eggSummonCombatScale(ordinary),1.0,1e-9);
+    CHECK_NEAR(eggSummonHealthScale(ordinary),1.0,1e-9);
+}
+
 TEST(ant_and_beetle_eggs_duplicate_actual_summons_in_the_leftmost_slot){
     CHECK(contentLoaded());
     for(const auto* id:{"egg","beetle_egg"})for(const auto rarity:{Rarity::Common,Rarity::Unique,Rarity::Apex})for(const int slot:{0,1}){

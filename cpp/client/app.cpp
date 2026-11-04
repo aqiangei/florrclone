@@ -929,6 +929,14 @@ void App::frame(double dt) {
     // After every field has been hit-tested, which is the only point at which
     // the set is complete.
     publishKeyboardRegions();
+    // K's "Use Mouse Controls" switch is the pointer's too: with the cursor
+    // half off, the flower is steered by the keys, and a pointer left sitting
+    // over the world only hides the fight. Panels, the chat box, the tutorial
+    // card and the death card are all clicked, so every one of them brings it
+    // back -- and so does turning mouse controls on again.
+    window_.setCursorVisible(!(screen_ == Screen::Playing && !chatOpen_ &&
+                               !menus_.anyOpen() && !tutorial_.visible() &&
+                               !menus_.settings().useMouseControls));
     window_.present();
 
     // One heartbeat a second while the socket is up, as the reference's own

@@ -1384,12 +1384,20 @@ inline bool petalIsCompass(const PetalConfig& config) { return config.id == "com
 /// A cursor walks its flower's pets of a LOWER tier to the pointer instead of
 /// letting them fight on their own (MobAiSystem::steerPet).
 inline bool petalControlsPets(const PetalConfig& config) { return config.id == "cursor"; }
-inline double eggSummonHealthScale(const PetalConfig& config) {
-    const auto& id=config.id;
-    return id=="egg"||(id.size()>=4&&id.compare(id.size()-4,4,"_egg")==0)?2.0:1.0;
+inline bool petalIsEgg(const PetalConfig& config) {
+    const auto& id = config.id;
+    return id == "egg" || (id.size() >= 4 && id.compare(id.size() - 4, 4, "_egg") == 0);
 }
+
+/// The shell itself is a one-hit body with no contact damage; the summons are
+/// the egg's worth, so every egg's hatchlings get the bigger pool below.
+inline double eggSummonHealthScale(const PetalConfig& config) {
+    return petalIsEgg(config) ? 2.0 : 1.0;
+}
+/// And both halves of the summons' combat worth, pool and bite, climb together:
+/// the shell's own stat block carries neither of them.
 inline double eggSummonCombatScale(const PetalConfig& config) {
-    return config.id == "egg" || config.id == "beetle_egg" ? 1.5 : 1.0;
+    return petalIsEgg(config) ? 1.5 : 1.0;
 }
 
 /// The sacrifice: florr's "On death, summons a mob to fight again". Worn on

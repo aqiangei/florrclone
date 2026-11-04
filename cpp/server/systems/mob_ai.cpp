@@ -23,6 +23,11 @@ constexpr double kDirectionEpsilonSq = 1e-9;
 /// shadowing that residual would creep away from a motionless flower.
 constexpr double kOwnerMovingSpeed = 1.0;
 
+/// A pet orders its prey by tier first, distance second. One tier is worth
+/// more than every unit of range a pet can have, so the sum stays an exact
+/// ordering and one ascending sort key carries both rules.
+constexpr double kPetTargetTierStride = 1e6;
+
 /// How often the provocation watermarks are swept for mobs that have since
 /// died. Nothing tells this system a mob was reaped, and a per-tick scan of
 /// the whole table would cost far more than the handful of stale doubles it
@@ -1903,54 +1908,60 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
 
 Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const SpatialGrid& grid,
                                    Entity self, Vec2 from, Realm realm, MobAi& ai, bool hasOwner,
-                                   Vec2 ownerPosition, double range) {
-    // With a living owner the pet sees exactly what the owner's SCREEN shows,
-    // not what its own aggro range reaches. An ownerless pet has no screen to
-    // be clipped to and falls back to that range.
-    const auto visible = [&](Vec2 at, double gapSq) {
-        if (!hasOwner) return gapSq < range * range;
-        return std::abs(at.x - ownerPosition.x) <= kPetViewHalfWidth &&
-               std::abs(at.y - ownerPosition.y) <= kPetViewHalfHeight;
-    };
+                                   double range) {
+    // Every direction around the PET. The owner's screen is a rectangle pinned
+    // to the flower, and a summon running ahead of it sat outside the reach it
+    // was being measured by; an owned pet therefore scans as far as that screen
+    // reaches, from where it actually stands. An ownerless one has only its own
+    // range.
+    const double searchReach =
+        hasOwner ? std::max(range, std::sqrt(kPetViewHalfWidth * kPetViewHalfWidth +
+                                             kPetViewHalfHeight * kPetViewHalfHeight))
+                 : range;
+    const double reachSq = searchReach * searchReach;
 
     // Map training posts are NPCs, not MobTag entities. Keep an established
-    // training target while it remains visible and reachable.
-    if(const auto* npc=world.tryGet<Npc>(ai.target)){
-        const auto* at=world.tryGet<Transform>(ai.target);
-        if(npc->configIndex<content().mobCount()&&content().mob(npc->configIndex).id=="target_dummy"&&
-           at&&at->realm==realm&&isStanding(world,ai.target)&&visible(at->position,distanceSq(from,at->position))&&
-           !terrain.segmentBlocked(from,at->position,realm))return ai.target;
+    // training target while it remains in reach and in the pet's sight.
+    if (const auto* npc = world.tryGet<Npc>(ai.target)) {
+        const auto* at = world.tryGet<Transform>(ai.target);
+        if (npc->configIndex < content().mobCount() &&
+            content().mob(npc->configIndex).id == "target_dummy" && at && at->realm == realm &&
+            isStanding(world, ai.target) && distanceSq(from, at->position) < reachSq &&
+            !terrain.segmentBlocked(from, at->position, realm))
+            return ai.target;
     }
 
-    // Scanned every tick rather than held: the pet is there to guard its
-    // owner, so the moment something gets closer to the flower than what the
-    // pet is fighting, that is the fight. The margin is what keeps two mobs
-    // about as close from splitting its attention.
+    // Scanned every tick rather than held: a pet that keeps a mob only until a
+    // better one appears still has to see the field, and the scan is what says
+    // whether a rarer one has come into reach.
     ++stats_.targetScans;
-    // Centred on whatever the clip is stated against, and wide enough to reach
-    // the corner of it: a pet running ahead of its owner must still see
-    // everything the owner can.
-    const Vec2 centre = hasOwner ? ownerPosition : from;
-    const double reach = hasOwner
-                             ? std::sqrt(kPetViewHalfWidth * kPetViewHalfWidth +
-                                         kPetViewHalfHeight * kPetViewHalfHeight)
-                             : range;
-    grid.query(realm, centre, reach, gridScratch_);
+    grid.query(realm, from, searchReach, gridScratch_);
     candidates_.clear();
     for (const Entity candidate : gridScratch_) {
         if (candidate == self) continue;
         // Wild mobs only: pets do not fight each other, and a pet chasing its
         // owner's other summon is a squad that never reaches anything.
-        const auto* station=world.tryGet<Npc>(candidate);
-        const bool dummy=station&&station->configIndex<content().mobCount()&&content().mob(station->configIndex).id=="target_dummy";
-        if ((!world.has<MobTag>(candidate)&&!dummy) || world.has<Pet>(candidate)) continue;
+        const auto* station = world.tryGet<Npc>(candidate);
+        const bool dummy =
+            station && station->configIndex < content().mobCount() &&
+            content().mob(station->configIndex).id == "target_dummy";
+        if ((!world.has<MobTag>(candidate) && !dummy) || world.has<Pet>(candidate)) continue;
         if (!isStanding(world, candidate)) continue;
         const Transform* at = world.tryGet<Transform>(candidate);
-        if (at == nullptr) continue;
-        if (!visible(at->position, distanceSq(from, at->position))) continue;
-        // Nearest the OWNER: the mob closest to the flower is the one the pet
-        // takes on, wherever the pet itself happens to be standing.
-        double score = (at->position - centre).length();
+        if (at == nullptr || at->realm != realm) continue;
+        const double gapSq = distanceSq(from, at->position);
+        if (!(gapSq < reachSq)) continue;
+        // The highest TIER in reach is the fight; distance decides only between
+        // mobs of one tier. A Super across the clearing outranks a common at the
+        // pet's feet, and a tier is worth more than any range a pet can have,
+        // so one ascending key carries both rules.
+        int tier = 0;
+        if (const MobType* type = world.tryGet<MobType>(candidate)) {
+            tier = rarityIndex(type->rarity);
+        } else if (const Replicated* replicated = world.tryGet<Replicated>(candidate)) {
+            tier = rarityIndex(replicated->rarity);
+        }
+        double score = std::sqrt(gapSq) - tier * kPetTargetTierStride;
         if (candidate == ai.target) score -= kPetRetargetMargin;
         candidates_.push_back(Candidate{candidate, at->position, score});
     }
@@ -1958,7 +1969,7 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
     std::sort(candidates_.begin(), candidates_.end(),
               [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
     // Sight is the PET's: it goes for what it can reach, and a mob behind a
-    // wall from it falls to the next nearest the owner.
+    // wall from it falls to the next in the order.
     const std::size_t rays = std::min<std::size_t>(candidates_.size(),
                                                    static_cast<std::size_t>(kTargetLosRayCap));
     for (std::size_t i = 0; i < rays; ++i) {
@@ -2115,7 +2126,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
         ai.target = NULL_ENTITY;
         if (attacks && drive.shoots && speed > 0.0) {
             ai.target = acquirePetPrey(world, terrain, grid, self, transform.position,
-                                       transform.realm, ai, false, Vec2{0, 0}, range);
+                                       transform.realm, ai, false, range);
         }
         if (WanderTarget* wander = world.tryGet<WanderTarget>(self)) {
             desired = wanderToPoint(*wander, transform.position, speed, nowMillis);
@@ -2153,7 +2164,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
         ai.target = NULL_ENTITY;
         if (attacks && drive.shoots) {
             ai.target = acquirePetPrey(world, terrain, grid, self, transform.position,
-                                       transform.realm, ai, true, ownerPosition, range);
+                                       transform.realm, ai, true, range);
         }
         const Vec2 toPointer = pointer - transform.position;
         const double gap = toPointer.length();
@@ -2194,7 +2205,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
     if (!driven) {
         if (attacks) {
             ai.target = acquirePetPrey(world, terrain, grid, self, transform.position,
-                                       transform.realm, ai, true, ownerPosition, range);
+                                       transform.realm, ai, true, range);
             // Then it fights exactly as the wild one does: the same chase, the
             // same weave, the same standoff and volley -- and the same run
             // once a digger is down to its last tenth.

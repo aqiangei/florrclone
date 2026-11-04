@@ -659,9 +659,27 @@ struct Window::Impl {
   CursorShape cursorRequested = CursorShape::Arrow;
   // Count means "nothing has been pushed to the OS yet".
   CursorShape cursorApplied = CursorShape::Count;
+  // A hidden pointer is not a shape: it has to outlast the shape the frame
+  // asks for, on every present, so both backends keep it here and skip the
+  // shape while it is set.
+  bool cursorVisible = true;
+  bool cursorHidden = false;
 
 #ifdef __EMSCRIPTEN__
   void applyCursor() {
+    if (!cursorVisible) {
+      if (!cursorHidden) {
+        web_set_cursor(elementId.c_str(), "none");
+        cursorHidden = true;
+        // The shape has to be pushed again once the pointer comes back.
+        cursorApplied = CursorShape::Count;
+      }
+      return;
+    }
+    if (cursorHidden) {
+      cursorHidden = false;
+      cursorApplied = CursorShape::Count;
+    }
     if (cursorRequested == cursorApplied) return;
     const char* shape = "default";
     if (cursorRequested == CursorShape::Hand) shape = "pointer";
@@ -671,6 +689,19 @@ struct Window::Impl {
   }
 #else
   void applyCursor() {
+    if (!cursorVisible) {
+      if (!cursorHidden) {
+        SDL_ShowCursor(SDL_DISABLE);
+        cursorHidden = true;
+        cursorApplied = CursorShape::Count;
+      }
+      return;
+    }
+    if (cursorHidden) {
+      SDL_ShowCursor(SDL_ENABLE);
+      cursorHidden = false;
+      cursorApplied = CursorShape::Count;
+    }
     if (cursorRequested == cursorApplied) return;
     const auto slot = static_cast<std::size_t>(cursorRequested);
     if (slot >= kCursorCount) return;
@@ -1391,6 +1422,9 @@ void Window::close() {
   }
   impl_->cursorRequested = CursorShape::Arrow;
   impl_->cursorApplied = CursorShape::Count;
+  if (impl_->cursorHidden) web_set_cursor(impl_->elementId.c_str(), "default");
+  impl_->cursorVisible = true;
+  impl_->cursorHidden = false;
   impl_->pendingTouches.clear();
   impl_->touchEvents.clear();
   impl_->touches.clear();
@@ -1409,6 +1443,10 @@ void Window::close() {
   }
   impl_->cursorRequested = CursorShape::Arrow;
   impl_->cursorApplied = CursorShape::Count;
+  // A window closed while the pointer was hidden hands it back to the desktop.
+  if (impl_->cursorHidden) SDL_ShowCursor(SDL_ENABLE);
+  impl_->cursorVisible = true;
+  impl_->cursorHidden = false;
   if (impl_->window) { SDL_DestroyWindow(impl_->window); impl_->window = nullptr; SDL_Quit(); }
 #endif
   impl_->canvas.reset();
@@ -1840,13 +1878,10 @@ void Window::setClipboardText(const std::string& text) {
 }
 
 void Window::setCursorVisible(bool visible) {
-#ifdef __EMSCRIPTEN__
-  web_set_cursor(impl_->elementId.c_str(), visible ? "default" : "none");
-  // The shape cache no longer describes what is showing.
+  if (impl_->cursorVisible == visible) return;
+  impl_->cursorVisible = visible;
+  // Reached at the next present(), where every shape request is settled.
   impl_->cursorApplied = CursorShape::Count;
-#else
-  SDL_ShowCursor(visible ? SDL_ENABLE : SDL_DISABLE);
-#endif
 }
 
 void Window::setCursorShape(CursorShape shape) {
