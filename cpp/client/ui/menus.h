@@ -1335,6 +1335,7 @@ public:
 private:
     ui::Scroller scroll_;
     bool requested_ = false;
+    bool hyper_ = false;
 };
 
 /// Display switches, camera zoom and the menu keys.

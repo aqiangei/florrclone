@@ -68,6 +68,7 @@ struct CustomSkin {
     /// Unix milliseconds. Double rather than int64 because it round-trips
     /// through the JSON database the TypeScript build wrote.
     double createdAt = 0;
+    bool published = false;
 };
 
 const char* skinShapeTypeName(SkinShapeType);

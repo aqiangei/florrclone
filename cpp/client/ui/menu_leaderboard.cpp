@@ -21,7 +21,7 @@ namespace {
 
 /// The card is a fixed 500x500 pinned under the top icon row, and every metric
 /// here is measured off it rather than off the window.
-constexpr double kHeaderHeight = 50.0;   ///< chrome above the scrolling body
+constexpr double kHeaderHeight = 90.0;   ///< chrome above the scrolling body
 constexpr double kRowHeight = 40.0;
 constexpr double kColumnHeader = 30.0;
 constexpr double kScrollbarWidth = 10.0;
@@ -59,12 +59,6 @@ std::string formatXp(double xp) {
     return buffer;
 }
 
-/// Trimmed by character count, not by pixel width, as the browser's board
-/// trimmed it: twenty characters fit, and a longer name keeps seventeen.
-std::string displayName(const std::string& name) {
-    return name.size() > 20 ? name.substr(0, 17) + "..." : name;
-}
-
 /// Where a scrollbar drag started. This belongs on LeaderboardPanel beside the
 /// scroller, but menus.h is not this file's to change; there is exactly one
 /// panel instance, so one copy here is that state under another name.
@@ -86,6 +80,7 @@ double LeaderboardPanel::preferredWidth() { return 500.0; }
 void LeaderboardPanel::reset() {
     scroll_ = {};
     requested_ = false;
+    hyper_ = false;
     barDrag() = {};
 }
 
@@ -102,7 +97,13 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     }
 
     const std::vector<LeaderboardRow>& rows = ctx.net.leaderboard();
+    const auto& holdings = ctx.net.hyperBoard();
     const bool pending = ctx.net.leaderboardPending();
+    const std::size_t rowCount = hyper_ ? holdings.size() : rows.size();
+    const Rect xpTab{panel.x+12, panel.y+50, 95, 28};
+    const Rect hyperTab{panel.x+115, panel.y+50, 115, 28};
+    const Rect prevPage{panel.right()-92, panel.y+50, 32, 28};
+    const Rect nextPage{panel.right()-50, panel.y+50, 32, 28};
 
     const Rect closeRect = closeButtonRect(panel);
     const Rect refreshRect{panel.right() - 140.0, panel.y + 10.0, 80.0, 30.0};
@@ -114,9 +115,9 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
 
     // An empty board still reserves a row's worth of height, which is what
     // keeps its one line of prose from being the only thing that can scroll.
-    scroll_.contentHeight = rows.empty() && !pending
+    scroll_.contentHeight = rowCount == 0 && !pending
                                 ? kRowHeight
-                                : kColumnHeader + static_cast<double>(rows.size()) * kRowHeight;
+                                : kColumnHeader + static_cast<double>(rowCount) * kRowHeight;
     // Clamped against the viewport ui::scrollbar measures, not against the
     // clipped view, so the thumb lands on the end of its track exactly when
     // the board does; at the end of a long board that last 5px of content
@@ -140,8 +141,20 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     if (ctx.pressed()) {
         if (closeRect.contains(mouse)) {
             closing = true;
-        } else if (refreshRect.contains(mouse)) {
+        } else if (xpTab.contains(mouse) || hyperTab.contains(mouse)) {
+            hyper_ = hyperTab.contains(mouse); scroll_.offset = 0; drag.active = false;
             ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard);
+            return true; // Recompute the selected row count on the next frame.
+        } else if (hyper_ && !pending && (prevPage.contains(mouse) || nextPage.contains(mouse))) {
+            const auto offset = ctx.net.hyperHoldingsOffset();
+            if (prevPage.contains(mouse) && offset > 0)
+                ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard, offset-kHyperBoardPageSize);
+            if (nextPage.contains(mouse) && offset+kHyperBoardPageSize<ctx.net.hyperHoldingsTotal())
+                ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard, offset+kHyperBoardPageSize);
+            scroll_.offset = 0;
+        } else if (refreshRect.contains(mouse)) {
+            ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard,
+                hyper_ ? ctx.net.hyperHoldingsOffset() : 0);
         } else if (scrollable && bar.contains(mouse)) {
             drag.active = true;
             drag.anchorY = mouse.y;
@@ -182,6 +195,16 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
 
     pillButton(canvas, refreshRect, tipRefresh(), kLeaderboardSkin.border);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
+    pillButton(canvas, xpTab, "等级榜", !hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
+    pillButton(canvas, hyperTab, "超凡持有", hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
+    if (hyper_) {
+        const auto pages = std::max(1u, (ctx.net.hyperHoldingsTotal()+kHyperBoardPageSize-1)/kHyperBoardPageSize);
+        TextStyle info; info.size=12; info.strokeWidth=0;
+        text(canvas, std::to_string(ctx.net.hyperHoldingsOffset()/kHyperBoardPageSize+1)+" / "+std::to_string(pages),
+            panel.right()-155, panel.y+64, info);
+        pillButton(canvas, prevPage, "<", kLeaderboardSkin.border);
+        pillButton(canvas, nextPage, ">", kLeaderboardSkin.border);
+    }
 
     canvas.save();
     canvas.beginPath();
@@ -191,13 +214,13 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
 
     double y = view.y - scroll_.offset;
 
-    if (rows.empty()) {
+    if (rowCount == 0) {
         TextStyle empty;
         empty.size = 14.0;
         empty.align = Align::Centre;
         empty.baseline = Baseline::Top;
         empty.strokeWidth = 0.0;
-        textAtAlpha(canvas, pending ? "Loading..." : "No accounts found",
+        textAtAlpha(canvas, pending ? "加载中…" : (hyper_ ? "暂无超凡持有记录" : "暂无账号"),
                     panel.x + panel.w * 0.5, y + 20.0, empty, 0.7);
     } else {
         const double rankX = panel.x + 15.0;
@@ -209,14 +232,14 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
         header.size = 14.0;
         header.baseline = Baseline::Top;
         header.strokeWidth = 0.0;
-        textAtAlpha(canvas, "#", rankX, y + 8.0, header, 0.8);
-        textAtAlpha(canvas, "Player", nameX, y + 8.0, header, 0.8);
-        textAtAlpha(canvas, "Level", levelX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, hyper_ ? "总H" : "#", rankX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, "玩家", nameX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, hyper_ ? "花瓣" : "等级", levelX, y + 8.0, header, 0.8);
         header.align = Align::Right;
-        textAtAlpha(canvas, "XP", xpX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, hyper_ ? "数量" : "XP", xpX, y + 8.0, header, 0.8);
         y += kColumnHeader;
 
-        for (std::size_t i = 0; i < rows.size(); ++i) {
+        for (std::size_t i = 0; i < rowCount; ++i) {
             const Rect row{panel.x + 10.0, y, panel.w - 20.0, kRowHeight};
             y += kRowHeight;
             if (row.bottom() < view.y || row.y > view.bottom()) continue;
@@ -233,19 +256,23 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
             TextStyle cell;
             cell.size = 16.0;
             cell.fill = rankColor(rank);
-            text(canvas, std::to_string(rank), rankX, middle, cell);
+            text(canvas, std::to_string(hyper_ ? holdings[i].ownerTotal : rank), rankX, middle, cell);
 
             cell.size = 14.0;
-            text(canvas, displayName(rows[i].name), nameX, middle, cell);
+            const auto& name = hyper_ ? holdings[i].name : rows[i].name;
+            cell.size = std::min(14.0, 14.0 * (levelX-nameX-12) / std::max(1.0, measure(name,14.0)));
+            text(canvas, name, nameX, middle, cell);
 
             // The level travels with the row; the panel does not re-derive it
             // from XP with a curve that could drift from the server's.
             cell.fill = kPaper;
-            text(canvas, std::to_string(rows[i].level), levelX, middle, cell);
+            const auto label = hyper_ ? petalNameTr(holdings[i].petal, holdings[i].petal.c_str()) : std::to_string(rows[i].level);
+            cell.size = std::min(14.0, 14.0 * (xpX-levelX-35) / std::max(1.0, measure(label,14.0)));
+            text(canvas, label, levelX, middle, cell);
 
             cell.align = Align::Right;
             cell.size = 13.0;
-            textAtAlpha(canvas, formatXp(rows[i].totalXp), xpX, middle, cell, 0.8);
+            textAtAlpha(canvas, hyper_ ? std::to_string(holdings[i].count) : formatXp(rows[i].totalXp), xpX, middle, cell, 0.8);
         }
     }
     canvas.restore();

@@ -221,6 +221,7 @@ void writeCustomSkin(ByteWriter& w, const CustomSkin& skin) {
     w.str(skin.name);
     w.str(skin.author);
     w.f64(skin.createdAt);
+    w.boolean(skin.published);
     const std::size_t count = std::min(skin.shapes.size(), static_cast<std::size_t>(kMaxSkinShapes));
     w.u8(static_cast<std::uint8_t>(count));
     for (std::size_t i = 0; i < count; ++i) writeSkinShape(w, skin.shapes[i]);
@@ -232,6 +233,7 @@ bool readCustomSkin(ByteReader& r, CustomSkin& out) {
     skin.name = r.str();
     skin.author = r.str();
     skin.createdAt = r.f64();
+    skin.published = r.boolean();
     const std::uint8_t count = r.u8();
     skin.shapes.reserve(count);
     for (int i = 0; i < count; ++i) {
@@ -263,6 +265,7 @@ Json skinToJson(const CustomSkin& skin) {
     out["id"] = skin.id;
     out["name"] = skin.name;
     out["author"] = skin.author;
+    out["published"] = skin.published;
     Json shapes = Json::array();
     for (const SkinShape& s : skin.shapes) {
         Json j = Json::object();
@@ -304,6 +307,8 @@ CustomSkin skinFromJson(const Json& value) {
     skin.name = value["name"].asString();
     skin.author = value["author"].asString();
     skin.createdAt = value["createdAt"].asDouble(0.0);
+    // Existing skins predate privacy and were already public.
+    skin.published = value["published"].asBool(true);
 
     const Json& shapes = value["shapes"];
     if (!shapes.isArray()) return skin;

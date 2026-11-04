@@ -1549,21 +1549,37 @@ TEST(a_sandstorm_pet_pulls_ahead_of_a_running_owner_but_stays_on_its_leash) {
     CHECK(farthest < kViewportHeight * 0.5);
 }
 
-TEST(a_pet_fights_the_wild_mob_nearest_its_owner_not_itself) {
+TEST(a_pet_fights_the_nearest_wild_mob_in_any_direction) {
     CHECK(contentReady());
     Sim sim;
     const Entity owner = sim.spawnPlayer(kOrigin);
     const Entity pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{400, 0});
     sim.world.add<Pet>(pet, Pet{owner, 0});
-    // Right beside the pet, but further from the flower than the other one.
+    // Right beside the pet, and another one on the flower's side of it. The
+    // pet is the centre now, not the flower: what it can reach is what it sees.
     const Entity byPet = sim.spawnMob("rock", kOrigin + Vec2{450, 0});
     const Entity byOwner = sim.spawnMob("rock", kOrigin + Vec2{-200, 0});
-    (void)byPet;
+    (void)byOwner;
 
     sim.tick();
-    CHECK_EQ(sim.brainOf(pet).target, byOwner);
+    CHECK_EQ(sim.brainOf(pet).target, byPet);
     // And it chases it on the wild one's pursuit.
-    CHECK(sim.velocityOf(pet).x < 0.0);
+    CHECK(sim.velocityOf(pet).x > 0.0);
+}
+TEST(a_pet_prefers_the_highest_tier_mob_in_reach) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity owner = sim.spawnPlayer(kOrigin);
+    const Entity pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{100, 0});
+    sim.world.add<Pet>(pet, Pet{owner, 0});
+    // A common at the pet's feet, an epic on the same side and still inside
+    // its range: the tier is the fight, and distance only breaks its ties.
+    const Entity common = sim.spawnMob("rock", kOrigin + Vec2{150, 0});
+    const Entity epic = sim.spawnMob("ladybug", kOrigin + Vec2{300, 0}, Rarity::Epic);
+    (void)common;
+
+    sim.tick();
+    CHECK_EQ(sim.brainOf(pet).target, epic);
 }
 TEST(a_pet_holds_a_map_dummy_as_its_training_target_until_it_leaves_view){
     CHECK(contentReady());Sim sim;const auto owner=sim.spawnPlayer(kOrigin);
@@ -1579,21 +1595,21 @@ TEST(a_pet_holds_a_map_dummy_as_its_training_target_until_it_leaves_view){
     sim.world.get<Transform>(dummy).position=kOrigin+Vec2{10000,0};sim.tickIntent();CHECK(sim.brainOf(pet).target==other);
 }
 
-TEST(a_pet_switches_to_a_mob_that_comes_nearer_its_owner) {
+TEST(a_pet_switches_to_a_mob_that_comes_nearer_it) {
     CHECK(contentReady());
     Sim sim;
     const Entity owner = sim.spawnPlayer(kOrigin);
     const Entity pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{100, 0});
     sim.world.add<Pet>(pet, Pet{owner, 0});
-    const Entity first = sim.spawnMob("rock", kOrigin + Vec2{500, 0});
+    const Entity first = sim.spawnMob("rock", kOrigin + Vec2{380, 0});
     sim.tick();
     CHECK_EQ(sim.brainOf(pet).target, first);
 
     // Inside the margin it keeps its fight; well inside it, it switches.
-    const Entity close = sim.spawnMob("rock", kOrigin + Vec2{0, 500.0 - kPetRetargetMargin * 0.5});
+    const Entity close = sim.spawnMob("rock", kOrigin + Vec2{0, 250});
     sim.tick();
     CHECK_EQ(sim.brainOf(pet).target, first);
-    sim.world.get<Transform>(close).position = kOrigin + Vec2{0, 200};
+    sim.world.get<Transform>(close).position = kOrigin + Vec2{0, 100};
     sim.tick();
     CHECK_EQ(sim.brainOf(pet).target, close);
 }
@@ -3954,4 +3970,13 @@ TEST(large_egg_summons_push_large_wild_mobs_in_proportion_to_body_size) {
  sim.world.get<Body>(pet).radius=300;sim.world.get<Body>(wild).radius=300;
  MovementSystem movement;movement.runWorldPhase(sim.world,sim.terrain,sim.now,0);
  CHECK(sim.positionOf(wild).x>kOrigin.x+200+kMobSeparationMaxPushPerPair);
+}
+
+TEST(a_pet_does_not_chase_a_high_tier_past_its_return_boundary) {
+    CHECK(contentReady()); Sim sim;
+    const auto owner=sim.spawnPlayer(kOrigin);
+    const auto pet=sim.spawnMob("soldier_ant",kOrigin+Vec2{900,0});sim.world.add<Pet>(pet,Pet{owner,0});
+    const auto near=sim.spawnMob("rock",kOrigin+Vec2{850,0});
+    sim.spawnMob("ladybug",kOrigin+Vec2{1100,0},Rarity::Epic);
+    sim.tickIntent();CHECK_EQ(sim.brainOf(pet).target,near);
 }

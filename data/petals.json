@@ -7012,7 +7012,7 @@
     "size": 1,
     "cooldown": 8000,
     "price": 10,
-    "description": "超凡争夺成品：10个永恒碎片锻造，固定耗10、被夺返9；首保15小时，每次被夺减1小时，最低1小时。普通与超凡锤的实际雷击伤害已下调。",
+    "description": "超凡争夺成品：10个永恒碎片锻造，固定耗10、被夺返9；首保15小时，每次被夺减1小时，最低1小时。超凡锤接触雷击基础48、重装6秒，不连锁；限时永恒锤维持基础12。",
     "color": "#90EE90",
     "count": 1,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\" viewBox=\"0 0 64 64\"><g transform=\"rotate(-28 32 32)\"><path d=\"M28 26h8v30h-8z\" fill=\"#976435\" stroke=\"#493e34\" stroke-width=\"3\"/><path d=\"M9 10h46v23H9z\" fill=\"#a5b4c2\" stroke=\"#45576a\" stroke-width=\"4\" stroke-linejoin=\"round\"/><path d=\"M34 12l-10 12h9l-4 7 13-13h-9z\" fill=\"#b4f8ff\"/></g></svg>",

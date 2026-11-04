@@ -41,6 +41,7 @@ void ContextMenu::open(Vec2 at, std::vector<Item> items, int viewWidth, int view
         return;
     }
     open_ = true;
+    justOpened_ = true;
     at_ = at;
 
     // Flipped rather than clamped when it would overflow: a menu shoved back
@@ -53,6 +54,7 @@ void ContextMenu::open(Vec2 at, std::vector<Item> items, int viewWidth, int view
 
 void ContextMenu::close() {
     open_ = false;
+    justOpened_ = false;
     items_.clear();
 }
 
@@ -71,6 +73,8 @@ bool ContextMenu::contains(Vec2 point) const {
 
 ContextAction ContextMenu::update(Canvas& canvas, Window& window) {
     if (!open_) return ContextAction::None;
+    const bool justOpened = justOpened_;
+    justOpened_ = false;
     if (window.keyPressed(Key::Escape)) {
         close();
         return ContextAction::None;
@@ -81,7 +85,7 @@ ContextAction ContextMenu::update(Canvas& canvas, Window& window) {
     const bool inside = card.contains(mouse);
     // A press anywhere else dismisses. The frame asks `contains` first and
     // swallows that press, so it never also reaches the panel underneath.
-    if (!inside && (window.mousePressed(MouseButton::Left) ||
+    if (!justOpened && !inside && (window.mousePressed(MouseButton::Left) ||
                     window.mousePressed(MouseButton::Right))) {
         close();
         return ContextAction::None;

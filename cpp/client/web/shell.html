@@ -11,6 +11,7 @@
     <meta name="keywords" content="florr, florr.io, florr clone, flowrix, flowrix pro, flowrix.pro, florrclone cryodome, zorr, zorr.pro, gardn, io games, online game, multiplayer game, browser game, web game">
     <link rel="icon" type="image/x-icon" href="/favicon.ico?v=2">
     <style>
+        @font-face{font-family:Ubuntu;font-style:normal;font-weight:700;src:url(FLIX_BUNDLED_UBUNTU) format('truetype');font-display:swap;}
         * {
             margin: 0;
             padding: 0;
@@ -403,7 +404,8 @@
     // defined the moment appendChild returns.
     load('bundle.js', 'text/javascript')
       .then((response) => response.text())
-      .then((source) => {
+      .then(async (source) => {
+        await document.fonts.load("700 16px Ubuntu");
         const script = document.createElement('script');
         script.textContent = source;
         document.body.appendChild(script);
@@ -430,7 +432,8 @@
     if (!runtimeReady) status.hidden = false;
     const started = loadRuntime();
     if (!booting) return;
-    started.then(() => {
+    started.then(async () => {
+      await document.fonts.load("700 16px Ubuntu");
       game.callMain(gameArguments);
       mainCalled = true;
       canvas.focus();

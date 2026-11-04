@@ -28,18 +28,18 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
 }
 int total(const Counts& counts,const std::string& name){int n=0;for(const auto&[key,value]:counts)if(key.first==name)n+=value;return n;}
 }
-TEST(hyper_drop_budget_is_half_an_eternal_per_corpse_not_per_drop_row){
+TEST(hyper_drop_budget_is_035_eternal_per_corpse_not_per_drop_row){
     for(const auto id:{"ladybug","bee","beetle"}){
         const auto result=kills(id,Rarity::Apex,2000);int eternal=0;
         for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
-        CHECK(eternal>880&&eternal<1120);
+        CHECK(eternal>590&&eternal<810);
     }
 }
 TEST(hyper_drop_budget_bonus_preserves_existing_one_point_five_and_double_rates){
     for(int bonus=2;bonus<=3;++bonus){
         const auto result=kills("ladybug",Rarity::Apex,2000,false,bonus);int eternal=0;
         for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
-        CHECK_NEAR(eternal/2000.0,bonus==2?0.75:1.0,0.1);
+        CHECK_NEAR(eternal/2000.0,bonus==2?0.525:0.7,0.1);
     }
 }
 TEST(reference_pharaoh_crown_really_drops_at_unique_from_super_and_eternal_beetles){
@@ -136,7 +136,7 @@ TEST(computer_hyper_actual_kills_share_one_eternal_budget_and_standard_super_tai
     for(int bonus=1;bonus<=3;++bonus){
         int maximum=0;const auto result=kills(id,Rarity::Apex,300,false,bonus,&maximum);int eternal=0,super=0;
         for(const auto&[key,n]:result){if(key.second==8)eternal+=n;if(key.second==7)super+=n;CHECK(key.second<=8);}
-        CHECK_NEAR(eternal/300.0,bonus==1?.5:bonus==2?.75:1.,.15);
+        CHECK_NEAR(eternal/300.0,bonus==1?.35:bonus==2?.525:.7,.15);
         CHECK(super/300.0<4.0); // Previously glitch 60, glitch_flower 107 at base bonus.
         CHECK(maximum<10);
         std::printf("  COMPUTER_H %s bonus=%d meanE=%.4f meanS=%.4f maxE=%d\n",id,bonus,eternal/300.0,super/300.0,maximum);
@@ -145,4 +145,15 @@ TEST(computer_hyper_actual_kills_share_one_eternal_budget_and_standard_super_tai
 TEST(computer_hyper_soul_split_account_does_not_duplicate_eternal_entitlement){
     const auto ordinary=kills("server",Rarity::Apex,300);const auto split=kills("server",Rarity::Apex,300,false,1,nullptr,true);
     CHECK(ordinary==split);
+}
+
+TEST(all_three_ladybugs_convert_to_mana_orbs_only_for_orb_wearers){
+ for(const char* mob:{"ladybug","jungle_ladybug","desert_ladybug"}){
+  CHECK_EQ(total(kills(mob,Rarity::Apex,80,false),"mana_orb"),0);
+  const auto withOrb=kills(mob,Rarity::Apex,80,true);
+  CHECK(total(withOrb,"mana_orb")>0);
+  for(const auto& [key,n]:withOrb)if(key.first=="mana_orb")CHECK(key.second<=5);
+  // The separate H->E pool must convert too, not leak ordinary source petals.
+  CHECK_EQ(total(withOrb,std::string(mob)=="jungle_ladybug"?"dahlia":"rose"),0);
+ }
 }

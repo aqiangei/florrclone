@@ -367,6 +367,7 @@ struct ChatToken {
     std::string image;
     double imageWidth = 0;
     double imageHeight = 0;
+    std::string playerTarget;
 };
 
 /// The same run once it knows which row it is on and where along it.
@@ -380,6 +381,7 @@ struct ChatPlacedRun {
     bool blink = false;
     double width = 0;
     int code = 0;
+    std::string playerTarget;
 };
 
 /// One row of a laid-out message.
@@ -454,7 +456,7 @@ std::vector<ChatRow> layoutChatMessage(const std::vector<ChatToken>& tokens, dou
         const auto place = [&](const std::string& run, double x) {
             rows.back().runs.push_back({run, x, token.size, token.fill, token.italic,
                                         token.underline, token.blink, measure(run, token.size),
-                                        token.code});
+                                        token.code, token.playerTarget});
             if (token.pre) rows.back().pre = true;
         };
         double gap = (rows.back().runs.empty() || token.joinsPrevious)
@@ -583,7 +585,11 @@ std::vector<ChatToken> chatLineTokens(const ChatLine& line) {
             const std::size_t space = name.find(' ', at);
             const std::string part =
                 name.substr(at, space == std::string::npos ? std::string::npos : space - at);
-            if (!part.empty()) word(part, fill);
+            if (!part.empty()) {
+                word(part, fill);
+                // Only the server-provided author is actionable, never body markup.
+                if (tab >= 0 && tab != kTabAdmin) tokens.back().playerTarget = line.author;
+            }
             if (space == std::string::npos) break;
             at = space + 1;
         }
@@ -1123,6 +1129,7 @@ bool App::handleClientCommand(const std::string& message) {
 // ---------------------------------------------------------------------------
 
 void App::drawChat(Canvas& canvas, double time) {
+    chatNameHits_.clear();
     const double bottom = canvas.height();
     Rect panel{kChatX, bottom - kChatPanelUp, kChatPanelWidth,
                kChatPanelUp - kChatPanelDown};
@@ -1377,6 +1384,12 @@ void App::drawChat(Canvas& canvas, double time) {
                         // first half of every second and hidden for the
                         // second.
                         if (run.blink && std::fmod(time, 1.0) >= 0.5) continue;
+                        if (!run.playerTarget.empty()) {
+                            const double top = std::max(panel.y, rowBaseline - ascent(run.size));
+                            const double bottom = std::min(panel.bottom(), rowBaseline - descent(run.size));
+                            if (bottom > top) chatNameHits_.push_back({
+                                Rect{column.x + run.x, top, run.width, bottom - top}, run.playerTarget});
+                        }
                         chatRun(canvas, run.text, column.x + run.x, rowBaseline, run.size,
                                 run.fill, 1.0, run.italic, run.underline);
                     }

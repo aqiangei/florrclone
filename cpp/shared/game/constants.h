@@ -395,6 +395,8 @@ inline constexpr double kPetalReloadFeelScale = 0.5;
 /// How many ground copies a kill leaves, before apex/orb extras.
 /// Requested rate: 30 independent loot trials for every mob tier.
 inline constexpr int kLootFeelCopies = 30;
+/// Shared Eternal budget per H corpse and entitled account, before drop bonuses.
+inline constexpr double kHyperEternalDropBudget = 0.35;
 inline constexpr int kLootFeelSuperMultiplier = 1;
 
 // -- ring physics ------------------------------------------------------------

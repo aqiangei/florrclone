@@ -4179,13 +4179,27 @@ TEST(rubber_scales_the_knockback_its_flower_takes) {
 
 TEST(player_dice_uses_its_authored_critical_hit_and_keeps_damage_talents){
  const auto& c=testsupport::shippedContent();const auto dice=c.petalIndex("dice");
- for(const auto tier:{Rarity::Common,Rarity::Apex})for(double scale:{1.0,1.4}){
+ for(int tierIndex=0;tierIndex<kLadderRarityCount;++tierIndex)for(double scale:{1.0,1.4})for(bool dummy:{false,true}){
+  const auto tier=static_cast<Rarity>(tierIndex);
   Arena a;const auto player=a.player({5000,5000}),mob=a.mob({1000,1000},1e15);
+  if(dummy)a.world.add<NpcTag>(mob);
   PlayerModifiers mods;mods.petalDamageScale=scale;a.world.add<PlayerModifiers>(player,mods);
   const auto petal=equipPetal(a,player,dice,tier,{1000,1000});int procs=0,normal=0;
   const double base=c.petalStats(dice,tier).damage*scale;
-  for(int i=0;i<256;++i){const auto before=a.health(mob);a.step(i*1000.0,c);const double hit=before-a.health(mob);
+  auto total=[&](){const auto& shares=a.world.get<Bounty>(mob).contributors;return shares.empty()?0.0:shares[0].damage;};
+  for(int i=0;i<256;++i){const auto before=total();a.step(i*1000.0,c);const double hit=total()-before;
    if(std::abs(hit-base*35)<0.2)++procs;else {CHECK_NEAR(hit,base,.2);++normal;}}
   CHECK(procs>0&&procs<50);CHECK(normal>200);CHECK(a.world.isAlive(petal));
  }
+}
+
+TEST(training_dummy_reports_full_damage_regardless_of_health_pool){
+ for(double hp:{100.0,1000.0}){
+  Arena a;auto player=a.player({5000,5000}),dummy=a.mob({1000,1000},hp);
+  a.world.add<NpcTag>(dummy);
+  const auto hit=a.combat.applyDamage(a.world,dummy,player,5000,1000);
+  CHECK_NEAR(hit.applied,5000,1e-9);CHECK_NEAR(a.health(dummy),hp,1e-9);
+ }
+ Arena a;auto player=a.player({5000,5000}),mob=a.mob({1000,1000},100);
+ CHECK_NEAR(a.combat.applyDamage(a.world,mob,player,5000,1000).applied,100,1e-9);
 }

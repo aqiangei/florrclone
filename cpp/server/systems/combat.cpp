@@ -947,14 +947,16 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // What the health bar actually lost, which is what the caller is told and
     // what the floating number reads. The LEDGER is credited the full swing
     // instead -- see creditSwing().
-    const double applied = std::min(amount, health.current);
+    const bool invulnerable = world.has<NpcTag>(victim);
+    // Training NPCs never lose HP: their damage readout must not be capped
+    // by a decorative health pool (which differs between rarity tiers).
+    const double applied = invulnerable ? amount : std::min(amount, health.current);
     // The same loss against the whole bar, for the client's hit flash. Taken
     // now: `health` dangles past trySecondChance below.
     const double share = health.max > 0.0 ? applied / health.max : 0.0;
     // An NPC's bar never moves. The hit LANDS -- armour took its share above,
     // it flashes, it is numbered and a target dummy counts it -- and nothing
     // comes off, so nothing an NPC is hit by can kill it.
-    const bool invulnerable = world.has<NpcTag>(victim);
     if (!invulnerable) {
         health.current -= applied;
         if (applied > 0 && isDirectHit(kind) && source != victim) ++health.directHurtSerial;

@@ -999,13 +999,13 @@ private:
                   Transform& transform, Motion& motion, const Body& body, const MobType& type,
                   MobAi& ai, Entity owner, bool ownerAlive, const Drive& drive,
                   double nowMillis, double dt, CommandBuffer& commands);
-    /// The wild mob a pet is fighting: of those on the OWNER's screen and in
-    /// the pet's sight, the one nearest the owner -- the one it holds winning
-    /// ties within kPetRetargetMargin. Ownerless, the nearest to the pet
-    /// within `range`.
+    /// The wild mob a pet is fighting: every direction around the PET, out to
+    /// its own range -- or, with an owner, as far as the flower's screen
+    /// reaches -- with the highest tier in reach preferred and ties inside
+    /// kPetRetargetMargin kept by its current target.
     Entity acquirePetPrey(World& world, const Terrain& terrain, const SpatialGrid& grid,
                           Entity self, Vec2 from, Realm realm, MobAi& ai, bool hasOwner,
-                          Vec2 ownerPosition, double range);
+                          double range);
     /// Pops a sandstorm pet onto a clear, visible ring position around its
     /// owner. False when nothing was clear and the pet stayed where it was.
     bool teleportPetToOwner(const Terrain& terrain, Transform& transform, Vec2 ownerPosition);

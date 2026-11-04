@@ -87,6 +87,12 @@ async function main(){
       fs.writeFileSync(path.join(local,'account-adjustments.json'),JSON.stringify(report.accountAdjustments,null,2));
       next=adjusted;
     }
+    const grantDb=JSON.parse(fs.readFileSync(next,'utf8'));
+    report.requestedPetals=require('./grant-requested-petals.cjs').apply(grantDb);
+    const granted=path.join(local,'inventory.granted.json');
+    fs.writeFileSync(granted,JSON.stringify(grantDb));
+    fs.writeFileSync(path.join(local,'requested-petals.json'),JSON.stringify(report.requestedPetals,null,2));
+    next=granted;
     const shopManifest=path.join(__dirname,'manifests/shop-locks-20261104.json');
     if(fs.existsSync(shopManifest)){
       const restored=path.join(local,'inventory.shop-restored.json');

@@ -1,3 +1,4 @@
+#include "server/hyper_board.h"
 #include "server/shop_lock.h"
 #include "server/timed_hammers.h"
 #include "server/daily_drop_bonus.h"
@@ -4426,11 +4427,26 @@ void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) 
     for (const std::string& id : skins.keys()) {
         const CustomSkin skin = skinFromJson(skins[id]);
         if (skin.id.empty() || skin.shapes.empty()) continue;
+        bool visible = skin.published || lowerCase(skin.author) == lowerCase(session.username);
+        if (!visible) for (const auto& entry : sessions_) {
+            const auto& other = entry.second;
+            const auto* wearing = other.authenticated() ? database_.findProgress(other.userId) : nullptr;
+            if (wearing && wearing->equippedSkinId == skin.id) {
+                visible = true; break;
+            }
+        }
+        if (!visible) continue;
         writeCustomSkin(w, skin);
         ++count;
     }
     w.patchU16(at, count);
     connection.send(w);
+    const CustomSkin worn = skinFromJson(skins[record.equippedSkinId]);
+    if (!worn.id.empty() && !worn.published) {
+        ByteWriter appearance;
+        appearance.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+        writeCustomSkin(appearance, worn); broadcastToAuthenticated(appearance);
+    }
 }
 
 void GameServer::handlePublishSkin(Session& session, net::Connection& connection,
@@ -4445,7 +4461,51 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
             shapes.push_back(std::move(shape));
         }
     }
+    const bool published = reader.boolean();
+    const std::string existingId = reader.str();
     if (!reader.ok() || !session.authenticated()) return;
+    if (!existingId.empty()) {
+        Json& catalog = database_.rawTable("customSkins");
+        const Json& saved = static_cast<const Json&>(catalog)[existingId];
+        const bool owner = saved["ownerId"].isString()
+            ? saved["ownerId"].asString() == session.userId
+            : lowerCase(saved["author"].asString()) == lowerCase(session.username);
+        if (!saved.isObject() || !owner) {
+            sendSkinChat(connection, "只能发布自己保存的皮肤。"); return;
+        }
+        CustomSkin skin = skinFromJson(saved);
+        if (skin.published == published) return;
+        const SkinLook look = sampleSkinLook(skin.shapes);
+        if (published && (skinsLookAlike(look, starterLook()) || findLookAlikeSkin(look))) {
+            sendSkinChat(connection, "与已有公开皮肤或初始外观过于相似，请修改后发布。"); return;
+        }
+        catalog[existingId]["published"] = published;
+        skin.published = published;
+        if (!published) {
+            for (const std::string& userId : database_.playerIds()) {
+                const auto* record = database_.findProgress(userId);
+                if (userId != session.userId && record && record->equippedSkinId == existingId) {
+                    auto& changed = database_.progress(userId);
+                    changed.equippedSkinId.clear();
+                    changed.renderFlags = PlayerRenderNone;
+                }
+            }
+            for (auto& entry : sessions_) {
+                auto& other = entry.second;
+                if (other.userId == session.userId) continue;
+                for (Entity body : bodiesOf(other)) {
+                    auto* visuals = world_.tryGet<PlayerVisuals>(body);
+                    if (visuals && visuals->equippedSkinId == existingId) {
+                        visuals->equippedSkinId.clear(); visuals->renderFlags = PlayerRenderNone;
+                    }
+                }
+            }
+        }
+        database_.markDirty();
+        ByteWriter w; w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+        writeCustomSkin(w, skin); broadcastToAuthenticated(w);
+        sendSkinChat(connection, (published ? "已公开皮肤：" : "已撤回为私密，其他穿戴者已恢复默认：") + skin.name); return;
+    }
 
     if (isGuestName(session.username)) {
         sendSkinChat(connection, "Create a (non-guest) account to publish skins.");
@@ -4478,12 +4538,12 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
     // Last, because it is the one check that costs anything: the cheap
     // refusals above never sample a thing.
     SkinLook look = sampleSkinLook(check.shapes);
-    if (skinsLookAlike(look, starterLook())) {
+    if (published && skinsLookAlike(look, starterLook())) {
         sendSkinChat(connection, "That's the starter flower. Change it a bit more before "
                                  "publishing.");
         return;
     }
-    if (const std::optional<CustomSkin> original = findLookAlikeSkin(look)) {
+    if (const std::optional<CustomSkin> original = published ? findLookAlikeSkin(look) : std::nullopt) {
         if (lowerCase(original->author) == me) {
             sendSkinChat(connection, "That looks just like your \"" + original->name +
                                          "\". Change it a bit more, or delete that one first.");
@@ -4504,7 +4564,9 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
     skin.author = session.username;
     skin.shapes = check.shapes;
     skin.createdAt = static_cast<double>(database_.nowMillis());
+    skin.published = published;
     catalog[skin.id] = skinToJson(skin);
+    catalog[skin.id]["ownerId"] = session.userId;
     database_.markDirty();
     skinLooks_[skin.id] = CachedSkinLook{skinShapesHash(skin.shapes), std::move(look)};
 
@@ -4513,8 +4575,8 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
     writeCustomSkin(w, skin);
     // Everyone, not just the author: a skin nobody else has cannot be drawn on
     // the player wearing it.
-    broadcastToAuthenticated(w);
-    sendSkinChat(connection, "Published \"" + skin.name + "\". It's now in the Browse tab.");
+    if (published) broadcastToAuthenticated(w); else connection.send(w);
+    sendSkinChat(connection, published ? "Published \"" + skin.name + "\". It's now in the Browse tab." : "已私密保存：" + skin.name + "。仅自己可选用，可在皮肤列表主动发布。");
 }
 
 void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
@@ -4529,6 +4591,21 @@ void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
         return;
     }
 
+    if (!id.empty()) {
+        const CustomSkin skin = skinFromJson(catalog[id]);
+        const bool owner = catalog[id]["ownerId"].isString()
+            ? catalog[id]["ownerId"].asString() == session.userId
+            : lowerCase(skin.author) == lowerCase(session.username);
+        if (!skin.published && !owner) {
+            sendSkinChat(connection, "这是私人皮肤，不能使用。");
+            sendSkinCatalog(session, connection); return;
+        }
+        if (!skin.published) {
+            ByteWriter appearance;
+            appearance.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+            writeCustomSkin(appearance, skin); broadcastToAuthenticated(appearance);
+        }
+    }
     PlayerRecord& record = database_.progress(session.userId);
     record.equippedSkinId = id;
     // A custom skin replaces any built-in cosmetic so the two cannot fight
@@ -4591,6 +4668,7 @@ std::optional<CustomSkin> GameServer::findLookAlikeSkin(const SkinLook& look) {
         it = table.isObject() && table.contains(it->first) ? std::next(it) : skinLooks_.erase(it);
     }
     for (CustomSkin& skin : catalogByAge(table)) {
+        if (!skin.published) continue;
         if (skinsLookAlike(look, catalogSkinLook(skin))) return std::move(skin);
     }
     return std::nullopt;
@@ -4602,6 +4680,7 @@ void GameServer::foldLookAlikeSkins() {
     std::unordered_map<std::string, std::string> foldedInto;
     std::vector<const CustomSkin*> originals;
     for (const CustomSkin& skin : skins) {
+        if (!skin.published) continue;
         const SkinLook& look = catalogSkinLook(skin);
         const CustomSkin* original = nullptr;
         const bool starter = skinsLookAlike(look, starterLook());
@@ -4656,6 +4735,7 @@ void GameServer::foldLookAlikeSkins() {
 void GameServer::handleLeaderboard(const Session& session, net::Connection& connection,
                                    ByteReader& reader) {
     const bool includeAdmins = reader.boolean();
+    const auto requestedOffset = reader.u32();
     if (!reader.ok()) return;
     // Ranked over ACCOUNTS, not over the players currently online: the board is
     // a record of progress, and a top player who logged off has not lost it.
@@ -4712,6 +4792,16 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
         w.str(*rows[i].name);
         w.u16(static_cast<std::uint16_t>(levelFromTotalXp(rows[i].totalXp).level));
         w.f64(rows[i].totalXp);
+    }
+    const auto holdings = hyperHoldingBoard(accounts, database_.nowMillis());
+    const auto total = static_cast<std::uint32_t>(holdings.size());
+    const auto offset = total ? std::min(requestedOffset / kHyperBoardPageSize,
+        (total - 1) / kHyperBoardPageSize) * kHyperBoardPageSize : 0;
+    const auto end = std::min(total, offset + kHyperBoardPageSize);
+    w.u32(total); w.u32(offset); w.u16(static_cast<std::uint16_t>(end - offset));
+    for (auto i = offset; i < end; ++i) {
+        const auto& row = holdings[i];
+        w.str(row.name); w.str(row.petal); w.u32(row.count); w.u32(row.ownerTotal);
     }
     connection.send(w);
 }

@@ -418,6 +418,8 @@ private:
     /// older lines instead of zooming the camera behind it.
     Rect chatColumn_{};
     ui::ContextMenu contextMenu_;
+    std::vector<std::pair<Rect,std::string>> chatNameHits_;
+    std::string chatContextPlayer_;
 
     /// Text entry shared by the login fields and the chat box.
     ///

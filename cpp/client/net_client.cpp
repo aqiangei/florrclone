@@ -308,6 +308,7 @@ void NetClient::forgetAccount() {
     equippedSkinId_.clear();
     skinAdmin_ = false;
     leaderboard_.clear();
+    hyperBoard_.clear(); hyperHoldingsTotal_ = hyperHoldingsOffset_ = 0;
     leaderboardPending_ = false;
     notifications_.clear();
     notificationsPending_ = false;
@@ -589,13 +590,22 @@ void NetClient::requestSkin(std::uint32_t renderFlags) {
     send(w);
 }
 
-void NetClient::publishSkin(const std::string& name, const std::vector<SkinShape>& shapes) {
+void NetClient::publishSkin(const std::string& name, const std::vector<SkinShape>& shapes, bool published) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::PublishSkin);
     w.str(name);
     const std::size_t count = std::min(shapes.size(), static_cast<std::size_t>(kMaxSkinShapes));
     w.u8(static_cast<std::uint8_t>(count));
     for (std::size_t i = 0; i < count; ++i) writeSkinShape(w, shapes[i]);
+    w.boolean(published);
+    w.str("");
+    send(w);
+}
+
+void NetClient::publishSavedSkin(const std::string& id, bool published) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::PublishSkin);
+    w.str(""); w.u8(0); w.boolean(published); w.str(id);
     send(w);
 }
 
@@ -618,11 +628,12 @@ void NetClient::deleteSkin(const std::string& id) {
     send(w);
 }
 
-void NetClient::requestLeaderboard(bool includeAdmins) {
+void NetClient::requestLeaderboard(bool includeAdmins, std::uint32_t hyperOffset) {
     leaderboardPending_ = true;
     ByteWriter w;
     beginMessage(w, net::ClientMessage::RequestLeaderboard);
     w.boolean(includeAdmins);
+    w.u32(hyperOffset);
     send(w);
 }
 
@@ -1641,7 +1652,20 @@ void NetClient::handleLeaderboard(ByteReader& reader) {
         row.totalXp = reader.f64();
         rows.push_back(std::move(row));
     }
+    const auto hyperTotal = reader.u32(), hyperOffset = reader.u32();
+    const auto hyperCount = reader.u16();
+    if (hyperCount > kHyperBoardPageSize || hyperOffset > hyperTotal ||
+        hyperCount > hyperTotal - hyperOffset) return;
+    std::vector<HyperHoldingRow> holdings;
+    for (std::uint16_t i = 0; i < hyperCount; ++i) {
+        HyperHoldingRow row;
+        row.name = reader.str(); row.petal = reader.str();
+        row.count = reader.u32(); row.ownerTotal = reader.u32();
+        holdings.push_back(std::move(row));
+    }
     if (!reader.ok()) return;
+    hyperBoard_ = std::move(holdings);
+    hyperHoldingsTotal_ = hyperTotal; hyperHoldingsOffset_ = hyperOffset;
     leaderboard_ = std::move(rows);
     totalAccounts_ = total;
     dailyActiveUsers_ = dau;
@@ -1988,6 +2012,8 @@ void NetClient::handleSkinCatalog(ByteReader& reader) {
 void NetClient::handleSkinPublished(ByteReader& reader) {
     CustomSkin skin;
     if (!readCustomSkin(reader, skin)) return;
+    if (!skin.published && lowerCase(skin.author) != lowerCase(profile_.username) &&
+        equippedSkinId_ == skin.id) equippedSkinId_.clear();
     // Replace in place when it is already known: a republished id is an edit,
     // and appending it would leave the Browse tab showing the skin twice.
     for (CustomSkin& known : skinCatalog_) {

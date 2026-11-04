@@ -6061,7 +6061,7 @@ TEST(wiki_mechanism_dice_rolls_all_six_faces_and_keeps_equipment_counter_synchro
     bool seen[7]{};
     rig.setFlags(net::InputAttack);
     for(int roll=0;roll<256;++roll){
-        rig.tick(9);
+        rig.tick(50);
         const auto& state=rig.world.get<PetalSlotState>(rig.player).slots[0];
         CHECK(state.diceFace>=1 && state.diceFace<=6);
         CHECK_NEAR(rig.slotCounter(0),static_cast<double>(state.diceFace),1e-9);
@@ -6070,8 +6070,9 @@ TEST(wiki_mechanism_dice_rolls_all_six_faces_and_keeps_equipment_counter_synchro
     for(int face=1;face<=6;++face)CHECK(seen[face]);
     rig.setFlags(0);rig.tick();
     const double restingFace=rig.slotCounter(0);
-    rig.tick(90);
-    CHECK_NEAR(rig.slotCounter(0),restingFace,1e-9);
+    bool changed=false;
+    for(int roll=0;roll<24;++roll){rig.tick(50);changed|=rig.slotCounter(0)!=restingFace;}
+    CHECK(changed);
 }
 
 TEST(ant_and_beetle_egg_summons_gain_health_and_damage_at_every_rarity){
@@ -6101,4 +6102,17 @@ TEST(ant_and_beetle_eggs_duplicate_actual_summons_in_the_leftmost_slot){
         CHECK(rig.tickUntil([&]{return rig.petCount()==std::size_t(expected);},2500));
         rig.tick(10);CHECK_EQ(rig.petCount(),std::size_t(expected));
     }
+}
+
+TEST(every_egg_id_takes_the_same_summon_buff){
+    // This build writes only the two hand-made eggs into petals.json; every
+    // other `<mob>_egg` is a name the rule has to recognise all the same.
+    PetalConfig generated;
+    generated.id = "matriarch_egg";
+    CHECK_NEAR(eggSummonCombatScale(generated),1.5,1e-9);
+    CHECK_NEAR(eggSummonHealthScale(generated),2.0,1e-9);
+    PetalConfig ordinary;
+    ordinary.id = "basic";
+    CHECK_NEAR(eggSummonCombatScale(ordinary),1.0,1e-9);
+    CHECK_NEAR(eggSummonHealthScale(ordinary),1.0,1e-9);
 }

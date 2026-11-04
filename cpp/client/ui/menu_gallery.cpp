@@ -1,3 +1,5 @@
+#include <map>
+#include "client/ui/gallery_drop_preview.h"
 // The bestiary.
 //
 // A row per mob, a column per tier, and a cell filled in only once the account
@@ -22,6 +24,7 @@
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
+#include "shared/game/constants.h"
 #include "client/ui/text.h"
 #include "shared/core/json.h"
 #include "shared/game/config.h"
@@ -183,7 +186,9 @@ struct DropDef {
     /// kInvalidIndex for anything that is not a petal, which is exactly the
     /// set of drops the browser build has no icon for either.
     std::uint16_t petalIndex = kInvalidIndex;
-    DropRates rates;
+    DropRates rates, magicRates;
+    std::uint16_t magicPetal = kInvalidIndex, sourcePetal = kInvalidIndex;
+    int orbTier = kRarityCount;
 };
 
 /// The staged content directory.
@@ -277,6 +282,10 @@ std::vector<std::vector<DropDef>> loadDropTables() {
             def.maxQuantity = entry["maxQuantity"].asInt(1);
             def.petalIndex = content().petalIndex(def.itemType);
             if(entry.contains("rarityChances")&&!parseDropRates(entry["rarityChances"],def.rates))continue;
+            def.sourcePetal = def.petalIndex;
+            def.magicPetal = entry.contains("magicItemType")
+                ? content().petalIndex(entry["magicItemType"].asString()) : content().magicFormOf(def.petalIndex);
+            if(entry.contains("magicRarityChances") && !parseDropRates(entry["magicRarityChances"],def.magicRates))continue;
             byMob[index].push_back(std::move(def));
         }
     }
@@ -316,10 +325,24 @@ std::vector<std::vector<DropDef>> loadDropTables() {
 
 /// Parsed once, on the first tooltip. Content is immutable after load, so the
 /// resolved indices cannot go stale.
-const std::vector<DropDef>& mobDropTable(std::uint16_t mobIndex) {
-    static const std::vector<std::vector<DropDef>> tables = loadDropTables();
-    static const std::vector<DropDef> kNone;
-    return mobIndex < tables.size() ? tables[mobIndex] : kNone;
+const std::vector<DropDef>& mobDropTable(std::uint16_t mobIndex, int orbTier) {
+    static const auto ordinary = loadDropTables();
+    static std::map<int,std::vector<std::vector<DropDef>>> converted;
+    static const std::vector<DropDef> none;
+    if(mobIndex>=ordinary.size())return none;
+    if(orbTier<0 || orbTier>=kRarityCount)return ordinary[mobIndex];
+    auto found=converted.find(orbTier);
+    if(found==converted.end()){
+        auto tables=ordinary;
+        for(auto& table:tables)for(auto& row:table){
+            const auto magic=row.magicPetal;
+            if(magic==kInvalidIndex || orbTier<rarityIndex(content().petal(magic).minRarity))continue;
+            row.petalIndex=magic;row.itemType=content().petal(magic).id;row.orbTier=orbTier;
+            if(!row.magicRates.empty())row.rates=row.magicRates;
+        }
+        found=converted.emplace(orbTier,std::move(tables)).first;
+    }
+    return found->second[mobIndex];
 }
 
 /// Crafting success at a tier, as a PERCENTAGE. The shared
@@ -379,9 +402,9 @@ struct DropRow {
 /// down. Every graded outcome is then clamped up to the mob's rarity floor;
 /// chaff is not, which is what keeps it chaff.
 std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
-                                     std::array<bool, kDropTiers>& usedTiers) {
+                                     std::array<bool, kDropTiers>& usedTiers, int orbTier = kRarityCount) {
     std::vector<DropRow> rows;
-    const std::vector<DropDef>& table = mobDropTable(mobIndex);
+    const std::vector<DropDef>& table = mobDropTable(mobIndex,orbTier);
     if (table.empty()) return rows;
 
     const int tier = rarityIndex(mobRarity);
@@ -400,6 +423,7 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         int column = dropTier(rarity);
         if (column < 0) return;
         if (column < floorTier) column = floorTier;
+        if(drop.orbTier<kRarityCount)column=std::max(rarityIndex(content().petal(drop.petalIndex).minRarity),std::min(column,drop.orbTier));
         // Below the petal's lowest tier the server drops nothing at all
         // (petalComesAt), so there is no chance to quote.
         if (drop.petalIndex != kInvalidIndex &&
@@ -427,10 +451,11 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
 
     if(mobRarity==Rarity::Apex){
         std::vector<const DropDef*> pool;
-        for(const auto& drop:table)if(drop.petalIndex!=kInvalidIndex&&petalComesAt(content().petal(drop.petalIndex),Rarity::Unique)&&
-            std::none_of(pool.begin(),pool.end(),[&](const DropDef* other){return other->petalIndex==drop.petalIndex;}))pool.push_back(&drop);
+        const auto original=[](const DropDef& d){return d.sourcePetal!=kInvalidIndex?d.sourcePetal:d.petalIndex;};
+        for(const auto& drop:table)if(original(drop)!=kInvalidIndex&&petalComesAt(content().petal(original(drop)),Rarity::Unique)&&
+            std::none_of(pool.begin(),pool.end(),[&](const DropDef* other){return original(*other)==original(drop);} ))pool.push_back(&drop);
         hyperEternalCell=true;
-        for(const auto* drop:pool)push(*drop,Rarity::Unique,100.0*0.5/(30.0*pool.size()));
+        for(const auto* drop:pool)push(*drop,Rarity::Unique,100.0*kHyperEternalDropBudget/(kLootFeelCopies*pool.size()));
         hyperEternalCell=false;
     }
     // Exact reference tables are per independent trial, without the legacy
@@ -580,6 +605,26 @@ ScrollDrag& scrollDrag() {
 }
 
 } // namespace
+
+int galleryOrbTier(const Profile& profile) {
+    const auto legacy=content().petalIndex("magic_orb");
+    const auto orb=legacy!=kInvalidIndex?legacy:content().petalIndex("mana_orb");
+    int best=kRarityCount;
+    for(int i=0;i<kLoadoutActiveSlots;++i){
+        const auto item=profile.equipped(content(),i);
+        if(item.empty()||item.configIndex!=orb)continue;
+        const int tier=rarityIndex(item.rarity);
+        if(best==kRarityCount||tier>best)best=tier;
+    }
+    return best;
+}
+std::vector<GalleryDropPreview> galleryDropPreview(std::uint16_t mob,Rarity rarity,int orbTier){
+    std::array<bool,kDropTiers> used{};std::vector<GalleryDropPreview> out;
+    for(const auto& row:computeMobDrops(mob,rarity,used,orbTier))
+        for(int tier=0;tier<kDropTiers;++tier)if(row.cells[tier].drop)
+            out.push_back({row.cells[tier].drop->petalIndex,static_cast<Rarity>(tier),row.cells[tier].probability});
+    return out;
+}
 
 double GalleryPanel::preferredWidth() { return kCardWidth; }
 
@@ -829,7 +874,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
             stat(trEnZh("Each visible type is guaranteed at least once.","每个可见种类至少掉落1件。"),0.0);
             stat(std::string(trEnZh("Normal rarity rolls; independent trials: ","稀有度正常判定；基础独立掉落次数："))+std::to_string(baseLootTrialsForRarity(cell.rarity)),0.0);
         }
-        const std::vector<DropRow> rows = config.id=="garbage" ? std::vector<DropRow>{} : computeMobDrops(cell.mobIndex, cell.rarity, usedTiers);
+        const std::vector<DropRow> rows = config.id=="garbage" ? std::vector<DropRow>{} : computeMobDrops(cell.mobIndex, cell.rarity, usedTiers, galleryOrbTier(ctx.net.profile()));
         std::vector<int> columns;
         for (int i = 0; i < kDropTiers; ++i) {
             if (usedTiers[static_cast<std::size_t>(i)]) columns.push_back(i);

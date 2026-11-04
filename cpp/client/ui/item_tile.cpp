@@ -416,6 +416,15 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     // and the observer all declare zero and are drawn as a single icon.
     const int drawCount = count >= 1 ? count : 1;
     ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
+    const int authoredCount = std::max(1, content().petalStats(petalIndex, rarity).count);
+    if (drawCount > authoredCount) {
+        // Preserve the authored gap between neighbours as copies are added;
+        // the fit below then scales the whole arrangement into the same slot.
+        if (authoredCount > 1)
+            shape.ring *= std::sin(kPi / authoredCount) / std::sin(kPi / drawCount);
+        else
+            shape.ring = std::max(shape.ring, shape.diameter * .55);
+    }
 
     // gardn's own clamp is the `shrink` inside the shape; `maxDiameter` is a
     // caller's backstop on top of it, and a petal gardn measures is already
@@ -574,9 +583,11 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
     if (filled) {
         const PetalStats stats = content().petalStats(tile.petalIndex, tile.rarity);
         const PetalConfig& config = content().petal(tile.petalIndex);
-        // The equipment picture identifies the petal, using its authored
-        // arrangement. Duplicator changes live bodies, not this illustration.
-        const int copies = stats.count;
+        // Keep the petal's own cluster layout, but show the equipped quantity.
+        const int copies = tile.loadoutSlot >= 0
+            ? petalCopies(stats.count, viewerSkills, tile.loadoutSlot,
+                          rarityIndex(tile.rarity), config.stackable)
+            : stats.count;
         canvas.save();
         canvas.translate(0.0f, static_cast<float>(-kItemTileIconRise));
         canvas.rotate(static_cast<float>(tile.iconAngle));
@@ -599,7 +610,14 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         if (tile.flash.a != 0) canvas.setColorTint(tile.flash);
         const double iconCap = kFaceSide / kItemTileIconScale;
         if(tile.diceFace>=1&&tile.diceFace<=6){
-            drawDiceIcon(canvas,tile.diceFace,tile.timeSeconds,iconCap*.72);
+            const int diceCount = std::max(1, copies);
+            for(int i=0;i<diceCount;++i){
+                canvas.save();
+                if(diceCount>1){const double angle=kTau*i/diceCount;
+                    canvas.translate(std::cos(angle)*iconCap*.22,std::sin(angle)*iconCap*.22);}
+                drawDiceIcon(canvas,tile.diceFace,tile.timeSeconds,iconCap*(diceCount>1?.42:.72));
+                canvas.restore();
+            }
         }else drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,
                          0.0, 0.0, iconCap, tile.timeSeconds, facesInward);
         canvas.setColorTint(outerTint);

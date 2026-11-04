@@ -154,7 +154,7 @@ TEST(a_published_skin_is_worn_on_the_wearers_body_for_everyone) {
     body.t = SkinShapeType::Circle;
     body.r = 20;
     body.fill = "#e011cc";
-    author.publishSkin("mine", {body});
+    author.publishSkin("mine", {body}, true);
     // The catalog is broadcast, so the WATCHER learns the skin too -- which is
     // what lets it draw a wearer it has never authored anything for.
     CHECK(h.stepUntil({&author, &watcher}, [&] {
@@ -194,7 +194,7 @@ TEST(a_worn_skin_survives_a_respawn) {
     body.t = SkinShapeType::Circle;
     body.r = 20;
     body.fill = "#e011cc";
-    client.publishSkin("mine", {body});
+    client.publishSkin("mine", {body}, true);
     CHECK(h.stepUntil({&client}, [&] { return !client.skinCatalog().empty(); }));
     const std::string id = client.skinCatalog().front().id;
     client.equipSkin(id);

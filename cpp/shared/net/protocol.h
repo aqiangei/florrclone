@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 88;
+inline constexpr std::uint16_t kProtocolVersion = 89;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -92,11 +92,11 @@ enum class ClientMessage : std::uint8_t {
                         ///< full-price catalogue purchase; it is a claim about
                         ///< the card, never about the price.
     SetSkin,            ///< u32 renderFlags
-    RequestLeaderboard, ///< bool includeAdmins -- the TypeScript client's
+    RequestLeaderboard, ///< bool includeAdmins, u32 hyperOffset -- the TypeScript client's
                         ///< `?includeAdmins=true`, and sent as that was, from
                         ///< the "Show Admins on Leaderboard" switch, for anyone.
     RedeemCode,         ///< str code -- a star code, checked server-side
-    PublishSkin,        ///< str name, u8 shapeCount, { SkinShape }*  (skin_format.h)
+    PublishSkin,        ///< str name, u8 shapeCount, { SkinShape }*, bool published, str existingId
     EquipSkin,          ///< str skinId -- empty takes the current skin off
     DeleteSkin,         ///< str skinId -- own skin, or anyone's for an admin
     RequestNotifications, ///< u16 limit, f64 beforeMillis (0 asks for the newest
@@ -272,7 +272,9 @@ enum class ServerMessage : std::uint8_t {
                         ///< back, which is what the ring's surviving slots
                         ///< are drawn from.
     Leaderboard,        ///< u8 count, u32 totalAccounts, u32 dailyActiveUsers,
-                        ///< { str name, u16 level, f64 totalXp }*.
+                        ///< { str name, u16 level, f64 totalXp }*, then u32 hyperTotal,
+                        ///< u32 hyperOffset, u16 hyperCount,
+                        ///< { str name, str petal, u32 count, u32 ownerTotal }*.
                         ///< `dailyActiveUsers` is 0 for a non-admin, where the
                         ///< TypeScript server's payload left the field out.
     Pong,               ///< u64 clientTimeMillis, u64 serverTimeMillis

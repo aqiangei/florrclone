@@ -1116,9 +1116,10 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         if(config.id=="dice"){
             const auto* input=world.tryGet<PlayerInput>(player);
             const bool attacking=input&&input->current.attacking()&&!live.empty();
-            if(slotState.diceFace==0 || (attacking&&(!slotState.diceAttacking||nowMillis>=slotState.nextDiceRollMillis))){
+            // The equipped die rolls even at rest, matching its 1.6s icon cycle.
+            if(slotState.diceFace==0 || nowMillis>=slotState.nextDiceRollMillis){
                 slotState.diceFace=1+static_cast<int>(rng_.below(6));
-                slotState.nextDiceRollMillis=nowMillis+250;
+                slotState.nextDiceRollMillis=nowMillis+1600;
             }
             slotState.diceAttacking=attacking;
             slotState.counter=slotState.diceFace;

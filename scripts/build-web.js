@@ -275,7 +275,14 @@ for (const name of selected) {
             );
         }
         const dest = path.join(DIST, to);
-        fs.copyFileSync(src, dest);
+        if (to === 'index.html') {
+            // Ship the reference font locally: external Google Fonts is unreliable
+            // for players, and measuring Ubuntu while drawing a fallback wraps badly.
+            const font = fs.readFileSync(path.join(BUILD_DIR, 'data', 'Ubuntu-Bold.ttf')).toString('base64');
+            const html = fs.readFileSync(src, 'utf8');
+            if (!html.includes('FLIX_BUNDLED_UBUNTU')) fail('Missing bundled-font marker');
+            fs.writeFileSync(dest, html.replace('FLIX_BUNDLED_UBUNTU', `data:font/ttf;base64,${font}`));
+        } else fs.copyFileSync(src, dest);
         copied.push([to, fs.statSync(dest).size]);
     }
     for (const [src, to] of TARGETS[name].sidecars) {

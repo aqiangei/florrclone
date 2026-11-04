@@ -19737,6 +19737,7 @@
       {
         "type": "petal",
         "itemType": "dahlia",
+        "magicItemType": "mana_orb",
         "rarity": "common",
         "probability": 1,
         "minQuantity": 1,

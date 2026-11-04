@@ -902,6 +902,21 @@ Vec2 SpriteCache::petalOrigin(std::uint16_t index) const {
             -(doc.viewBoxY() + doc.viewBoxHeight() * 0.5) / side};
 }
 
+void SpriteCache::drawDustGrain(Canvas& canvas, double diameter) {
+    canvas.save();
+    const float r = static_cast<float>(diameter * .18);
+    canvas.setFillStyle("#777b78");
+    canvas.beginPath();
+    canvas.moveTo(-r, -.15f*r);
+    canvas.bezierCurveTo(-r, -.8f*r, -.3f*r, -r, .15f*r, -.8f*r);
+    canvas.bezierCurveTo(.75f*r, -r, r, -.35f*r, .8f*r, .15f*r);
+    canvas.bezierCurveTo(r, .75f*r, .3f*r, r, -.1f*r, .7f*r);
+    canvas.bezierCurveTo(-.75f*r, r, -r, .4f*r, -r, -.15f*r);
+    canvas.closePath();
+    canvas.fill();
+    canvas.restore();
+}
+
 void SpriteCache::drawPetal(Canvas& canvas, std::uint16_t index, Rarity rarity, double x,
                             double y, double diameter, double rotation,
                             double timeSeconds) const {

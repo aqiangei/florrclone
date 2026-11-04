@@ -104,6 +104,8 @@ public:
     /// cutter -- passes Common.
     void drawPetal(Canvas&, std::uint16_t index, Rarity rarity, double x, double y,
                    double diameter, double rotation, double timeSeconds) const;
+    /// A small soft dust grain in the world; inventory artwork is unchanged.
+    static void drawDustGrain(Canvas&, double diameter);
 
     /// True when the sprite compiled; false when the fallback disc is used.
     bool mobDrawable(std::uint16_t index) const;

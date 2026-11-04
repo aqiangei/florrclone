@@ -714,12 +714,13 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 const int tier=visibleGarbage?kRarityCount:wornOrbTier(world,content,baseEligible[i],magicOrb);
                 eligibleOrbs_.push_back(tier);anyOrb=anyOrb||tier!=kRarityCount;
             }
-            // One shared budget for the entire corpse, not 0.5 per drop row.
-            // 30 independent trials at 1/60 yield 0.5 Eternal per entitled player.
-            if(hyperKill&&!hyperEternalPool.empty()&&rng.chance(0.5/baseTrials)){
+            // One shared budget for the entire corpse, never a budget per drop row.
+            if(hyperKill&&!hyperEternalPool.empty()&&rng.chance(kHyperEternalDropBudget/baseTrials)){
                 const auto petal=hyperEternalPool[std::min(hyperEternalPool.size()-1,static_cast<std::size_t>(rng.unit()*hyperEternalPool.size()))];
                 hyperEternalRoll=true;
-                const auto magic=visibleGarbage?kInvalidIndex:content.magicFormOf(petal);
+                auto magic=visibleGarbage?kInvalidIndex:content.magicFormOf(petal);
+                if(!visibleGarbage)for(const auto& entry:table)
+                    if(entry.petalIndex==petal && entry.magicPetal!=kNoPetal){magic=entry.magicPetal;break;}
                 for(std::size_t i=0;i<eligible_.size();++i){
                     const int tier=eligibleOrbs_[i];
                     const bool convert=magic!=kInvalidIndex&&tier!=kRarityCount&&tier>=rarityIndex(content.petal(magic).minRarity);

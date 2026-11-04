@@ -303,7 +303,7 @@ std::string serializeShape(const Shape& s) {
 
 enum class Act : std::uint8_t {
     None, Close, Tab, AddShape, SelectShape, MoveShape, DelShape, Step, Fill, Stroke,
-    AddVertex, DelVertex, TextMode, Publish, Reset, Equip, Unequip, Delete,
+    AddVertex, DelVertex, TextMode, Publish, PublishSaved, Reset, Equip, Unequip, Delete,
     ConfirmDelete, CancelDelete,
 };
 
@@ -1001,12 +1001,12 @@ void Studio::drawFooter(Canvas& canvas, double timeSeconds) {
                  tr(Msg::SkinReset), reset, kNeutralFill);
     Action publish;
     publish.k = Act::Publish;
-    actionButton(canvas, {r.right() - kPublishW, r.y, kPublishW, r.h}, tr(Msg::SkinPublish),
+    actionButton(canvas, {r.right() - kPublishW, r.y, kPublishW, r.h}, "私密保存",
                  publish, kAccent);
 }
 
 void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
-    ui::text(canvas, tr(Msg::SkinBrowseHint), layout.body.x, layout.tabs.bottom() + 16.0,
+    ui::text(canvas, "公共皮肤与我的私密皮肤；私密保存后可主动发布。", layout.body.x, layout.tabs.bottom() + 16.0,
              label(kBodySize));
 
     const Rect view = browseBody(layout);
@@ -1022,13 +1022,15 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
     // bottom edge, so the buttons painted on top of the artwork.
     constexpr int cols = 4;
     constexpr double kGap = 10.0;
-    constexpr double kCardH = 180.0;
+    constexpr double kCardH = 208.0;
     const double cardW = (view.w - (cols - 1) * kGap - kScrollbarWidth - 4.0) / cols;
     const double preview = cardW - 30.0;
 
     std::vector<const CustomSkin*> sorted;
     sorted.reserve(skins.size());
-    for (const CustomSkin& skin : skins) sorted.push_back(&skin);
+    for (const CustomSkin& skin : skins) {
+        if (skin.published || lowerCase(skin.author) == me) sorted.push_back(&skin);
+    }
     std::stable_sort(sorted.begin(), sorted.end(),
                      [](const CustomSkin* a, const CustomSkin* b) {
                          return a->createdAt > b->createdAt;
@@ -1072,6 +1074,11 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
                  label(kCaptionSize, Align::Centre));
 
         const bool canDelete = isAdmin() || lowerCase(skin.author) == me;
+        if (lowerCase(skin.author) == me) {
+            Action publish; publish.k = Act::PublishSaved; publish.id = skin.id; publish.i = skin.published ? 0 : 1;
+            actionButton(canvas, {card.x + 8, card.bottom() - 60, cardW - 16, 24},
+                         skin.published ? "公开 · 撤回为私密" : "私密 · 发布到公共", publish, kAccent, kCaptionSize);
+        }
 
         // A takedown is a glyph beside the Equip button, not a second labelled
         // one: at this card width two labelled buttons side by side left
@@ -1491,6 +1498,9 @@ bool Studio::dispatch(MenuContext& ctx, const Action& a) {
             ctx.net.publishSkin(skinName, shapes);
             break;
         }
+        case Act::PublishSaved:
+            ctx.net.publishSavedSkin(a.id, a.i != 0);
+            break;
         case Act::Reset:
             shapes = starterSkinShapes();
             selected = 0;

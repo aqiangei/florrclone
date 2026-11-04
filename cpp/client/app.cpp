@@ -493,6 +493,7 @@ void App::markPhaseOps(OpPhase phase) {
 }
 
 void App::frame(double dt) {
+    chatNameHits_.clear();
     // Every ease this frame steps by the smoothed frame period, not by `dt`:
     // see client/ease.h. Advanced first so nothing eases on last frame's.
     const double easeStep = framePeriod().advance(dt);
@@ -929,6 +930,9 @@ void App::frame(double dt) {
     // After every field has been hit-tested, which is the only point at which
     // the set is complete.
     publishKeyboardRegions();
+    window_.setCursorVisible(!(screen_ == Screen::Playing && !chatOpen_ &&
+                               !contextMenu_.isOpen() && !menus_.anyOpen() &&
+                               !tutorial_.visible() && !menus_.settings().useMouseControls));
     window_.present();
 
     // One heartbeat a second while the socket is up, as the reference's own
@@ -1078,7 +1082,9 @@ void App::updateTextSelection(Canvas& canvas) {
     if (window_.mousePressed(MouseButton::Right) && !contextMenu_.isOpen()) {
         // Only over something this client owns. Over the world the right
         // button is the defend control, and a card there would eat it.
-        const bool overOwnUi = overField || menus_.capturesMouse(mouse) ||
+        const bool overPlayerName = std::any_of(chatNameHits_.begin(), chatNameHits_.end(),
+            [&](const auto& hit) { return hit.first.contains(mouse); });
+        const bool overOwnUi = overPlayerName || overField || menus_.capturesMouse(mouse) ||
                                selectable.overText(mouse) ||
                                (chatOpen_ && chatBox_.contains(mouse));
         if (overOwnUi) {
@@ -1088,6 +1094,15 @@ void App::updateTextSelection(Canvas& canvas) {
                                  selectable.hasSelection();
 
             std::vector<ui::ContextMenu::Item> items;
+            chatContextPlayer_.clear();
+            for (const auto& hit : chatNameHits_) {
+                if (hit.first.contains(mouse)) { chatContextPlayer_ = hit.second; break; }
+            }
+            if (!chatContextPlayer_.empty()) {
+                items.push_back({ui::ContextAction::InvitePlayer,"邀请组队",chatContextPlayer_!=net_.profile().username});
+                items.push_back({ui::ContextAction::WhisperPlayer,"私聊",chatContextPlayer_!=net_.profile().username});
+                items.push_back({ui::ContextAction::CopyPlayer,"复制玩家名",true});
+            }
             if (editable) {
                 items.push_back({ui::ContextAction::Cut, "Cut",
                                  fieldHasSelection && field.options.copyable});
@@ -1103,6 +1118,20 @@ void App::updateTextSelection(Canvas& canvas) {
     }
 
     switch (contextMenu_.update(canvas, window_)) {
+        case ui::ContextAction::InvitePlayer:
+            if (!chatContextPlayer_.empty()) net_.sendChat("/squad-invite " + chatContextPlayer_);
+            break;
+        case ui::ContextAction::WhisperPlayer:
+            if (!chatContextPlayer_.empty()) {
+                chatDraft_ = "/w " + chatContextPlayer_ + " ";
+                chatOpen_ = true;
+                chatSuggestion_ = -1;
+                chatField_.focusAtEnd(chatDraft_, timeSeconds_);
+            }
+            break;
+        case ui::ContextAction::CopyPlayer:
+            window_.setClipboardText(chatContextPlayer_);
+            break;
         case ui::ContextAction::Copy: {
             const std::string text =
                 field.valid() && !field.state->selection.empty() && field.options.copyable

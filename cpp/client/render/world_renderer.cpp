@@ -2829,7 +2829,9 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         canvas.translate(static_cast<float>(config->visualOffsetX * zoom),
                          static_cast<float>(config->visualOffsetY * zoom));
     }
-    if (sprites_) {
+    if (config && config->id == "dust") {
+        SpriteCache::drawDustGrain(canvas, diameter);
+    } else if (sprites_) {
         // The sprite cache falls back to a disc in the petal's own colour when
         // its artwork failed to compile, which is the useful fallback here.
         sprites_->drawPetal(canvas, entity.typeIndex, entity.rarity, 0, 0, diameter, 0,

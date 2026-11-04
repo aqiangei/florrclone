@@ -34,11 +34,13 @@ TEST(ant_and_beetle_tooltips_match_the_buffed_summon_stats){
     }
 }
 
-TEST(eternal_and_hyper_hammer_lightning_base_is_twelve){
+TEST(temporary_hammer_stays_twelve_and_contested_hammer_recovers_output){
     std::string error;CHECK(loadContent(testsupport::dataDir(),error));
     for(const auto* id:{"mjolnir","timed_mjolnir"})for(const auto rarity:{Rarity::Unique,Rarity::Apex}){
         const auto stats=content().petalStats(content().petalIndex(id),rarity);
-        CHECK_NEAR(stats.lightningDamagePerHit,12*petalStrengthScale(rarity),1e-6);
+        const bool contested = std::string(id)=="mjolnir" && rarity==Rarity::Apex;
+        CHECK_NEAR(stats.lightningDamagePerHit,(contested?48:12)*petalStrengthScale(rarity),1e-6);
+        CHECK_NEAR(stats.reloadMillis,contested?6000:8000,1e-6);
     }
 }
 

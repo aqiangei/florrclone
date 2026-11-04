@@ -20,7 +20,7 @@ namespace flix::ui {
 
 /// What a row does. The app maps these onto whatever holds the caret or the
 /// selection, so the menu itself knows nothing about fields or panels.
-enum class ContextAction : std::uint8_t { None, Cut, Copy, Paste, SelectAll };
+enum class ContextAction : std::uint8_t { None, Cut, Copy, Paste, SelectAll, InvitePlayer, WhisperPlayer, CopyPlayer };
 
 class ContextMenu {
 public:
@@ -48,6 +48,7 @@ private:
     Rect bounds() const;
 
     bool open_ = false;
+    bool justOpened_ = false;
     Vec2 at_{};
     std::vector<Item> items_;
 };

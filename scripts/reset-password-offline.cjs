@@ -7,6 +7,7 @@ const entries=Object.entries(db.users||{}).filter(([,u])=>u.username===request.u
 assert.equal(entries.length,1,'Exact account not found');
 assert(typeof request.password==='string'&&request.password.length>0,'Password required');
 const [key,user]=entries[0],salt=crypto.randomBytes(16).toString('hex');
+if(request.userId)assert.equal(user.id,request.userId,'Account identity changed');
 user.password=crypto.scryptSync(request.password,salt,64).toString('hex');
 user.salt=salt;user.isPlainText=false;user.passwordChosen=true;delete user.passwordHash;
 let revoked=0;

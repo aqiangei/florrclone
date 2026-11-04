@@ -2185,6 +2185,12 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
                     1.0 + (eternal.modifiers.*field - 1.0) * 1.5);
         }
     }
+    // The contested H hammer is a sustained-output reward, independent of the
+    // temporary E hammer. Restore bite and recovery without restoring old chains.
+    if (graded == Rarity::Apex && c.id == "mjolnir") {
+        s.lightningDamagePerHit = 48.0 * strength;
+        s.reloadMillis = 6000.0;
+    }
     // Admin starts with universal combat strength and apex utility, then
     // boosts the useful effects. Apply AFTER all named-petal overrides so
     // special petals receive the same treatment as ordinary ones.

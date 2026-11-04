@@ -24,14 +24,15 @@ TEST(equipped_dice_is_a_projected_cube_that_turns_over_time){
 }
 
 #include "shared/game/skills.h"
-TEST(duplicator_keeps_each_equipment_icon_authored_layout) {
+TEST(duplicator_shows_extra_equipped_particles_using_each_petals_layout) {
  std::string error;CHECK(loadContent("/data",error));SpriteCache sprites;CHECK(sprites.build(content()));
- for(const char* id:{"orange","peas","dust","stinger","light","dahlia"}){
+ for(const char* id:{"orange","peas","dust","stinger","light","dahlia","dice","rock"}){
   auto frame=[&](const SkillSet* skills){ui::setViewerSkills(skills);Canvas c=Canvas::createVirtual(120,120);
    ui::ItemTile tile;tile.petalIndex=content().petalIndex(id);tile.rarity=Rarity::Super;tile.loadoutSlot=0;tile.showName=false;
+   if(std::string(id)=="dice")tile.diceFace=6;
    ui::drawItemTile(c,sprites,{10,10,100,100},tile);return c.getImageData(0,0,120,120);};
   SkillSet skills;skills.set(SkillId::Loadout,4);skills.set(SkillId::Duplicator,3);
-  CHECK_EQ(testsupport::differingPixels(frame(nullptr),frame(&skills)),0);
+  CHECK(testsupport::differingPixels(frame(nullptr),frame(&skills))>10);
  }
  ui::setViewerSkills(nullptr);
 }
@@ -42,4 +43,13 @@ TEST(dust_source_art_contains_one_particle_for_one_simulated_body) {
  for(int i=0;i<10000;++i){if(px[i*4+3]<128)continue;++groups;px[i*4+3]=0;pending.push_back(i);
  while(!pending.empty()){int n=pending.back();pending.pop_back();for(int next:{n-1,n+1,n-100,n+100})if(next>=0&&next<10000&&std::abs(next%100-n%100)<=1&&px[next*4+3]>=128){px[next*4+3]=0;pending.push_back(next);}}}
  CHECK_EQ(groups,1);CHECK_EQ(content().petalStats(content().petalIndex("dust"),Rarity::Common).count,3);
+}
+TEST(world_dust_is_small_and_does_not_change_inventory_art) {
+ std::string error;CHECK(loadContent("/data",error));SpriteCache sprites;CHECK(sprites.build(content()));
+ Canvas world=Canvas::createVirtual(100,100),icon=Canvas::createVirtual(100,100);
+ world.save();world.translate(50,50);SpriteCache::drawDustGrain(world,60);world.restore();
+ sprites.drawPetal(icon,content().petalIndex("dust"),Rarity::Common,50,50,60,0,0);
+ const auto wp=world.getImageData(0,0,100,100),ip=icon.getImageData(0,0,100,100);
+ int w=0,i=0;for(std::size_t n=3;n<wp.size();n+=4){w+=wp[n]>128;i+=ip[n]>128;}
+ CHECK(w>100);CHECK(w<i/4);
 }

@@ -1,3 +1,4 @@
+#include "shared/game/hyper_board.h"
 #pragma once
 // The client's connection to a server.
 //
@@ -709,7 +710,8 @@ public:
     /// Offers an authored skin to the shared catalog. The server re-sanitizes
     /// and assigns the id, so nothing here is authoritative -- the studio runs
     /// the same check first only so a rejection is instant.
-    void publishSkin(const std::string& name, const std::vector<SkinShape>& shapes);
+    void publishSkin(const std::string& name, const std::vector<SkinShape>& shapes, bool published = false);
+    void publishSavedSkin(const std::string& id, bool published = true);
     /// Wears a published skin, or takes the current one off when `id` is empty.
     /// The local field moves immediately: the reference equips optimistically
     /// and the server's answer is the persistence, not the confirmation.
@@ -717,7 +719,7 @@ public:
     void deleteSkin(const std::string& id);
     /// `includeAdmins` is the "Show Admins on Leaderboard" switch: without it
     /// the server leaves admin accounts off the board.
-    void requestLeaderboard(bool includeAdmins = false);
+    void requestLeaderboard(bool includeAdmins = false, std::uint32_t hyperOffset = 0);
     /// Asks for one page of the global notification feed, newest first.
     /// `beforeMillis` of 0 asks for the newest page; anything else pages back
     /// past the oldest entry already held, as the browser's `?before=` does.
@@ -931,6 +933,9 @@ public:
 
     const std::vector<LeaderboardRow>& leaderboard() const { return leaderboard_; }
     /// True between asking for the board and the answer arriving.
+    const std::vector<HyperHoldingRow>& hyperBoard() const { return hyperBoard_; }
+    std::uint32_t hyperHoldingsTotal() const { return hyperHoldingsTotal_; }
+    std::uint32_t hyperHoldingsOffset() const { return hyperHoldingsOffset_; }
     bool leaderboardPending() const { return leaderboardPending_; }
     /// How many accounts the server holds, and how many of them authenticated
     /// in the last day. The second is 0 for a non-admin, which is how the
@@ -1188,6 +1193,8 @@ private:
     bool skinAdmin_ = false;
 
     std::vector<LeaderboardRow> leaderboard_;
+    std::vector<HyperHoldingRow> hyperBoard_;
+    std::uint32_t hyperHoldingsTotal_ = 0, hyperHoldingsOffset_ = 0;
     bool leaderboardPending_ = false;
     std::uint32_t totalAccounts_ = 0;
     std::uint32_t dailyActiveUsers_ = 0;

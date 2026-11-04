@@ -243,13 +243,14 @@ bool registerAs(Harness& h, NetClient& client, const char* name) {
 /// Publishes and steps until the server has answered in the Skins channel.
 bool publish(Harness& h, NetClient& client, const char* name, const std::vector<SkinShape>& shapes) {
     const std::size_t before = client.chat().size();
-    client.publishSkin(name, shapes);
+    client.publishSkin(name, shapes, true);
     return h.stepUntil({&client}, [&] { return client.chat().size() > before; });
 }
 
 CustomSkin storedSkin(const char* id, const char* name, const char* author, double createdAt,
                       std::vector<SkinShape> shapes) {
     CustomSkin skin;
+    skin.published = true;
     skin.id = id;
     skin.name = name;
     skin.author = author;
