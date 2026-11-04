@@ -3350,3 +3350,20 @@ TEST(hyper_operator_temporary_grant_keeps_five_materials_and_the_other_protected
     CHECK_EQ(saved["players"][owner]["inventory"]["apex"]["petal_mjolnir"].asInt(),1);
     ui::setLanguage(oldLanguage);removeDataDir(dir);
 }
+
+TEST(shop_lock_snapshot_keeps_stock_and_discount_but_requotes_current_prices) {
+    CHECK(ensureShippedContent());
+    PlayerRecord record;const auto rotation=shopRotation(shopClockNow());
+    record.extra["lockedShopRotation"]=static_cast<double>(rotation);
+    captureShopLock(record,rotation);
+    const auto captured=lockedShopOffers(record);CHECK(!captured.empty());
+    const Json persisted=record.extra;
+    record.extra["lockedShopOffers"][0]["price"]=1; // stale price is never authoritative
+    const auto quoted=lockedShopOffers(record);
+    CHECK_EQ(quoted.front().petalIndex,captured.front().petalIndex);
+    CHECK(quoted.front().rarity==captured.front().rarity);
+    CHECK_EQ(quoted.front().discountPercent,captured.front().discountPercent);
+    CHECK_NEAR(quoted.front().price,captured.front().price,1e-9);
+    record.extra=persisted;record.extra["lockedShopRotation"]=-1;
+    CHECK(lockedShopOffers(record).empty());
+}

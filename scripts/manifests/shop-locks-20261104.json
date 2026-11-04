@@ -1,0 +1,966 @@
+{
+  "schemaVersion": 1,
+  "id": "restore-original-shop-locks-20261104",
+  "sourceCommit": "a2873261d3b91c5c9068eb03d3cbe15ee7ba21e3",
+  "sourceSha256": {
+    "cpp/shared/game/shop.h": "d9ee432746612d9c475110b0c7a946480e5378e41fdd410325fde7e78d5c69f3",
+    "cpp/shared/core/types.h": "c246361ee7399ba6a26d307806e2cff74250784358f02abe94c1d140ad111637",
+    "data/mobs.json": "0429154c10e33e825e96f565b1774b9b0aa1c8771ca4a2c6bce83f4043061440",
+    "data/petals.json": "5b955cfd8e42ca5f0f1e8e37eb50950286d941d9e55f67010a6aba89fa4d08a4",
+    "data/mob_drops.json": "d8e4527ea9688ccc9324fdd36e88d202a20434a4b384e1f966c67aa4d580f1eb"
+  },
+  "accounts": [
+    {
+      "userId": "61c8aac2-d296-45f5-90cc-1c65a3b2c7e6",
+      "rotation": 83041,
+      "offers": [
+        {
+          "petalType": "rubber",
+          "rarity": "rare",
+          "discountPercent": 20
+        },
+        {
+          "petalType": "magic_stick",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "observer",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "javascript",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "faster",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "triangle",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "bubble",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "bur",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mecha_missile",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "disc",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "be0772a0-e29b-4194-b530-2fda713f19b7",
+      "rotation": 498253,
+      "offers": [
+        {
+          "petalType": "fang",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "air",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "pincer",
+          "rarity": "rare",
+          "discountPercent": 20
+        },
+        {
+          "petalType": "corn",
+          "rarity": "common",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "golden_leaf",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "magnet",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "moon_rock",
+          "rarity": "ultra",
+          "discountPercent": 20
+        },
+        {
+          "petalType": "magic_bubble",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "spaceship",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "grapes",
+          "rarity": "super",
+          "discountPercent": 30
+        }
+      ]
+    },
+    {
+      "userId": "2821f209-daab-4f40-befa-4bbad525d81a",
+      "rotation": 498252,
+      "offers": [
+        {
+          "petalType": "wax",
+          "rarity": "common",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yucca",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "stinger",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "claw",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "magic_peas",
+          "rarity": "uncommon",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "basic",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "clover",
+          "rarity": "mythic",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "lightning",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "leaf",
+          "rarity": "super",
+          "discountPercent": 10
+        }
+      ]
+    },
+    {
+      "userId": "e713b90a-82fd-4ccf-a1fa-b2cf97c43dd8",
+      "rotation": 498254,
+      "offers": [
+        {
+          "petalType": "card",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "light",
+          "rarity": "common",
+          "discountPercent": 30
+        },
+        {
+          "petalType": "wax",
+          "rarity": "uncommon",
+          "discountPercent": 30
+        },
+        {
+          "petalType": "dahlia",
+          "rarity": "common",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mysterious_powder",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "bone",
+          "rarity": "ultra",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "pearl",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "broccoli",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "jelly",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "magic_bubble",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "5bgxtqf6556i",
+      "rotation": 83041,
+      "offers": [
+        {
+          "petalType": "rubber",
+          "rarity": "rare",
+          "discountPercent": 20
+        },
+        {
+          "petalType": "magic_stick",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "observer",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "javascript",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "faster",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "triangle",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "bubble",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "bur",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mecha_missile",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "disc",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "7s5dprfkdh6h",
+      "rotation": 498263,
+      "offers": [
+        {
+          "petalType": "cactus",
+          "rarity": "common",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "fang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yin_yang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "talisman_of_evasion",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "ram",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "light",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "heavy",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "carrot",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mimic",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "tqdsrx843nek",
+      "rotation": 498263,
+      "offers": [
+        {
+          "petalType": "cactus",
+          "rarity": "common",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "fang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yin_yang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "talisman_of_evasion",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "ram",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "light",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "heavy",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "carrot",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mimic",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "l9nounruivn6",
+      "rotation": 498266,
+      "offers": [
+        {
+          "petalType": "beetle_egg",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "dead_leaf",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "card",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "glass",
+          "rarity": "common",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "missile",
+          "rarity": "epic",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "magic_cotton",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "ruby",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "egg",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "clover",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "rock",
+          "rarity": "super",
+          "discountPercent": 20
+        }
+      ]
+    },
+    {
+      "userId": "iqj0mtjol0q3",
+      "rotation": 498263,
+      "offers": [
+        {
+          "petalType": "cactus",
+          "rarity": "common",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "fang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yin_yang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "talisman_of_evasion",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "ram",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "light",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "heavy",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "carrot",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mimic",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "sasme6r0hce1",
+      "rotation": 83041,
+      "offers": [
+        {
+          "petalType": "rubber",
+          "rarity": "rare",
+          "discountPercent": 20
+        },
+        {
+          "petalType": "magic_stick",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "observer",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "javascript",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "faster",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "triangle",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "bubble",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "bur",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mecha_missile",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "disc",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "wg0knu3z5be4",
+      "rotation": 498267,
+      "offers": [
+        {
+          "petalType": "third_eye",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "cactus",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "magic_cotton",
+          "rarity": "rare",
+          "discountPercent": 20
+        },
+        {
+          "petalType": "corn",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "nazar_amulet",
+          "rarity": "epic",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "soil",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "lentil",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mana_orb",
+          "rarity": "mythic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "uranium",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "privet_berry",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "oc4h1r4344aj",
+      "rotation": 498263,
+      "offers": [
+        {
+          "petalType": "cactus",
+          "rarity": "common",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "fang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yin_yang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "talisman_of_evasion",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "ram",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "light",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "heavy",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "carrot",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mimic",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "a2w12isz82u8",
+      "rotation": 498252,
+      "offers": [
+        {
+          "petalType": "wax",
+          "rarity": "common",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yucca",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "stinger",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "claw",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "magic_peas",
+          "rarity": "uncommon",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "basic",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "clover",
+          "rarity": "mythic",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "lightning",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "leaf",
+          "rarity": "super",
+          "discountPercent": 10
+        }
+      ]
+    },
+    {
+      "userId": "uvxugndsiznv",
+      "rotation": 498263,
+      "offers": [
+        {
+          "petalType": "cactus",
+          "rarity": "common",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "fang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yin_yang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "talisman_of_evasion",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "ram",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "light",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "heavy",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "carrot",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mimic",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "w2fqeh3oxh25",
+      "rotation": 498252,
+      "offers": [
+        {
+          "petalType": "wax",
+          "rarity": "common",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yucca",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "stinger",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "claw",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "magic_peas",
+          "rarity": "uncommon",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "basic",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "clover",
+          "rarity": "mythic",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "lightning",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "leaf",
+          "rarity": "super",
+          "discountPercent": 10
+        }
+      ]
+    },
+    {
+      "userId": "p0ss9d5pj59b",
+      "rotation": 498254,
+      "offers": [
+        {
+          "petalType": "card",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "light",
+          "rarity": "common",
+          "discountPercent": 30
+        },
+        {
+          "petalType": "wax",
+          "rarity": "uncommon",
+          "discountPercent": 30
+        },
+        {
+          "petalType": "dahlia",
+          "rarity": "common",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mysterious_powder",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "bone",
+          "rarity": "ultra",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "pearl",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "broccoli",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "jelly",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "magic_bubble",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    },
+    {
+      "userId": "6hybwkpy0zsc",
+      "rotation": 498263,
+      "offers": [
+        {
+          "petalType": "cactus",
+          "rarity": "common",
+          "discountPercent": 10
+        },
+        {
+          "petalType": "fang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "yin_yang",
+          "rarity": "epic",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "talisman_of_evasion",
+          "rarity": "uncommon",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "ram",
+          "rarity": "rare",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "shovel",
+          "rarity": "legendary",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "light",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "heavy",
+          "rarity": "ultra",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "carrot",
+          "rarity": "super",
+          "discountPercent": 0
+        },
+        {
+          "petalType": "mimic",
+          "rarity": "super",
+          "discountPercent": 0
+        }
+      ]
+    }
+  ]
+}

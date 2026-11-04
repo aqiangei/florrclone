@@ -75,6 +75,13 @@ async function main(){
       fs.writeFileSync(path.join(local,'account-adjustments.json'),JSON.stringify(report.accountAdjustments,null,2));
       next=adjusted;
     }
+    const shopManifest=path.join(__dirname,'manifests/shop-locks-20261104.json');
+    if(fs.existsSync(shopManifest)){
+      const restored=path.join(local,'inventory.shop-restored.json');
+      report.shopLockRestore=JSON.parse(run(process.execPath,[path.join(__dirname,'restore-original-shop-locks.cjs'),'--input',next,'--output',restored,'--manifest',shopManifest]));
+      fs.writeFileSync(path.join(local,'shop-lock-restore.json'),JSON.stringify(report.shopLockRestore,null,2));
+      next=restored;
+    }
     if(process.env.FLORR_REFUND_ETERNAL_PRICE==='1'){
       const refunded=path.join(local,'inventory.refunded.json');
       report.eternalRefund=JSON.parse(run(process.execPath,[path.join(__dirname,'refund-eternal-forging.cjs'),next,refunded]));
