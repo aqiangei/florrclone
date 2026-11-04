@@ -1527,6 +1527,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     aggregate.modifiers.passiveHealPerSecond = 1.0;
     std::uint16_t equipFlags = EquipNone;
     bool equippedCorruption = false;
+    bool seesGhosts = false;
     // Whether the ring is physically pulled in, by updateRing's rule rather
     // than runActions': with both keys held the ring LUNGES, so a flower doing
     // that is not blocking. This is rysteria's `kDefending && !kAttacking`.
@@ -1561,6 +1562,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 const auto& worn = registry.petal(equipped.configIndex);
                 if (worn.id == "pharaoh_s_crown") equipFlags |= EquipPharaohCrown;
                 if (worn.id == "corruption") equippedCorruption = true;
+                if (worn.id == "paranormal_goggles") seesGhosts = true;
             }
             // TypeScript derives modifiers from equipped loadout entries, not
             // from their onCooldown flag. A broken body leaves a ring gap but
@@ -1795,6 +1797,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     if (PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(player)) {
         visuals->equipFlags = equipFlags;
         visuals->equippedCorruption = equippedCorruption;
+        visuals->seesGhosts = seesGhosts;
     }
     aggregate.modifiers.luck += cloverLuck;
     return aggregate;
@@ -3176,10 +3179,6 @@ bool PetalSystem::revivePlayerNear(World& world, Entity reviver, Realm realm, Ve
     for (const Entity other : playerList_) {
         if (other == reviver || !world.isAlive(other)) continue;
         if (!playerIsDown(world, other)) continue;
-        // A flower its bandage carried through Undead stays down a while.
-        if (const Unrevivable* lock = world.tryGet<Unrevivable>(other)) {
-            if (lock->active(nowMillis)) continue;
-        }
         const Transform* transform = world.tryGet<Transform>(other);
         if (transform == nullptr) continue;
         // A corpse at the same numbers on another map is not within reach of
@@ -3627,7 +3626,11 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     // an egg above common was worth nothing.
     const bool apex = ladderRarity(rarity) == Rarity::Apex;
     const Rarity petRarity = apex ? Rarity::Unique : rarity;
-    const int wanted = std::max(0, config.petCount) * (apex ? kApexPetCount : 1);
+    const auto* tree = world.tryGet<PlayerSkillTree>(player);
+    const bool egg = config.id == "egg" || config.id == "beetle_egg";
+    const int squad = egg ? petalCopies(config.petCount, tree ? &tree->skills : nullptr,
+        slot, rarityIndex(rarity), config.stackable) : config.petCount;
+    const int wanted = std::max(0, squad) * (apex ? kApexPetCount : 1);
     if (wanted <= 0) return;
 
     // Counted per SLOT: eggs of one type stack, so a second stick hatches a
@@ -3776,6 +3779,14 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     // top of the ladder: the digger's wild line is tuned for a mob that crawls
     // out of a dying ant hole, and as a permanent escort it outclassed every
     // other egg at the same tier. Every other mob's scales are 1.
+    double combatScale = 1.0;
+    if(const auto* state=world.tryGet<PetalSlotState>(player))if(slot<state->slots.size()){
+        const auto& source=state->slots[slot];
+        if(source.configIndex<registry.petalCount()){
+            combatScale=eggSummonCombatScale(registry.petal(source.configIndex));
+        }
+    }
+    strength *= combatScale;
     mob.health = config.health * ladder * config.petHealthScale * strength;
     if(const auto* state=world.tryGet<PetalSlotState>(player))if(slot<state->slots.size()){
         const auto index=state->slots[slot].configIndex;
@@ -3882,7 +3893,7 @@ void PetalSystem::summonPets(World& world, const ContentRegistry& registry, Enti
     const auto* ownerBody=world.tryGet<Body>(player);
     const double ownerRadius=ownerBody?ownerBody->radius:kPlayerBaseRadius;
     const double maxRadius=mob.radius*petSizeScale*config.maxRandomSize();
-    const double searchReach=ownerRadius+6.0*maxRadius+10.0;
+    const double searchReach=ownerRadius+14.0*maxRadius+10.0;
     struct HatchCircle {Vec2 at;double radius;};
     std::vector<HatchCircle> occupied;
     const auto collect=[&](const Transform& pos,const Body& body){
@@ -3909,7 +3920,7 @@ void PetalSystem::summonPets(World& world, const ContentRegistry& registry, Enti
         // surviving summons and egg shells. Random points alone could land
         // across a one-tile wall or directly inside the incubating egg.
         Vec2 spawnAt;bool placed=false;
-        for(int attempt=0;attempt<80 && !placed;++attempt){
+        for(int attempt=0;attempt<240 && !placed;++attempt){
             const double reach=ownerRadius+radius+8+radius*(attempt/20.0);
             const auto candidate=at+Vec2::fromAngle(rng_.angle(),reach);
             if(terrain_ && (terrain_->blocked(candidate,realm) ||

@@ -34,9 +34,9 @@ constexpr double kBodyTop = 53.6;
 constexpr double kFirstLineY = kBodyTop + 250.0 + 11.2;
 constexpr double kLinePitch = 22.4;
 constexpr std::array<const char*, 3> kLines = {
-    "普通花瓣永久保留；每15个超级碎片兑换1把限时锤子，碎片不返还。",
+    "永久永恒：15个超级碎片兑换1个永恒碎片。",
     "普通花瓣首次10、之后固定15个超级。",
-    "锤子可持有多把，每把独立计时1小时，离线计时。",
+    "限时锤请切换上方独立入口，每把1小时，离线计时。",
 };
 
 /// The forge's spin: toward 10 rad/s while it is out, easing both ways at
@@ -83,6 +83,7 @@ void TitanPanel::reset() {
     stagedPetal_ = kNoPetal;
     phase_ = Phase::Idle;
     resultPending_ = false;
+    confirmForge_ = false;
     refusal_.clear();
     askedPetal_ = kNoPetal;
     askedAt_ = -1.0;
@@ -146,16 +147,21 @@ bool TitanPanel::render(MenuContext& ctx) {
     // the ring under its own animation.
     if (phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
         (forgeInputOwned(profile, stagedPetal_, hyper_) < static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_, hyper_, ctx.net)) ||
-         !(hyper_?hyperForgeEligible(content().petal(stagedPetal_).id):titanForgeEligible(content().petal(stagedPetal_).id)))) {
+         !(hyper_?hyperForgeEligible(content().petal(stagedPetal_).id):titanForgeEligible(content().petal(stagedPetal_).id)) ||
+         (!hyper_ && !eternalFragment_ && content().petal(stagedPetal_).id!="fragment"))) {
         stagedPetal_ = kNoPetal;
     }
 
     const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin,
-                                            hyper_?"超凡争夺锻造":"永久永恒锻造", "Forge", mouse);
+                                            hyper_?"超凡争夺锻造":eternalFragment_?"永久永恒锻造":"限时永恒锤（1小时）", "Forge", mouse);
     const Rect panel = card.panel;
-    const Rect mode{panel.x+20,panel.y+62,160,32};
-    drawSlotButton(canvas,mode,hyper_?"切换：永久永恒":"切换：超凡争夺",rarityColor(outputTier),mode.contains(mouse),mode.contains(mouse)&&ctx.window.mouseDown(MouseButton::Left));
-    if(ctx.pressed()&&mode.contains(mouse)&&phase_!=Phase::Forging){hyper_=!hyper_;reset();return true;}
+    const char* modes[]={"永久永恒","限时锤（1h）","超凡争夺"};
+    for(int i=0;i<3;++i){
+        const Rect tab{panel.x+18+i*120,panel.y+62,114,32};
+        const bool selected=i==2?hyper_:!hyper_&&(eternalFragment_==(i==0));
+        drawSlotButton(canvas,tab,modes[i],selected?std::optional<std::uint32_t>(rarityColor(outputTier)):std::nullopt,tab.contains(mouse),tab.contains(mouse)&&ctx.window.mouseDown(MouseButton::Left));
+        if(ctx.pressed()&&tab.contains(mouse)&&phase_!=Phase::Forging){hyper_=i==2;eternalFragment_=i!=1;reset();return true;}
+    }
 
     // --- the slot ----------------------------------------------------------
     // The five, staged or out with the titan, as one apex tile counting them;
@@ -186,7 +192,9 @@ bool TitanPanel::render(MenuContext& ctx) {
     const bool canForge = phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
         (!hyper_ || (holder&&ctx.net.hyperHoldings()<kMaxHyperHoldings&&ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
                      *holder!=profile.username));
-    drawSlotButton(canvas, button, "锻造",
+    const bool fragment=knownPetal(stagedPetal_)&&content().petal(stagedPetal_).id=="fragment";
+    const char* action=fragment&&!hyper_?(eternalFragment_?(confirmForge_?"确认：E碎片":"兑换E碎片"):(confirmForge_?"确认：限时锤":"制作限时锤")):(confirmForge_?"确认锻造":"锻造");
+    drawSlotButton(canvas, button, action,
                    canForge ? std::optional<std::uint32_t>(rarityColor(outputTier))
                             : std::nullopt,
                    button.contains(mouse),
@@ -198,7 +206,8 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
-            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需10个永恒碎片；限时锤不能参与争夺。","锤耗10返9，其他耗5返4；两处独立，总计最多5份。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:kLines[i]);
+            if(!hyper_ && i==0 && knownPetal(stagedPetal_) && content().petal(stagedPetal_).id=="fragment"){drawSlotLine(canvas,line,eternalFragment_?"15个超级碎片 → 1个永久永恒碎片":"15个超级碎片 → 1把永恒限时锤（1小时）");continue;}
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需10个永恒碎片；限时锤不能参与争夺。","锤耗10返9，其他耗5返4；两处独立，总计最多5份。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:!eternalFragment_?std::array<const char*,3>{"15个超级碎片 → 1把永恒限时锤（1小时）","限时锤不能用于超凡争夺，不返还碎片。","可持有多把，每把独立计时1小时，离线计时。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;
@@ -232,7 +241,8 @@ bool TitanPanel::render(MenuContext& ctx) {
                 cell.count = owned > staged ? owned - staged : 0;
             }
             cell.greyed = cell.count < static_cast<std::uint32_t>(forgeCost(profile, petalIndex, hyper_, ctx.net)) ||
-                          !(hyper_?hyperForgeEligible(content().petal(petalIndex).id):titanForgeEligible(content().petal(petalIndex).id));
+                          !(hyper_?hyperForgeEligible(content().petal(petalIndex).id):titanForgeEligible(content().petal(petalIndex).id)) ||
+                          (!hyper_ && !eternalFragment_ && content().petal(petalIndex).id!="fragment");
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             return cell;
@@ -262,13 +272,15 @@ bool TitanPanel::render(MenuContext& ctx) {
 
     if (button.contains(mouse)) {
         if (canForge) {
+            if(!confirmForge_){confirmForge_=true;return true;}
+            confirmForge_=false;
             phase_ = Phase::Forging;
             phaseStarted_ = now;
             offeredPetal_ = stagedPetal_;
             offeredCost_ = forgeCost(profile, stagedPetal_, hyper_, ctx.net);
             resultPending_ = false;
             refusal_.clear();
-            ctx.net.requestTitanForge(stagedPetal_,hyper_);
+            ctx.net.requestTitanForge(stagedPetal_,hyper_,eternalFragment_ && content().petal(stagedPetal_).id=="fragment");
             // Handed over: the ring draws the offer from here, and a refusal
             // is what puts it back.
             stagedPetal_ = kNoPetal;
@@ -291,6 +303,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         // Explain a disabled stack; colour alone cannot explain a recipe.
         // Any other one REPLACES the ring -- one forge takes five of one petal.
         if (!hovered->greyed) {
+            confirmForge_=false;
             stagedPetal_ = hovered->petalIndex;
             refusal_.clear();
         } else {

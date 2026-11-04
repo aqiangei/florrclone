@@ -620,7 +620,10 @@ bool CraftingPanel::render(MenuContext& ctx) {
     }
 
     if(phase_==Phase::Idle && (bulkPrev.contains(mouse)||bulkNext.contains(mouse))) {
-        bulkTarget_=std::clamp(bulkTarget_+(bulkNext.contains(mouse)?1:-1),1,rarityIndex(Rarity::Unique));bulkArmed_=false;return true;
+        const int last = rarityIndex(Rarity::Unique);
+        bulkTarget_ = 1 + (bulkTarget_ - 1 + (bulkNext.contains(mouse) ? 1 : last - 1)) % last;
+        bulkArmed_ = false;
+        return true;
     }
     if(phase_==Phase::Idle && bulkRun.contains(mouse)) {
         if(!bulkArmed_){bulkArmed_=true;return true;}

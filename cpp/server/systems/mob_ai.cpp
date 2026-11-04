@@ -2493,17 +2493,16 @@ void MobAiSystem::fireRingPetal(World& world, Entity self, const PetalRingSpec& 
     // anything travels, and a seed that is bigger because its dandelion is
     // bigger is not thereby a faster seed.
     //
-    // REACH still rides the tier ladder, because that is a distance and an
-    // apex dandelion is throwing across a proportionally larger field. The two
-    // no longer cancel, so an apex seed is in the air longer than a common
-    // one: that is the honest reading of a longer throw at a stated speed.
+    // Other ring weapons retain their authored tier scaling. Dandelion seeds
+    // keep the stated range at every tier, so large plants do not shed shots
+    // across the map for many times the configured lifetime.
     const std::size_t tier =
         static_cast<std::size_t>(ladderIndex(clampRarity(rarityIndex(type.rarity))));
     const double tierScale = kMobSizeScale[tier] / kProjectileReachReferenceScale;
     const double speed = spec.shotSpeed > 0.0 ? spec.shotSpeed : kDefaultProjectileSpeed;
     shot.speed = speed;
     const double reach = spec.shotDistance > 0.0 ? spec.shotDistance : kDefaultRingShotDistance;
-    shot.distance = reach * tierScale;
+    shot.distance = registry.mob(type.configIndex).id == "dandelion" ? reach : reach * tierScale;
     shot.angle = wrapAngle(aim);
     // Off the RING, not off the centre: the seed is a petal that was orbiting
     // out there, and a shot born in the middle of the body reads as the mob

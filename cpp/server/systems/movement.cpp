@@ -351,6 +351,13 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
     // mob-vs-mob overlap in its combat phase for the same reason. A pass run
     // before the movers would have its work undone the same tick.
     separateMobs(world, terrain);
+    // Summons must stop at the same solid NPC skin as flowers. Their AI
+    // still presses toward a training target, maintaining contact damage.
+    collectNpcDiscs();
+    queries_->mobBodies.each([&](Entity e, MobTag&, Transform& transform, Body& body, MobType& type) {
+        if (world.has<Pet>(e)) pushOutOfNpcs(terrain, transform,
+            body.radius * mobBodyContactScale(content().mob(type.configIndex).id));
+    });
     // And the loose petals after that, off the separation pass's own grid,
     // so what they are solid against is where the mobs finally stand.
     collideLooseBodies(world, terrain);
@@ -1037,6 +1044,7 @@ void MovementSystem::buildSeparationSet(World& world) {
 
         SeparationEntry entry;
         entry.entity = e;
+        entry.pet = world.has<Pet>(e);
         entry.position = position;
         entry.realm = transform.realm;
         entry.radius = sanitizeCollisionRadius(body.radius);
@@ -1116,7 +1124,11 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
             if (other.emergingFrom == self.entity) continue;
             if (!(distance > 0.0)) continue;
 
-            const double push = std::min((minDistance - distance) * 0.5, kMobSeparationMaxPushPerPair);
+            const double pairCap = self.pet != other.pet
+                ? std::max(kMobSeparationMaxPushPerPair, std::min(self.radius, other.radius)*.12)
+                : kMobSeparationMaxPushPerPair;
+            if (self.pet != other.pet) self.petPushCap = std::max(self.petPushCap,pairCap);
+            const double push = std::min((minDistance - distance) * 0.5, pairCap);
             self.push -= toOther * (push / distance);
         }
     }
@@ -1139,7 +1151,7 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
         // push is stepped, not resolved in one go: it can be longer than a
         // point is allowed to plunge into a thin wall in one substep.
         Vec2 position = entry.position;
-        stepCollide(terrain, entry.realm, position, entry.push.clampedLength(cap), kMobWallRadius,
+        stepCollide(terrain, entry.realm, position, entry.push.clampedLength(std::max(cap, entry.petPushCap)), kMobWallRadius,
                     1.0);
         transform->position = position;
     }

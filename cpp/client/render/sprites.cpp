@@ -13,6 +13,40 @@ namespace flix {
 
 namespace {
 
+// Imported spider legs already have separate pivots. Drive their transforms
+// from travelled distance, using the garden spider's gait rate and amplitude.
+std::string walkingSpiderArtwork(const std::string& source) {
+    std::string out;
+    std::size_t at = 0;
+    int leg = 0;
+    while (at < source.size()) {
+        const auto start = source.find("<g ", at);
+        if (start == std::string::npos) break;
+        const auto end = source.find('>', start);
+        if (end == std::string::npos) break;
+        out.append(source, at, end + 1 - at);
+        const auto tag = source.substr(start, end + 1 - start);
+        if (tag.find("data-motion=\"leg\"") != std::string::npos) {
+            float x = 55, y = 55;
+            const auto pivot = tag.find("data-pivot=\"");
+            if (pivot != std::string::npos) std::sscanf(tag.c_str() + pivot + 12, "%f %f", &x, &y);
+            out += "<animateTransform attributeName=\"transform\" type=\"rotate\" dur=\"6.283185307s\" repeatCount=\"indefinite\" values=\"";
+            for (int step = 0; step <= 16; ++step) {
+                const double phase = step * kTau / 16 + (leg % 2 ? kPi * .5 : 0);
+                const double angle = std::sin(phase) * .2 * 180 / kPi * (leg < 4 ? 1 : -1);
+                char value[96];
+                std::snprintf(value, sizeof value, "%s%.7f %.3f %.3f", step ? ";" : "", angle, x, y);
+                out += value;
+            }
+            out += "\"/>";
+            ++leg;
+        }
+        at = end + 1;
+    }
+    out.append(source, at, std::string::npos);
+    return out;
+}
+
 /// The fallback fill for a sprite that could not be compiled. Config colours
 /// are stored as 0xRRGGBBAA by the loader; the drawing layer works in RGB.
 std::uint32_t rgbOf(std::uint32_t rgba) { return rgba >> 8; }
@@ -604,7 +638,10 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
             mobs_[i].usable = petals_[petal].usable;
             continue;
         }
-        compile(config.image, config.colorRgba, "mob " + config.id, mobs_[i]);
+        const bool walkingSpider = config.id == "mecha_spider";
+        compile(walkingSpider ? walkingSpiderArtwork(config.image) : config.image,
+                config.colorRgba, "mob " + config.id, mobs_[i]);
+        mobs_[i].distanceAnimated = walkingSpider;
         if (!mobs_[i].document) continue;
         const std::string petArt = petArtwork(config.image);
         if (!petArt.empty()) {
@@ -726,7 +763,9 @@ void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y,
                            static_cast<float>(-diameter * 0.5),
                            static_cast<float>(diameter),
                            static_cast<float>(diameter),
-                           static_cast<float>(timeSeconds));
+                           static_cast<float>(sprite.distanceAnimated
+                               ? (motion ? motion->distance * kGaitRadiansPerUnitWalked : 0.0)
+                               : timeSeconds));
     canvas.restore();
 }
 

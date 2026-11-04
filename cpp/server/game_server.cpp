@@ -77,6 +77,7 @@ constexpr double kViewportCeilingSlack = 1.01;
 /// cannot claim more than its loadout pays for.
 Vec2 claimableViewport(World& world, Entity body, const ContentRegistry& content, double width,
                        double height) {
+    bool goggles = false;
     const auto* talents = world.tryGet<PlayerSkillTree>(body);
     double zoom = talents ? 1.0 / (1.0 + talents->skills.antennaeFovBonus()) : 1.0;
     if (const Loadout* loadout = world.tryGet<Loadout>(body)) {
@@ -85,12 +86,13 @@ Vec2 claimableViewport(World& world, Entity body, const ContentRegistry& content
             // pulls the camera out as one at the mimic's tier.
             const EquippedPetal slot = equippedPetal(content, *loadout, i);
             if (slot.empty()) continue;
+            goggles = goggles || content.petal(slot.configIndex).id == "paranormal_goggles";
             zoom = std::min(zoom, petalCameraZoom(content, slot.configIndex, slot.rarity));
         }
     }
     // Antennae bottoms out at 0.1; this only stops a bad figure dividing by
     // zero or by a negative.
-    zoom = std::max(zoom * kMinimumUserCameraZoom, 0.01);
+    zoom = std::max(zoom * (goggles ? 1.25 : 1.0) * kMinimumUserCameraZoom, 0.01);
     const double ceilingX = std::max(kMaxViewportAxis, kViewportWidth / zoom * kViewportCeilingSlack);
     const double ceilingY = std::max(kMaxViewportAxis, kViewportHeight / zoom * kViewportCeilingSlack);
     return {clamp(width, 320.0, ceilingX), clamp(height, 240.0, ceilingY)};
@@ -1020,6 +1022,7 @@ void GameServer::tick(double nowMillis) {
 
     reapDead();
     commands_.flush();
+    serviceNearbyRevives(nowMillis);
     markTickPhase("reap");
 
     // The wire runs slower than the simulation and on its own clock: physics
@@ -2906,12 +2909,11 @@ void GameServer::handleProfileCheck(Session& session, net::Connection& connectio
     if (clockMillis_ < session.nextProfileCheckMillis) return;
     session.nextProfileCheckMillis = clockMillis_ + kProfileCheckFloorMillis;
 
-    // Folded before the last Profile or delta landed: it describes a bag the
-    // server has since changed and told the client about, so a mismatch
-    // proves nothing. Nor does one while a change is banked and owed to the
-    // next snapshot. Either way the next check, two seconds on, is judged.
-    if (revision != session.profileRevision || session.profileDue) return;
-    if (claimed == profileDigest(session)) return;
+    // A stale revision can be a check already in flight, but can also mean
+    // the client never applied a full profile. Ignoring it forever prevents
+    // recovery until re-login. The rate limit above bounds full resends.
+    if (session.profileDue) return;
+    if (revision == session.profileRevision && claimed == profileDigest(session)) return;
     sendProfile(session, connection);
 }
 
@@ -3544,7 +3546,11 @@ static std::string titanForgeScope(const WorldMaps& maps,Realm realm){
 void GameServer::handleTitanForge(Session& session, net::Connection& connection,
                                   ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
-    const bool hyper=reader.boolean();
+    const auto forgeMode=reader.u8();
+    const bool hyper=forgeMode==1;
+    const bool eternalFragment=forgeMode==2;
+    const bool timedHammer=forgeMode==3;
+    if(forgeMode>3)return;
     if (!reader.ok() || !session.authenticated()) return;
 
     std::uint16_t outputIndex = petalIndex;
@@ -3577,6 +3583,8 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     }
 
     const auto& petal = content().petal(petalIndex);
+    if (eternalFragment && petal.id != "fragment") { reply(false,"该配方仅用于永恒碎片。"); return; }
+    if (timedHammer && petal.id != "fragment") { reply(false,"限时锤配方仅接受超级碎片。"); return; }
     if (!(hyper ? hyperForgeEligible(petal.id) : titanForgeEligible(petal.id))) {
         reply(false, hyper ? "超凡锤子需10个永恒碎片，不能用限时永恒锤或血祭。" : "该花瓣不能用于泰坦锻造。");
         return;
@@ -3609,7 +3617,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         announceRareCraft(session,outputIndex,Rarity::Apex,1,result.consumed,true);
         reply(true,"");return;
     }
-    outputIndex = petal.id == "fragment" ? content().petalIndex("timed_mjolnir") : petalIndex;
+    outputIndex = timedHammer ? content().petalIndex("timed_mjolnir") : petalIndex;
     if (outputIndex >= content().petalCount()) { reply(false, "锻造产物不存在。"); return; }
     PlayerRecord& record = liveRecord(session);
     if (expireTimedHammer(record) && session.playing()) applyAccountToSession(session);
@@ -3625,7 +3633,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         resyncProfile(session, connection);
         return;
     }
-    if (petal.id == "fragment") {
+    if (timedHammer) {
         addHammerLease(record, static_cast<double>(database_.nowMillis()));
         sendNotice(connection, net::NoticeSeverity::Info,"已获得1把限时雷神之锤，每把独立计时1小时，离线也计时。");
     } else giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
@@ -3819,18 +3827,8 @@ void GameServer::bankKills() {
         const MobType* type = world_.tryGet<MobType>(death.entity);
         if (type == nullptr) continue;
 
-        // A credited killing blow is the gate, exactly as it is in the
-        // reference: a mob finished by another mob is nobody's kill and enters
-        // nobody's gallery. A pet's kill belongs to the player who summoned it,
-        // and combat has already resolved that attribution onto Dead::killer.
-        // Chat still hears about a boss that went down that way, just with
-        // nobody to credit.
-        if (death.killer == NULL_ENTITY || !world_.isAlive(death.killer) ||
-            !world_.has<PlayerTag>(death.killer)) {
-            announceBossDefeat(death.entity, *type, {});
-            continue;
-        }
-
+        // Participation belongs to the damage ledger even if a non-player
+        // delivered the last hit. The drop path already pays these rights.
         // The gallery entry and the star bounty go to every player who earned
         // LOOT rights on the corpse, not to the finisher alone: five flowers
         // that bring down an apex are five apex kills and five lots of 250
@@ -3855,7 +3853,7 @@ void GameServer::bankKills() {
                          });
         const Health* health = world_.tryGet<Health>(death.entity);
         selectLootRecipients(ranked, lootSlotsForRarity(type->rarity), &squadIndex_, recipients,
-                             lootDamageFloor(health != nullptr ? health->max : 0.0));
+                             lootDamageFloor(type->rarity, health != nullptr ? health->max : 0.0));
 
         const std::string mobId = content().mob(type->configIndex).id;
         const int stars = starsForKill(type->rarity);
@@ -6071,6 +6069,46 @@ void GameServer::guildInviteToSquad(Session& session, net::Connection& connectio
     }
 }
 
+void GameServer::serviceNearbyRevives(double nowMillis) {
+    constexpr double range = 120.0;
+    for (auto& entry : sessions_) {
+        Session& corpse = entry.second;
+        const Entity victim = corpse.entity;
+        const auto* at = world_.tryGet<Transform>(victim);
+        const auto* hp = world_.tryGet<Health>(victim);
+        if (!corpse.playing() || !world_.has<Dead>(victim) || !at || !hp) {
+            corpse.rescueHelper = NULL_ENTITY;
+            continue;
+        }
+        const auto eligible = [&](Entity helper) {
+            if (helper == victim || helper == NULL_ENTITY || world_.has<Dead>(helper)) return false;
+            const auto* pos = world_.tryGet<Transform>(helper);
+            const auto* health = world_.tryGet<Health>(helper);
+            return pos && health && health->alive() && pos->realm == at->realm &&
+                distanceSq(pos->position, at->position) <= range * range &&
+                !terrain_->segmentBlocked(pos->position, at->position, at->realm);
+        };
+        if (!eligible(corpse.rescueHelper)) {
+            corpse.rescueHelper = NULL_ENTITY;
+            double nearest = range * range + 1;
+            for (const auto& candidate : sessions_) {
+                if (!candidate.second.playing() || !eligible(candidate.second.entity)) continue;
+                const double d = distanceSq(world_.get<Transform>(candidate.second.entity).position, at->position);
+                if (d < nearest) { nearest = d; corpse.rescueHelper = candidate.second.entity; }
+            }
+            corpse.rescueStartedMillis = nowMillis;
+        }
+        if (corpse.rescueHelper == NULL_ENTITY || nowMillis - corpse.rescueStartedMillis < 3000) continue;
+        const Entity helper = corpse.rescueHelper;
+        auto& health = world_.get<Health>(victim);
+        health.current = health.max;
+        health.invulnerableUntilMillis = nowMillis + kRespawnInvulnerabilitySeconds * 1000.0;
+        world_.remove<Dead>(victim);
+        if (world_.has<Unrevivable>(victim)) world_.remove<Unrevivable>(victim);
+        onPlayerRevived(victim, helper);
+    }
+}
+
 void GameServer::handleRespawn(Session& session) {
     if (!session.authenticated()) return;
     // A lent console is lent for one life. Dropping it here rather than on
@@ -6085,7 +6123,12 @@ void GameServer::handleRespawn(Session& session) {
     Vec2 corpsePos = session.deathPosition;
     if (session.playing() && world_.isAlive(session.entity)) {
         Health* health = world_.tryGet<Health>(session.entity);
-        if (health && health->alive()) return;   // not actually dead
+        if (health && health->alive() && !world_.has<Dead>(session.entity)) {
+            // A delayed death card or a lost revive notification must be
+            // acknowledged. Repeated Continue must not heal or replace a body.
+            onPlayerRevived(session.entity, NULL_ENTITY);
+            return;
+        }
         if (const Transform* corpse = world_.tryGet<Transform>(session.entity)) {
             corpseKnown = true;
             corpseRealm = corpse->realm;
@@ -6152,6 +6195,8 @@ void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
     // time: without it the next death is silent and the player is left standing
     // as a corpse nobody told them about.
     session->deathReported = false;
+    session->rescueHelper = NULL_ENTITY;
+    session->rescueStartedMillis = 0;
     net::Connection* connection = listener_.find(session->connection);
     if (connection == nullptr) return;
 
@@ -6172,6 +6217,10 @@ void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::Revived));
     w.str(reviverName);
     connection->send(w);
+    if (!reviverName.empty()) {
+        broadcastChat(net::ChatChannel::System, "",
+            escapedMarkup(world_.get<PlayerAccount>(revived).username) + " 被 " + escapedMarkup(reviverName) + " 复活了。");
+    }
 }
 
 Entity GameServer::spawnPlayer(Session& session) {

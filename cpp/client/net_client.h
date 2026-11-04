@@ -665,7 +665,7 @@ public:
     void requestAbsorb(const std::vector<AbsorbStack>& stacks);
     /// Forges kTitanForgeCost apex of this petal into one universal at the
     /// titan the body is standing at.
-    void requestTitanForge(std::uint16_t petalIndex, bool hyper=false);
+    void requestTitanForge(std::uint16_t petalIndex, bool hyper=false, bool eternalFragment=true);
     /// Asks the titan the body is standing at who holds this petal at
     /// universal. The answer lands in titanHolder(); the server drops a query
     /// that comes too soon after the last, so a caller asks again until one

@@ -350,18 +350,6 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
         walls.strokeCircle(static_cast<float>(dot.x), static_cast<float>(dot.y), radius);
     }
 
-    if (annotations) {
-        int markers=0;
-        for (const auto& element:annotations->elements()) {
-            if (!superFarmBand(element) || markers>=8) continue;
-            const auto at=toBox(Vec2{element.bounds.x+element.bounds.w*.5,
-                                    element.bounds.y+element.bounds.h*.5});
-            TextStyle label;label.size=10;label.align=Align::Centre;label.baseline=Baseline::Middle;
-            label.fill=rarityColor(Rarity::Super);
-            outlinedText(walls,"S",at.x,at.y,label,1.5);
-            ++markers;
-        }
-    }
     // The two bakes the corner shows: the ground, then the wall layer laid
     // over it pixel for pixel. The blit is in raw pixels (identity transform,
     // the source's own size), so the walls land exactly where they were

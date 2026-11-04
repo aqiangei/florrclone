@@ -183,6 +183,30 @@ constexpr std::uint32_t kCorpseName = 0xFFB060u;
 /// Whether a flower is drawn wrapped in the bandage: for as long as it wears
 /// one (user, 2026-10-22: "always show the bandage drawing when it is
 /// equipped"), and while it is Undead.
+void drawWornPharaohCrown(Canvas& canvas) {
+        // A nemes headdress wraps the forehead and sides, leaving the face clear.
+        canvas.save();
+        ui::setFill(canvas, 0xE9B936u); ui::setStroke(canvas, 0x977320u);
+        canvas.setLineWidth(1.4f);
+        for (float side : {-1.0f, 1.0f}) {
+            canvas.beginPath();
+            canvas.moveTo(side * 18, -20); canvas.lineTo(side * 29, -5);
+            canvas.lineTo(side * 31, 28); canvas.lineTo(side * 21, 24);
+            canvas.lineTo(side * 19, -8); canvas.closePath(); canvas.fill(); canvas.stroke();
+            ui::setStroke(canvas, 0x24649Au); canvas.setLineWidth(3.0f);
+            for (float y = -3; y < 25; y += 6) {
+                canvas.beginPath(); canvas.moveTo(side * 22, y);
+                canvas.lineTo(side * 28, y + 1); canvas.stroke();
+            }
+            ui::setStroke(canvas, 0x977320u); canvas.setLineWidth(1.4f);
+        }
+        canvas.beginPath(); canvas.roundRect(-21, -24, 42, 8, 3); canvas.fill(); canvas.stroke();
+        ui::setFill(canvas, 0x24649Au); canvas.beginPath();
+        canvas.roundRect(-3, -28, 6, 14, 2); canvas.fill();
+        canvas.restore();
+
+}
+
 bool wrappedInBandage(std::uint8_t faceFlags, std::uint16_t equipFlags) {
     return (faceFlags & FaceUndead) != 0 || (equipFlags & EquipBandage) != 0;
 }
@@ -2832,6 +2856,12 @@ const CustomSkin* WorldRenderer::wornSkin(const RemoteEntity& entity) const {
 
 void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
                                    double timeSeconds) const {
+    // Corruption is a visible combat state. Skins must not hide it; keeping
+    // the chosen skin on the entity restores it as soon as the state clears.
+    if (entity.faceFlags & FaceHasCorruption) {
+        drawDefaultFlower(canvas, entity, timeSeconds);
+        return;
+    }
     // A user-created skin outranks a built-in one, as it does in
     // player-drawing.ts: the server keeps the two mutually exclusive, and this
     // is the tie-break if an old account row ever carries both.
@@ -2873,6 +2903,7 @@ void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
         if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
             drawUndeadWrap(canvas, timeSeconds);
         }
+        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
         return;
     }
     // Registration order in player-skins.ts is Pumpkin, then Robot. Preserve
@@ -2882,11 +2913,13 @@ void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
         if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
             drawUndeadWrap(canvas, timeSeconds);
         }
+        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
     } else if (entity.renderFlags & PlayerRenderRobot) {
         drawRobot(canvas, entity);
         if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
             drawUndeadWrap(canvas, timeSeconds);
         }
+        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
     } else {
         drawDefaultFlower(canvas, entity, timeSeconds);
     }
@@ -3072,28 +3105,7 @@ void WorldRenderer::drawFace(Canvas& canvas, std::uint8_t faceFlags, std::uint16
     // florr wraps the bandage on after the third eye and before the crown.
     if (wrappedInBandage(faceFlags, equipFlags)) drawUndeadWrap(canvas, timeSeconds);
     if (equipFlags & EquipCrown) drawWornCrown(canvas);
-    if (equipFlags & EquipPharaohCrown) {
-        // A nemes headdress wraps the forehead and sides, leaving the face clear.
-        canvas.save();
-        ui::setFill(canvas, 0xE9B936u); ui::setStroke(canvas, 0x977320u);
-        canvas.setLineWidth(1.4f);
-        for (float side : {-1.0f, 1.0f}) {
-            canvas.beginPath();
-            canvas.moveTo(side * 18, -20); canvas.lineTo(side * 29, -5);
-            canvas.lineTo(side * 31, 28); canvas.lineTo(side * 21, 24);
-            canvas.lineTo(side * 19, -8); canvas.closePath(); canvas.fill(); canvas.stroke();
-            ui::setStroke(canvas, 0x24649Au); canvas.setLineWidth(3.0f);
-            for (float y = -3; y < 25; y += 6) {
-                canvas.beginPath(); canvas.moveTo(side * 22, y);
-                canvas.lineTo(side * 28, y + 1); canvas.stroke();
-            }
-            ui::setStroke(canvas, 0x977320u); canvas.setLineWidth(1.4f);
-        }
-        canvas.beginPath(); canvas.roundRect(-21, -24, 42, 8, 3); canvas.fill(); canvas.stroke();
-        ui::setFill(canvas, 0x24649Au); canvas.beginPath();
-        canvas.roundRect(-3, -28, 6, 14, 2); canvas.fill();
-        canvas.restore();
-    }
+    if (equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
 }
 
 void WorldRenderer::drawPumpkin(Canvas& canvas, const RemoteEntity& entity) const {
@@ -3334,44 +3346,6 @@ MobMotion WorldRenderer::mobMotion(const MobDraw& mob, double clockSeconds) cons
     return motion;
 }
 
-double WorldRenderer::stingLoad(const MobDraw& mob, const MobConfig& config) const {
-    const auto pace = mobPaces_.find(mob.netId);
-    if (pace == mobPaces_.end() || !pace->second.unloaded) return 1.0;
-    // The server says when the next missile is loaded, not how far along it
-    // is, so the cadence is timed here against the same cooldown it reloads
-    // on. Held short of 1 until the server agrees: a sting fully out on a mob
-    // that cannot fire yet would promise a shot that is not coming.
-    const double cooldown =
-        config.cooldownMillis > 0.0 ? config.cooldownMillis : kDefaultVolleyCooldownMillis;
-    const double t = clamp(pace->second.unloadedMs / cooldown, 0.0, 0.98);
-    return t * t * (3.0 - 2.0 * t);
-}
-
-void WorldRenderer::drawLoadedSting(Canvas& canvas, const MobConfig& config, const MobDraw& mob,
-                                    Vec2 screen, double rotation, double grown, double zoom,
-                                    double clockSeconds) const {
-    const std::uint16_t ammo = config.projectile.ammoPetalIndex;
-    if (!sprites_ || !content_ || ammo == kInvalidIndex || !sprites_->petalDrawable(ammo)) return;
-    const double load = stingLoad(mob, config);
-    if (load <= 0.0) return;
-    // The radius fireVolley gives the shot, graded at this mob's tier, drawn
-    // the way a projectile is: twice that times the ammunition's
-    // visual_scale. So the sting that leaves is the missile that arrives.
-    const PetalConfig& petal = content_->petal(ammo);
-    const double radius = mobShotRadius(content_->petalStats(ammo, mob.rarity).size,
-                                        mobShotOwnerScale(mob.radius));
-    const double length = 2.0 * radius * petalArtScale(&petal);
-    // Loaded, it sits where fireVolley puts a stinger's shot.from. Reloading,
-    // it is drawn back in by up to its own length -- far enough to hide under
-    // the body it is coming out of.
-    const double out =
-        (stingerMuzzleDistance(mob.radius, radius) - length * (1.0 - load)) * grown;
-    const double tail = rotation + kPi;
-    const Vec2 at = screen + Vec2::fromAngle(tail, out * zoom);
-    sprites_->drawPetal(canvas, ammo, mob.rarity, at.x, at.y, length * grown * zoom, tail,
-                        clockSeconds);
-}
-
 const std::vector<std::uint16_t>& WorldRenderer::droppablePetals(Rarity rarity) const {
     auto& pool=droppablePetals_[static_cast<std::size_t>(rarityIndex(rarity))];
     if(pool.empty()&&content_)pool=garbageEligiblePetals(*content_,rarity);
@@ -3606,15 +3580,6 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
     // blow flashes on through the death animation.
     const ScopedColorTint flash(canvas, config && config->id == "garbage" ? Color{0,0,0,0} : hitTint(mob.netId));
 
-    // Before the body, so the sting comes out from under it. Off the HITBOX
-    // centre rather than the art's: it is the server's muzzle.
-    if (config && config->stingerShooter && config->projectile.present &&
-        !config->hideRotation) {
-        const double drawnAtRest = mob.radius * 2.0 * visualScale * zoom;
-        drawLoadedSting(canvas, *config, mob, screen, rotation,
-                        drawnAtRest > 0.0 ? diameter / drawnAtRest : 1.0, zoom, clockSeconds);
-    }
-
     static const std::string kNoId;
     const std::string& id = config ? config->id : kNoId;
     if (id == "garbage") {
@@ -3832,6 +3797,18 @@ void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm 
                                     double timeSeconds) const {
     const MapData* map = mapFor(realm);
     if (!map) return;
+    const auto& art=artFor(*map);
+    for(const auto& d:map->decorations()) {
+        if(d.art<0 || static_cast<std::size_t>(d.art)>=art.size() || !art[d.art]) continue;
+        const Vec2 centre{d.x+d.width*.5,d.y-d.height*.5};
+        if(!camera.visibleWorld(std::hypot(d.width,d.height)).contains(centre)) continue;
+        const auto at=camera.worldToScreen({d.x,d.y});
+        canvas.save();canvas.translate(at.x,at.y);canvas.rotate(d.rotation*kPi/180.0);
+        const double w=d.width*camera.zoom(),h=d.height*camera.zoom();
+        canvas.translate(w*.5,-h*.5);canvas.scale(d.flipX?-1.0f:1.0f,d.flipY?-1.0f:1.0f);
+        art[d.art]->renderFitted(canvas,-w*.5,-h*.5,w,h,static_cast<float>(timeSeconds));
+        canvas.restore();
+    }
     // florr runs the portal on a millisecond clock, and every rate below is
     // its own, per millisecond.
     const double ms = timeSeconds * 1000.0;
@@ -3994,6 +3971,11 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             npc.position = at;
             npc.angle = entity.angle;
             npc.radius = entity.radius;
+            if (content_ && entity.typeIndex < content_->mobCount() &&
+                content_->mob(entity.typeIndex).npc.service == NpcService::Assembler) {
+                // Artwork follows rarity independently of the physical body.
+                npc.radius = content_->mobStats(entity.typeIndex, entity.rarity).radius;
+            }
             npc.typeIndex = entity.typeIndex;
             npc.rarity = entity.rarity;
             npc.plateOpacity = entity.plate.opacity;

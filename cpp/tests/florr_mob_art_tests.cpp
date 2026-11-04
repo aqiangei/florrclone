@@ -335,28 +335,9 @@ TEST(a_dandelions_seeds_go_down_under_its_head) {
     CHECK(stem >= 200);
 }
 
-TEST(a_hornet_wears_its_missile_until_it_fires_it) {
-    // The sting IS the loaded missile: drawn on the tail, at the size and
-    // place the server will fire it from, and gone from the moment it leaves
-    // (net::StateUnloaded) until the next one has slid back out.
-    for (const char* id : {"hornet", "wasp"}) {
-        const std::uint16_t type = shipped().mobIndex(id);
-        const MobConfig& config = shipped().mob(type);
-        CHECK(config.stingerShooter && config.projectile.present);
-        const double body = shipped().mobStats(type, Rarity::Common).radius;
-        const double shot = mobShotRadius(
-            shipped().petalStats(config.projectile.ammoPetalIndex, Rarity::Common).size,
-            mobShotOwnerScale(body));
-        // Facing +X, so the tail and the muzzle are along -X.
-        const Vec2 muzzle{-stingerMuzzleDistance(body, shot), 0.0};
-        const auto stingAt = [&muzzle](const std::vector<std::uint8_t>& frame) {
-            return std::abs(brightnessAt(frame, muzzle) - 0x33) <= 8;
-        };
-        const bool loaded = stingAt(mobFrame(id, 0.0, 0, {}));
-        const bool fired = stingAt(mobFrame(id, 0.0, net::StateUnloaded, {}));
-        if (!loaded || fired) std::printf("    %s: loaded %d, just fired %d\n", id, loaded, fired);
-        CHECK(loaded);
-        CHECK(!fired);
+TEST(shooters_do_not_draw_a_separate_loaded_ammunition_overlay) {
+    for (const char* id : {"hornet", "wasp", "hel_wasp", "mecha_wasp"}) {
+        CHECK_EQ(differingPixels(mobFrame(id,0,0,{}),mobFrame(id,0,net::StateUnloaded,{})),0);
     }
 }
 

@@ -1388,6 +1388,9 @@ inline double eggSummonHealthScale(const PetalConfig& config) {
     const auto& id=config.id;
     return id=="egg"||(id.size()>=4&&id.compare(id.size()-4,4,"_egg")==0)?2.0:1.0;
 }
+inline double eggSummonCombatScale(const PetalConfig& config) {
+    return config.id == "egg" || config.id == "beetle_egg" ? 1.5 : 1.0;
+}
 
 /// The sacrifice: florr's "On death, summons a mob to fight again". Worn on
 /// the active bar, it is spent when its flower dies on ground rough enough to
@@ -1659,9 +1662,8 @@ struct EquippedPetal {
 /// reload wedge by it.
 ///
 /// A run of mimics copies through: each is the first non-mimic to its left, at
-/// its own tier, on that petal's reload. A run that reaches an empty slot or the
-/// row's edge copies its leftmost mimic, which is itself. Bounded by the row,
-/// so a mimic in the first column never reaches back into the row above it.
+/// its own tier, on that petal's reload. An empty slot stops the search. The row wraps from its first slot to its last;
+/// at most one circuit is searched, so an all-mimic row terminates safely.
 ///
 /// A mimic copying RAM is a sawblade instead, still at the mimic's tier and
 /// reloading at RAM's -- the sawblade's reload at that tier, as a mimic pays
@@ -1673,7 +1675,8 @@ EquippedPetal resolveEquippedPetal(const ContentRegistry& registry, int slot, Sl
     if (self.empty() || !petalMimicsLeft(registry.petal(self.configIndex))) return self;
     const int rowStart = slot - slot % kLoadoutActiveSlots;
     EquippedPetal source = self;
-    for (int i = slot - 1; i >= rowStart; --i) {
+    for (int step = 1; step < kLoadoutActiveSlots; ++step) {
+        const int i = rowStart + (slot - rowStart - step + kLoadoutActiveSlots) % kLoadoutActiveSlots;
         const EquippedPetal left = slotAt(i);
         if (left.empty()) break;
         source = left;
@@ -1784,6 +1787,7 @@ bool loadContent(const std::string& dataDir, std::string& errorOut);
 
 // Physical body contact ignores decorative legs, wings and antennae.
 inline double mobBodyContactScale(const std::string& id) {
+    if (id.find("centipede") != std::string::npos) return 1.0;
     return id.find("spider")!=std::string::npos ? 0.55 : 0.80;
 }
 

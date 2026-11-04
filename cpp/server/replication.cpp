@@ -286,6 +286,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         viewerAccount != nullptr ? viewerAccount->connection : 0;
     Query<NetId, Replicated, Transform> replicated{world};
     replicated.each([&](Entity e, NetId& id, Replicated&, Transform& transform) {
+        if (world.has<GhostTag>(e)) {
+            const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
+            if (!visuals || !visuals->seesGhosts) return;
+        }
         if (const DropItem* drop = world.tryGet<DropItem>(e)) {
             if (!drop->eligible.empty() && !claimed(drop->eligible, viewer, viewerOwner)) return;
             if (claimed(drop->pickedUpBy, viewer, viewerOwner)) return;

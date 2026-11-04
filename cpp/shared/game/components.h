@@ -36,6 +36,7 @@ namespace flix {
 
 struct PlayerTag {};
 struct MobTag {};
+struct GhostTag {};
 struct PetalTag {};
 struct ProjectileTag {};
 struct DropTag {};
@@ -578,6 +579,7 @@ struct PlayerVisuals {
     /// marking it, which is why it rides faceFlags and not renderFlags.
     bool corrupted = false;
     bool equippedCorruption = false;
+    bool seesGhosts = false;
 };
 
 /// Passive bonuses summed from equipped petals each tick.
@@ -1582,6 +1584,7 @@ struct Replicated {
 // Component registration. Global scope, once per type.
 FLIX_COMPONENT(flix::PlayerTag);
 FLIX_COMPONENT(flix::MobTag);
+FLIX_COMPONENT(flix::GhostTag);
 FLIX_COMPONENT(flix::PetalTag);
 FLIX_COMPONENT(flix::ProjectileTag);
 FLIX_COMPONENT(flix::DropTag);

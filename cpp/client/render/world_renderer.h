@@ -526,17 +526,6 @@ private:
     /// advanced to `clockSeconds` -- once a frame however often it is asked,
     /// like mobEye(). What a florr-ported painter animates from.
     MobMotion mobMotion(const MobDraw& mob, double clockSeconds) const;
-    /// How far a stinger mob's loaded missile is out of its tail, 0 (just
-    /// fired, nothing to draw) to 1 (loaded). Read off the MobPace that
-    /// mobMotion() advanced this frame.
-    double stingLoad(const MobDraw& mob, const MobConfig& config) const;
-    /// A stinger mob's LOADED missile: the ammunition's own artwork at the
-    /// size the server will fire it, on the tail where the shot leaves from.
-    /// Drawn under the body, which is what makes it read as coming out of it.
-    /// `grown` is the death pop's scale, 1 for a live mob.
-    void drawLoadedSting(Canvas&, const MobConfig&, const MobDraw&, Vec2 screen,
-                         double rotation, double grown, double zoom,
-                         double clockSeconds) const;
     /// The petal types a garbage pile may be built from: the same rule the
     /// server's drop roll uses, so both clients pick the same artwork.
     const std::vector<std::uint16_t>& droppablePetals(Rarity) const;

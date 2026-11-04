@@ -1,0 +1,12 @@
+const http=require('http'),fs=require('fs'),path=require('path');const{chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+(async()=>{const server=http.createServer((q,r)=>{let p=path.join(__dirname,q.url==='/'?'index.html':q.url);r.setHeader('Content-Type',p.endsWith('.wasm')?'application/wasm':p.endsWith('.js')?'application/javascript':'text/html');fs.createReadStream(p).on('error',()=>r.end()).pipe(r)});await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({headless:true,...(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{})});const page=await browser.newPage({viewport:{width:820,height:700}});page.on('pageerror',e=>console.log('ERROR',e.message));await page.goto('http://127.0.0.1:'+server.address().port);await page.waitForFunction(()=>window.uiReady);const assert=require('assert');
+const click=async(x,y)=>{await page.mouse.move(x,y);await page.mouse.down();await page.waitForTimeout(80);await page.mouse.up();await page.waitForTimeout(100)};
+const count=()=>page.evaluate(()=>forgeSent);
+await click(363,449);await click(493,207);assert.equal(await count(),0);await page.screenshot({path:path.join(__dirname,'confirm-fragment.png')});
+await click(250,106);await click(363,449);await click(493,207);assert.equal(await count(),0);await page.screenshot({path:path.join(__dirname,'confirm-hammer.png')});
+await click(130,106);await click(363,449);await click(493,207);assert.equal(await count(),0);await click(493,207);assert.equal(await count(),1);
+await page.evaluate(()=>Module._testOutcome(0));await page.waitForTimeout(1800);await page.screenshot({path:path.join(__dirname,'result-fragment.png')});
+await click(590,450);await click(250,106);await click(363,449);await click(493,207);assert.equal(await count(),1);await click(493,207);assert.equal(await count(),2);
+await page.evaluate(()=>Module._testOutcome(1));await page.waitForTimeout(1800);await page.screenshot({path:path.join(__dirname,'result-hammer.png')});
+console.log('PASS: two explicit modes; confirmation resets on switch; exactly one request after two clicks for each output');
+await browser.close();server.close()})().catch(e=>{console.error(e);process.exit(1)});

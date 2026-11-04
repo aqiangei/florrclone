@@ -13,3 +13,12 @@ for(const included of [false,true]){
 }
 a.throws(()=>apply(fixture(false),[{id:'bad',username:'absent',petals:['dahlia']}]),/uniquely/);
 console.log('PASS: separate/inclusive bag storage, one-copy removal, worn/presets, claims, no refunds, unrelated data, idempotency');
+
+for(const included of [false,true]){
+ const db=fixture(included),old=structuredClone(db.players.u.inventory.unique);
+ const report=apply(db,[{id:'refund-four',username:'test',expectedUserId:'u',petals:['dahlia','yggdrasil'],resetClaims:false,refund:4}]);
+ a.equal(db.players.u.inventory.unique.petal_dahlia,4);a.equal(db.players.u.inventory.unique.petal_yggdrasil,4);
+ a.equal(db.players.u.inventory.unique.petal_fragment,old.petal_fragment);a.equal(report[0].changed.reduce((s,x)=>s+x.refund,0),8);
+ const once=JSON.stringify(db);apply(db,[{id:'refund-four',username:'test',petals:['dahlia','yggdrasil'],refund:4}]);a.equal(JSON.stringify(db),once);
+}
+console.log('PASS: four matching Eternal materials per released claim, idempotent receipts');

@@ -3912,3 +3912,46 @@ TEST(hornet_family_shipped_ammunition_resolves_and_all_variants_fire_real_missil
         }
     }
 }
+
+TEST(hel_wasp_fires_a_slow_shotgun_volley){
+    CHECK(contentReady());
+    const auto& hel=content().mob(content().mobIndex("hel_wasp"));
+    const auto& wasp=content().mob(content().mobIndex("wasp"));
+    CHECK_EQ(hel.projectile.count,5);CHECK(hel.projectile.spreadAngle>0);CHECK(hel.cooldownMillis>wasp.cooldownMillis);
+    Sim sim;sim.spawnMob("hel_wasp",kOrigin);sim.spawnPlayer(kOrigin+Vec2{80,0});
+    CHECK(fireAndCatch(sim,450)!=NULL_ENTITY);
+    int shots=0;Query<Projectile> q{sim.world};q.each([&](Entity,Projectile&){++shots;});CHECK_EQ(shots,5);
+}
+
+TEST(dandelion_seed_range_stays_authored_at_every_rarity){
+    CHECK(contentReady());
+    const auto& spec=content().mob(content().mobIndex("dandelion")).petalRing;
+    for(const auto r:{Rarity::Common,Rarity::Super,Rarity::Unique,Rarity::Apex}){
+        Sim sim;const auto player=sim.spawnPlayer(kOrigin+Vec2{200,0});const auto mob=sim.spawnMob("dandelion",kOrigin,r);
+        sim.hurt(mob,player,1);sim.world.get<MobPetalRing>(mob).pending=1;sim.tick();
+        int shots=0;Query<Projectile> q{sim.world};q.each([&](Entity,Projectile& shot){++shots;CHECK_NEAR(shot.remainingDistance,spec.shotDistance,1e-6);});CHECK_EQ(shots,1);
+    }
+}
+
+TEST(summoned_egg_mobs_cannot_overlap_a_training_npc) {
+ CHECK(contentReady());Sim sim;auto owner=sim.spawnPlayer(kOrigin);
+ auto pet=sim.spawnMob("soldier_ant",kOrigin+Vec2{150,0},Rarity::Unique);
+ sim.world.add<Pet>(pet,Pet{owner,0});
+ auto dummy=sim.world.create();sim.world.add<NpcTag>(dummy);
+ Npc npc;npc.configIndex=content().mobIndex("target_dummy");sim.world.add<Npc>(dummy,npc);
+ sim.world.add<Transform>(dummy,Transform{kOrigin+Vec2{150,0},0});sim.world.add<Body>(dummy,Body{80,100});
+ sim.world.add<Health>(dummy,Health{10000,10000});sim.world.add<Faction>(dummy,Faction{Team::Hostiles,false});
+ MovementSystem movement;
+ for(int n=0;n<30;++n){sim.tickIntent();movement.runWorldPhase(sim.world,sim.terrain,sim.now,sim.dt);
+  CHECK(sim.gap(pet,dummy)+1e-6>=80+sim.world.get<Body>(pet).radius*mobBodyContactScale("soldier_ant"));}
+}
+
+TEST(large_egg_summons_push_large_wild_mobs_in_proportion_to_body_size) {
+ CHECK(contentReady());Sim sim;auto owner=sim.spawnPlayer(kOrigin);
+ auto pet=sim.spawnMob("soldier_ant",kOrigin,Rarity::Unique);
+ auto wild=sim.spawnMob("ladybug",kOrigin+Vec2{200,0},Rarity::Unique);
+ sim.world.add<Pet>(pet,Pet{owner,0});
+ sim.world.get<Body>(pet).radius=300;sim.world.get<Body>(wild).radius=300;
+ MovementSystem movement;movement.runWorldPhase(sim.world,sim.terrain,sim.now,0);
+ CHECK(sim.positionOf(wild).x>kOrigin.x+200+kMobSeparationMaxPushPerPair);
+}

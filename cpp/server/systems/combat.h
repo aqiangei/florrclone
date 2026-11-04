@@ -430,6 +430,8 @@ private:
         /// Added to `damage` while the victim is above kClawCritHealthFraction.
         /// Claw, and nothing else; already on the flower's petal curve.
         double critDamage = 0;
+        double critChance = 0;
+        double critMultiplier = 1;
         /// Fraction of what a hit actually took off that heals `owner`. Fang.
         double lifesteal = 0;
         /// The flower a petal belongs to -- who a fang heals. NULL_ENTITY for

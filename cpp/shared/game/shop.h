@@ -32,7 +32,14 @@ inline double shopPrice(std::uint16_t petalIndex, Rarity rarity) {
     // item. Respect authored acquisition costs without lowering cheap petals.
     const double variety=std::max(affordable,std::min(10.0,std::sqrt(base/20.0)));
     const double previous=std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
-    return std::ceil(previous*1.75);
+    return 2.0 * std::ceil(previous*1.75);
+}
+
+// Apply the economy multiplier after the old discounted rounding too, so
+// every offer (including saved locks) is exactly twice its previous quote.
+inline double shopOfferPrice(std::uint16_t index, Rarity rarity, int discount) {
+    return 2.0 * std::floor((shopPrice(index, rarity) / 2.0) *
+                            (100 - clamp(discount, 0, 30)) / 100.0);
 }
 
 /// By id. An id no petal answers to has no price at all and quotes zero --
@@ -182,8 +189,7 @@ inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
         const Rarity floor = content().petal(offer.petalIndex).minRarity;
         if (rarityIndex(offer.rarity) < rarityIndex(floor)) offer.rarity = floor;
         offer.discountPercent = rng.chance(0.2) ? 10 * (1 + static_cast<int>(rng.below(3))) : 0;
-        offer.price = std::floor(shopPrice(offer.petalIndex, offer.rarity) *
-                                 static_cast<double>(100 - offer.discountPercent) / 100.0);
+        offer.price = shopOfferPrice(offer.petalIndex, offer.rarity, offer.discountPercent);
         offers.push_back(offer);
     }
     return offers;

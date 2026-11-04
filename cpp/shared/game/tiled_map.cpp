@@ -522,6 +522,7 @@ Vec2 orientInTile(Vec2 local, std::uint8_t flags, double side) {
 
 bool TiledMap::load(const std::string& path, std::string& errorOut) {
     artFiles_.clear();
+    decorations_.clear();
     layers_.clear();
     tiles_.clear();
     palette_.clear();
@@ -844,6 +845,27 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
         tiles_[i] = static_cast<std::uint8_t>(tile);
         if (tile == Tile::Solid) ++solidCells_;
         else ++openCells_;
+    }
+
+    // Tiled tile objects (factory doors, pyramid, other large scenery) are
+    // not tile layers or gameplay annotations. Preserve their authored bounds.
+    for (const Json* layer : allLayers) {
+        if ((*layer)["type"].asString() != "objectgroup" ||
+            ((*layer).contains("visible") && !(*layer)["visible"].asBool())) continue;
+        for (const Json& object : (*layer)["objects"].items()) {
+            if (object.contains("visible") && !object["visible"].asBool()) continue;
+            const auto raw=static_cast<std::uint32_t>(object["gid"].asDouble());
+            const auto gid=raw & kGidMask;
+            if (!gid || gid>=paletteOfGid.size() || paletteOfGid[gid]<0) continue;
+            TiledDecoration d; d.art=palette_[paletteOfGid[gid]].artIndex;
+            if(d.art<0) continue;
+            d.x=object["x"].asDouble()+(*layer)["offsetx"].asDouble();
+            d.y=object["y"].asDouble()+(*layer)["offsety"].asDouble();
+            d.width=object["width"].asDouble();d.height=object["height"].asDouble();
+            d.rotation=object["rotation"].asDouble();
+            d.flipX=(raw & 0x80000000u)!=0;d.flipY=(raw & 0x40000000u)!=0;
+            if(d.width>0 && d.height>0) decorations_.push_back(d);
+        }
     }
 
     // -- annotations --------------------------------------------------------

@@ -1,6 +1,7 @@
 #include "client/ui/item_tile.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <string_view>
@@ -146,6 +147,7 @@ struct GardnIcon {
     double box;
 };
 constexpr GardnIcon kGardnIcon[] = {
+    {"dust",              12,    7,  9,       0,     1},
     {"antennae",           33, 12.5,  0,       0,     1},
     {"basic",              23,   10,  0,       0,     1},
     {"bone",             38.5,   12,  0,       1, 0.664},   // art fills 66% of its box
@@ -334,6 +336,56 @@ double smootherStep(double t) {
     return t * t * t * (t * (6.0 * t - 15.0) + 10.0);
 }
 
+// Project each face and pip through the same rotating cube, rather than
+// rotating a flat square. No bitmap bake: the orientation changes every frame.
+void drawDiceIcon(Canvas& canvas, int front, double seconds, double diameter) {
+    struct V { double x,y,z; };
+    // A short roll followed by a readable hold. Full turns end at the same
+    // front face, so the settled art shows the actual counter, not a random pip.
+    const double phase = std::fmod(std::max(0.0, seconds), 1.6);
+    const double progress = std::min(phase / 1.1, 1.0);
+    const double turn = smootherStep(progress);
+    const double yaw = -.28 + kTau * 3 * turn;
+    const double pitch = .30 + kTau * 2 * turn;
+    const double roll = .08 + .16 * std::sin(kTau * turn);
+    const auto rotate=[&](V p){
+        V a{p.x,p.y*std::cos(pitch)-p.z*std::sin(pitch),p.y*std::sin(pitch)+p.z*std::cos(pitch)};
+        V b{a.x*std::cos(yaw)+a.z*std::sin(yaw),a.y,-a.x*std::sin(yaw)+a.z*std::cos(yaw)};
+        return V{b.x*std::cos(roll)-b.y*std::sin(roll),b.x*std::sin(roll)+b.y*std::cos(roll),b.z};
+    };
+    const auto project=[&](V p){p=rotate(p);double k=diameter*.25*4/(4-p.z);return Vec2{p.x*k,p.y*k};};
+    struct Face { V a,b,c,d,normal; int value; double depth; };
+    int side=1;while(side==front||side==7-front)++side;
+    int top=1;while(top==front||top==7-front||top==side||top==7-side)++top;
+    std::array<Face,6> faces{{
+      {{-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1},{0,0,1},front,0},
+      {{1,-1,-1},{-1,-1,-1},{-1,1,-1},{1,1,-1},{0,0,-1},7-front,0},
+      {{1,-1,1},{1,-1,-1},{1,1,-1},{1,1,1},{1,0,0},side,0},
+      {{-1,-1,-1},{-1,-1,1},{-1,1,1},{-1,1,-1},{-1,0,0},7-side,0},
+      {{-1,1,1},{1,1,1},{1,1,-1},{-1,1,-1},{0,1,0},top,0},
+      {{-1,-1,-1},{1,-1,-1},{1,-1,1},{-1,-1,1},{0,-1,0},7-top,0}
+    }};
+    for(auto& f:faces)f.depth=rotate(f.normal).z;
+    std::sort(faces.begin(),faces.end(),[](const Face& a,const Face& b){return a.depth<b.depth;});
+    for(const auto& f:faces){
+        if(f.depth<=0)continue;
+        const auto n=rotate(f.normal);const int shade=static_cast<int>(205+std::clamp(n.z*.5-n.y*.2,0.0,1.0)*50);
+        setFill(canvas,static_cast<std::uint32_t>((shade<<16)|(shade<<8)|shade));setStroke(canvas,0x7E858Bu);canvas.setLineWidth(1.8);canvas.setLineJoin("round");
+        const std::array<Vec2,4> corners{{project(f.a),project(f.b),project(f.c),project(f.d)}};
+        const auto toward=[](Vec2 a,Vec2 b){return Vec2{a.x+(b.x-a.x)*.14,a.y+(b.y-a.y)*.14};};
+        canvas.beginPath();
+        auto start=toward(corners[0],corners[3]);canvas.moveTo(start.x,start.y);
+        for(int i=0;i<4;++i){const auto c=corners[i];auto after=toward(c,corners[(i+1)%4]);
+            canvas.quadraticCurveTo(c.x,c.y,after.x,after.y);
+            auto before=toward(corners[(i+1)%4],c);canvas.lineTo(before.x,before.y);}
+        canvas.closePath();canvas.fill();canvas.stroke();
+        const auto dot=[&](double u,double v){canvas.beginPath();for(int i=0;i<16;++i){double a=kTau*i/16,du=u+.065*std::cos(a),dv=v+.065*std::sin(a);
+          const V p{f.a.x+(f.b.x-f.a.x)*du+(f.d.x-f.a.x)*dv,f.a.y+(f.b.y-f.a.y)*du+(f.d.y-f.a.y)*dv,f.a.z+(f.b.z-f.a.z)*du+(f.d.z-f.a.z)*dv};
+          auto q=project(p);if(i==0)canvas.moveTo(q.x,q.y);else canvas.lineTo(q.x,q.y);}canvas.closePath();setFill(canvas,0x303942u);canvas.fill();};
+        if(f.value%2)dot(.5,.5);if(f.value>=2){dot(.25,.25);dot(.75,.75);}if(f.value>=4){dot(.75,.25);dot(.25,.75);}if(f.value==6){dot(.25,.5);dot(.75,.5);}
+    }
+}
+
 /// See setViewerSkills.
 const SkillSet* viewerSkills = nullptr;
 
@@ -363,7 +415,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     // A configured count below one means "not a stack" -- third eye, antennae
     // and the observer all declare zero and are drawn as a single icon.
     const int drawCount = count >= 1 ? count : 1;
-    const ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
+    ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
 
     // gardn's own clamp is the `shrink` inside the shape; `maxDiameter` is a
     // caller's backstop on top of it, and a petal gardn measures is already
@@ -522,8 +574,9 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
     if (filled) {
         const PetalStats stats = content().petalStats(tile.petalIndex, tile.rarity);
         const PetalConfig& config = content().petal(tile.petalIndex);
-        const int copies = petalCopies(stats.count, viewerSkills, tile.loadoutSlot,
-                                       rarityIndex(tile.rarity), config.stackable);
+        // The equipment picture identifies the petal, using its authored
+        // arrangement. Duplicator changes live bodies, not this illustration.
+        const int copies = stats.count;
         canvas.save();
         canvas.translate(0.0f, static_cast<float>(-kItemTileIconRise));
         canvas.rotate(static_cast<float>(tile.iconAngle));
@@ -546,16 +599,7 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         if (tile.flash.a != 0) canvas.setColorTint(tile.flash);
         const double iconCap = kFaceSide / kItemTileIconScale;
         if(tile.diceFace>=1&&tile.diceFace<=6){
-            const float half=static_cast<float>(iconCap*.30),pip=half*.13f,d=half*.55f;
-            ui::setFill(canvas,0xFFFFFFu);canvas.fillRect(-half,-half,half*2,half*2);
-            ui::setStroke(canvas,0x555555u);canvas.setLineWidth(2);canvas.strokeRect(-half,-half,half*2,half*2);
-            ui::setFill(canvas,0x333333u);
-            const auto dot=[&](float x,float y){canvas.fillCircle(x,y,pip);};
-            const int face=tile.diceFace;
-            if(face%2)dot(0,0);
-            if(face>=2){dot(-d,-d);dot(d,d);}
-            if(face>=4){dot(d,-d);dot(-d,d);}
-            if(face==6){dot(-d,0);dot(d,0);}
+            drawDiceIcon(canvas,tile.diceFace,tile.timeSeconds,iconCap*.72);
         }else drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,
                          0.0, 0.0, iconCap, tile.timeSeconds, facesInward);
         canvas.setColorTint(outerTint);

@@ -739,3 +739,22 @@ TEST(a_split_flower_pays_for_what_it_buys) {
     for (const Entity half : halves) CHECK_EQ(world.get<PlayerProgress>(half).stars, left);
     CHECK_EQ(alice.view().self().stars, left);
 }
+
+TEST(splitter_spare_fires_blueberries_with_the_active_flower) {
+ Harness h("splitter-blueberry",{},testsupport::dataDir(),0);CHECK(h.ready);if(!h.ready)return;
+ NetClient alice;CHECK(loginNew(h,alice,"alice","hunter2!"));alice.joinGame(1280,720,{},"alice");
+ CHECK(h.stepUntil({&alice},[&]{return alice.status()==NetClient::Status::Playing;}));
+ CHECK(equipSplitter(h,alice,"alice",content().petalIndex(kSplitterPetalId)));
+ CHECK(h.stepUntil({&alice},[&]{return bodiesNamed(h.server.world(),"alice").size()==2;}));
+ const auto berry=content().petalIndex("magic_peas");alice.sendChat("/admin give alice magic_peas common 1");
+ CHECK(h.stepUntil({&alice},[&]{return alice.profile().stackCount(berry,Rarity::Common)>0;}));
+ alice.setLoadoutSlot(1,berry,Rarity::Common);
+ const auto mana=content().petalIndex("mana_orb");alice.sendChat("/admin give alice mana_orb common 1");
+ CHECK(h.stepUntil({&alice},[&]{return alice.profile().stackCount(mana,Rarity::Common)>0;}));
+ alice.setLoadoutSlot(2,mana,Rarity::Common);h.step(100,{&alice});
+ net::InputFrame frame;frame.sequence=100;frame.flags=net::InputDefend;frame.aimDistance=300;alice.sendInput(frame);
+ std::vector<Entity> fired;auto& world=h.server.world();
+ CHECK(h.stepUntil({&alice},[&]{Query<Projectile> q{world};q.each([&](Entity,Projectile& p){
+  if(p.petalConfigIndex==berry&&std::find(fired.begin(),fired.end(),p.owner)==fired.end())fired.push_back(p.owner);
+ });return fired.size()==2;},200));
+}

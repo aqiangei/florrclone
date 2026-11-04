@@ -74,7 +74,7 @@ constexpr double kBadgeTipSize = 16.0;
 /// florrclone talent-wheel stage is an 880×880 viewBox. Nodes are projected
 /// with Nv(tier, phase, camera); only |phase−camera|<3 are shown.
 constexpr double kWheelSize = 880.0;
-constexpr double kCameraMax = 24.5;
+constexpr double kCameraMax = 21.0;
 constexpr double kPhaseVisible = 3.0;
 constexpr double kFlowerX = 440.0;
 constexpr double kFlowerY = 777.0;
@@ -207,18 +207,18 @@ const std::vector<Branch>& branches() {
          {{4, 9.5}, {5, 10}, {6, 9.5}, {6, 10.5}, {7, 10}, {8, 10.5}, {9, 10}, {8, 9.5}, {9, 9}}},
         {SkillId::SharpEdges,
          {{4, 10.5}, {5, 11}, {6, 11.5}, {7, 11}, {8, 11.5}, {9.5, 11.5}, {9, 11}, {9.5, 10.5}}},
-        {SkillId::BodyToxicity, {{9, 12}}},
+        {SkillId::BodyToxicity, {{9.8, 11}}},
         {SkillId::Luck,
          {{4, 11.5}, {5, 12}, {4, 12.5}, {6, 12.5}, {7, 12}, {8, 12.5}, {9, 13}, {7.5, 13}, {6, 13}}},
         {SkillId::Poison,
-         {{4, 15.5}, {6, 15.5}, {5, 15}, {5, 16}, {7, 15}, {7, 15.5}, {7, 16}, {9, 15}, {9, 16}}},
-        {SkillId::ConcentratedPoison, {{9, 15.5}}},
+         {{4, 14.5}, {5, 14}, {6, 14.5}, {7, 14}, {8, 14.5}, {9, 14}, {9, 15}, {8, 15.5}, {7, 15.5}}},
+        {SkillId::ConcentratedPoison, {{6, 15.5}}},
         {SkillId::Damage,
-         {{4, 18}, {5, 17.5}, {6, 18}, {7, 17.5}, {8, 18}, {9, 17.5},
-          {8, 18.5}, {7, 19}, {9, 19}, {9.5, 18.5}}},
+         {{4, 17}, {5, 16.5}, {6, 17}, {7, 16.5}, {8, 17}, {9, 16.5},
+          {9.5, 17}, {9, 17.5}, {8, 18}, {7, 18}}},
         {SkillId::Absorbing,
-         {{4, 22}, {5, 21.5}, {6, 22}, {7, 21.5}, {8, 22}, {9, 21.5},
-          {8, 22.5}, {7, 23}, {9, 23}, {9.5, 22.5}}},
+         {{4, 19.5}, {5, 19}, {6, 19.5}, {7, 19}, {8, 19.5}, {9, 19},
+          {9.5, 19.5}, {9, 20}, {8, 20.5}, {7, 20.5}}},
     };
     return kBranches;
 }

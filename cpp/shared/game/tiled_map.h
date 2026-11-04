@@ -314,6 +314,13 @@ struct TiledTileType {
 /// tile with no image. A cell is EMPTY or it is not; a layer that collides
 /// contributes the shapes of every non-empty cell's tile, which for a tile
 /// carrying no shapes is nothing at all.
+// Tile objects are scenery with independent size and a bottom-left origin.
+struct TiledDecoration {
+    int art = -1;
+    double x=0, y=0, width=0, height=0, rotation=0;
+    bool flipX=false, flipY=false;
+};
+
 struct TiledCell {
     std::int16_t art = -1;
     std::uint8_t flags = 0;   ///< kTileFlip* and kTileCoversEverything
@@ -375,6 +382,7 @@ public:
     /// Every distinct artwork the map's tiles name, in palette order, by bare
     /// file name. A TiledCell's `art` indexes into this.
     const std::vector<std::string>& artFiles() const { return artFiles_; }
+    const std::vector<TiledDecoration>& decorations() const { return decorations_; }
 
     /// The tile layers, bottom to top. Each holds width()*height() cells.
     const std::vector<TiledLayer>& layers() const { return layers_; }
@@ -448,6 +456,7 @@ private:
     int solidCells_ = 0;
     int openCells_ = 0;
     std::vector<std::string> artFiles_;
+    std::vector<TiledDecoration> decorations_;
     std::vector<TiledLayer> layers_;
     std::vector<std::uint8_t> tiles_;
     Json elements_;

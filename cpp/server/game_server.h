@@ -1448,6 +1448,7 @@ private:
     void bankPickups();
     void replicate(double nowMillis);
     void reapDead();
+    void serviceNearbyRevives(double nowMillis);
 
     ServerConfig config_;
     std::atomic<bool> running_{false};

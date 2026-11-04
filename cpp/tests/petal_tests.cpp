@@ -90,6 +90,7 @@ const char* const kPetalsJson = R"JSON({
   "disc":     {"name":"Disc","damage":0,"health":null,"size":1,"cooldown":1,"count":0,"range":0,"equipFlags":"Disc","noPhysics":true,"color":"#111111"},
   "bandage":  {"name":"Bandage","damage":0,"health":null,"size":1,"cooldown":1,"count":0,"range":0,"noPhysics":true,"color":"#E5DAA1"},
   "egg":{"name":"Ant Egg","damage":0,"health":1,"cooldown":60000,"count":4,"petMobType":"critter","petCount":4},
+  "beetle_egg":{"name":"Beetle Egg","damage":0,"health":1,"cooldown":30000,"count":1,"petMobType":"critter","petCount":1},
   "golden_leaf":{"name":"Golden Leaf","damage":1,"health":100,"size":1.2,"cooldown":200,"count":1,"color":"#EBEB34"},
   "cursor":   {"name":"Cursor","damage":0,"health":null,"size":1,"cooldown":1,"count":1,"color":"#EEEEEE"},
   "ram":      {"name":"RAM","damage":10,"health":2,"size":1,"cooldown":3000,"count":1,"color":"#3498DB"},
@@ -5497,7 +5498,7 @@ TEST(a_bandage_carries_florrs_undead_figures_and_does_not_stack) {
                1500.0 * std::pow(1.4, 6), 1e-6);
     CHECK_NEAR(fixture().registry.petalStats(petalId("bandage"), Rarity::Common).undeadMillis,
                1500.0, 1e-9);
-    CHECK_NEAR(mythic.unrevivableMillis, 30000.0, 1e-9);
+    CHECK_NEAR(mythic.unrevivableMillis, 0.0, 1e-9);
     CHECK_NEAR(mythic.undeadBodyDamageCut, 0.75, 1e-12);
     CHECK_NEAR(fixture().registry.petalStats(petalId("basic"), Rarity::Ultra).undeadMillis, 0.0,
                1e-12);
@@ -5510,7 +5511,7 @@ TEST(a_bandage_carries_florrs_undead_figures_and_does_not_stack) {
     rig.settleEquips();
     // The better one alone: the common is a spare.
     CHECK_NEAR(rig.modifiers().undeadMillis, 1500.0 * std::pow(1.4, 5), 1e-6);
-    CHECK_NEAR(rig.modifiers().unrevivableMillis, 30000.0, 1e-9);
+    CHECK_NEAR(rig.modifiers().unrevivableMillis, 0.0, 1e-9);
     CHECK_NEAR(rig.modifiers().undeadBodyDamageScale, 0.25, 1e-12);
     // Worn, never out: florr gives it no body on the ring.
     CHECK(rig.petals(0).empty());
@@ -5980,7 +5981,7 @@ TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead_with_double_summon
                     CHECK(combat.applyDamage(rig.world,shell,enemy,1e9,rig.now).refused);}
             }
             count=0;Query<Pet,Health,ContactDamage> pets{rig.world};pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
-            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,20,1e-8);CHECK_NEAR(hit.amount,1,1e-8);
+            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,30,1e-8);CHECK_NEAR(hit.amount,1.5,1e-8);
         });return count==4;},150));
     }
 }
@@ -6071,4 +6072,33 @@ TEST(wiki_mechanism_dice_rolls_all_six_faces_and_keeps_equipment_counter_synchro
     const double restingFace=rig.slotCounter(0);
     rig.tick(90);
     CHECK_NEAR(rig.slotCounter(0),restingFace,1e-9);
+}
+
+TEST(ant_and_beetle_egg_summons_gain_health_and_damage_at_every_rarity){
+    CHECK(contentLoaded());
+    const auto& config=fixture().registry.mob(fixture().registry.mobIndex("critter"));
+    for(const auto* id:{"egg","beetle_egg"})for(int tier=0;tier<kRarityCount;++tier){
+        const auto rarity=clampRarity(tier);Rig rig;rig.equip(0,id,rarity);
+        CHECK(rig.tickUntil([&]{return rig.petCount()>0;},2500));
+        const auto petRarity=ladderRarity(rarity)==Rarity::Apex?Rarity::Unique:rarity;
+        const double scale=petalStatScale(petRarity)*strengthBoost(rarity);
+        int count=0;Query<Pet,Health,ContactDamage> pets{rig.world};
+        pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
+            if(tag.owner!=rig.player)return;++count;
+            CHECK_NEAR(hp.max,config.health*scale*3.0,std::max(1e-7,hp.max*1e-10));
+            CHECK_NEAR(hit.amount,config.damage*scale*1.5,std::max(1e-7,hit.amount*1e-10));
+        });CHECK(count>0);
+    }
+}
+
+TEST(ant_and_beetle_eggs_duplicate_actual_summons_in_the_leftmost_slot){
+    CHECK(contentLoaded());
+    for(const auto* id:{"egg","beetle_egg"})for(const auto rarity:{Rarity::Common,Rarity::Unique,Rarity::Apex})for(const int slot:{0,1}){
+        Rig rig;rig.world.add<PlayerSkillTree>(rig.player);auto& skills=rig.world.get<PlayerSkillTree>(rig.player).skills;
+        skills.set(SkillId::Loadout,4);skills.set(SkillId::Duplicator,3);rig.equip(slot,id,rarity);
+        const auto& c=fixture().registry.petal(petalId(id));
+        const int expected=petalCopies(c.petCount,&skills,slot,rarityIndex(rarity),c.stackable)*(ladderRarity(rarity)==Rarity::Apex?3:1);
+        CHECK(rig.tickUntil([&]{return rig.petCount()==std::size_t(expected);},2500));
+        rig.tick(10);CHECK_EQ(rig.petCount(),std::size_t(expected));
+    }
 }

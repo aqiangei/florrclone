@@ -27,7 +27,7 @@ inline std::vector<ShopOffer> lockedShopOffers(const PlayerRecord& record) {
         offer.rarity=parseRarity(row["rarity"].asString());
         if(offer.petalIndex==kInvalidIndex || !shopSellsPetal(offer.petalIndex) || !shopSellsRarity(offer.rarity))continue;
         offer.discountPercent=clamp(row["discountPercent"].asInt(),0,30);
-        offer.price=std::floor(shopPrice(offer.petalIndex,offer.rarity)*(100-offer.discountPercent)/100.0);
+        offer.price=shopOfferPrice(offer.petalIndex,offer.rarity,offer.discountPercent);
         result.push_back(offer);
     }
     return result;

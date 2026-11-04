@@ -36,6 +36,74 @@
       ],
       "resetClaims": true,
       "expectedUserId": "80la7njyqrr9"
+    },
+    {
+      "id": "20261104-release-Quu-selected-feedback88",
+      "username": "Quu",
+      "expectedUserId": "iqj0mtjol0q3",
+      "petals": [
+        "mecha_missile",
+        "ankh",
+        "observer",
+        "card"
+      ],
+      "resetClaims": false,
+      "refund": 4
+    },
+    {
+      "id": "20261104-release-Cyber-selected-feedback87",
+      "username": "Cyber",
+      "expectedUserId": "80la7njyqrr9",
+      "petals": [
+        "computer_chip",
+        "glitch",
+        "javascript",
+        "bomb"
+      ],
+      "resetClaims": false,
+      "refund": 4
+    },
+    {
+      "id": "20261104-release-AKEE36-except-soil-feedback88",
+      "username": "AKEE36",
+      "expectedUserId": "5bgxtqf6556i",
+      "petals": [
+        "web",
+        "shovel",
+        "third_eye",
+        "corruption"
+      ],
+      "resetClaims": false,
+      "refund": 4,
+      "keepPetals": [
+        "soil"
+      ]
+    },
+    {
+      "id": "20261104-release-323421-except-corn-rock-feedback88",
+      "username": "323421",
+      "expectedUserId": "1eb44bf4-f8cb-4682-8576-1ed498cdd451",
+      "petals": [
+        "starfish",
+        "dust",
+        "electric_web"
+      ],
+      "keepPetals": [
+        "corn",
+        "rock"
+      ],
+      "resetClaims": false,
+      "refund": 4
+    },
+    {
+      "id": "20261104-release-WantSuper-lentil-feedback88",
+      "username": "WantSuper",
+      "expectedUserId": "4h9eic4ln3x7",
+      "petals": [
+        "lentil"
+      ],
+      "resetClaims": false,
+      "refund": 4
     }
   ]
 }

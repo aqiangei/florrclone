@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 86;
+inline constexpr std::uint16_t kProtocolVersion = 88;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -164,7 +164,7 @@ enum class ClientMessage : std::uint8_t {
     GuildEdit,          ///< str displayName, str description -- both replace
                         ///< what the guild has. Leader only; the tag is the
                         ///< guild's key and cannot be edited. (Version 45.)
-    TitanForge,         ///< u16 input petal, u8 hyper. Normal: 10 then 15 Super;
+    TitanForge,         ///< u16 input petal, u8 mode (0 permanent, 1 hyper, 2 Eternal fragment, 3 timed hammer). Normal: 10 then 15 Super;
                         ///< Hyper: 5 Eternal -> globally contested Hyper (v82).
                         ///< permanent next-tier petal, Fragment -> Mjolnir.
                         ///< Per-account/per-petal price ledger; never takes

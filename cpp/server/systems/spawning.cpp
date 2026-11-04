@@ -721,6 +721,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
 
     const Entity e = world.create();
     world.add<MobTag>(e);
+    if (config.id == "ghost") world.add<GhostTag>(e);
     world.add<Transform>(e, Transform{at, angle, realm});
     world.add<Motion>(e);
     // Mass is area, but it is the TIER's area: the reference derives mass from
@@ -897,9 +898,12 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
     Entity ahead = head;
     Vec2 at = headPosition;
     for (int i = 1; i <= config.segmentCount; ++i) {
-        if (census_.mobs >= mobCap) break;
-        const double spacing = config.segmentSpacing(leaderRadius, bodyStats.radius);
-        leaderRadius = bodyStats.radius;
+        // Admit the whole animal once its head was admitted. Cutting this
+        // loop at the cap leaves bosses with a partial body (or just a head).
+        // The remaining beads may exceed the cap by one animal.
+        const double bodyRadius = bodyStats.radius * 0.75;
+        const double spacing = config.segmentSpacing(leaderRadius, bodyRadius);
+        leaderRadius = bodyRadius;
         at = at + back * spacing;
         // Segments belong to the animal, not to the band: the head is the one
         // thing the band counted, and the chain is rebuilt from scratch every

@@ -321,6 +321,8 @@ private:
         /// A gardn chain (MobConfig::gardnChain): collides with its own
         /// animal everywhere but at its joints.
         bool gardnChain = false;
+        bool pet = false;
+        double petPushCap = 0;
         /// The config's `no_mob_collision`: neither pushes nor is pushed.
         bool noCollision = false;
         /// The parent this mob is still climbing out of (HoleTether::emerging),

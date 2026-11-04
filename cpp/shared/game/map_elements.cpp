@@ -314,6 +314,7 @@ void MapData::reset(Realm realm) {
     dark_ = false;
     darkColor_ = 0;
     artFiles_.clear();
+    decorations_.clear();
     layers_.clear();
     sourcePath_.clear();
     width_ = height_ = 0;
@@ -357,6 +358,7 @@ bool MapData::loadTiled(const std::string& path, std::string& errorOut, Realm re
     adopt(map.elements());
 
     artFiles_ = map.artFiles();
+    decorations_ = map.decorations();
     layers_ = map.layers();
     width_ = map.width();
     height_ = map.height();

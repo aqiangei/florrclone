@@ -1,4 +1,5 @@
 #include "test.h"
+#include "test_data.h"
 
 #include "server/replication.h"
 #include "server/squads.h"
@@ -743,14 +744,12 @@ TEST(a_bandage_holds_a_killing_blow_off_until_its_time_is_up) {
     a.step(2950.0);
     CHECK(!a.world.has<Dead>(player));
     // ...and dead once it is, to the mob that struck the blow it was spared,
-    // and out of a yggdrasil's reach for the bandage's while.
+    // and eligible for revival immediately.
     a.step(3000.0);
     CHECK(a.world.has<Dead>(player));
     CHECK(a.world.get<Dead>(player).killer == mob);
     CHECK(!a.world.has<Undead>(player));
-    CHECK(a.world.has<Unrevivable>(player));
-    CHECK(a.world.get<Unrevivable>(player).active(3000.0 + 29999.0));
-    CHECK(!a.world.get<Unrevivable>(player).active(3000.0 + 30000.0));
+    CHECK(!a.world.has<Unrevivable>(player));
 }
 
 TEST(without_a_bandage_a_killing_blow_kills) {
@@ -4176,4 +4175,17 @@ TEST(rubber_scales_the_knockback_its_flower_takes) {
     a.combat.applyKnockback(a.world, rubbery, {1, 0}, 10.0);
     CHECK_NEAR(a.world.get<Knockback>(rubbery).impulse.x,
                2.5 * a.world.get<Knockback>(plain).impulse.x, 1e-9);
+}
+
+TEST(player_dice_uses_its_authored_critical_hit_and_keeps_damage_talents){
+ const auto& c=testsupport::shippedContent();const auto dice=c.petalIndex("dice");
+ for(const auto tier:{Rarity::Common,Rarity::Apex})for(double scale:{1.0,1.4}){
+  Arena a;const auto player=a.player({5000,5000}),mob=a.mob({1000,1000},1e15);
+  PlayerModifiers mods;mods.petalDamageScale=scale;a.world.add<PlayerModifiers>(player,mods);
+  const auto petal=equipPetal(a,player,dice,tier,{1000,1000});int procs=0,normal=0;
+  const double base=c.petalStats(dice,tier).damage*scale;
+  for(int i=0;i<256;++i){const auto before=a.health(mob);a.step(i*1000.0,c);const double hit=before-a.health(mob);
+   if(std::abs(hit-base*35)<0.2)++procs;else {CHECK_NEAR(hit,base,.2);++normal;}}
+  CHECK(procs>0&&procs<50);CHECK(normal>200);CHECK(a.world.isAlive(petal));
+ }
 }

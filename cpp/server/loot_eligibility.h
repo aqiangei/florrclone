@@ -106,6 +106,12 @@ inline double lootDamageFloor(double mobMaxHealth) {
     return mobMaxHealth > 0.0 ? mobMaxHealth / 100.0 : 0.0;
 }
 
+/// Hyper participation keeps its existing positive-damage loot rule. XP and
+/// the gallery must use the same floor as the drops they accompany.
+inline double lootDamageFloor(Rarity rarity, double mobMaxHealth) {
+    return rarity == Rarity::Apex ? 0.0 : lootDamageFloor(mobMaxHealth);
+}
+
 /// How many PEOPLE a group of bodies holds.
 ///
 /// One connection is one person however many flowers it is steering: a

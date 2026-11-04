@@ -137,7 +137,8 @@ bool matchesSearch(std::uint16_t petalIndex, const std::string& needle) {
     if (needle.empty()) return true;
     const PetalConfig& config = content().petal(petalIndex);
     return lowerCase(titleCase(config.name)).find(needle) != std::string::npos ||
-           lowerCase(config.id).find(needle) != std::string::npos;
+           lowerCase(config.id).find(needle) != std::string::npos ||
+           std::string(petalNameZh(config.id)).find(needle) != std::string::npos;
 }
 
 /// Centre each row within the scrolling content area, including partial rows.
@@ -309,8 +310,21 @@ namespace ui {
 /// number the player will actually see in the field, and the reload carries
 /// `reloadScale` -- the Reload talent and the bar's golden leaves -- for the
 /// same reason.
+std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
+        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot) {
+    const auto effectiveStats = equippedPetalStats(content(), equipped);
+    const auto baseStats = content().petalStats(equipped.configIndex, equipped.rarity);
+    const double scale = baseStats.reloadMillis > 0.0
+        ? reloadScale * effectiveStats.reloadMillis / baseStats.reloadMillis : reloadScale;
+    auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, scale, slot);
+    if (originalIndex != equipped.configIndex && !lines.empty()) {
+        lines.front().text = std::string(language() == Language::Zh ? "拟态 → " : "Mimic → ") + lines.front().text;
+    }
+    return lines;
+}
+
 std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rarity,
-                                           const SkillSet& skills, double reloadScale) {
+                                           const SkillSet& skills, double reloadScale, int slot) {
     const PetalConfig& config = content().petal(petalIndex);
     const PetalStats stats = content().petalStats(petalIndex, rarity);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
@@ -472,10 +486,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const auto& summon=content().mob(config.petMobIndex);
         const bool apex=ladderRarity(rarity)==Rarity::Apex;
         const auto summonRarity=apex?Rarity::Unique:rarity;
-        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity);
+        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
-            " x" + std::to_string(config.petCount*(apex?3:1)),12.0};lines.push_back(pet);
+            " x" + std::to_string((config.id=="egg"||config.id=="beetle_egg"
+                ? petalCopies(config.petCount,&skills,slot,rarityIndex(rarity),config.stackable)
+                : config.petCount)*(apex?3:1)),12.0};lines.push_back(pet);
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
         special("召唤物伤害：", "Summon damage: ",summon.damage*summonScale*summon.petDamageScale);
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
@@ -623,10 +639,6 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         body.alpha = 0.56;
         body.labelColor = kStatDamage;
         lines.push_back(body);
-        TooltipLine lock{std::string(chinese ? "无法复活持续：" : "Unrevivable: ") + seconds(stats.unrevivableMillis), 12.0};
-        lock.alpha = 0.56;
-        lock.labelColor = kStatDanger;
-        lines.push_back(lock);
     }
 
     // Bur alone. Its description says the petal debuffs armour and cannot say

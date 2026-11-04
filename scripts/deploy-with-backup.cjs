@@ -57,9 +57,21 @@ async function main(){
     console.log('已验证本地最新存档备份：'+path.join(local,'inventory.json'));
     // Preserve the original migration snapshot's fixed TP debt without
     // changing passwords, progress or inventory earned since the cutover.
+    let next,report;
+    if(process.env.FLORR_RESTORE_SNAPSHOT){
+      const source=path.resolve(process.env.FLORR_RESTORE_SNAPSHOT);
+      const bytes=fs.readFileSync(source);
+      const expected=process.env.FLORR_RESTORE_SHA256;
+      assert(expected && /^[a-f0-9]{64}$/.test(expected),'Explicit restore SHA256 required');
+      assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),expected,'Restore snapshot hash mismatch');
+      const restored=JSON.parse(bytes);assert(restored.users && restored.players,'Invalid restore database');
+      next=path.join(local,'inventory.restored.json');fs.writeFileSync(next,bytes);
+      report={restoreSnapshot:{source,sha256:expected,accounts:Object.keys(restored.players).length},accountAdjustments:[]};
+      fs.writeFileSync(path.join(local,'snapshot-restore.json'),JSON.stringify(report.restoreSnapshot,null,2));
+    }else{
     const baseline=path.join(root,'migrate/latest-final-cpp.json');
-    let next=path.join(local,'inventory.reconciled.json');
-    const report=JSON.parse(run(process.execPath,[path.join(__dirname,'reconcile-migrated-tp.js'),baseline,path.join(local,'inventory.json'),next]));
+    next=path.join(local,'inventory.reconciled.json');
+    report=JSON.parse(run(process.execPath,[path.join(__dirname,'reconcile-migrated-tp.js'),baseline,path.join(local,'inventory.json'),next]));
     const compare=JSON.parse(fs.readFileSync(next));
     for(const [id,p]of Object.entries(compare.players||{}))for(const k of ['talentPointBonus','talentPointReconciledAt']){
       if(k in before.players[id])p[k]=before.players[id][k];else delete p[k];
@@ -101,6 +113,7 @@ async function main(){
       report.operatorRequest=JSON.parse(run(process.execPath,[path.join(__dirname,'prepare-operator-hyper-forge.cjs'),next,queued,process.env.FLORR_OPERATOR_HYPER_USER,'hammer-'+stamp,marker,ready]));
       fs.writeFileSync(path.join(local,'operator-request.json'),JSON.stringify(report.operatorRequest,null,2));
       next=queued;
+    }
     }
     scp(next,host+':'+remote+'/inventory.next.json');
     // All validation and the local backup gate have completed at this point.

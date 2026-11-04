@@ -126,3 +126,30 @@ TEST(jungle_centipede_spawns_a_complete_networked_body_chain){
         if(part.chainHead!=head||e==head)return;++bodies;CHECK_EQ(type.configIndex,config.segmentBodyIndex);CHECK(type.rarity==Rarity::Super);CHECK(w.has<Replicated>(e));
     });CHECK_EQ(bodies,kCentipedeSegmentCount);
 }
+
+TEST(centipede_chains_stay_complete_at_capacity_and_touch_at_actual_body_size){
+    const auto& c=data();
+    for(const auto* id:{"centipede","jungle_centipede","desert_centipede","evil_centipede","hel_centipede"})for(const auto rarity:{Rarity::Common,Rarity::Super,Rarity::Unique,Rarity::Apex}){
+        World w;Terrain terrain;SpawnSystem spawn;Rng rng{66};spawn.mobCap=1;
+        const auto index=c.mobIndex(id);
+        const auto head=spawn.spawnMob(w,terrain,c,index,rarity,{3000,3000},Realm::Overworld,0,rng);
+        CHECK(head!=NULL_ENTITY);int count=0;
+        Query<BodySegment,Body,Transform> q{w};q.each([&](Entity e,BodySegment& link,Body& body,Transform& at){
+            if(e==head||link.chainHead!=head)return;++count;
+            const auto& leader=w.get<Body>(link.ahead);const auto& pos=w.get<Transform>(link.ahead);
+            CHECK_NEAR(link.spacing,leader.radius+body.radius+kGardnSegmentGap,1e-6);
+            // Very large chains exceed this empty terrain's default bounds.
+            if(rarity==Rarity::Common)CHECK_NEAR((at.position-pos.position).length(),link.spacing,1e-6);
+        });CHECK_EQ(count,kCentipedeSegmentCount);
+    }
+}
+
+#include "shared/game/tiled_map.h"
+TEST(entrance_tile_objects_survive_map_loading_with_their_authored_size) {
+ for(const auto* name:{"garden.tmj","desert.tmj","computer.tmj"}) {
+  TiledMap map;std::string error;CHECK(map.load(testsupport::dataFile(name),error));
+  const std::string expected=std::string(name)=="garden.tmj"?"factory_entrance.svg":std::string(name)=="desert.tmj"?"pyramid.svg":"factory_exit.svg";
+  bool found=false;for(const auto& d:map.decorations())if(map.artFiles()[d.art]==expected){found=true;CHECK(d.width>300);CHECK(d.height>300);}
+  CHECK(found);
+ }
+}

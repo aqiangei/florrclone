@@ -183,7 +183,7 @@ inline constexpr int kStripSlotCount = 19;
 /// key moves it. The step is the browser's own ZOOM_STEP; the range is this
 /// client's. The floor is 25%; camera equipment still multiplies this value.
 inline constexpr double kMinZoom = kMinimumUserCameraZoom;
-inline constexpr double kMaxZoom = 1.6;
+inline constexpr double kMaxZoom = 4.0;
 inline constexpr double kZoomKeyStep = 0.1;
 
 /// The camera multiplier the worn loadout asks for: the smallest cameraZoom
@@ -1106,6 +1106,8 @@ private:
     enum class Phase : std::uint8_t { Idle, Forging, Result };
 
     bool hyper_ = false;
+    bool eternalFragment_ = true;
+    bool confirmForge_ = false;
     SlotTierGrid grid_;
     SlotMotion motion_;
     /// The petal in the slot: five of it at apex, which is what one forge

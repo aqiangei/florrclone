@@ -560,6 +560,10 @@ const char* skillTr(SkillId id, int /*tier*/) {
                 : kSkillLabels[static_cast<std::size_t>(i)];
 }
 
+const char* petalNameZh(const std::string& id) {
+    for (const auto& entry : kPetals) if (id == entry.id) return entry.zh;
+    return "";
+}
 const char* petalNameTr(const std::string& id, const char* fallback) {
     return lookup(kPetals, sizeof(kPetals) / sizeof(kPetals[0]), id, fallback);
 }

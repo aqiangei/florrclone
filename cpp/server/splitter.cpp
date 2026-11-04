@@ -395,6 +395,13 @@ void GameServer::serviceSplitters(double nowMillis) {
                 continue;
             }
             parkBody(session.splitOther);
+            const auto* activeInput = world_.tryGet<PlayerInput>(session.entity);
+            auto* spareInput = world_.tryGet<PlayerInput>(session.splitOther);
+            if (activeInput && spareInput) {
+                spareInput->current.flags = activeInput->current.flags & (net::InputAttack | net::InputDefend);
+                spareInput->current.aimAngle = activeInput->current.aimAngle;
+                spareInput->current.aimDistance = activeInput->current.aimDistance;
+            }
             syncSplitProgress(session);
             continue;
         }

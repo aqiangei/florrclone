@@ -19,6 +19,7 @@
 #include "client/net_client.h"
 #include "server/db.h"
 #include "server/game_server.h"
+#include "server/systems/combat.h"
 #include "server_harness.h"
 #include "shared/game/config.h"
 #include "shared/net/protocol.h"
@@ -275,7 +276,7 @@ TEST(a_profile_check_that_agrees_is_answered_with_nothing) {
     CHECK_EQ(client.profile().stars, -12345.0);
 }
 
-TEST(a_profile_check_behind_the_server_s_revision_is_not_judged) {
+TEST(a_profile_check_behind_the_server_s_revision_recovers_without_relogin) {
     Harness h("resync-revision", [](const std::string& path) {
         seedTinkerer(path, [](PlayerRecord& record) {
             record.addItem(Rarity::Rare, "petal_rose", 4);
@@ -289,15 +290,13 @@ TEST(a_profile_check_behind_the_server_s_revision_is_not_judged) {
     CHECK(login(h, client));
     h.step(kSettleTicks, {&client});
 
-    // A check folded before the latest Profile landed -- here, one that names
-    // the revision before it -- describes a bag the server has moved on from.
-    // However wrong it looks, it is not answered.
+    // Simulate an unapplied profile: both the bag and revision remain stale.
     setHeldCount(client, rose, Rarity::Rare, 999);
     const std::uint32_t latest = client.profile().revision;
     CHECK(latest > 0);
     editInMemory(client).revision = latest - 1;
-    CHECK(!checkBroughtProfile(h, client));
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Rare), 999u);
+    CHECK(checkBroughtProfile(h, client));
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Rare), 4u);
 
     // Caught up, the same disagreement is a desync, and is repaired at once.
     editInMemory(client).revision = latest;
@@ -469,4 +468,93 @@ TEST(a_delta_restates_every_stack_a_legacy_bag_keeps_for_one_petal) {
     for (const std::uint32_t count : held()) total += count;
     CHECK_EQ(total, 6u);
     CHECK(!checkBroughtProfile(h, client));
+}
+
+TEST(eternal_fragment_recipe_is_separate_from_the_timed_hammer){
+    Harness h("fragment-recipe",[](const std::string& path){seedTinkerer(path,[](PlayerRecord& r){r.addItem(Rarity::Super,"petal_fragment",30);});},dataDir(),0);
+    CHECK(h.ready);if(!h.ready)return;NetClient client;CHECK(login(h,client));
+    client.joinGame(800,600);CHECK(h.stepUntil({&client},[&]{return client.status()==NetClient::Status::Playing;}));
+    auto& world=h.server.world();Entity player=NULL_ENTITY;Query<PlayerTag,Transform> players{world};
+    players.each([&](Entity e,PlayerTag&,Transform&){player=e;});CHECK(player!=NULL_ENTITY);if(player==NULL_ENTITY)return;
+    const auto at=world.get<Transform>(player);const auto titan=world.create();world.add<NpcTag>(titan);world.add<Transform>(titan,at);
+    Npc npc;npc.service=NpcService::Titan;world.add<Npc>(titan,npc);
+    const auto fragment=content().petalIndex("fragment"),hammer=content().petalIndex("timed_mjolnir");
+    client.requestTitanForge(fragment,false,true);
+    CHECK(h.stepUntil({&client},[&]{return client.titanForgeOutcome().pending;}));
+    CHECK(client.titanForgeOutcome().success);CHECK_EQ(client.titanForgeOutcome().petalIndex,fragment);client.titanForgeOutcome().pending=false;
+    CHECK_EQ(client.profile().stackCount(fragment,Rarity::Unique),1u);CHECK_EQ(client.profile().stackCount(hammer,Rarity::Unique),0u);
+    client.requestTitanForge(fragment,false,false);
+    CHECK(h.stepUntil({&client},[&]{return client.titanForgeOutcome().pending;}));
+    CHECK(client.titanForgeOutcome().success);CHECK_EQ(client.titanForgeOutcome().petalIndex,hammer);
+    CHECK_EQ(client.profile().stackCount(fragment,Rarity::Unique),1u);CHECK_EQ(client.profile().stackCount(hammer,Rarity::Unique),1u);
+}
+
+TEST(goggles_reveal_ghosts_and_allow_hits_only_while_equipped){
+    Harness h("goggles",[](const std::string& path){seedTinkerer(path,[](PlayerRecord& r){r.addItem(Rarity::Common,"petal_paranormal_goggles",1);});},dataDir(),0);
+    CHECK(h.ready);if(!h.ready)return;NetClient client;CHECK(login(h,client));client.joinGame(800,600);
+    CHECK(h.stepUntil({&client},[&]{return client.status()==NetClient::Status::Playing;}));
+    const auto player=bodyOf(h);auto& w=h.server.world();const auto ghost=w.create();auto at=w.get<Transform>(player);at.position.x+=100;
+    w.add<MobTag>(ghost);w.add<GhostTag>(ghost);w.add<Transform>(ghost,at);w.add<Body>(ghost,Body{20,1});w.add<Health>(ghost,Health{100,100});w.add<Faction>(ghost,Faction{Team::Hostiles,false});
+    w.add<MobType>(ghost,MobType{content().mobIndex("ghost"),Rarity::Common,1});w.add<NetId>(ghost,NetId{900000});w.add<Replicated>(ghost,Replicated{net::EntityKind::Mob});
+    h.step(10,{&client});CHECK(client.view().entities().count(900000)==0);CHECK(!CombatSystem::canHit(w,ghost,player,0));
+    client.setLoadoutSlot(0,content().petalIndex("paranormal_goggles"),Rarity::Common);
+    CHECK(h.stepUntil({&client},[&]{return client.view().entities().count(900000)>0;}));CHECK(CombatSystem::canHit(w,ghost,player,0));
+    client.setLoadoutSlot(0,kNoPetal,Rarity::Common);
+    CHECK(h.stepUntil({&client},[&]{return client.view().entities().count(900000)==0;}));CHECK(!CombatSystem::canHit(w,ghost,player,0));
+}
+
+TEST(continue_acknowledges_a_live_body_without_healing_or_replacing_it){
+ const auto fixture=twoMapDataDir("continue-empty");
+ Harness h("continue-live",[](const std::string& p){seedTinkerer(p,[](PlayerRecord&){});},fixture,0);
+ CHECK(h.ready);if(!h.ready)return;NetClient c;CHECK(login(h,c));CHECK(joinWorld(h,c));
+ auto body=bodyOf(h);auto& hp=h.server.world().get<Health>(body);hp.current=hp.max*0.5;
+ double before=hp.current;c.revived=false;c.requestRespawn();CHECK(h.stepUntil({&c},[&]{return c.revived;},30));
+ CHECK_EQ(bodyOf(h),body);CHECK_NEAR(h.server.world().get<Health>(body).current,before,0.5);
+}
+TEST(nearby_rescue_requires_three_continuous_seconds_and_announces_both_names){
+ const auto fixture=twoMapDataDir("rescue-empty");
+ Harness h("nearby-rescue",[](const std::string& p){seedTinkerer(p,[](PlayerRecord&){});},fixture,0);
+ CHECK(h.ready);if(!h.ready)return;NetClient c,helper;CHECK(login(h,c));CHECK(joinWorld(h,c));auto dead=bodyOf(h);
+ CHECK(connectClient(h,helper));helper.requestRegister("rescuer","password8");
+ CHECK(h.stepUntil({&c,&helper},[&]{return helper.status()==NetClient::Status::LoggedIn;}));helper.joinGame(800,600);
+ CHECK(h.stepUntil({&c,&helper},[&]{return helper.status()==NetClient::Status::Playing;}));auto& w=h.server.world();Entity rescuer=NULL_ENTITY;
+ Query<PlayerTag,PlayerAccount> q{w};q.each([&](Entity e,PlayerTag&,PlayerAccount&){if(e!=dead)rescuer=e;});CHECK(rescuer!=NULL_ENTITY);if(rescuer==NULL_ENTITY)return;
+ auto site=w.get<Transform>(dead);w.get<Transform>(rescuer)=site;w.get<Transform>(rescuer).position.x+=70;w.get<Health>(rescuer).invulnerableUntilMillis=1e12;
+ w.get<Health>(dead).current=0;w.add<Dead>(dead);w.add<Unrevivable>(dead,Unrevivable{1e12});c.revived=false;
+ h.step(60,{&c,&helper});CHECK(w.has<Dead>(dead));CHECK(!c.revived);
+ w.get<Transform>(rescuer).position.x+=1000;h.step(2,{&c,&helper});w.get<Transform>(rescuer)=site;w.get<Transform>(rescuer).position.x+=70;
+ h.step(60,{&c,&helper});CHECK(w.has<Dead>(dead));CHECK(h.stepUntil({&c,&helper},[&]{return c.revived;},50));
+ CHECK(!w.has<Dead>(dead));CHECK(!w.has<Unrevivable>(dead));bool announced=false;
+ for(const auto& line:helper.chat())if(line.text.find("rescuer")!=std::string::npos&&line.text.find("Tinkerer")!=std::string::npos)announced=true;CHECK(announced);
+ w.get<Transform>(rescuer).position.x+=1000;w.get<Health>(dead).current=0;w.add<Dead>(dead);h.step(3,{&c,&helper});c.revived=false;
+ c.requestRespawn();CHECK(h.stepUntil({&c,&helper},[&]{return c.revived;},30));
+}
+
+TEST(hyper_loot_participation_below_one_percent_also_unlocks_the_gallery){
+ const auto fixture=twoMapDataDir("hyper-gallery");
+ Harness h("hyper-gallery",[](const std::string& p){seedUser(p,kName,kPassword,true);},fixture,0);
+ CHECK(h.ready);if(!h.ready)return;NetClient c;CHECK(login(h,c));CHECK(joinWorld(h,c));auto body=bodyOf(h);
+ auto& w=h.server.world();const auto bee=content().mobIndex("bee");const auto target=w.create();
+ w.add<MobTag>(target);w.add<Transform>(target,w.get<Transform>(body));w.add<Body>(target,Body{20,1});
+ w.add<Health>(target,Health{0.01,100000});w.add<MobType>(target,MobType{bee,Rarity::Apex,1});
+ w.add<Faction>(target,Faction{Team::Hostiles,false});w.add<Bounty>(target);w.add<HitCooldowns>(target);
+ auto& bounty=w.get<Bounty>(target);bounty.contributors.clear();bounty.credit(body,1);bounty.xp=1000;
+ const double xp=w.get<PlayerProgress>(body).totalXp;w.get<Health>(body).invulnerableUntilMillis=1e12;
+ CHECK(h.stepUntil({&c},[&]{if(w.isAlive(target)&&!w.has<Dead>(target)){
+  if(auto* armor=w.tryGet<Armor>(target))armor->amount=0;
+  w.get<Health>(target).current=0.01;w.get<Transform>(target).position=w.get<Transform>(body).position+Vec2{30,0};
+ }return c.profile().killCount(bee,Rarity::Apex)==1;},60));
+ CHECK(w.get<PlayerProgress>(body).totalXp>=xp+1000);
+ CHECK_EQ(c.profile().killCount(bee,Rarity::Apex),1u);
+}
+
+TEST(a_non_player_finisher_keeps_the_contributors_gallery_credit){
+ const auto fixture=twoMapDataDir("gallery-last-hit");Harness h("gallery-last-hit",[](const std::string& p){seedTinkerer(p,[](PlayerRecord&){});},fixture,0);
+ CHECK(h.ready);if(!h.ready)return;NetClient c;CHECK(login(h,c));CHECK(joinWorld(h,c));auto body=bodyOf(h);auto& w=h.server.world();
+ const auto bee=content().mobIndex("bee");const auto target=w.create();auto at=w.get<Transform>(body);at.position.x+=300;
+ w.add<MobTag>(target);w.add<Transform>(target,at);w.add<Body>(target,Body{20,1});w.add<Health>(target,Health{1,100});
+ w.add<MobType>(target,MobType{bee,Rarity::Common,1});w.add<Faction>(target,Faction{Team::Hostiles,false});
+ Bounty bounty;bounty.credit(body,50);bounty.xp=100;w.add<Bounty>(target,bounty);
+ Afflictions poison;poison.poisonPerSecond=100;poison.poisonUntilMillis=h.clock+5000;poison.poisonSource=NULL_ENTITY;w.add<Afflictions>(target,poison);
+ CHECK(h.stepUntil({&c},[&]{return c.profile().killCount(bee,Rarity::Common)==1;},30));
 }

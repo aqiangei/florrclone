@@ -612,8 +612,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const Vec2 at = transform->position;
         const Realm realm = transform->realm;
         const Health* health = world.tryGet<Health>(corpse);
-        const double damageFloor = mobRarity == Rarity::Apex ? 0.0 :
-            lootDamageFloor(health != nullptr ? health->max : 0.0);
+        const double damageFloor = lootDamageFloor(mobRarity, health != nullptr ? health->max : 0.0);
 
         // Loot slots go to the highest positive contributors, just like XP.
         ranked_.clear();

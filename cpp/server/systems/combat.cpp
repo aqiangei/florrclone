@@ -581,6 +581,11 @@ bool CombatSystem::canHit(const World& world, Entity victim, Entity source, doub
     // Kept out of every broadphase already; this is for whatever reaches a
     // victim some other way.
     if (world.has<Intangible>(victim)) return false;
+    if (world.has<GhostTag>(victim)) {
+        const Entity player = creditedPlayer(world, source);
+        const auto* visuals = world.tryGet<PlayerVisuals>(player);
+        if (!visuals || !visuals->seesGhosts) return false;
+    }
     // The players' own NPCs are not something anybody hits: their own side
     // cannot, and nothing on the other side is meant to be fighting them --
     // a mob wandering through the oracle is not an attack on it. An NPC on any
@@ -1279,7 +1284,7 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
     const Health* health = world.tryGet<Health>(victim);
     std::vector<Entity> recipients;
     selectLootRecipients(shares, lootSlotsForRarity(rarity), squads, recipients,
-                         lootDamageFloor(health != nullptr ? health->max : 0.0));
+                         lootDamageFloor(rarity, health != nullptr ? health->max : 0.0));
 
     // Every recipient is paid the mob's full XP -- the corpse is not split
     // between them, and no account earns at a different rate than another.
@@ -1394,9 +1399,7 @@ void CombatSystem::tickUndead(World& world, double nowMillis) {
         // nobody, when they have been reaped since.
         const Entity killer = world.isAlive(undead.killer) ? undead.killer : NULL_ENTITY;
         fell(world, e, killer);
-        if (world.has<PlayerTag>(e)) {
-            world.ensure<Unrevivable>(e).untilMillis = nowMillis + undead.unrevivableMillis;
-        } else {
+        if (!world.has<PlayerTag>(e)) {
             // Everything else a mob's killing blow does (applyDamage).
             mirrorSharedChain(world, e, true, killer);
             collapseClearedNest(world, e, killer);
@@ -2406,6 +2409,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.noHealDurationMillis = stats.noHealDurationMillis;
         source.armorReduction = stats.armorReduction;
         source.critDamage = stats.critDamage;
+        if (config.id == "dice") { source.critChance = 0.05; source.critMultiplier = 35.0; }
         source.lifesteal = stats.lifesteal;
         source.owner = petal.owner;
         source.rarity = petal.rarity;
@@ -2518,6 +2522,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // against each other's skin rather than inside it.
             const bool flushPair = (source.isNpcBody && world.has<PlayerTag>(victim)) ||
                                    (source.isPlayerBody && world.has<NpcTag>(victim)) ||
+                                   (source.isPet && world.has<NpcTag>(victim)) ||
                                    (looseVictim && !source.isPetal) || source.isLoose;
 
             const Vec2 offset = transform->position - source.position;
@@ -2622,6 +2627,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // A claw's bonus is decided here, per victim, off the health the
             // victim has BEFORE this hit.
             double swing = swingDamage(world, source.damage, source.critDamage, victim);
+            if (source.critChance > 0 && rng_.chance(source.critChance)) swing *= source.critMultiplier;
             if(const auto* petal=world.tryGet<FlowerMobPetal>(source.attacker)) {
                 if(petal->damageMax>swing)swing=rng_.range(swing,petal->damageMax);
                 if(petal->critChance>0 && rng_.chance(petal->critChance))
@@ -2951,7 +2957,8 @@ void CombatSystem::resolvePetalPvp(World& world, const MeleeSource& source, Enti
     world.ensure<HitCooldowns>(source.attacker).arm(victim, nowMillis + interval);
 
     // A claw opens on a fresh duellist exactly as it opens on a fresh mob.
-    const double swing = swingDamage(world, source.damage, source.critDamage, victim);
+    double swing = swingDamage(world, source.damage, source.critDamage, victim);
+    if (source.critChance > 0 && rng_.chance(source.critChance)) swing *= source.critMultiplier;
     const DamageResult hit =
         applyDamage(world, victim, source.attacker, swing, nowMillis, source.hitKind);
     // And a fang drinks from one: what the victim's bar lost, never what a

@@ -184,6 +184,8 @@ struct Session {
     /// the reaper sees it again every tick and needs to know it is done with
     /// it. Cleared when a new body is spawned.
     bool deathReported = false;
+    Entity rescueHelper = NULL_ENTITY;
+    double rescueStartedMillis = 0;
 
     // -- abuse limits ------------------------------------------------------
     //

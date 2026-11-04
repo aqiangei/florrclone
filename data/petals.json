@@ -2229,10 +2229,10 @@
   },
   "peas": {
     "name": "Peas",
-    "damage": 15,
+    "damage": 8,
     "health": 5,
     "size": 1,
-    "cooldown": 1500,
+    "cooldown": 2500,
     "price": 10,
     "description": "It goes poof.",
     "color": "#000000",
@@ -2250,63 +2250,63 @@
     "zh": "豌豆",
     "rarityStats": {
       "0": {
-        "damage": 15,
+        "damage": 8,
         "health": 5,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "1": {
-        "damage": 45,
+        "damage": 24,
         "health": 15,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "2": {
-        "damage": 135,
+        "damage": 72,
         "health": 45,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "3": {
-        "damage": 405,
+        "damage": 216,
         "health": 135,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "4": {
-        "damage": 1215,
+        "damage": 648,
         "health": 405,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "5": {
-        "damage": 3645,
+        "damage": 1944,
         "health": 1215,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "6": {
-        "damage": 10935,
+        "damage": 5832,
         "health": 3645,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "7": {
-        "damage": 32805,
+        "damage": 17496,
         "health": 10935,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "8": {
-        "damage": 98415,
+        "damage": 52488,
         "health": 32805,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       },
       "9": {
-        "damage": 295245,
+        "damage": 157464,
         "health": 98415,
-        "reloadMillis": 1500,
+        "reloadMillis": 2500,
         "count": 4
       }
     }
@@ -5852,7 +5852,7 @@
     "cooldown": 0,
     "price": 60,
     "visual_scale": 1.56,
-    "description": "Turns the flower <c val=\"#83B05D\">Undead</c> for a limited time on death.\nDelays death until expiration.\nFlower <c val=\"#FF6666\">Body Damage</c> is reduced during this period.\nPrevents revival for some time afterwards.",
+    "description": "Turns the flower <c val=\"#83B05D\">Undead</c> for a limited time on death.\nDelays death until expiration.\nFlower <c val=\"#FF6666\">Body Damage</c> is reduced during this period.",
     "color": "#E5DAA1",
     "count": 0,
     "noPhysics": true,
@@ -7215,7 +7215,7 @@
     "description": "由3颗尘埃粒子组成。",
     "color": "#90EE90",
     "count": 1,
-    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"390\" height=\"390\" viewBox=\"0 0 390 390\" fill=\"none\"><image href=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAYAAAAGGCAYAAABynlaiAAAXyElEQVR4nO3d23VTSdoGYO2tRuZuyGCcAWRAZ9Ah4AsfuOsY/hD6DgMXdAhk0J0Bk4EnA+YOTFv7X8VIs4zbJ2kf6qvaz7PWLHNwyxph66366quqZlGoo6OjZ0+ePDns8xhd1z0b7hnV7/3793/kfg7AcH5aFGq1Wv2yWCx6BUDTNMM9oRl4/fr1xZs3by5yPw9gGO2iQK9fvz7s++bP7tbr9UuvG9SjyADouu557ucwU4eb8AUq0JZY+++67kXu5zFXwhfqUVwAHBwcKEPkdZhCOPNzAOYWAEb/+aXOKSEMdSgqALzxhGEdACpQVACo/ceZBZycnFiHgcIVEwBnZ2ep758g2ra1FgOFKyYAjP7jzQK0hELZiggAo/+YbAyDshURAEb/YdkYBgULHwDHx8c/534O3M3GMChX+ACw2BieWQAUKnQAGP2XsRhsFgBlCh0Ay+XSoW9lsDEMChQ2ANJGIxe2lMHGMChT2ABQ+y+Lfy8oT8gAMPovj41hUJ6QAWA0WSYbw6As4QLA6L9oWkKhIOECwOi/bGYBUI5QAWD0X76maRwSB4UIFQBN0+j7L5yNYVCOMAGwuWDEhqI6+HeEAoQJAKP/umYBjvGA+EIEgNF/fRzjAfGFCACj//o4HgLiyx4Am2sF1YwrpKUXYsseAPrG6+V4CIgtawAY/ddPwENcWQPAm8MsOB4CgsoWAEb/8+HGMIgpWwAY/c/K4dHR0bPcTwIIEABG//NbDD44OHiZ+3kAAQJASWCWtPrC3AMglQK6rkvn/jAjNoZBPJMHgFLAfNkYBjMOAKP/ebMxDGYcAEb/6P6CmQaA2j82hsEMA+Ds7OyXqb4WsekCg5kFgNE/19gYBnMJALdDcZ2NYTCjAND+xy1sDIPaA8Don9vYGAYzCACjf3xvwAwDYHPZO9zKxjCoOACM/nmIjWFQYQCk0X8a4Y31+FTDjWFQWwAY/fNYZgFQUQAY/bOLpmmebS4JAkoPAKN/dpFKhY6HgAoCwOifPZkBQOkBYPTPvrMAmwah4AAw+qeP5XL53CsIhQZA0zR+gNmbjWFQaABsdv2q49JL13XujYDSAsDonyGYBUBhAWD0z5BsDIOCAsDon4E5HgJKCIDNDk61fwZlYxgUEACm64zEoAIiB4DRP2OxMQyCB4DRP2OyMQyCBoDRP2NzbzAEDQCjf6bgbCkIFgBHR0fppi+LdIzOxjAIFgAHBwcvh38qcDuzTQgSAGn033VdOvcHpmJjGEQIAKN/crAxDAIEgNE/mRxu1p6AHAFwdnbmqF6yLQabfULGADD6JzOdZ5AjAIz+yc3GMMgUAEb/RGBjGEwcAMfHxz8P+DVhbzaGwcQBYNRFJDaGwUQBYPRPQDaGwRQBYPRPRGYBMHIAbC57h3Capnm2OZIcyHkpPORYDHY8BIwYAN++fbvo+fgwJjMAGCsAPnz48Lnruo99vgCMxcYwGLkEZBZAZJoUYMQASLOApmk+9fgaMBobw2DkReCvX7/+2eNrwKiurq4cEw1jBYBZAFE1TfP53bt3ZqgwZhuoWQARNU2jSQHGDgCzAAK6ePPmjVZlmGIjmFkAkbRta20KpgqANAtIo64+XxAGYvQPUx8FcXl5qeZKdkb/kCEAzAIIwOgfch0GZ/RFTr7/IGMAbDovrAWQg9E/5D4O2iiMHHzfQYAAMAsgA6N/iHIhjNEYU/L9BoEC4MuXL/YFMIl0Iq1dvxAoADYXxvxruKcDt2uaxvcZRLsTeHNhjI4gRmP0D0EDwCyAsRn9Q9AA2M4C0rnsQzwWXGf0D8EDIM0C1uu1kxkZnBNoIXgAJC6PZ2hp9L85ewqIHACbtQAnhTIYo38oJAASswCGYvQPhQWAayMZitE/FBYAiR9c+jL6h0IDwCyAvgwioNAASPwAsy+jf5jOT2M8aJoFnJ2dfeq67sUYj0+9DB6GcXx8/HP6uN2guVwuP28PcNRay6gBsP1BXq1WAoBHS5sJvTn1d3Jy8qJpmpc3XtvvH1er1eL09PR/wdB13feP299fXV39R2jMRzPmg5+enr5aLBaHY34N6vH27dv/y/0canB2dvZr13XPhn5coVGf0WYAyeXl5cfVavXrmF+DOjhKZLjSzxhv/sm1x/3+seu6779p27b3TGNzt8j38vEYz50MM4DELIDHMPrv7+jo6FkNA667QmO9Xv87fbSeUcgMYHuN33q9VgbiTkb/w1itVr/U8G1210yjaZoXt80ybobG9ZOJhUbmGUBiFsB9jP77e/369eF6vU5rbjxSc0tozG0RfPQZQGIWwF0cIDiMruuqGP3nmml0j1jPSFI4nJ+f/7aoxCgbwW7aXObt2kj+5t27d5+8LHEXfvlRep3Pzs6qCdt2si/Uti6M4QdG/8Ms/LZt+0PPP+Pquu5F2mtRw+s8WQBs2rzMAvgfo//+aln4LU3bti9T+C4KN1kAuDye64z+h1n4tdEyXyno4OCg+JnXZAFw7cIYs4CZSwtpRv/9rdfr4t+AStZVUAqaNADMAkj0/Q922Jv9NZm1hZeCJg2A7Szg+kYN5sXovz8Lv7FKQauC12EmD4A0CzACnC//9v2V/IZTqcPt8dulmTwAEpfHz9aF2n8/Fn5jWi6Xz0ssBWUJgM1awMccX5t87AXpz8JvTF2hpaAsAZCYBczOxWZHOHvadJxY+I3rsLRSULYAcHn8vBj999c0TXEjzLlZFlYKyhYAiftfZ8Pov6eazp+ZwQaxV4tCZA0As4B5MPrvv/CbNh0N9M/BBCFwXEgpKGsAJGYB1TP678nCb5mloNf/PaojtOwBYBZQN6P/fiz8ljsL6Aq4oyF7ACRmAdUy+u/Jwm+5ugJKQSECYHPdmhbByhj992Pht3zL4KWgEAGQXF5e2hhWF6P/Hiz81qELXgoKEwBmAXUx+u/Hwm89usDXSIYJgMSbRh2apvlk1+/+LPxW6TBiKShUALg8vg5N0/wr93MomTt+69MFLQWFCoDELKBsRv/9pK6R9GYx0D8HgXQBS0HhAsAsoGxG//tz0Uv9uq57EakUFC4AErOAMhn991PiccLsLlIpKGQAfPnyxb6AAtnQtz8Lv/PRBSoFhQwAl8eXOfrftPKyBwu/89IFKQWFDIBrF8bYHVwIo//9Wfidpy5AKShsAJgFlMPof38WfuerC1AKChsA21lA0zTKCsEZ/e/Pwu+8dV33YrP+k0XoAEizgPV6/Wfu58HdjP73t6kBZ68Dk3/9J9c1kqEDIHF5fGxG/2XXgAlzjeTLHF87fABs1gKcFBqQ0f/+LPwSoRQUPgASs4CYjP73Y+GXKKWgIgLAtZHxpLUZff/7sfDLXaWgqb83igiAxGgzlvfv3/+R+zmUyMIvDzicshRUTACYBcShM6vXa5dlsY9ytBOWgooJgMQsIAaj//0474dopaCiAsAsID+j//01TaPtk8c6TJ1ii5H9tChMmgU8ffr0UTdOXV1dPXoa9dhLOJbL5T+GfsykaZpHfW7uy0KM/vdzenr6auB/Ciq3XC6fHx0djXrIYnEBsHkxHA/xgF1riE+fPn32yGO62WPhd71e2/HLPhvE0sDht8VImrEeGPhh9C8A2LvsOtbMu6g1ACiNhV+GKAWNdXeAAIARWfhliFLQWOdGCQAYSe6z3qkrBI5H6AoSADCCNGVPB3x5cYlcChIAMAI7fimhFCQAYGAWfimlFCQAYISzXLyolFAKEgAw8MJv7t3a1K0bsBQkAGAgFn6ZMgSG6DITADAQC79M7LBvKUgAwAAs/FJiKUgAwAAs/FJiKUgAQE+pLc/CL7mkDYf7loIEAPQ8dtvon9z2LQUJAOhhqqv7YIxSkACAPW2m3c75p9hSkACA/X/gjP4J9z25y22AAgD2YOGXwNdIPvooEgEAO7LwS/RS0GZfyoMEAOzIwi/Rpc60x5SCBADswMIvpZSCHjNQEQCwA+f9UJDDh0pBAgAeaXMRh7ZPqikFCQDY4YfJi0VNpSABAI9wenr6ygtFoQ7vukZSAMADLPxSwzWSt5WCBAA8wMIvtZaCBADcw0Uv1FwKEgBwj6ZpnPdDVaWg6wfGCQC4wxCXbkPkayQFANwijZLSmSpeHGoMgW0pSADALSz8ModSkAAAmJntHdYCAG5xeXn50QtDrZqm+fTmzZsLAQC3+PDhw+eu64QAVfr69euf6aMAgDt8+/btYrFYpP9BNdbr9Z9pgJN+LQDgDumHRCmImjRN8/n9+/d/bH8vAOCBEEgjJi8SNWia5oeypgCAB/z111+flIKowEVa+L3+BwIAHjELaNvWLICi3fY9LADgEdLIKbXOebEoue3z5p8LANihdS4tonnBKM35+fmtLc0CAHYoBd1cRIPo7tvPIgBgB0pBlCTNWN+9e3dn6VIAwJ67KCG6h2asAgB25JgISm37vEkAwB4202rHRBDWY1qXBQDsyTERlNb2eZMAgD0pBVFa2+dNAgB6cGIo0exyjLkAgB6cGEowF/e1fd4kAKAnJ4YSxa5nVgkAGIATQymh7fMmAQADUAqixK40AQADUQoiwjWPuxAAMHApyImhTO36NY+7EAAwICeGErnt8yYBAANzYihR2z5vEgAwApfHMIW+V5UKABiBBWGinPdzHwEAI0lTc/cIE/leCgEAI3J5DJHaPm8SADAiJ4YytNRmvG/b500CAEbm8himvOZxFwIAJuDyGHKd93Ofn4Z6IOpzdHT0bPvrp0+fPvvy5cvnIeqOc5Ret5OTk49N0/yS+7kw37bPmwRAxW/Y6ePV1dX3j13X/e/vlsvlP27+WdM0f/u869br9eLg4CC9+f828v+Nqi+PWa1WafR2mPu5UJ4h2j7/9phDPhhx3rDH/CZ87HVz3P5vvlqtfvXasKvLy8vfhp6BC4DK37DH6EBIi1BDj0Tm5Pj4+Oe2bV/mfh6U1fY5VOfPrEpA2zftMUoim8/74ePmv/nb59/2ZyVKr0fXdenNSwD0ODF0tVr9UymIqds+//bYi4q9fv36cL1ev8r9PGrUtu3vZgH7Uwoiws9a1W2gXdfpuPDahuSsIHK0fc4mAE5PT1+VXm+PLL22JycnL3I/j5K5PIap2z7/9viLCm3emLTajcxCZj8uj2Hqts/qAyDVVm22mW4WcHZ2pszWg8tjuMsU7dbVBcBqtfKGNK3D6+2x7M7lMQx5zeNsAyD1Vyv9TD8LODg40NPegwVhbrZ99rnmcZYBkFo+1aSzOUyvf74vXz4nhjLGaZ+zCIBUgtDvn3cWsF6vzQJ6cmIoi5HbPqsMAHX/EMwCenJ5DO3IbZ/VBYC6fxw23vWnFDRfzQRtn1UFgLp/LDaHDUMpaJ7OM5yyW3QAqDvHYyG+P6Wg+ekmavusJgDSUQ9aPuOxOWy4y2OcuDobF1O1fVYRAJuWQ22HcVkQHmAWoBQ0D+3EC78/fO1FYbR8xqctdBg2iM3CRc5j1YsLAC2fxTALGOjEUKWgel1eXma9XrWoANDyWRZtocPMAnKWCBj3mseh7/itNgC0fJZHW+gwUokgvVkM9HAE8X6kax6rDACjyTJpCx2Gy2Pq0mVq+ywyANzuVfYsYFO6oweXx1TlIlfbZ3EB4Hav8i2Xy+fuDOjP5TF1aAOt6YQOALd71cGdAcNxeUzZmgzn/RQbAFo+q6ItdAD2BpQf4ItAwgaAox7qYnPYcJwYWqZ1gLbPIgLAUQ/VMguoZAMRu1/zGKHtM3wAOOqhbtp5h+HE0LI0E17zWHQAqPvXzeaw4SgFFeMi0sJv2ABw1MM82Bw2HKWg+NpAbZ9hA8BRD/PhzoDhKAXF1gRr+wwbAGrDs2NBeCAuj4nra7C2z5AB4KiHec4Cuq57nvt51MDlMTGtA7Z93tREKP2s1+t0vSMz1Lbt75GnyCXZHrfx5MmTw23ILpfLf6SPm09xi96EbZ/n5+e/LYL7KecX1/LJpvQX/gelBNdGm58eComnT58+u7q6+v7rtm3/mT6moGia5tm1wKCyts9QMwC7fdkejRvldET+S1D0cvH27dvfFwXINgPQ8smNtlABEHM2cb2G/emhoLhZdprjjKIN3PYZYgag7s9tC2YRt8ozjBQU18tOta5PNE3z6fz8vIjyT7YZgEVf7rgz4FP0rgn2s/l3/Vx72elr8LbP7DMAdX9qGT2RR9Sg6Apcy2qmrvs7BoD7WudS94S2UIbw0PrEYsCyUyltn9lKQJu6f1rsg/s2h6XvEfsCGGshe5TZRFNI22e2GYDSD49lcxjRHN0TFEmppctJAsCbP3OYTkNpRj8LyO1e7MqdATCNUQPAUQ/sS7MAFB4AbvdiX+4MgIIDwFEPDOBwu/gGFBIAbvdiqFnAwcGB1mEoKQDc7sWA30svNo0EQPQAcLsXQ7OBEAoIgJOTkxe1nOpHKIeb7y0gYgCkxbqmadLtTjA4baEQOAC0fDL2gvCmswyIFABaPpnwzgBtoRAlALR8MhVtoRAoABz1QAaH2kIhQACo+5NjFqAtFDIHgLo/GZkFQK4AUPcnN7vNIVMAmIKTmzsDIEMAuN2LKGwOgwkDwO1eROLOAJgoALR8EpQ7A2DsANDySUQ2h8HIAaDlk8jcGQAjBYCWT0qgMw1GCAD91hTC5jAYMgDc7kVJDFZgoABwuxelcWcADBAAbvei5DsDcj8HKDoAtHxSKpvDoEcAnJ2dpXt9XexOySwIw64BkFo+U0/1Y/5DiMqdAbBjADjqgcqYBcBjA0Ddn9poC4VHBICjHqiROwPgfm0q/ThXnVr53oYHZgBN03y+53OgWNpC4W7thw8fPq/X6z/v+RwoPgRyPwcIOwN49+7dp8VicZH7ycAY2rY1wIH7uoAuLy8/3vYJULI0u33z5o3BDdwXAKkU1DRNmglAFdLa1vv37//I/TygiJ3AX79+NVWmGk3TmNXCYwMgzQK6rvNDQ/GUfmCPw+C+ffuW6qVqppTsQukH9giANAvQNUHJfP9Cj/sANl0TZgEUR+kHBrgSUlsoBVL6gSECQFsopTFogYECYNsW6pwgStC27e9p0JL7eUA1AeCcIApxYbcvDBwAibZQolP6gZECQFsokSn9wIgBkGgLJSilHxg7ABLTbCJJzQlv3779PffzgFkEgAVhInHQG0wYAMlff/31SVsouaVjy3X9wMQBYBZAbmkAcn5+7sRamDoAEtdHkpPSD2QMgMSCMDk46A0CBIBzgsjAQW8QIQAS10cyJWf8Q6AAcH0kU1H6gWABkDgniAko/UDEAHBOEGNT+oGgAZA4J4ixdF330YYvCBwAibZQRnCx2XMCRA4AbaEMzaACxjdIACSuj2QozviHwgLAOUEMxBn/UFoAJNpC6csZ/1BoAGgLpW/pxysIhQZAoi2UfTjjHyoIgEQHB7twxj9UFAAWhNmFM/6hogBIXB/JYyj9QIUBYBbAQ5R+oNIASFwfyX2UfqDiAEgsCHMbZ/zDDALAOUHcwhn/MIcASFwfyQ/fdG37p1cEZhIAro9kS+kHZhYAiXOCUPqBmQaAc4LQEAAzDYDEOUHz5Yx/mHkAJEaBs+SMfwho8gDQFjo/Qh9imjwAEtdHzofSD8SVJQCcEzQbSj8QWJYASLSF1i0d9OZ6R4gtWwBoC62bg94gvmwBkGgLrZMz/qEMWQMg0SFSF2f8QzmyB4AF4boo/UA5sgdA4vrIOjjoDcoSIgDMAqrgjH8oTIgASFwfWTZn/EN5wgRAYkG4TEo/UKZQAeCcoCIp/UChQgVA4vrIsij9QLnCBYDrI8vRdd3HzWY+oEDhAiBxTlARLjYL90ChQgaAc4Lis2AP5QsZAIlzguJyxj/UIWwAJEaZITnjHyoROgC0hcbjjH+oR+gASFwfGav0k/s5ADMKAOcExeCMf6hP+ABItIXm5Yx/qFMRAaAtNO+bvzP+oU7NoiCnp6evFovFYe7nUeobefrYdd3n7e+vrq7+c/3vl8vl97/78uXL5xS6GZ8uMIGfFgVJbaGr1erXxYxt38i3b+beyIFZzACS4+Pjn9u2fbmobFS+/fV2VG5EDoytqBnA9vrIg4OD513XPVsU+EaePiqvABEUNwNITk5OXjRN88uUdfLt36mTA7UoMgAeWhC24AlQYQno+oLwkydPDo3IARZ7+X/1U2N79pNgzgAAAABJRU5ErkJggg==\" x=\"3\" y=\"0\" width=\"384\" height=\"390\" preserveAspectRatio=\"xMidYMid meet\"/></svg>",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"0 0 32 32\"><path d=\"M 8 2 L 24 2 L 31 16 L 24 30 L 8 30 L 1 16 Z\" fill=\"#666666\"/></svg>",
     "florrclonePort": true,
     "rarityStats": {
       "0": {
@@ -8689,10 +8689,10 @@
   },
   "c++": {
     "name": "C++",
-    "damage": 128,
-    "health": 128,
+    "damage": 45,
+    "health": 32,
     "size": 1,
-    "cooldown": 2000,
+    "cooldown": 2500,
     "price": 600,
     "description": "极其稀有而坚固的程序花瓣。",
     "color": "#000000",

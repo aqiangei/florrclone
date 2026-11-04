@@ -1435,9 +1435,7 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
         if (slot.action == StripAction::Qq) {
             drawRemoteImage(canvas, QQ_LOGO_DATA, r.x + (r.w - style.glyph) * 0.5,
                             r.y + (r.h - style.glyph) * 0.5, style.glyph, style.glyph);
-        } else if (slot.action == StripAction::Github) {
-            TextStyle label; label.size=style.side*.30; label.align=Align::Centre;
-            text(canvas,"GH",r.x+r.w*.5,r.y+r.h*.5,label);
+
         } else if (const SvgDocument* glyph = icon(ui::menuIconIndex(slot.icon))) {
             glyph->renderFitted(canvas, static_cast<float>(r.x + (r.w - style.glyph) * 0.5),
                                 static_cast<float>(r.y + (r.h - style.glyph) * 0.5),
@@ -2129,8 +2127,15 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         const double reloadScale =
             profile.skills.reloadScale() *
             (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills));
-        const std::vector<TooltipLine> lines =
-            petalTooltipLines(slot.petalIndex, slot.rarity, profile.skills, reloadScale);
+        // Resolve against the displayed bar, including pending drag changes.
+        // A mimic's own config has zero damage; its card must describe the
+        // copied petal at the mimic's tier and the source's reload tier.
+        const auto equipped = resolveEquippedPetal(content(), tipIndex, [&](int i) {
+            if (i < 0 || i >= static_cast<int>(shown.size())) return EquippedPetal{};
+            const auto& at = shown[static_cast<std::size_t>(i)];
+            return EquippedPetal{at.petalIndex, at.rarity, at.rarity};
+        });
+        const auto lines = equippedPetalTooltipLines(slot.petalIndex, equipped, profile.skills, reloadScale, tipIndex);
         const bool alt = altMode_;
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, alt);
         // Slot boxes are laid out in screen space; the slide only moves the
@@ -3354,6 +3359,7 @@ bool MenuSystem::capturesMouse(Vec2 mouse) const {
 }
 
 double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry) {
+    bool goggles = false;
     // Per petal, the shared rule: the server bounds the viewport this client
     // may report by the very same figure, so the two cannot disagree about
     // how much world is on screen.
@@ -3364,9 +3370,10 @@ double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry
         // Resolved, as the server resolves it when it bounds the viewport.
         const EquippedPetal slot = profile.equipped(registry, static_cast<int>(i));
         if (slot.empty()) continue;
+        goggles = goggles || registry.petal(slot.configIndex).id == "paranormal_goggles";
         zoom = std::min(zoom, petalCameraZoom(registry, slot.configIndex, slot.rarity));
     }
-    return zoom;
+    return zoom * (goggles ? 1.25 : 1.0);
 }
 
 } // namespace flix
