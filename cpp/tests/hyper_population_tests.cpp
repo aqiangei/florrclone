@@ -9,8 +9,8 @@ int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,T
 }
 TEST(hyper_mobs_keep_xp_speed_and_hyper_pollen_uses_one_point_five_eternal){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto e=data().mobStats(i,Rarity::Unique),h=data().mobStats(i,Rarity::Apex);
-        CHECK_NEAR(h.health,e.health*36,std::max(1e-5,h.health*1e-12));CHECK_NEAR(h.damage,e.damage*12,1e-5);
-        CHECK_NEAR(e.health,data().mob(i).health*7122000.0,1e-5);
+        CHECK_NEAR(h.health,e.health*18,std::max(1e-5,h.health*1e-12));CHECK_NEAR(h.damage,e.damage*12,1e-5);
+        CHECK_NEAR(e.health,data().mob(i).health*14244000.0,std::max(1e-5,e.health*1e-12));
         CHECK_NEAR(data().mobStats(i,Rarity::Super).health,data().mob(i).health*2374000.0,1e-5);
         CHECK_NEAR(h.xp,e.xp*3,1e-5);
         CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor*4,1e-9);}
