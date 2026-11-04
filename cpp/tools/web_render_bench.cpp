@@ -2,6 +2,8 @@
 #include "canvas.h"
 #include "client/camera.h"
 #include "client/render/world_renderer.h"
+#include "client/render/sprites.h"
+#include "shared/game/garbage_contents.h"
 #include "client/world_view.h"
 #include "shared/game/config.h"
 #include "shared/game/components.h"
@@ -31,6 +33,21 @@ int main(){
             if(frame>=0){elapsed[mode]+=ms;ops[mode]+=canvasOpsEmitted()-before;}
         }
     }
+    // Second scene: actual garbage renderer, five vs nine visible petal types.
+    // The source bag SVG and overlay opacity are the shipping implementation's.
+    SpriteCache sprites;sprites.build(content(),"data");renderer.setSprites(&sprites);
+    WorldView garbageView;garbageView.setRealm(Realm::Overworld);
+    const auto pool=garbageEligiblePetals(content(),Rarity::Super);
+    for(int side=0;side<2;++side){const int wanted=side?9:5;std::uint32_t id=1000;
+        const Vec2 at=centre+Vec2{side?250.0:-250.0,0};
+        for(;id<100000;++id)if(garbageContents(pool,id,at).size()==static_cast<std::size_t>(wanted))break;
+        RemoteEntity bag;bag.netId=id;bag.kind=net::EntityKind::Mob;bag.typeIndex=content().mobIndex("garbage");
+        bag.rarity=Rarity::Super;bag.radius=140;bag.position=bag.targetPosition=at;bag.needsSnap=false;bag.healthFraction=1;garbageView.seedForTest(bag);
+    }
+    renderer.draw(canvas,garbageView,camera,centre,200);
+#ifdef __EMSCRIPTEN__
+    canvasFlushOps();canvas.present("bench");
+#endif
     char result[512];std::snprintf(result,sizeof(result),"{\"webs\":%d,\"frames\":%d,\"rawMs\":%.5f,\"cachedMs\":%.5f,\"rawOps\":%.2f,\"cachedOps\":%.2f,\"pass\":%s}",count,frames,elapsed[0]/frames,elapsed[1]/frames,ops[0]/frames,ops[1]/frames,ops[1]<ops[0]*.5?"true":"false");
     std::printf("WEB_BENCH %s\n",result);
 #ifdef __EMSCRIPTEN__

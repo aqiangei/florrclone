@@ -1372,7 +1372,7 @@ TEST(a_flowers_first_tick_on_a_map_pulls_no_other_flower) {
 }
 
 TEST(wax_barrier_displaces_surrounding_mobile_mobs_without_changing_moon_mass_contact){
-    std::string error;CHECK(testsupport::loadContent(testsupport::dataDir(),error));
+    std::string error;CHECK(loadContent(testsupport::dataDir(),error));
     for(const auto* id:{"wax","moon_rock"}){Fixture fx;
         const auto slab=fx.spawnLoose({3000,3000},30);PetalInstance instance;
         instance.configIndex=content().petalIndex(id);CHECK(instance.configIndex!=kInvalidIndex);fx.world.add<PetalInstance>(slab,instance);
