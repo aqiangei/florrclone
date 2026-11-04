@@ -37,7 +37,7 @@ double expectedHyperEternals(const char* id) {
     double expected=0;for(double chance:hyperEternalChances(weights,kHyperEternalDropBudget/kLootFeelCopies))expected+=chance*kLootFeelCopies;
     return expected;
 }
-TEST(hyper_drop_budget_is_035_eternal_per_corpse_not_per_drop_row){
+TEST(hyper_drop_budget_is_capped_at_035_eternal_per_corpse_not_per_drop_row){
     for(const auto id:{"ladybug","bee","beetle"}){
         const auto result=kills(id,Rarity::Apex,2000);int eternal=0;
         for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
