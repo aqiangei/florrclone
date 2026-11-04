@@ -53,7 +53,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
                                    const std::string& operatorRequest = {},const std::string& titan={}) {
     HyperForgeResult out;
     if(!hyperForgeEligible(input)){
-        out.reason="超凡锤子需要5把未装备的永恒锤子，不能使用碎片。";return out;
+        out.reason="超凡锤子只能使用5个永恒碎片，限时永恒锤不能用于争夺。";return out;
     }
     const std::string petal=hyperForgeOutput(input);
     const auto forgeKey=hyperForgeKey(petal,titan);

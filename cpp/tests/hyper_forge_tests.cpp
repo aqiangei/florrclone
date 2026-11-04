@@ -17,8 +17,8 @@ struct Fixture {
 };
 }
 TEST(hyper_temporary_hammer_preserves_protected_owner_and_materials_expires_and_cannot_regrant){
-    Fixture f;f.give(f.a,"timed_mjolnir");f.give(f.b,"timed_mjolnir");
-    CHECK(forgeHyper(f.db,f.a,"timed_mjolnir",1000).ok);
+    Fixture f;f.give(f.a,"fragment");f.give(f.b,"timed_mjolnir");
+    CHECK(forgeHyper(f.db,f.a,"fragment",1000).ok);
     const auto protectedState=f.db.storedTable("hyperForges").dump();
     CHECK(grantTemporaryHyperHammer(f.db,f.b,2000,"compensation").ok);
     CHECK_EQ(f.db.storedTable("hyperForges").dump(),protectedState);
@@ -125,40 +125,40 @@ TEST(hyper_forge_persists_owner_counter_and_protection_across_restart){
     CHECK(forgeHyper(restored,f.b,"rose",1000+15LL*3600000).ok);
     CHECK_EQ(hyperForgeState(restored,"rose").claims,2);
 }
-TEST(hyper_hammer_uses_five_eternal_hammers_and_does_not_share_their_expiry){
-    Fixture f;
+TEST(hyper_hammer_uses_five_eternal_fragments_and_ignores_combat_hammer_expiry){
+    Fixture f;f.give(f.a,"fragment");f.give(f.b,"fragment");
     for(int n=0;n<7;++n)addHammerLease(f.db.progress(f.a),0);
-    CHECK(forgeHyper(f.db,f.a,"timed_mjolnir",0).ok);
+    CHECK(forgeHyper(f.db,f.a,"fragment",0).ok);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),1);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_fragment"),0);
-    CHECK_EQ(hyperForgeState(f.db,"mjolnir").protectedUntil,15LL*3600000);
-    CHECK_EQ(expireHammerLeases(f.db.progress(f.a),3602000),2);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),1);
-    for(int n=0;n<6;++n)addHammerLease(f.db.progress(f.b),15LL*3600000);
-    CHECK(forgeHyper(f.db,f.b,"timed_mjolnir",15LL*3600000).ok);
-    CHECK_EQ(hyperForgeState(f.db,"mjolnir").protectedUntil,29LL*3600000);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_timed_mjolnir"),4);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),0);
+    CHECK_EQ(hyperForgeState(f.db,"mjolnir").protectedUntil,15LL*3600000);
+    CHECK_EQ(expireHammerLeases(f.db.progress(f.a),3602000),7);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),1);
+    CHECK(forgeHyper(f.db,f.b,"fragment",15LL*3600000).ok);
+    CHECK_EQ(hyperForgeState(f.db,"mjolnir").protectedUntil,29LL*3600000);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),4);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),0);
-    CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Apex,"petal_mjolnir"),1);
 }
-TEST(hyper_hammer_rejects_fragments_and_expired_hammers_without_charging){
-    Fixture f;f.give(f.a,"fragment");
-    CHECK(!forgeHyper(f.db,f.a,"fragment",0).ok);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),5);
+TEST(hyper_hammer_rejects_timed_hammers_and_super_fragments_without_charging){
+    Fixture f;f.give(f.a,"fragment",4);
+    f.db.progress(f.a).addItem(Rarity::Super,"petal_fragment",25);
     for(int n=0;n<5;++n)addHammerLease(f.db.progress(f.a),0);
-    CHECK(!forgeHyper(f.db,f.a,"timed_mjolnir",3600001).ok);
+    const auto before=f.db.progress(f.a).inventory.dump();
+    CHECK(!forgeHyper(f.db,f.a,"timed_mjolnir",0).ok);
+    CHECK(!forgeHyper(f.db,f.a,"mjolnir",0).ok);
+    CHECK(!forgeHyper(f.db,f.a,"fragment",0).ok);
+    CHECK_EQ(f.db.progress(f.a).inventory.dump(),before);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),0);
 }
-TEST(hyper_hammer_legacy_holder_receives_the_material_they_originally_paid){
-    Fixture f;f.db.progress(f.a).addItem(Rarity::Apex,"petal_mjolnir",1);
-    Json entry=Json::object();entry["owner"]=f.a;entry["input"]="fragment";
+TEST(hyper_hammer_legacy_holder_receives_original_material_without_opening_a_new_conversion){
+    Fixture f;f.db.progress(f.a).addItem(Rarity::Apex,"petal_mjolnir",1);f.give(f.b,"fragment");
+    Json entry=Json::object();entry["owner"]=f.a;entry["input"]="timed_mjolnir";
     entry["claims"]=1;entry["protectedUntil"]=Json(15.0*3600000);
     f.db.rawTable("hyperForges")["mjolnir"]=entry;
-    for(int n=0;n<6;++n)addHammerLease(f.db.progress(f.b),15LL*3600000);
-    CHECK(forgeHyper(f.db,f.b,"timed_mjolnir",15LL*3600000).ok);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),4);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_timed_mjolnir"),0);
+    CHECK(forgeHyper(f.db,f.b,"fragment",15LL*3600000).ok);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),0);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_timed_mjolnir"),4);
+    CHECK(!forgeHyper(f.db,f.a,"timed_mjolnir",30LL*3600000).ok);
 }
 TEST(hyper_forge_requires_five_inputs_and_keeps_unrelated_inventory_intact){
     Fixture f;f.give(f.a,"rose",4);f.give(f.a,"leaf",20);

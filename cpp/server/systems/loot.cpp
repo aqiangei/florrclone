@@ -701,7 +701,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 ? clamp(bonusMultiplier(claimant),1,3) : 1;
             bonuses.push_back(bonus);maxBonus=std::max(maxBonus,bonus);
         }
-        const int baseTrials=kLootFeelCopies * (rarityIndex(mobRarity)>=rarityIndex(Rarity::Super)?kLootFeelSuperMultiplier:1);
+        const int baseTrials=baseLootTrialsForRarity(mobRarity);
         const bool superBonus=rarityIndex(mobRarity)>=rarityIndex(Rarity::Super);
         const int trials=superBonus?baseTrials*(maxBonus+1)/2:baseTrials*maxBonus;
         const bool grouped=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rollGroup!=0;});

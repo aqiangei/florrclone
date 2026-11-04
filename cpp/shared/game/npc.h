@@ -137,10 +137,11 @@ inline constexpr int kHyperForgeRefund=4;
 inline constexpr int hyperForgeCost(int /*completed*/){return 5;}
 inline constexpr int hyperForgeRefund(int /*paid*/){return 4;}
 inline std::string hyperForgeOutput(const std::string& input) {
-    return input=="timed_mjolnir"?"mjolnir":input;
+    return input=="fragment"?"mjolnir":input;
 }
 inline bool hyperForgeEligible(const std::string& input) {
-    return input!="fragment" && input!="blood_sacrifice" && input!="sacrifice";
+    return input!="timed_mjolnir" && input!="mjolnir" &&
+           input!="blood_sacrifice" && input!="sacrifice";
 }
 inline constexpr std::int64_t hyperProtectionMillis(int claims) {
     return static_cast<std::int64_t>(claims<15?16-std::max(1,claims):1)*3600000;

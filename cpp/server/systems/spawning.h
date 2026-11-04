@@ -82,6 +82,7 @@ namespace flix {
 /// Carrying it is what makes a mob "ambient". A pet, a boss placed by a
 /// script, or anything else spawned outside this system has none, so it is
 /// neither counted against the caps nor recycled out from under its owner.
+struct SuperFarmMob {}; // Extra Super stock in high-threat farming bands.
 struct AmbientMob {
     /// Last time the mob was inside any player's buffered viewport. Stamped at
     /// spawn, so a mob placed into an empty world still gets the full grace period rather
@@ -338,7 +339,7 @@ inline constexpr double kTargetMobDensity = 9000.0 / (kWorldSize * kWorldSize);
 /// There is no boss PASS any more -- supers come from band difficulty, and a
 /// difficulty-200 band is full of supers by design -- so this is a property of
 /// the spawn that happened rather than of a scheduler.
-inline constexpr Rarity kAnnouncedRarity = Rarity::Super;
+inline constexpr Rarity kAnnouncedRarity = Rarity::Unique;
 
 /// The two tiers above super are not band difficulty's to hand out: a band's
 /// roll stops at super, and a wild unique or apex is a super spawn that a
@@ -809,7 +810,7 @@ private:
     bool stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                    SpawnZone& zone, std::uint16_t zoneIndex, const std::vector<Viewer>& viewers,
                    Rng& rng, double nowMillis, Slot slot = Slot::TopUp, Vec2 lostAt = Vec2{},
-                   bool fixedSuper = false, Rarity managedTier = Rarity::Super);
+                   bool fixedSuper = false, Rarity managedTier = Rarity::Super, bool superFarm = false);
 
     /// Gives each band back the population that died in it, where it died.
     ///
@@ -1047,6 +1048,9 @@ private:
     std::vector<TopBoss> topBosses_;
     struct SuperMapState { Realm realm; SuperPopulation population; };
     std::vector<SuperMapState> superPopulations_;
+    std::vector<SuperMapState> superFarmPopulations_;
+    void stockSuperFarms(World&,const Terrain&,const ContentRegistry&,
+                         const std::vector<Viewer>&,Rng&,double);
     struct EternalMapState { Realm realm; int previousLiving = 0; };
     std::vector<EternalMapState> eternalPopulations_;
     std::vector<EternalMapState> hyperPopulations_;

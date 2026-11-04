@@ -3249,14 +3249,14 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     CHECK(awaitProfile(h,beta,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
     removeDataDir(dir);
 }
-TEST(hyper_hammer_network_forges_mjolnir_from_five_eternal_hammers) {
+TEST(hyper_hammer_network_forges_mjolnir_from_five_eternal_fragments) {
     const auto dir=titanWorld("hyper-hammer-network");
-    Harness h("hyper-hammer-network",[](const std::string& path){seedAccount(path,"smith");seedStack(path,"smith","petal_timed_mjolnir",Rarity::Unique,5);},dir,0);
+    Harness h("hyper-hammer-network",[](const std::string& path){seedAccount(path,"smith");seedStack(path,"smith","petal_fragment",Rarity::Unique,5);},dir,0);
     CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient client;CHECK(joinAs(h,client,"smith"));std::vector<NetClient*> clients{&client};h.step(3,clients);standAtTitan(h,clients,"smith");
-    client.requestTitanForge(content().petalIndex("timed_mjolnir"),true);TitanForgeOutcome out;CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
+    client.requestTitanForge(content().petalIndex("fragment"),true);TitanForgeOutcome out;CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
     CHECK_EQ(out.petalIndex,content().petalIndex("mjolnir"));
-    CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique)==0;}));removeDataDir(dir);
+    CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("fragment"),Rarity::Unique)==0;}));removeDataDir(dir);
 }
 TEST(hyper_garden_and_jungle_network_quotes_and_holdings_are_independent){
     const double cell=kTileSize;
@@ -3285,7 +3285,7 @@ TEST(hyper_operator_exchange_waits_for_cutover_and_broadcasts_once_without_doubl
     {std::ofstream marker(gate);marker<<"maintenance";}
     std::string id;
     Harness h("operator-hammer",[&](const std::string& path){
-        seedAccount(path,"smith");seedStack(path,"smith","petal_timed_mjolnir",Rarity::Unique,5);
+        seedAccount(path,"smith");seedStack(path,"smith","petal_fragment",Rarity::Unique,5);
         Database db;std::string error;CHECK(db.load(path,error));id=db.findUser("smith")->id;
         Json job=Json::object();job["id"]="test-once";job["userId"]=id;
         job["status"]="pending";job["maintenanceGate"]=gate;job["readyFile"]=ready;
@@ -3300,7 +3300,7 @@ TEST(hyper_operator_exchange_waits_for_cutover_and_broadcasts_once_without_doubl
     h.step(3,{});auto result=saved();
     CHECK_EQ(result["operatorHyperForgeRequest"]["status"].asString(),std::string("done"));
     CHECK_EQ(result["players"][id]["inventory"]["apex"]["petal_mjolnir"].asInt(),1);
-    CHECK_EQ(result["players"][id]["inventory"]["unique"]["petal_timed_mjolnir"].asInt(),0);
+    CHECK_EQ(result["players"][id]["inventory"]["unique"]["petal_fragment"].asInt(),0);
     NetClient client;CHECK(joinAs(h,client,"smith"));std::vector<NetClient*> clients{&client};
     CHECK(h.stepUntil(clients,[&]{return sawText(client,"has been forged by");},60));
     h.step(5,clients);result=saved();
@@ -3317,9 +3317,9 @@ TEST(hyper_operator_temporary_grant_keeps_five_materials_and_the_other_protected
     Harness h("temporary-hammer",[&](const std::string& path){
         seedAccount(path,"smith");seedAccount(path,"owner");
         seedStack(path,"smith","petal_timed_mjolnir",Rarity::Unique,5);
-        seedStack(path,"owner","petal_timed_mjolnir",Rarity::Unique,5);
+        seedStack(path,"owner","petal_fragment",Rarity::Unique,5);
         Database db;std::string error;CHECK(db.load(path,error));id=db.findUser("smith")->id;owner=db.findUser("owner")->id;
-        CHECK(forgeHyper(db,owner,"timed_mjolnir",db.nowMillis()).ok);
+        CHECK(forgeHyper(db,owner,"fragment",db.nowMillis()).ok);
         Json job=Json::object();job["id"]="temporary-once";job["userId"]=id;job["mode"]="temporary15h";job["status"]="pending";
         db.rawTable("operatorHyperForgeRequest")=job;db.markDirty();CHECK(db.save());
     },dir,0);

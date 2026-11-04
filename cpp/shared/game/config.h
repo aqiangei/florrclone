@@ -33,6 +33,10 @@
 #include "shared/game/drop_rates.h"
 
 namespace flix {
+inline constexpr int baseLootTrialsForRarity(Rarity rarity) {
+    return rarity == Rarity::Super ? 20 : kLootFeelCopies *
+        (rarityIndex(rarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);
+}
 
 /// What mobIndex()/petalIndex() answer for an id the content does not define.
 /// Deliberately the same sentinel as an empty loadout slot: "no petal" and

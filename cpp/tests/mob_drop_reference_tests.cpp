@@ -61,14 +61,14 @@ TEST(all_imported_mob_tables_link_without_obsolete_generated_eggs){
 }
 
 TEST(super_sandstorm_drops_only_sand_glass_and_stick_at_reference_tiers){
-    const auto counts=kills("sandstorm",Rarity::Super,100);const int rolls=100*kLootFeelCopies*kLootFeelSuperMultiplier;
+    const auto counts=kills("sandstorm",Rarity::Super,100);const int rolls=100*baseLootTrialsForRarity(Rarity::Super);
     CHECK_EQ(total(counts,"sand"),rolls);CHECK_EQ(total(counts,"glass"),rolls);CHECK_EQ(total(counts,"mysterious_stick"),rolls);
     CHECK_EQ(total(counts,"rock"),0);CHECK(counts.size()>=std::size_t(6));
     for(const auto&[key,n]:counts){CHECK(key.second==5||key.second==6||key.second==7);if(key.first=="sand"&&key.second==6)CHECK_NEAR(static_cast<double>(n)/rolls,.461*.995,.03);}
 }
 
 TEST(queen_ant_and_beetle_drop_pools_match_reference_in_actual_kills){
-    const auto queen=kills("queen_ant",Rarity::Super,30);const int rolls=30*kLootFeelCopies*kLootFeelSuperMultiplier;
+    const auto queen=kills("queen_ant",Rarity::Super,30);const int rolls=30*baseLootTrialsForRarity(Rarity::Super);
     CHECK_EQ(total(queen,"egg"),rolls);CHECK_EQ(total(queen,"basil"),rolls);CHECK(queen.size()>=std::size_t(4));
     const auto beetle=kills("beetle",Rarity::Super,30);
     CHECK_EQ(total(beetle,"beetle_egg"),rolls);CHECK_EQ(total(beetle,"privet_berry"),rolls);CHECK(beetle.size()>=std::size_t(4));
@@ -78,10 +78,10 @@ TEST(queen_ant_and_beetle_drop_pools_match_reference_in_actual_kills){
 TEST(ant_egg_trials_and_golden_leafbug_orb_conversion_use_reference_probabilities){
     const auto common=kills("ant_egg",Rarity::Common,200);const int rolls=200*kLootFeelCopies;
     CHECK_NEAR(static_cast<double>(total(common,"egg"))/rolls,.762,.03);
-    const auto super=kills("ant_egg",Rarity::Super,100);const int supers=100*kLootFeelCopies*kLootFeelSuperMultiplier;
+    const auto super=kills("ant_egg",Rarity::Super,100);const int supers=100*baseLootTrialsForRarity(Rarity::Super);
     CHECK_EQ(total(super,"egg"),supers);CHECK_EQ(super.size(),std::size_t(3));CHECK_NEAR(static_cast<double>(super.at({"egg",5}))/supers,.357,.03);
     const auto ordinary=kills("golden_leafbug",Rarity::Super,100);CHECK_EQ(total(ordinary,"magic_leaf"),0);CHECK_NEAR(static_cast<double>(total(ordinary,"golden_leaf"))/supers,.643,.03);
-    const auto magic=kills("golden_leafbug",Rarity::Super,30,true);CHECK_EQ(total(magic,"golden_leaf"),0);CHECK_EQ(total(magic,"magic_leaf"),30*kLootFeelCopies*kLootFeelSuperMultiplier);
+    const auto magic=kills("golden_leafbug",Rarity::Super,30,true);CHECK_EQ(total(magic,"golden_leaf"),0);CHECK_EQ(total(magic,"magic_leaf"),30*baseLootTrialsForRarity(Rarity::Super));
     for(const auto&[key,n]:magic)if(key.first=="magic_leaf")CHECK_EQ(key.second,5);
 }
 
@@ -108,9 +108,9 @@ TEST(super_and_eternal_actual_kills_restore_super_petals_without_quantity_inflat
     for(const auto&[key,n]:super)if(key.second==7)superS+=n;
     for(const auto&[key,n]:eternal){if(key.second==7)eternalS+=n;CHECK(key.second<=7);}
     CHECK(superS>0);CHECK(eternalS>superS*2);
-    CHECK_NEAR(static_cast<double>(superS)/(1000*kLootFeelCopies*2),.643*.005,.0008);
+    CHECK_NEAR(static_cast<double>(superS)/(1000*baseLootTrialsForRarity(Rarity::Super)*2),.643*.005,.0008);
     CHECK_NEAR(static_cast<double>(eternalS)/(1000*kLootFeelCopies*2),.643*.015,.0015);
-    CHECK_EQ(total(super,"light"),total(eternal,"light"));CHECK_EQ(total(super,"rose"),total(eternal,"rose"));
+    CHECK_EQ(total(super,"light")*3,total(eternal,"light")*2);CHECK_EQ(total(super,"rose")*3,total(eternal,"rose")*2);
 }
 TEST(every_restored_super_table_retains_a_positive_same_tier_tail){
     Json json;std::string error;CHECK(Json::parseFile(testsupport::dataFile("mob_drops.json"),json,error));int checked=0;

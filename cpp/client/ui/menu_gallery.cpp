@@ -827,7 +827,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
         if(config.id=="garbage") {
             stat(trEnZh("Drops exactly the visible petal types.","开袋掉落与外观中的花瓣种类一致。"),6.0);
             stat(trEnZh("Each visible type is guaranteed at least once.","每个可见种类至少掉落1件。"),0.0);
-            stat(trEnZh("Normal rarity rolls and 30 independent trials apply.","稀有度正常判定，保留30次独立掉落。"),0.0);
+            stat(std::string(trEnZh("Normal rarity rolls; independent trials: ","稀有度正常判定；基础独立掉落次数："))+std::to_string(baseLootTrialsForRarity(cell.rarity)),0.0);
         }
         const std::vector<DropRow> rows = config.id=="garbage" ? std::vector<DropRow>{} : computeMobDrops(cell.mobIndex, cell.rarity, usedTiers);
         std::vector<int> columns;

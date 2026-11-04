@@ -521,25 +521,21 @@ NearbyNpc App::nearbyNpc(Vec2 self) const {
 }
 
 double App::drawBossBars(Canvas& canvas, bool altHeld) {
-    // Super, unique and apex only. An ultra is a big mob, not a boss: it wears
+    // Eternal and Hyper only. Super farming mobs keep the ordinary bar under
     // the ordinary bar under its body, which is also where its name is.
     // A pet is somebody's summon and a target dummy is a permanent DPS-test
     // fixture, so neither earns the screen-top bar whatever tier it wears.
     // A centipede or a leech is one boss however many bodies it drags: the
     // head wears the bar and the segments behind it none.
-    // In a prestige biome a super is ordinary stock, not a boss
-    // (shared/game/prestige.h), and keeps only the bar under its body.
-    const bool prestige = worldMaps_.isPrestige(net_.view().realm());
     std::vector<const RemoteEntity*> bosses;
     const Rect view = camera_.visibleWorld();
     for (const auto& entry : net_.view().entities()) {
         const RemoteEntity& entity = entry.second;
         if (entity.kind != net::EntityKind::Mob) continue;
-        if (entity.rarity != Rarity::Super && entity.rarity != Rarity::Unique &&
+        if (entity.rarity != Rarity::Unique &&
             entity.rarity != Rarity::Apex) {
             continue;
         }
-        if (prestige && entity.rarity == Rarity::Super) continue;
         if ((entity.spawnFlags & net::SpawnIsPet) != 0) continue;
         const MobConfig& config = content().mob(entity.typeIndex);
         if (config.id == "target_dummy" || config.chainBody) continue;

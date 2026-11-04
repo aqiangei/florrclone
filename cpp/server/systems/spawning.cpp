@@ -1929,7 +1929,7 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
         int habitats[3]={0,0,0};
         int living = 0;
         ambient_->each([&](Entity e, MobTag&, Transform& transform, Body&, MobType& type, AmbientMob& ambient) {
-            if (!world.has<HoleTether>(e) && transform.realm == state.realm && type.rarity == Rarity::Super && isWholeAnimal(world, e)) {
+            if (!world.has<HoleTether>(e) && !world.has<SuperFarmMob>(e) && transform.realm == state.realm && type.rarity == Rarity::Super && isWholeAnimal(world, e)) {
                 ++living;const int family=antHabitat(ambient.zone);if(family>=0)++habitats[family];
             }
         });
@@ -1976,6 +1976,46 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
                           Slot::TopUp, {}, true)) {
                 state.population.spawned();const int family=antHabitat(index);if(family>=0)++habitats[family];
             }
+        }
+    }
+}
+
+void SpawnSystem::stockSuperFarms(World& world, const Terrain& terrain,
+                                  const ContentRegistry& content,
+                                  const std::vector<Viewer>& viewers,Rng& rng,double nowMillis) {
+    if (!worldMaps) return;
+    for (const auto& map : worldMaps->maps()) {
+        if (worldMaps->isPrestige(map.realm()) || !map.usesReferenceSpawnCurve() ||
+            !supportsSuperFarm(map.id())) continue;
+        double highest = -1;
+        for (const auto& zone : zones_)
+            if (zone.realm==map.realm() && !zone.prestige && !zone.singular && zone.forceRarity<0)
+                highest=std::max(highest,zone.difficulty);
+        if (highest<0) continue;
+        std::vector<std::uint16_t> candidates;
+        for (std::size_t i=0;i<zones_.size();++i) {
+            const auto& zone=zones_[i];
+            if (zone.realm==map.realm() && !zone.prestige && !zone.singular && zone.forceRarity<0 &&
+                zone.difficulty>=highest-kSuperFarmDifficultyWindow)
+                candidates.push_back(static_cast<std::uint16_t>(i));
+        }
+        if (candidates.empty()) continue;
+        auto state=std::find_if(superFarmPopulations_.begin(),superFarmPopulations_.end(),
+            [&](const SuperMapState& entry){return entry.realm==map.realm();});
+        if (state==superFarmPopulations_.end()) {
+            superFarmPopulations_.push_back({map.realm(),SuperPopulation{kSuperFarmPopulation}});
+            state=std::prev(superFarmPopulations_.end());
+        }
+        int living=0;
+        ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob&){
+            if (at.realm==map.realm() && type.rarity==Rarity::Super && world.has<SuperFarmMob>(e) &&
+                !world.has<Dead>(e) && isWholeAnimal(world,e)) ++living;
+        });
+        state->population.observe(living,nowMillis);
+        for (int attempt=0;attempt<160 && state->population.ready(nowMillis);++attempt) {
+            const auto index=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
+            if (stockZone(world,terrain,content,zones_[index],index,viewers,rng,nowMillis,
+                          Slot::TopUp,{},true,Rarity::Super,true)) state->population.spawned();
         }
     }
 }
@@ -2082,6 +2122,7 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
     stockSupers(world, terrain, content, viewers, rng, nowMillis);
     stockEternals(world, terrain, content, viewers, rng, nowMillis);
     stockHypers(world, terrain, content, viewers, rng, nowMillis);
+    stockSuperFarms(world, terrain, content, viewers, rng, nowMillis);
 
     for (std::size_t index = 0; index < zones_.size(); ++index) {
         SpawnZone& zone = zones_[index];
@@ -2111,7 +2152,7 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
 bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                             SpawnZone& zone, std::uint16_t zoneIndex,
                             const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
-                            Slot slot, Vec2 lostAt, bool fixedSuper, Rarity managedTier) {
+                            Slot slot, Vec2 lostAt, bool fixedSuper, Rarity managedTier, bool superFarm) {
     // Everything about this happens in the band's OWN realm: the map it is
     // drawn on has its own size, its own walls and its own population, and the
     // same numbers on the overworld describe somewhere else entirely.
@@ -2287,6 +2328,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     const Entity spawned = spawnMobAt(world, terrain, content, type, rarity, at, zone.realm,
                                       nowMillis, rng, 0, zoneIndex, facing);
     if (spawned == NULL_ENTITY) return false;
+    if (superFarm) world.add<SuperFarmMob>(spawned);
     ++zone.liveMobs;
     // Charged only now that the boss is standing. Every refusal above hands
     // the slot back to the band and rolls it afresh on a later pass, and a
@@ -2333,6 +2375,7 @@ void SpawnSystem::bankCasualties(World& world, const Terrain& terrain,
             *tracked = censusMobs_.back();
             censusMobs_.pop_back();
         }
+        if (world.has<SuperFarmMob>(casualty.entity)) continue;
         stockZone(world, terrain, content, zones_[casualty.zone], casualty.zone, viewers, rng,
                   nowMillis, Slot::Killed, casualty.position);
     }

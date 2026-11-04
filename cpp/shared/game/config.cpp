@@ -1834,6 +1834,7 @@ MobStats ContentRegistry::mobStats(std::uint16_t index, Rarity r) const {
     // than a bee does, without becoming a wall.
     const double scaledSize = c.size * kMobSizeScale[t];
     s.health = c.health * kMobHealthScale[t];
+    if (tier == rarityIndex(Rarity::Super)) s.health *= 0.5;
     s.damage = c.damage * kMobDamageScale[t];
     // This extra Hyper tuning is mob-only; Bone shares the base armour ladder.
     s.armor = c.armor * kMobArmorScale[t] * (tier == rarityIndex(Rarity::Apex) ? 2.0 : 1.0);

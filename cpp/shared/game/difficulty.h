@@ -21,11 +21,19 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <string>
 
 #include "shared/core/types.h"
 #include "shared/game/rarity.h"
 
 namespace flix {
+inline bool supportsSuperFarm(const std::string& id) {
+    return id=="garden"||id=="desert"||id=="computer"||id=="ocean"||id=="jungle"||
+           id=="hel"||id=="ant_hell"||id=="sewers"||id=="pyramid"||id=="cyberspace";
+}
+inline constexpr int kSuperFarmPopulation = 8;
+inline constexpr double kSuperFarmDifficultyWindow = 10.0;
+
 
 /// One point on the difficulty curve: at this difficulty, the ground spawns at
 /// this tier value (0 = common, 6 = ultra, 7 = super, 8 = unique, 9 = apex).

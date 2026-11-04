@@ -5,13 +5,13 @@
 using namespace flix;
 namespace {
 const ContentRegistry& data(){static ContentRegistry c;static bool ready=false;if(!ready){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));ready=true;}return c;}
-int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(!w.has<HoleTether>(e)&&at.realm==realm&&t.rarity==rarity&&(!b||b->chainHead==e))++n;});return n;}
+int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(!w.has<HoleTether>(e)&&!w.has<SuperFarmMob>(e)&&at.realm==realm&&t.rarity==rarity&&(!b||b->chainHead==e))++n;});return n;}
 }
 TEST(hyper_mobs_keep_xp_speed_and_hyper_pollen_uses_one_point_five_eternal){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto e=data().mobStats(i,Rarity::Unique),h=data().mobStats(i,Rarity::Apex);
         CHECK_NEAR(h.health,e.health*18,std::max(1e-5,h.health*1e-12));CHECK_NEAR(h.damage,e.damage*12,1e-5);
         CHECK_NEAR(e.health,data().mob(i).health*14244000.0,std::max(1e-5,e.health*1e-12));
-        CHECK_NEAR(data().mobStats(i,Rarity::Super).health,data().mob(i).health*2374000.0,1e-5);
+        CHECK_NEAR(data().mobStats(i,Rarity::Super).health,data().mob(i).health*1187000.0,1e-5);
         CHECK_NEAR(h.xp,e.xp*3,1e-5);
         CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor*4,1e-9);}
     const auto pollen=data().petalStats(data().petalIndex("pollen"),Rarity::Apex);
@@ -68,4 +68,38 @@ TEST(hyper_actual_loot_is_thirty_trials_of_super_eternal_materials_never_hyper){
     int total=0,eternal=0;Query<DropTag,DropItem> q{w};q.each([&](Entity,DropTag&,DropItem& item){
         CHECK(rarityIndex(item.rarity)<rarityIndex(Rarity::Apex));total+=item.quantity;if(item.rarity==Rarity::Unique)eternal+=item.quantity;});
     CHECK_EQ(total-eternal,100*30*3);CHECK(eternal>20&&eternal<80);
+}
+
+TEST(super_farm_has_eight_independent_slots_and_preserves_roaming_supers){
+    ContentRegistry c;WorldMaps maps;Terrain terrain;std::string error;
+    CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),error));
+    CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    World w;CommandBuffer commands{w};SpawnSystem spawn;spawn.worldMaps=&maps;Rng rng{2853};
+    auto step=[&](double at){spawn.run(w,terrain,c,std::vector<RealmPoint>{},rng,at,net::kTickSeconds,commands);commands.flush();};
+    step(1000);step(1500);Entity victim=NULL_ENTITY;Realm garden=Realm::Overworld;int mapsChecked=0;
+    for(const auto& map:maps.maps()){
+        if(maps.isPrestige(map.realm())||!map.usesReferenceSpawnCurve()||!supportsSuperFarm(map.id()))continue;
+        int farm=0;double highest=-1;
+        for(const auto& band:map.elements())if(band.isSpawnBand()&&!band.singular&&band.forceRarity<0)highest=std::max(highest,band.difficulty);
+        Query<SuperFarmMob,MobType,Transform> q{w};q.without<Dead>();q.each([&](Entity e,SuperFarmMob&,MobType& type,Transform& at){
+            if(at.realm!=map.realm())return;++farm;CHECK(type.rarity==Rarity::Super);
+            bool inside=false;for(const auto& band:map.elements())if(band.isSpawnBand()&&!band.singular&&band.forceRarity<0&&band.difficulty>=highest-kSuperFarmDifficultyWindow)
+                inside=inside||zoneContains(band.bounds,band.polygon,at.position);CHECK(inside);
+            if(map.id()=="garden"){victim=e;garden=map.realm();}
+        });
+        CHECK(farm>0);CHECK(farm<=8);CHECK_EQ(population(w,map.realm(),Rarity::Super),5);++mapsChecked;
+    }
+    CHECK(mapsChecked>=10);CHECK(victim!=NULL_ENTITY);
+    for(const auto& event:spawn.bossSpawns)CHECK(event.rarity!=Rarity::Super);
+    auto count=[&](){int n=0;Query<SuperFarmMob,Transform> q{w};q.without<Dead>();q.each([&](Entity,SuperFarmMob&,Transform& at){if(at.realm==garden)++n;});return n;};
+    const int before=count();w.add<Dead>(victim);step(2000);CHECK_EQ(count(),before-1);
+    step(31999);CHECK_EQ(count(),before-1);step(32500);CHECK_EQ(count(),before);
+}
+TEST(super_farm_health_and_loot_budget_change_without_touching_eternal_or_hyper_rewards){
+    for(std::uint16_t i=0;i<data().mobCount();++i){const auto& mob=data().mob(i);
+        CHECK_NEAR(data().mobStats(i,Rarity::Super).health,mob.health*1187000.0,std::max(1e-6,mob.health*.001));
+        CHECK_NEAR(data().mobStats(i,Rarity::Unique).health,mob.health*14244000.0,std::max(1e-6,mob.health*.001));
+    }
+    CHECK_EQ(baseLootTrialsForRarity(Rarity::Super),20);CHECK_EQ(baseLootTrialsForRarity(Rarity::Unique),30);CHECK_EQ(baseLootTrialsForRarity(Rarity::Apex),30);
+    CHECK(kAnnouncedRarity==Rarity::Unique);
 }

@@ -7,9 +7,10 @@ class SuperPopulation {
 public:
     static constexpr int target = 5;
     static constexpr double respawnMillis = 30000.0;
+    SuperPopulation(int capacity = target) : capacity_(std::max(1, capacity)) {}
     void observe(int living, double now) {
         living = std::max(0, living);
-        const int vacancies = std::max(0, target - living);
+        const int vacancies = std::max(0, capacity_ - living);
         if (!initialized_) {
             deadlines_.assign(static_cast<std::size_t>(vacancies), now);
             initialized_ = true;
@@ -23,7 +24,7 @@ public:
         previous_ = living;
     }
     bool ready(double now) const {
-        return !deadlines_.empty() && deadlines_.front() <= now && previous_ < target;
+        return !deadlines_.empty() && deadlines_.front() <= now && previous_ < capacity_;
     }
     void spawned() {
         if (deadlines_.empty()) return;
@@ -31,6 +32,7 @@ public:
         ++previous_;
     }
 private:
+    int capacity_ = target;
     bool initialized_ = false;
     int previous_ = 0;
     std::vector<double> deadlines_;

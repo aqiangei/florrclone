@@ -197,7 +197,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
-            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"每处泰坦同种超凡固定需5个永恒。","被抢返原投入减1个；每账号最多5份超凡。","每次争夺减1小时，最低1小时；碎片不能换超凡锤。"}[i]:kLines[i]);
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需5个永恒碎片；限时锤不能参与争夺。","固定耗5、被夺返4；两处泰坦独立，账号最多5份。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;
@@ -294,7 +294,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             refusal_.clear();
         } else {
             const auto& id=content().petal(hovered->petalIndex).id;
-            refusal_=hyper_&&id=="fragment"?"超凡锤子需要5把永恒锤子，不能用碎片。":
+            refusal_=hyper_&&(id=="timed_mjolnir"||id=="mjolnir")?"超凡锤子需5个永恒碎片，限时锤不能参与争夺。":
                 "材料不足或不可锻造；超凡需5个未装备的同种永恒。";
             refusalUntil_=now+kRefusalSeconds;
         }

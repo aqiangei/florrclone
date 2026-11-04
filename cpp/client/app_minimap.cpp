@@ -26,6 +26,7 @@
 #include "client/minimap.h"
 #include "client/ui/draw.h"
 #include "client/ui/menu_widgets.h"
+#include "client/ui/menu_style.h"
 #include "shared/game/constants.h"
 #include "shared/game/difficulty.h"
 #include "shared/game/terrain.h"
@@ -138,6 +139,17 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
     // and the maze have none, which is correct: neither is an authored map, so
     // there are no bands and no pads to draw.
     const MapData* annotations = worldMaps_.forRealm(realm);
+    double farmHighest=-1;
+    if (annotations && !worldMaps_.isPrestige(realm) &&
+        annotations->usesReferenceSpawnCurve() && supportsSuperFarm(annotations->id())) {
+        for (const auto& element:annotations->elements())
+            if (element.isSpawnBand() && !element.singular && element.forceRarity<0)
+                farmHighest=std::max(farmHighest,element.difficulty);
+    }
+    const auto superFarmBand=[&](const MapElement& element){
+        return farmHighest>=0 && element.isSpawnBand() && !element.singular &&
+            element.forceRarity<0 && element.difficulty>=farmHighest-kSuperFarmDifficultyWindow;
+    };
 
     // What lies UNDER the walls: the paper, the letterbox, and -- in the ALT
     // variant -- the spawn bands. Painted once per variant; the walls are
@@ -202,7 +214,8 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
                 // the spawner rolls against: a band reads as the tier a player
                 // will actually meet in it, and a band between two tiers takes the
                 // one it mostly produces. See shared/game/difficulty.h.
-                const Rarity tier = (annotations->usesReferenceSpawnCurve() ? static_cast<Rarity>(referenceSpawnTier(element.difficulty)) : dominantTierForDifficulty(element.difficulty));
+                const Rarity tier = superFarmBand(element) ? Rarity::Super :
+                    (annotations->usesReferenceSpawnCurve() ? static_cast<Rarity>(referenceSpawnTier(element.difficulty)) : dominantTierForDifficulty(element.difficulty));
                 setFill(map, kMinimapSpawnColors[static_cast<std::size_t>(rarityIndex(tier))], 0.4);
                 // The zone's outline, so the minimap shows the band the spawner
                 // actually uses rather than the box around it. The bounding box
@@ -337,6 +350,18 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
         walls.strokeCircle(static_cast<float>(dot.x), static_cast<float>(dot.y), radius);
     }
 
+    if (annotations) {
+        int markers=0;
+        for (const auto& element:annotations->elements()) {
+            if (!superFarmBand(element) || markers>=8) continue;
+            const auto at=toBox(Vec2{element.bounds.x+element.bounds.w*.5,
+                                    element.bounds.y+element.bounds.h*.5});
+            TextStyle label;label.size=10;label.align=Align::Centre;label.baseline=Baseline::Middle;
+            label.fill=rarityColor(Rarity::Super);
+            outlinedText(walls,"S",at.x,at.y,label,1.5);
+            ++markers;
+        }
+    }
     // The two bakes the corner shows: the ground, then the wall layer laid
     // over it pixel for pixel. The blit is in raw pixels (identity transform,
     // the source's own size), so the walls land exactly where they were

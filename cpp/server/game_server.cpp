@@ -929,7 +929,7 @@ void GameServer::tick(double nowMillis) {
                     persistAll();
                     if(job["mode"].asString()=="temporary15h")
                         result=grantTemporaryHyperHammer(database_,userId,database_.nowMillis(),requestId);
-                    else result=forgeHyper(database_,userId,"timed_mjolnir",database_.nowMillis(),requestId);
+                    else result=forgeHyper(database_,userId,"fragment",database_.nowMillis(),requestId);
                 }else result.reason="指定账号不存在，未兑换。";
                 auto& receipt=database_.rawTable("operatorHyperForgeRequest");
                 receipt["status"]=result.ok?"done":"failed";
@@ -3568,7 +3568,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
 
     const auto& petal = content().petal(petalIndex);
     if (!(hyper ? hyperForgeEligible(petal.id) : titanForgeEligible(petal.id))) {
-        reply(false, "血祭不能用于泰坦锻造。");
+        reply(false, hyper ? "超凡锤子需5个永恒碎片，不能用限时永恒锤或血祭。" : "该花瓣不能用于泰坦锻造。");
         return;
     }
     if(hyper) {
