@@ -45,8 +45,19 @@ EM_JS(int, c2d_create, (const char* element, int width, int height, int virtualC
   let surface, options;
   if (virtualCanvas) surface = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width, height) : document.createElement('canvas');
   else { const id = UTF8ToString(element); surface = document.getElementById(id) || Object.assign(document.createElement('canvas'), {id}); if (!surface.parentNode) document.body.appendChild(surface); options = {alpha: false, desynchronized: !!desynchronized}; }
+  let display = null;
+  if (!virtualCanvas && window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+    // Publish complete mobile frames only. An intermediate flush/clear must
+    // not reach a single-buffer canvas while a long frame is still drawing.
+    display = surface;
+    if (display.width !== width) display.width = width;
+    if (display.height !== height) display.height = height;
+    display.getContext('2d', {alpha:false, desynchronized:false});
+    surface = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(width,height) : document.createElement('canvas');
+    options = undefined;
+  }
   surface.width = width; surface.height = height;
-  Module.cppCanvasContexts.push({surface, ctx: surface.getContext('2d', options)});
+  Module.cppCanvasContexts.push({surface, ctx: surface.getContext('2d', options), display});
   return Module.cppCanvasContexts.length - 1;
 });
 EM_JS(void, c2d_destroy, (int id), { if (Module.cppCanvasContexts) Module.cppCanvasContexts[id] = null; });
@@ -54,7 +65,11 @@ EM_JS(void, c2d_present, (int id, const char* target), {
   const item = Module.cppCanvasContexts[id], name = UTF8ToString(target);
   let canvas = document.getElementById(name);
   if (!canvas) { canvas = document.createElement('canvas'); canvas.id = name; document.body.appendChild(canvas); }
-  canvas.width = item.surface.width; canvas.height = item.surface.height; canvas.getContext('2d').drawImage(item.surface, 0, 0);
+  if (canvas === item.surface) return;
+  if (canvas.width !== item.surface.width) canvas.width = item.surface.width;
+  if (canvas.height !== item.surface.height) canvas.height = item.surface.height;
+  const ctx=canvas.getContext('2d');ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=1;
+  ctx.globalCompositeOperation='copy';ctx.drawImage(item.surface,0,0);ctx.restore();
 });
 // The drawing calls do not cross into the page one at a time. Each one used
 // to be its own c2d_op -- ten arguments widened to doubles and a UTF8ToString

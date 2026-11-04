@@ -724,7 +724,10 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.checkbox(kMobDeathAnimation, tr(Msg::MobDeathAnimation));
             p.checkbox(kAntialiasing, tr(Msg::Antialiasing));
             p.checkbox(kGpuAcceleration, tr(Msg::GpuAcceleration));
-            p.checkbox(kDesynchronizedCanvas, tr(Msg::DesynchronizedCanvas));
+            if(ctx.window.coarsePointer()){
+                p.label(language()==Language::Zh?"移动端：完整帧显示，减少闪屏":"Mobile: complete-frame display",p.cy+10,12,kPaper,kInk);
+                p.cy+=kRowStride;
+            }else p.checkbox(kDesynchronizedCanvas, tr(Msg::DesynchronizedCanvas));
             p.checkbox(kDisableUltraParticles, tr(Msg::DisableUltraParticles));
             p.checkbox(kShowConsoleLogs, tr(Msg::ShowConsoleLogs));
 

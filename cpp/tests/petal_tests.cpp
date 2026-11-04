@@ -5971,7 +5971,13 @@ TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead_with_double_summon
         if(undead){const auto attacker=addMob(rig,rig.position(rig.player)+Vec2{60,0});CombatSystem combat;
             combat.applyDamage(rig.world,rig.player,attacker,1e9,rig.now);CHECK(rig.world.has<Undead>(rig.player));CHECK(!rig.world.has<Dead>(rig.player));}
         rig.equip(1,"egg");int count=0;
-        CHECK(rig.tickUntil([&]{count=0;Query<Pet,Health,ContactDamage> pets{rig.world};pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
+        CHECK(rig.tickUntil([&]{
+            for(const auto shell:rig.petals(1))if(!rig.world.has<Dead>(shell)){
+                const auto& instance=rig.world.get<PetalInstance>(shell);
+                if(rig.now-instance.spawnedAtMillis<1000){const auto enemy=addMob(rig,rig.position(shell)+Vec2{10,0});CombatSystem combat;
+                    CHECK(combat.applyDamage(rig.world,shell,enemy,1e9,rig.now).refused);}
+            }
+            count=0;Query<Pet,Health,ContactDamage> pets{rig.world};pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
             if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,20,1e-8);CHECK_NEAR(hit.amount,1,1e-8);
         });return count==4;},150));
     }

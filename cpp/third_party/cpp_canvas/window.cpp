@@ -747,6 +747,7 @@ struct Window::Impl {
     pointHeight = static_cast<int>(std::lround(cssHeight));
     devicePixelRatio = emscripten_get_device_pixel_ratio();
     if (!(devicePixelRatio > 0)) devicePixelRatio = 1.0;
+    if(web_coarse_pointer())devicePixelRatio=std::min(2.0,devicePixelRatio);
 
     const int wantPixelW =
         std::max(1, static_cast<int>(std::lround(cssWidth * devicePixelRatio * renderScale)));
@@ -1570,11 +1571,11 @@ void Window::present() {
   // draws, so it is the last point at which they can be handed over, and
   // batching them is worth about a third of the client's main-thread time.
   canvasFlushOps();
-  // There is nothing to upload: the frame was drawn INTO the page's canvas
-  // element, through its own 2D context, so it is already on screen. (On the
-  // Skia backend the flush is what copies it there.) The cursor is the only
-  // thing this still owes the host, on the same terms as the native path --
-  // last word of the frame wins.
+#ifndef CPP_CANVAS_SKIA
+  if(impl_->canvas)impl_->canvas->present(impl_->elementId);
+#endif
+  // Desktop 2D draws directly; mobile publishes its completed offscreen frame
+  // above. Skia's flush already presents. The cursor remains last-word-wins.
   impl_->applyCursor();
 #else
   if (!open_) return;

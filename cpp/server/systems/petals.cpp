@@ -1360,7 +1360,8 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
                                                std::max(0.0, stats.damageIntervalMillis)});
         world.add<HitCooldowns>(petal);
     }
-    if (health > 0.0) world.add<Health>(petal, Health{health, stats.health, 0.0, 0.0});
+    if (health > 0.0) world.add<Health>(petal, Health{health, stats.health, 0.0,
+        config.id=="egg"||config.id=="beetle_egg"?nowMillis+1000.0:0.0});
     world.add<Faction>(petal, faction);
     // Bone's armour is the same component a mob's is, so every hit the damage
     // path lands on the petal is blunted by the one rule that blunts a mob's.
