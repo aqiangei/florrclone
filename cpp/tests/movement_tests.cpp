@@ -1376,7 +1376,9 @@ TEST(wax_barrier_displaces_surrounding_mobile_mobs_without_changing_moon_mass_co
     for(const auto* id:{"wax","moon_rock"}){Fixture fx;
         const auto slab=fx.spawnLoose({3000,3000},30);PetalInstance instance;
         instance.configIndex=content().petalIndex(id);CHECK(instance.configIndex!=kInvalidIndex);fx.world.add<PetalInstance>(slab,instance);
-        const auto mob=fx.spawnMob({3040,3000},30,20);fx.step(1,0);
+        const auto mob=fx.spawnMob({3040,3000},30,20);
+        fx.world.add<MobType>(mob,MobType{content().mobIndex("ladybug"),Rarity::Common,1.0});
+        fx.step(1,0);
         const double slabMove=3000-fx.positionOf(slab).x,mobMove=fx.positionOf(mob).x-3040;
         CHECK(mobMove>0);CHECK(slabMove>=0);
         if(std::string(id)=="wax")CHECK(mobMove>slabMove*2);

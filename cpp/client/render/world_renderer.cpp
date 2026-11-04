@@ -3397,6 +3397,13 @@ void WorldRenderer::drawGarbagePile(Canvas& canvas, Vec2 at, double baseSize,
         const double rotation=(static_cast<int>(petalSeed%31)-15)*kPi/180.0;
         const PetalConfig& config = content_->petal(index);
         const double size=baseSize*.205*clamp(config.size*petalArtScale(&config),.8,1.0);
+        canvas.save();
+        canvas.setGlobalAlpha(canvas.globalAlpha()*.12f);
+        ui::setFill(canvas, 0xD0D0D0u);
+        canvas.beginPath();
+        canvas.arc(static_cast<float>(x), static_cast<float>(y),
+                   static_cast<float>(size*.57), 0.0f, static_cast<float>(kPi*2));
+        canvas.fill();canvas.restore();
         canvas.save();canvas.setGlobalAlpha(canvas.globalAlpha()*.58f);
         sprites_->drawPetal(canvas, index, content_->petal(index).minRarity, x, y, size, rotation, 0.0);
         canvas.restore();

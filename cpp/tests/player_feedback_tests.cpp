@@ -92,10 +92,11 @@ TEST(feedback_computer_is_a_separate_map_with_art_spawn_bands_and_assembler){
     NpcSystem npcs;std::vector<std::string> warnings;npcs.loadSites(maps,c,warnings);World world;npcs.placeMissing(world,terrain,c,0);
     int converters=0;Query<Npc,Transform> services{world};services.each([&](Entity e,Npc& npc,Transform& at){
         if(at.realm!=realm||npc.configIndex!=assembler)return;++converters;
+        CHECK(npc.rarity==Rarity::Unique);
         CHECK(!terrain.blocked(at.position,realm));CHECK(npc.recipe<c.mob(assembler).npc.recipes.size());
         const auto attacker=world.create();world.add<PlayerTag>(attacker);world.add<Faction>(attacker,Faction{Team::Players,false});
         CombatSystem combat;CHECK(combat.applyDamage(world,e,attacker,1e20,0).refused);
-    });CHECK_EQ(converters,kLadderRarityCount);
+    });CHECK_EQ(converters,1);
     for(const char* id:{"javascript","c++","bomb","glitch","ram","cursor","computer_chip","cube","icosahedron","spaceship","capacitor","ruby"})
         CHECK(c.petalIndex(id)!=kInvalidIndex);
 }
@@ -230,7 +231,7 @@ TEST(feedback_scarce_shop_petals_keep_their_authored_price_premium) {
     const auto mimic=content().petalIndex("mimic");
     const auto basic=content().petalIndex("basic");
     const double price=shopPrice(mimic,Rarity::Super);
-    CHECK_NEAR(price,6000,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*6);
+    CHECK_NEAR(price,10500,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*6);
     CHECK(!shopSellsRarity(Rarity::Unique));
     CHECK(shopPrice(mimic,Rarity::Ultra)>shopPrice(basic,Rarity::Ultra)*4);
 }
@@ -342,12 +343,12 @@ TEST(feedback_ant_hell_supers_cover_black_fire_and_termite_habitats) {
     }
     CHECK(!viewers.empty());World w;CommandBuffer commands{w};SpawnSystem spawns;spawns.worldMaps=&maps;
     for(int tick=0;tick<100;++tick){spawns.run(w,terrain,content(),viewers,rng,tick*net::kTickMillis,net::kTickSeconds,commands);commands.flush();}
-    int supers=0,habitats[3]={};Query<MobTag,MobType,Transform> mobs{w};
-    mobs.each([&](Entity,MobTag&,MobType& type,Transform& at){if(at.realm!=realm||type.rarity!=Rarity::Super)return;++supers;
+    int supers=0,farms=0,habitats[3]={};Query<MobTag,MobType,Transform> mobs{w};
+    mobs.each([&](Entity entity,MobTag&,MobType& type,Transform& at){if(at.realm!=realm||type.rarity!=Rarity::Super)return;++supers;if(w.has<SuperFarmMob>(entity))++farms;
         for(const auto& e:map->elements())if(e.isSpawnBand()&&e.contains(at.position)){const int f=familyOf(e);if(f>=0){++habitats[f];break;}}
     });
     std::printf("Ant Hell Supers %d; black %d fire %d termite %d\n",supers,habitats[0],habitats[1],habitats[2]);
-    CHECK_EQ(supers,5);for(const auto n:habitats)CHECK(n>0);
+    CHECK_EQ(supers-farms,5);CHECK_EQ(farms,8);for(const auto n:habitats)CHECK(n>0);
 }
 
 TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {

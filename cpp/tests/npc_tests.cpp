@@ -2720,10 +2720,10 @@ TEST(an_assembly_takes_one_of_each_input_per_run_at_the_assemblers_tier) {
     const std::string dir = assemblerWorld("assembler-make");
     Harness h("assembler-make", [](const std::string& path) {
         seedAccount(path, "builder");
-        seedStack(path, "builder", "petal_mimic", Rarity::Epic, 3);
-        seedStack(path, "builder", "petal_ram", Rarity::Epic, 2);
-        seedStack(path, "builder", "petal_mimic", Rarity::Unique, 4);
-        seedStack(path, "builder", "petal_ram", Rarity::Unique, 4);
+        seedStack(path, "builder", "petal_mimic", Rarity::Unique, 3);
+        seedStack(path, "builder", "petal_ram", Rarity::Unique, 2);
+        seedStack(path, "builder", "petal_mimic", Rarity::Epic, 4);
+        seedStack(path, "builder", "petal_ram", Rarity::Epic, 4);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
     const std::uint16_t mimic = content().petalIndex("mimic");
@@ -2734,27 +2734,27 @@ TEST(an_assembly_takes_one_of_each_input_per_run_at_the_assemblers_tier) {
     CHECK(joinAs(h, client, "builder"));
     h.step(3, {&client});
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(ram, Rarity::Epic) == 2u;
+        return p.stackCount(ram, Rarity::Unique) == 2u;
     }));
 
     AssembleOutcome outcome;
     const std::uint8_t recipe = offerRecipe(h, "sawblade");
     standBeside(h, client, "assembler");
-    client.requestAssemble(Rarity::Epic, recipe, 2);
+    client.requestAssemble(Rarity::Unique, recipe, 2);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(outcome.success);
-    CHECK(outcome.rarity == Rarity::Epic);
+    CHECK(outcome.rarity == Rarity::Unique);
     CHECK_EQ(outcome.recipe, recipe);
     CHECK_EQ(outcome.made, 2);
     // Two of each in, two sawblades out, all at the assembler's tier; the
     // rare stacks are another tier's, and untouched.
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(mimic, Rarity::Epic) == 1u && p.stackCount(ram, Rarity::Epic) == 0u &&
-               p.stackCount(saw, Rarity::Epic) == 2u;
+        return p.stackCount(mimic, Rarity::Unique) == 1u && p.stackCount(ram, Rarity::Unique) == 0u &&
+               p.stackCount(saw, Rarity::Unique) == 2u;
     }));
-    CHECK_EQ(client.profile().stackCount(mimic, Rarity::Unique), 4u);
-    CHECK_EQ(client.profile().stackCount(ram, Rarity::Unique), 4u);
-    CHECK_EQ(client.profile().stackCount(saw, Rarity::Unique), 0u);
+    CHECK_EQ(client.profile().stackCount(mimic, Rarity::Epic), 4u);
+    CHECK_EQ(client.profile().stackCount(ram, Rarity::Epic), 4u);
+    CHECK_EQ(client.profile().stackCount(saw, Rarity::Epic), 0u);
     // No wait: the next one is a matter of having the petals.
     CHECK_EQ(client.oracleCooldownRemainingMillis(), 0.0);
     CHECK_EQ(client.traderCooldownRemainingMillis(), 0.0);
@@ -2765,10 +2765,10 @@ TEST(the_assembler_refuses_a_short_bag_and_a_flower_not_standing_at_it) {
     const std::string dir = assemblerWorld("assembler-refuse");
     Harness h("assembler-refuse", [](const std::string& path) {
         seedAccount(path, "builder");
-        seedStack(path, "builder", "petal_mimic", Rarity::Epic, 5);
-        seedStack(path, "builder", "petal_ram", Rarity::Epic, 2);
         seedStack(path, "builder", "petal_mimic", Rarity::Unique, 5);
-        seedStack(path, "builder", "petal_ram", Rarity::Unique, 5);
+        seedStack(path, "builder", "petal_ram", Rarity::Unique, 2);
+        seedStack(path, "builder", "petal_mimic", Rarity::Epic, 5);
+        seedStack(path, "builder", "petal_ram", Rarity::Epic, 5);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
     const std::uint16_t mimic = content().petalIndex("mimic");
@@ -2779,32 +2779,32 @@ TEST(the_assembler_refuses_a_short_bag_and_a_flower_not_standing_at_it) {
     CHECK(joinAs(h, client, "builder"));
     h.step(3, {&client});
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(ram, Rarity::Epic) == 2u;
+        return p.stackCount(ram, Rarity::Unique) == 2u;
     }));
 
     AssembleOutcome outcome;
     const std::uint8_t recipe = offerRecipe(h, "sawblade");
     // Three runs need three RAM: all or nothing, so not one mimic goes.
     standBeside(h, client, "assembler");
-    client.requestAssemble(Rarity::Epic, recipe, 3);
+    client.requestAssemble(Rarity::Unique, recipe, 3);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(!outcome.success);
     CHECK_EQ(outcome.made, 0);
     CHECK(outcome.reason.find("RAM") != std::string::npos);
     // A recipe it does not offer -- another of its mob's -- and no runs at all.
     standBeside(h, client, "assembler");
-    client.requestAssemble(Rarity::Epic, static_cast<std::uint8_t>(recipe == 0 ? 1 : 0), 1);
+    client.requestAssemble(Rarity::Unique, static_cast<std::uint8_t>(recipe == 0 ? 1 : 0), 1);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(!outcome.success);
     CHECK(outcome.reason.find("does not make") != std::string::npos);
     standBeside(h, client, "assembler");
-    client.requestAssemble(Rarity::Epic, recipe, 0);
+    client.requestAssemble(Rarity::Unique, recipe, 0);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(!outcome.success);
-    // The flower is at the EPIC assembler: a rare run is asking for one that
+    // The flower is at the ETERNAL assembler: an Epic run is asking for one that
     // is not there, whatever the bag holds.
     standBeside(h, client, "assembler");
-    client.requestAssemble(Rarity::Unique, recipe, 1);
+    client.requestAssemble(Rarity::Epic, recipe, 1);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(!outcome.success);
     // Walked away: no assembler in reach.
@@ -2820,24 +2820,24 @@ TEST(the_assembler_refuses_a_short_bag_and_a_flower_not_standing_at_it) {
         }
         h.step(1, {&client});
     }
-    client.requestAssemble(Rarity::Epic, recipe, 1);
+    client.requestAssemble(Rarity::Unique, recipe, 1);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(!outcome.success);
 
     h.step(5, {&client});
-    CHECK_EQ(client.profile().stackCount(mimic, Rarity::Epic), 5u);
-    CHECK_EQ(client.profile().stackCount(ram, Rarity::Epic), 2u);
     CHECK_EQ(client.profile().stackCount(mimic, Rarity::Unique), 5u);
-    CHECK_EQ(client.profile().stackCount(saw, Rarity::Epic), 0u);
+    CHECK_EQ(client.profile().stackCount(ram, Rarity::Unique), 2u);
+    CHECK_EQ(client.profile().stackCount(mimic, Rarity::Epic), 5u);
     CHECK_EQ(client.profile().stackCount(saw, Rarity::Unique), 0u);
+    CHECK_EQ(client.profile().stackCount(saw, Rarity::Epic), 0u);
 
     // Back at it, the two RAM make two.
     standBeside(h, client, "assembler");
-    client.requestAssemble(Rarity::Epic, recipe, 2);
+    client.requestAssemble(Rarity::Unique, recipe, 2);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(outcome.success);
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(saw, Rarity::Epic) == 2u && p.stackCount(mimic, Rarity::Epic) == 3u;
+        return p.stackCount(saw, Rarity::Unique) == 2u && p.stackCount(mimic, Rarity::Unique) == 3u;
     }));
     removeDataDir(dir);
 }

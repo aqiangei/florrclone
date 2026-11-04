@@ -312,6 +312,10 @@ TEST(clicking_the_loaded_splitter_swaps_halves_and_pays_a_reload) {
     // Which flower the client is looking through, before and after. The client
     // learns this from the self flag on a spawn record, which is what the
     // switch's view reset restates.
+    // This test waits through a full reload in a populated map. Keep both
+    // flowers alive so wild mobs cannot turn a switch check into a death test.
+    for(const Entity half:bodiesNamed(world,"alice"))
+        world.get<Health>(half).invulnerableUntilMillis=1e12;
     const std::uint32_t steered = alice.view().self().netId;
     CHECK(steered != 0);
 
@@ -331,7 +335,14 @@ TEST(clicking_the_loaded_splitter_swaps_halves_and_pays_a_reload) {
         }
         return true;
     }, 600));
-    auto& held=world.get<PlayerInput>(original).current;
+    // Account equipment updates may replace the original body. Resolve the
+    // current half by the authoritative net ID before testing held input.
+    Entity activeBeforeClick=NULL_ENTITY;
+    for(const Entity half:bodiesNamed(world,"alice"))
+        if(world.get<NetId>(half).value==steered)activeBeforeClick=half;
+    CHECK(activeBeforeClick!=NULL_ENTITY);
+    if(activeBeforeClick==NULL_ENTITY)return;
+    auto& held=world.get<PlayerInput>(activeBeforeClick).current;
     held.moveStrength=1;held.moveAngle=.75;held.flags=net::InputDefend;
     alice.usePetal(0);
     CHECK(h.stepUntil({&alice}, [&] {
