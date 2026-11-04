@@ -13,11 +13,17 @@ TEST(hyper_drop_payout_preserves_rolled_rarity_instead_of_promoting_super_to_ete
 namespace {
 const ContentRegistry& registry(){static ContentRegistry c;static bool loaded=false;if(!loaded){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));loaded=true;}return c;}
 using Counts=std::map<std::pair<std::string,int>,int>;
-Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1){
+Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,int* maxEternal=nullptr,bool splitAccount=false){
     const auto& c=registry();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;loot.bonusMultiplier=[bonus](Entity){return bonus;};
     const Entity p=w.create();w.add<PlayerTag>(p);w.add<Transform>(p,Transform{{10000,10000},0});w.add<Body>(p,Body{25,1});w.add<Health>(p,Health{100,100,0,0});
+    w.add<PlayerAccount>(p,PlayerAccount{"audit-user","audit",77,false});
+    Entity sibling=NULL_ENTITY;
+    if(splitAccount){sibling=w.create();w.add<PlayerTag>(sibling);w.add<PlayerAccount>(sibling,PlayerAccount{"audit-user","audit",77,false});w.add<Transform>(sibling,Transform{{10000,10000},0});w.add<Health>(sibling,Health{100,100,0,0});}
+    int previousEternal=0;
     if(orb){w.add<Loadout>(p);auto& s=w.get<Loadout>(p).slots[0];s.configIndex=c.petalIndex("mana_orb");s.rarity=Rarity::Mythic;}
-    for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,100);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{p});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);}
+    for(int i=0;i<count;++i){const Entity corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex(id),rarity,1});w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100,0,0});Bounty b;b.credit(p,100,77);if(splitAccount)b.credit(sibling,100,77);w.add<Bounty>(corpse,b);w.add<Dead>(corpse,Dead{p});loot.run(w,grid,c,rng,i,0,commands,events);commands.flush();w.destroy(corpse);
+        if(maxEternal){int now=0;Query<DropTag,DropItem> q{w};q.each([&](Entity,DropTag&,DropItem& d){if(d.rarity==Rarity::Unique&&LootSystem::mayPickUp(d,p,77))now+=static_cast<int>(d.quantity);});*maxEternal=std::max(*maxEternal,now-previousEternal);previousEternal=now;}
+    }
     Counts out;Query<DropTag,DropItem> drops{w};drops.each([&](Entity,DropTag&,DropItem& d){out[{c.petal(d.configIndex).id,rarityIndex(d.rarity)}]+=static_cast<int>(d.quantity);});return out;
 }
 int total(const Counts& counts,const std::string& name){int n=0;for(const auto&[key,value]:counts)if(key.first==name)n+=value;return n;}
@@ -123,4 +129,20 @@ TEST(every_restored_super_table_retains_a_positive_same_tier_tail){
         CHECK_NEAR(eternal,super*3,1e-9);
       }
     CHECK(checked>=180);
+}
+
+TEST(computer_hyper_actual_kills_share_one_eternal_budget_and_standard_super_tails){
+    for(const char* id:{"javascript","c++","dust","glitch","glitch_flower","cube","sun","server","mecha_flower","mecha_wasp","mecha_spider","mecha_crab","barrel"})
+    for(int bonus=1;bonus<=3;++bonus){
+        int maximum=0;const auto result=kills(id,Rarity::Apex,300,false,bonus,&maximum);int eternal=0,super=0;
+        for(const auto&[key,n]:result){if(key.second==8)eternal+=n;if(key.second==7)super+=n;CHECK(key.second<=8);}
+        CHECK_NEAR(eternal/300.0,bonus==1?.5:bonus==2?.75:1.,.15);
+        CHECK(super/300.0<4.0); // Previously glitch 60, glitch_flower 107 at base bonus.
+        CHECK(maximum<10);
+        std::printf("  COMPUTER_H %s bonus=%d meanE=%.4f meanS=%.4f maxE=%d\n",id,bonus,eternal/300.0,super/300.0,maximum);
+    }
+}
+TEST(computer_hyper_soul_split_account_does_not_duplicate_eternal_entitlement){
+    const auto ordinary=kills("server",Rarity::Apex,300);const auto split=kills("server",Rarity::Apex,300,false,1,nullptr,true);
+    CHECK(ordinary==split);
 }
