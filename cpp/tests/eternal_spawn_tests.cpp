@@ -27,6 +27,7 @@ TEST(eternal_three_per_regular_map_keeps_five_supers_and_waits_after_death) {
         int eternal=0,supers=0;
         Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();
         q.each([&](Entity e,MobTag&,MobType& type,Transform& at,AmbientMob&){
+            if(w.has<HoleTether>(e))return; // Nest defenders are not natural boss slots.
             const auto* segment=w.tryGet<BodySegment>(e);if(segment&&segment->chainHead!=e)return;
             if(at.realm!=map.realm())return;
             if(type.rarity==Rarity::Unique){++eternal;if(at.realm==garden)boss=e;}
