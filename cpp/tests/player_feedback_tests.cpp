@@ -12,6 +12,51 @@
 #include "shared/game/shop.h"
 #include "client/camera.h"
 using namespace flix;
+TEST(feedback_dummy_total_preserves_old_hits_and_excludes_other_players){
+    const auto& c=testsupport::shippedContent();WorldRenderer renderer;renderer.setContent(&c);WorldView view;
+    RemoteEntity dummy;dummy.netId=123;dummy.kind=net::EntityKind::Npc;dummy.typeIndex=c.mobIndex("target_dummy");view.seedForTest(dummy);
+    ViewEvent hit;hit.kind=net::EventKind::Damage;hit.netId=123;hit.amount=50;hit.flag=net::DamageByViewer;
+    view.events().push_back(hit);renderer.ingestEvents(view);renderer.update(20);
+    hit.flag=0;hit.amount=999;view.events().push_back(hit);renderer.ingestEvents(view);
+    hit.flag=net::DamageByViewer;hit.amount=25;view.events().push_back(hit);renderer.ingestEvents(view);
+    CHECK_NEAR(renderer.dummyTotalDamage(123),75,1e-8);
+    hit.kind=net::EventKind::Killed;view.events().push_back(hit);renderer.ingestEvents(view);CHECK_NEAR(renderer.dummyTotalDamage(123),0,1e-8);
+}
+TEST(feedback_ant_holes_use_lower_tier_soldiers_and_one_same_tier_queen_below_half){
+    const auto& c=testsupport::shippedContent();
+    for(int tier=0;tier<kLadderRarityCount;++tier){World w;CommandBuffer commands{w};SpawnSystem spawn;Terrain terrain;Rng rng{71};
+        const auto rarity=static_cast<Rarity>(tier);const auto nest=spawn.spawnMob(w,terrain,c,c.mobIndex("ant_hole"),rarity,{1000,1000},Realm::Overworld,0,rng);
+        CHECK(nest!=NULL_ENTITY);if(nest==NULL_ENTITY)continue;
+        auto inspect=[&](){int queens=0;Query<HoleTether,MobType> children{w};children.each([&](Entity,HoleTether& link,MobType& type){
+            if(link.hole!=nest)return;const bool queen=c.mob(type.configIndex).id=="queen_ant";
+            if(queen)++queens;CHECK(type.rarity==(queen?rarity:downgradeRarity(rarity)));
+        });return queens;};
+        CHECK_EQ(inspect(),0);auto step=[&](double at){spawn.run(w,terrain,c,std::vector<RealmPoint>{{{1000,1000},Realm::Overworld}},rng,at,net::kTickSeconds,commands);commands.flush();};
+        w.get<Health>(nest).current=w.get<Health>(nest).max*.51;step(1);CHECK_EQ(inspect(),0);
+        w.get<Health>(nest).current=w.get<Health>(nest).max*.49;step(34);CHECK_EQ(inspect(),1);
+        step(1000);CHECK_EQ(inspect(),1);
+    }
+}
+TEST(feedback_ant_hole_wave_retries_when_the_live_cap_has_room_again){
+    const auto& c=testsupport::shippedContent();World w;CommandBuffer commands{w};SpawnSystem spawn;Terrain terrain;Rng rng{11};
+    const auto nest=spawn.spawnMob(w,terrain,c,c.mobIndex("ant_hole"),Rarity::Super,{1000,1000},Realm::Overworld,0,rng);
+    spawn.mobCap=7;w.get<Health>(nest).current*=.99;
+    auto step=[&](double now){spawn.run(w,terrain,c,std::vector<RealmPoint>{{{1000,1000},Realm::Overworld}},rng,now,net::kTickSeconds,commands);commands.flush();};
+    step(1);CHECK(!w.get<NestWaves>(nest).pending.empty());spawn.mobCap=40;step(34);
+    CHECK(w.get<NestWaves>(nest).pending.empty());CHECK(!w.get<NestWaves>(nest).children.empty());
+}
+TEST(feedback_one_shot_super_and_higher_ant_holes_still_release_their_brood){
+    const auto& c=testsupport::shippedContent();
+    for(const auto rarity:{Rarity::Super,Rarity::Unique,Rarity::Apex}){
+        World w;CommandBuffer commands{w};SpawnSystem spawn;Terrain terrain;Rng rng{29};
+        const auto nest=spawn.spawnMob(w,terrain,c,c.mobIndex("ant_hole"),rarity,{1000,1000},Realm::Overworld,0,rng);
+        w.get<Health>(nest).current=0;w.add<Dead>(nest);
+        spawn.run(w,terrain,c,std::vector<RealmPoint>{{{1000,1000},Realm::Overworld}},rng,1,net::kTickSeconds,commands);commands.flush();
+        int queens=0,ants=0;Query<HoleTether,MobType> children{w};children.each([&](Entity,HoleTether& link,MobType& type){
+            if(link.hole!=nest)return;if(c.mob(type.configIndex).id=="queen_ant"){++queens;CHECK(type.rarity==rarity);}else{++ants;CHECK(type.rarity==downgradeRarity(rarity));}
+        });CHECK_EQ(queens,1);CHECK(ants>6);
+    }
+}
 TEST(feedback_computer_is_a_separate_map_with_art_spawn_bands_and_assembler){
     WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));
     bool found=false;const auto realm=maps.realmOfId("cyberspace",found);CHECK(found);if(!found)return;

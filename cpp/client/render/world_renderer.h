@@ -178,6 +178,9 @@ public:
 
     /// Turns this frame's server events into effects. Drains `view.events()`.
     void ingestEvents(WorldView& view);
+    double dummyTotalDamage(std::uint32_t id) const {
+        const auto it=dummyTotalDamage_.find(id);return it==dummyTotalDamage_.end()?0:it->second;
+    }
 
     /// Ages effects and retires expired ones.
     void update(double dt);
@@ -730,6 +733,8 @@ private:
     /// Damage landed on each target dummy over the last ten seconds, which is
     /// the window the TypeScript server reported DPS over.
     mutable std::unordered_map<std::uint32_t, std::deque<std::pair<double, double>>> dummyDamage_;
+    std::unordered_map<std::uint32_t,double> dummyTotalDamage_;
+    std::uint32_t dummyViewerNetId_=0;
 
     /// Built on first use from the content registry; the registry is immutable
     /// after load, so one pass is enough.

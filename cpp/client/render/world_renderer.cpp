@@ -15,6 +15,7 @@
 #include "client/render/art_cache.h"
 #include "client/render/skin_render.h"
 #include "client/ui/content_i18n.h"
+#include "client/ui/i18n.h"
 #include "client/ui/draw.h"
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_widgets.h"
@@ -744,6 +745,9 @@ bool WorldRenderer::hiddenByOptions(const RemoteEntity& entity) const {
 }
 
 void WorldRenderer::ingestEvents(WorldView& view) {
+    if(dummyViewerNetId_!=view.self().netId){
+        dummyViewerNetId_=view.self().netId;dummyDamage_.clear();dummyTotalDamage_.clear();
+    }
     const auto isPlayer = [&view](std::uint32_t netId) {
         const auto it = view.entities().find(netId);
         return it != view.entities().end() && it->second.kind == net::EntityKind::Player;
@@ -868,6 +872,7 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 }
                 if ((event.flag & net::DamageByViewer) != 0 && isTargetDummy(event.netId)) {
                     dummyDamage_[event.netId].emplace_back(nowSeconds_, event.amount);
+                    if(std::isfinite(event.amount)&&event.amount>0)dummyTotalDamage_[event.netId]+=event.amount;
                 }
                 // A squadmate's hit far off screen is here for the party HUD's
                 // flash only (net::DamageOffView).
@@ -932,6 +937,7 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                     damageTextAt_.erase(key);
                 }
                 dummyDamage_.erase(event.netId);
+                dummyTotalDamage_.erase(event.netId);
 
                 // The snapshot erased the entity before this event was read, so
                 // the death animation replays the last state it was DRAWN in:
@@ -3794,6 +3800,10 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         const std::string dps = "DPS: " + ui::formatCompact(total / kDpsWindowSeconds);
         label(dps, kMobTierSize, ui::kPaper, halfSpan - boxWidth(dps, kMobTierSize),
               lineY + kMobDpsDrop);
+        const auto cumulative=dummyTotalDamage_.find(mob.netId);
+        const std::string sum=(ui::language()==ui::Language::Zh?"总伤害: ":"Total damage: ")+
+            ui::formatCompact(cumulative==dummyTotalDamage_.end()?0:cumulative->second);
+        label(sum,kMobTierSize,ui::kPaper,halfSpan-boxWidth(sum,kMobTierSize),lineY+kMobDpsDrop+kMobTierSize*1.4);
     }
     canvas.restore();
 }

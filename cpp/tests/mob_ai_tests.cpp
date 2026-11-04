@@ -1565,6 +1565,19 @@ TEST(a_pet_fights_the_wild_mob_nearest_its_owner_not_itself) {
     // And it chases it on the wild one's pursuit.
     CHECK(sim.velocityOf(pet).x < 0.0);
 }
+TEST(a_pet_holds_a_map_dummy_as_its_training_target_until_it_leaves_view){
+    CHECK(contentReady());Sim sim;const auto owner=sim.spawnPlayer(kOrigin);
+    const auto pet=sim.spawnMob("soldier_ant",kOrigin+Vec2{100,0});sim.world.add<Pet>(pet,Pet{owner,0});
+    const auto dummy=sim.world.create();sim.world.add<NpcTag>(dummy);
+    Npc npc;npc.configIndex=content().mobIndex("target_dummy");
+    sim.world.add<Npc>(dummy,npc);sim.world.add<Transform>(dummy,Transform{kOrigin+Vec2{200,0},0});
+    sim.world.add<Body>(dummy,Body{30,100});sim.world.add<Health>(dummy,Health{10000,10000});
+    sim.world.add<Faction>(dummy,Faction{Team::Hostiles,false});
+    sim.tickIntent();CHECK(sim.brainOf(pet).target==dummy);
+    const auto other=sim.spawnMob("ladybug",kOrigin+Vec2{40,0});
+    for(int n=0;n<120;++n){sim.tickIntent();CHECK(sim.brainOf(pet).target==dummy);}
+    sim.world.get<Transform>(dummy).position=kOrigin+Vec2{10000,0};sim.tickIntent();CHECK(sim.brainOf(pet).target==other);
+}
 
 TEST(a_pet_switches_to_a_mob_that_comes_nearer_its_owner) {
     CHECK(contentReady());

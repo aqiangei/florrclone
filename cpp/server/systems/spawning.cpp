@@ -367,7 +367,6 @@ void SpawnSystem::bind(World& world) {
     spawners_.emplace(world);
     spawners_->without<Dead>();
     waveNests_.emplace(world);
-    waveNests_->without<Dead>();
     allMobs_.emplace(world);
     allMobs_->without<Dead>();
     playerBodies_.emplace(world);
@@ -978,7 +977,13 @@ Entity SpawnSystem::spawnEscort(World& world, const Terrain& terrain, const Cont
     // Every such path comes through here -- a hole's opening guard, its
     // waves, a queen's soldiers and a broken tomb's mummy -- so this is where
     // a minion is held to ultra, however far above that its nest stands.
-    const Entity child = spawnMobAt(world, terrain, content, childIndex, minionRarity(nestRarity),
+    Rarity childRarity=minionRarity(nestRarity);
+    if(const auto* type=world.tryGet<MobType>(parent)){
+        const auto& id=content.mob(type->configIndex).id;
+        if(id=="ant_hole"||id=="queen_ant")
+            childRarity=content.mob(childIndex).id=="queen_ant"?nestRarity:downgradeRarity(nestRarity);
+    }
+    const Entity child = spawnMobAt(world, terrain, content, childIndex, childRarity,
                                     at, realm, nowMillis, rng, depth, kInvalidIndex);
     if (child == NULL_ENTITY || parent == NULL_ENTITY) return child;
 
@@ -1370,6 +1375,9 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
         if (waves == nullptr || transform == nullptr || type == nullptr || health == nullptr) {
             continue;
         }
+        // Combat precedes this pass. A one-shot still crosses the hole's
+        // health bands before the end-of-tick reaper removes its corpse.
+        if(world.has<Dead>(nest)&&content.mob(waves->mobIndex).id!="ant_hole")continue;
 
         std::size_t live = 0;
         for (const Entity child : waves->children) {
@@ -1386,49 +1394,37 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
         // this tick's hit and never a heal or a refused swing banked earlier.
         const Entity attacker = freshestAttacker(world, world.tryGet<Bounty>(nest),
                                                  transform->realm, waves->ledgerSeen);
-        if (current >= previous) continue;
-
         const MobConfig& config = content.mob(waves->mobIndex);
         if (config.spawnWaves.empty()) continue;
-
-        // Everything the nest owns is read out here: `waves`, `health` and
-        // `transform` all point into an archetype column and do not survive the
-        // first create() below. The wave lists live in the registry rather than
-        // in the world, so they are safe to walk while entities are appearing.
-        const int lastWave = static_cast<int>(config.spawnWaves.size()) - 1;
-        const double maxHealth = health->max > 0.0 ? health->max : 1.0;
-        const Rarity nestRarity = type->rarity;
-        const Vec2 anchor = transform->position;
-        const Realm nestRealm = transform->realm;
-
-        // Both ends are clamped into the list. An overkill drives `current` far
-        // negative, and an unclamped end index turns the loop below into
-        // millions of iterations that all just skip -- a flat-heap CPU hang.
-        const int startBand =
-            std::min(lastWave, static_cast<int>(std::floor(previous / maxHealth * lastWave)));
-        const int endBand =
-            std::max(0, static_cast<int>(std::ceil(current / maxHealth * lastWave)));
-
-        // Counted DOWN from the health the hole had, so the band escalates as it
-        // is worn away and one big hit releases every band it crossed at once.
-        for (int band = startBand; band >= endBand; --band) {
-            const int index = lastWave - band;
-            if (index < 0 || index > lastWave) continue;
-            for (const std::uint16_t member : config.spawnWaves[static_cast<std::size_t>(index)]) {
-                const Entity child =
-                    spawnEscort(world, terrain, content, member, nestRarity,
-                                escortSpawnPoint(anchor, rng), nestRealm, nest, nowMillis, rng, 1);
-                if (child == NULL_ENTITY) break;   // the global cap, nothing else
-                // Already angry with whoever dug into the nest this tick.
-                provokeIfNeutral(world, child, attacker);
-                if (NestWaves* again = world.tryGet<NestWaves>(nest)) {
-                    again->children.push_back(child);
+        const int lastWave=static_cast<int>(config.spawnWaves.size())-1;
+        const double maxHealth=std::max(1.0,health->max);
+        const Rarity nestRarity=type->rarity;
+        const Vec2 anchor=transform->position;
+        const Realm nestRealm=transform->realm;
+        if(current<previous){
+            const int released=clamp(1+static_cast<int>(std::floor(clamp(1.0-current/maxHealth,0.0,1.0)*lastWave)),1,lastWave+1);
+            while(waves->nextWave<released){
+                for(const auto member:config.spawnWaves[waves->nextWave]){
+                    if(config.id=="ant_hole"&&content.mob(member).id=="queen_ant")continue;
+                    waves->pending.emplace_back(member,attacker);
                 }
+                ++waves->nextWave;
+            }
+            if(config.id=="ant_hole"&&!waves->queenReleased&&current<maxHealth*.5){
+                const auto queen=content.mobIndex("queen_ant");
+                if(queen!=kInvalidIndex)waves->pending.emplace_back(queen,attacker);
+                waves->queenReleased=true;
             }
         }
-
-        if (NestWaves* again = world.tryGet<NestWaves>(nest)) {
-            again->nextWave = static_cast<std::uint16_t>(std::max(0, lastWave - endBand));
+        // A full live population delays the wave instead of discarding it.
+        // Copy before creates: spawning can relocate the nest's ECS row.
+        const auto pending=std::move(waves->pending);waves->pending.clear();
+        for(std::size_t n=0;n<pending.size();++n){
+            const auto child=spawnEscort(world,terrain,content,pending[n].first,nestRarity,
+                escortSpawnPoint(anchor,rng),nestRealm,nest,nowMillis,rng,1);
+            auto* again=world.tryGet<NestWaves>(nest);if(!again)break;
+            if(child==NULL_ENTITY){again->pending.insert(again->pending.end(),pending.begin()+n,pending.end());break;}
+            again->children.push_back(child);provokeIfNeutral(world,child,pending[n].second);
         }
     }
 
@@ -1787,6 +1783,7 @@ void SpawnSystem::noteStandingBosses(World& world, const CommandBuffer& commands
     topBosses_.clear();
     ambient_->each([&](Entity e, MobTag&, Transform& transform, Body&, MobType& type,
                        AmbientMob& ambient) {
+        if(world.has<HoleTether>(e))return;
         if (type.rarity != Rarity::Unique && type.rarity != Rarity::Apex) return;
         if (!isWorldRealm(transform.realm) || !isWholeAnimal(world, e)) return;
         topBosses_.push_back(TopBoss{biomeKey(transform.realm), type.rarity, ambient.spawnOrder, e});
@@ -1930,7 +1927,7 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
         int habitats[3]={0,0,0};
         int living = 0;
         ambient_->each([&](Entity e, MobTag&, Transform& transform, Body&, MobType& type, AmbientMob& ambient) {
-            if (transform.realm == state.realm && type.rarity == Rarity::Super && isWholeAnimal(world, e)) {
+            if (!world.has<HoleTether>(e) && transform.realm == state.realm && type.rarity == Rarity::Super && isWholeAnimal(world, e)) {
                 ++living;const int family=antHabitat(ambient.zone);if(family>=0)++habitats[family];
             }
         });
@@ -1997,7 +1994,7 @@ void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
         }
         int living=0;
         ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob&){
-            if(at.realm==map.realm() && type.rarity==Rarity::Unique &&
+            if(!world.has<HoleTether>(e) && at.realm==map.realm() && type.rarity==Rarity::Unique &&
                !world.has<Dead>(e) && isWholeAnimal(world,e))++living;
         });
         if(state->previousLiving>living){
@@ -2044,7 +2041,7 @@ void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
         }
         int living=0;
         ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob&){
-            if(at.realm==map.realm() && type.rarity==Rarity::Apex &&
+            if(!world.has<HoleTether>(e) && at.realm==map.realm() && type.rarity==Rarity::Apex &&
                !world.has<Dead>(e) && isWholeAnimal(world,e))++living;
         });
         if(state->previousLiving>living){
@@ -2460,7 +2457,10 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
               });
 
     std::size_t attempted = 0;
-    for (; attempted < wakeList_.size() && census_.mobs < mobCap; ++attempted) {
+    // Keep bounded room for combat-triggered nest defenders. Ambient records
+    // remain on the map and can wake as those slots become available.
+    const int ambientBudget=mobCap>=128?mobCap-128:mobCap;
+    for (; attempted < wakeList_.size() && census_.mobs < ambientBudget; ++attempted) {
         const WakeCandidate& candidate = wakeList_[attempted];
         SpawnZone& zone = zones_[candidate.zone];
         const LatentMob& record = zone.latent[candidate.index];

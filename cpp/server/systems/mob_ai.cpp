@@ -1913,6 +1913,15 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
                std::abs(at.y - ownerPosition.y) <= kPetViewHalfHeight;
     };
 
+    // Map training posts are NPCs, not MobTag entities. Keep an established
+    // training target while it remains visible and reachable.
+    if(const auto* npc=world.tryGet<Npc>(ai.target)){
+        const auto* at=world.tryGet<Transform>(ai.target);
+        if(npc->configIndex<content().mobCount()&&content().mob(npc->configIndex).id=="target_dummy"&&
+           at&&at->realm==realm&&isStanding(world,ai.target)&&visible(at->position,distanceSq(from,at->position))&&
+           !terrain.segmentBlocked(from,at->position,realm))return ai.target;
+    }
+
     // Scanned every tick rather than held: the pet is there to guard its
     // owner, so the moment something gets closer to the flower than what the
     // pet is fighting, that is the fight. The margin is what keeps two mobs
@@ -1932,7 +1941,9 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
         if (candidate == self) continue;
         // Wild mobs only: pets do not fight each other, and a pet chasing its
         // owner's other summon is a squad that never reaches anything.
-        if (!world.has<MobTag>(candidate) || world.has<Pet>(candidate)) continue;
+        const auto* station=world.tryGet<Npc>(candidate);
+        const bool dummy=station&&station->configIndex<content().mobCount()&&content().mob(station->configIndex).id=="target_dummy";
+        if ((!world.has<MobTag>(candidate)&&!dummy) || world.has<Pet>(candidate)) continue;
         if (!isStanding(world, candidate)) continue;
         const Transform* at = world.tryGet<Transform>(candidate);
         if (at == nullptr) continue;

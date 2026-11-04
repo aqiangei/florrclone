@@ -111,6 +111,8 @@ struct AmbientMob {
 /// component rather than widened into Spawner because two mobs in the whole
 /// data set have waves, and every other nest would carry the empty vector.
 struct NestWaves {
+    std::vector<std::pair<std::uint16_t,Entity>> pending;
+    bool queenReleased=false;
     std::uint16_t mobIndex = 0;      ///< the nest's own config, where the list lives
     /// The health the nest had when its bands were last weighed.
     ///
@@ -119,9 +121,7 @@ struct NestWaves {
     /// and one big hit fires every band it crossed at once. That is the whole
     /// shape of the ant-hole fight.
     double previousHealth = 0;
-    /// Deepest band released so far. Nothing is scheduled from it -- the band
-    /// is recomputed from current health on every drop -- it is the nest's
-    /// phase, for anything reporting on a hole.
+    /// Next health band not yet queued; healing never releases a band twice.
     std::uint16_t nextWave = 0;
     /// The nest's damage ledger as it stood when it was last weighed, so the
     /// player who landed THIS tick's hit can be told apart from everyone who
