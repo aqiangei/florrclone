@@ -462,8 +462,11 @@ void NetClient::requestDungeonEntry(){ByteWriter w;beginMessage(w,net::ClientMes
 void NetClient::requestDailyDropBonus(bool claim) {
     ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.boolean(claim);send(w);
 }
-void NetClient::requestBulkCraft(Rarity target) {
-    ByteWriter w;beginMessage(w,net::ClientMessage::BulkCraft);w.u8(static_cast<std::uint8_t>(target));send(w);
+void NetClient::requestBulkCraft(Rarity target, const std::vector<std::uint16_t>& excluded) {
+    ByteWriter w;beginMessage(w,net::ClientMessage::BulkCraft);w.u8(static_cast<std::uint8_t>(target));
+    w.u16(static_cast<std::uint16_t>(excluded.size()));
+    for (auto id : excluded) w.u16(id);
+    send(w);
 }
 
 void NetClient::requestCraft(std::uint16_t petalIndex, Rarity rarity, int count) {

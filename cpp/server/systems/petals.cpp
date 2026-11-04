@@ -22,8 +22,8 @@ constexpr double kPollenRadiusPerSize = 6.0;
 
 constexpr double kWebThrowDistance = 620.0;
 constexpr double kWebLifetimeSeconds = 10.0;
-constexpr double kPollenLifetimeSeconds = 5.0;
-constexpr double kPollenHitIntervalMillis = 500.0;
+constexpr double kPollenLifetimeSeconds = 4.0;
+constexpr double kPollenHitIntervalMillis = 600.0;
 
 /// How long the ring takes to fly across when what it is laid out around
 /// changes -- a moon coming out, or breaking and handing the ring back to the
@@ -2245,18 +2245,38 @@ void PetalSystem::stepPetalPhysics(World& world, const ContentRegistry& registry
     const double elapsedTicks = std::max(0.0, dt) / net::kTickSeconds;
     const int steps =
         dt > 0.0 ? std::clamp(static_cast<int>(std::lround(elapsedTicks)), 1, 4) : 0;
-    Vec2 perTick = instance.ringVelocity * net::kTickSeconds;
+    // Preserve the 30 Hz reference spring, including its phase, by taking
+    // a fractional power of its position/velocity transition matrix.
+    constexpr double referenceStep = 1.0 / 30.0;
+    constexpr double fraction = net::kTickSeconds / referenceStep;
+    static const double rho = std::sqrt(kPetalFriction);
+    static const double cosine = (1.0 - kPetalPull + kPetalFriction) / (2.0 * rho);
+    static const double theta = std::acos(cosine);
+    static const double scale = std::pow(rho, fraction);
+    static const double sineRatio = std::sin(theta * fraction) / std::sin(theta);
+    static const double diagonal = std::cos(theta * fraction) - sineRatio * cosine;
+    static const double m00 = scale * (diagonal + sineRatio * (1.0 - kPetalPull) / rho);
+    static const double m01 = scale * sineRatio * kPetalFriction / rho;
+    static const double m10 = -scale * sineRatio * kPetalPull / rho;
+    static const double m11 = scale * (diagonal + sineRatio * kPetalFriction / rho);
+    static const double decay = std::pow(kPetalFriction, fraction);
+    static const double velocitySum = kPetalFriction * (1.0 - decay) / (1.0 - kPetalFriction);
+    Vec2 perTick = instance.ringVelocity * referenceStep;
     for (int step = 0; step < steps; ++step) {
         const Vec2 gap = target - transform.position;
-        Vec2 acceleration = gap * kPetalPull;
         if (instance.homing) {
             const double distance = gap.length();
-            acceleration = distance > 0.0 ? gap * (kPetalHomingPush / distance) : Vec2{};
+            const Vec2 acceleration = distance > 0.0 ? gap * (kPetalHomingPush / distance) : Vec2{};
+            transform.position += perTick * velocitySum +
+                acceleration * ((fraction - velocitySum) / (1.0 - kPetalFriction));
+            perTick = perTick * decay + acceleration * ((1.0 - decay) / (1.0 - kPetalFriction));
+        } else {
+            const Vec2 offset = -gap;
+            transform.position = target + offset * m00 + perTick * m01;
+            perTick = offset * m10 + perTick * m11;
         }
-        perTick = perTick * kPetalFriction + acceleration;
-        transform.position += perTick;
     }
-    instance.ringVelocity = perTick / net::kTickSeconds;
+    instance.ringVelocity = perTick / referenceStep;
 
     // Defence in depth. If the integrator ever does go non-finite, a petal
     // stranded at NaN is invisible and unkillable forever; snapping it back on
@@ -2384,9 +2404,14 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 Vec2 at = transform->position;
                 if (attacking) at += Vec2::fromAngle(transform->angle, kWebThrowDistance);
                 const Vec2 launch = transform->position;
+                const bool electric = config.id == "electric_web";
+                double webDamage = electric ? stats.damage : 0.0;
+                if (const auto* modifiers = world.tryGet<PlayerModifiers>(player))
+                    webDamage *= modifiers->petalDamageScale;
                 const Entity web = emitGroundEffect(world, player, attacking ? launch : at,
-                                 GroundEffectKind::Web, stats.webRadius, 0.0, 0.5,
-                                 instance->rarity, kWebLifetimeSeconds);
+                                 electric ? GroundEffectKind::ElectricWeb : GroundEffectKind::Web,
+                                 stats.webRadius, 0.0, 0.5,
+                                 instance->rarity, kWebLifetimeSeconds, webDamage, 1000.0);
                 if (attacking && web != NULL_ENTITY) {
                     world.add<WebFlight>(web, WebFlight{launch, at, 0.0, 0.35, stats.webRadius});
                     world.get<GroundEffect>(web).radius = 0.0;

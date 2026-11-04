@@ -751,9 +751,11 @@ bool ClientSettings::load(const std::string& path) {
     // Whether the six-tab chat mask was in the file, which outranks the older
     // five-tab line wherever in the file the two are.
     bool sawChatTabs = false;
+    craftBlacklist.clear();
     while (file >> key >> value) {
         const int number = std::atoi(value.c_str());
-        if (key == "names") render.names = number != 0;
+        if (key == "craftExclude") craftBlacklist.push_back(value);
+        else if (key == "names") render.names = number != 0;
         else if (key == "healthBars") render.healthBars = number != 0;
         else if (key == "damageNumbers") render.damageNumbers = number != 0;
         else if (key == "hitboxes") render.hitboxes = number != 0;
@@ -880,6 +882,7 @@ bool ClientSettings::save(const std::string& path) const {
     // Capped at the server's own retention: it keeps the last thousand
     // notifications, so a read mark older than that can never be asked about
     // again and would only grow this file forever. The tail is the newest.
+    for (const auto& id : craftBlacklist) file << "craftExclude " << id << '\n';
     constexpr std::size_t kReadMarkCap = 1000;
     const std::size_t firstMark =
         readNotifications.size() > kReadMarkCap ? readNotifications.size() - kReadMarkCap : 0;

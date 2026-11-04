@@ -365,7 +365,8 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         e.position = reader.position();
         e.radius = reader.f32();
         e.flag = reader.u8();
-        // Lightning is the only kind carrying a tail; see EventKind. A frame
+        if (e.kind == net::EventKind::PickedUp) { e.pickupQuantity = reader.u32(); e.pickupByAccount = reader.boolean(); }
+        // Lightning carries a variable point tail; see EventKind. A frame
         // that ends inside it hands back zeroes and trips the reader's ok()
         // flag, which the check below turns into a rejected snapshot -- the
         // tail must be consumed either way, or its bytes would be read as the

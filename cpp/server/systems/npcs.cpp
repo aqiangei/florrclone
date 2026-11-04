@@ -189,6 +189,7 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
     npc.rarity = rarity;
     npc.service = config.npc.service;
     npc.home = position;
+    npc.serviceRadius = config.npc.service == NpcService::Assembler ? stats.radius : radius;
     npc.nextGlanceMillis = nowMillis;
     // Flies like its mob does when its mob flies like a bee, starting off on
     // a heading and a weave of its own.
@@ -345,7 +346,7 @@ Entity NpcSystem::findService(World& world, NpcService service, Vec2 at, Realm r
         if (npc.service != service || transform.realm != realm) return;
         if (tier && npc.rarity != *tier) return;
         const Body* body = world.tryGet<Body>(e);
-        const double gap = distance(at, transform.position) - (body != nullptr ? body->radius : 0.0);
+        const double gap = distance(at, transform.position) - std::max(npc.serviceRadius, body != nullptr ? body->radius : 0.0);
         if (gap > reach) return;
         if (best != NULL_ENTITY && gap >= bestGap) return;
         best = e;

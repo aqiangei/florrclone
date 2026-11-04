@@ -1,6 +1,8 @@
 #include "test.h"
 #include "test_data.h"
 #include "server/systems/loot.h"
+#include "server/systems/spawning.h"
+#include "server/systems/combat.h"
 #include "shared/game/drop_rates.h"
 #include <map>
 
@@ -156,4 +158,69 @@ TEST(all_three_ladybugs_convert_to_mana_orbs_only_for_orb_wearers){
   // The separate H->E pool must convert too, not leak ordinary source petals.
   CHECK_EQ(total(withOrb,std::string(mob)=="jungle_ladybug"?"dahlia":"rose"),0);
  }
+}
+
+TEST(reported_hyper_screen_and_sandstorm_keep_split_account_loot) {
+    for (const char* id : {"server", "sandstorm"}) {
+        const auto ordinary = kills(id, Rarity::Apex, 300);
+        const auto split = kills(id, Rarity::Apex, 300, false, 1, nullptr, true);
+        CHECK(ordinary == split);
+        int normal = 0;
+        for (const auto& [key, count] : split) if (key.second < rarityIndex(Rarity::Unique)) normal += count;
+        CHECK(normal >= 300);
+        std::printf("  SPLIT_H %s normal=%d across 300 kills\n", id, normal);
+        // A single qualifying kill is not an empty drop just because its
+        // independent eternal roll failed.
+        for (bool splitBody : {false, true}) {
+            const auto single = kills(id, Rarity::Apex, 1, false, 1, nullptr, splitBody);
+            CHECK(!single.empty());
+        }
+    }
+}
+
+TEST(hyper_hammer_buff_preserves_reload_and_temporary_eternal_hammer) {
+    const auto& c = registry();
+    const auto hammer = c.petalIndex("mjolnir");
+    const auto timed = c.petalIndex("timed_mjolnir");
+    CHECK(hammer != kInvalidIndex); CHECK(timed != kInvalidIndex);
+    if (hammer == kInvalidIndex || timed == kInvalidIndex) return;
+    const auto h = c.petalStats(hammer, Rarity::Apex);
+    const auto e = c.petalStats(hammer, Rarity::Unique);
+    const auto temporary = c.petalStats(timed, Rarity::Unique);
+    CHECK_NEAR(h.lightningDamagePerHit, 60 * petalStrengthScale(Rarity::Apex), 1e-8);
+    CHECK_NEAR(h.health, e.health * 2.25, 1e-8);
+    CHECK_NEAR(h.reloadMillis, 6000, 1e-8);
+    CHECK_EQ(h.lightningBounces, 0);
+    CHECK_NEAR(temporary.lightningDamagePerHit, 12 * petalStrengthScale(Rarity::Unique), 1e-8);
+    CHECK_NEAR(temporary.reloadMillis, 8000, 1e-8);
+}
+
+TEST(carrot_projectile_speed_keeps_range_and_reload) {
+    const auto& c=registry();const auto index=c.petalIndex("carrot");
+    CHECK(index!=kInvalidIndex);if(index==kInvalidIndex)return;
+    CHECK_NEAR(c.petal(index).projectile.speed,450,1e-9);
+    CHECK_NEAR(c.petal(index).projectile.distance,500,1e-9);
+    for(int tier=0;tier<kLadderRarityCount;++tier)
+        CHECK_NEAR(c.petalStats(index,static_cast<Rarity>(tier)).reloadMillis,1000,1e-9);
+}
+
+TEST(centipede_body_kills_award_loot_without_soul_splitter) {
+    const auto& c=registry();
+    for(const char* name:{"hel_centipede","jungle_centipede","centipede","desert_centipede","evil_centipede"})
+    for(const auto rarity:{Rarity::Super,Rarity::Unique,Rarity::Apex}) {
+        World w;Terrain terrain;SpawnSystem spawn;CombatSystem combat;LootSystem loot;
+        CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{91};
+        const auto player=w.create();w.add<PlayerTag>(player);w.add<PlayerAccount>(player,PlayerAccount{"body-loot","body-loot",77,false});
+        w.add<Health>(player,Health{100,100});w.add<Transform>(player,Transform{{10000,10000},0});w.add<Faction>(player,Faction{Team::Players});
+        const auto head=spawn.spawnMob(w,terrain,c,c.mobIndex(name),rarity,{3000,3000},Realm::Overworld,0,rng);
+        CHECK(head!=NULL_ENTITY);if(head==NULL_ENTITY)continue;
+        const auto body=w.get<BodySegment>(head).behind;CHECK(body!=NULL_ENTITY);if(body==NULL_ENTITY)continue;
+        CHECK(!w.get<BodySegment>(body).sharedHealth);
+        const auto hit=combat.applyDamage(w,body,player,w.get<Health>(body).max*2,1000);
+        CHECK(hit.killed);CHECK(w.has<Dead>(body));CHECK(!w.has<Dead>(head));
+        CHECK(!w.get<Bounty>(body).contributors.empty());
+        loot.run(w,grid,c,rng,1000,net::kTickSeconds,commands,events);commands.flush();
+        std::uint32_t quantity=0;Query<DropTag,DropItem> drops{w};drops.each([&](Entity,DropTag&,DropItem& drop){if(LootSystem::mayPickUp(drop,player,77))quantity+=drop.quantity;});
+        CHECK(quantity>0);
+    }
 }

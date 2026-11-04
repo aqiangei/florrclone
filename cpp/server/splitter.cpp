@@ -264,6 +264,20 @@ void GameServer::endSplit(Session& session, double nowMillis, bool armReload) {
     if (!session.split()) return;
     const Entity parked = session.splitOther;
     session.splitOther = NULL_ENTITY;
+    // Released attacks outlive this body. Keep their credit on the surviving
+    // half before removing the old owner, or later kills have no loot claimant.
+    if (world_.isAlive(session.entity) && !world_.has<Dead>(session.entity)) {
+        Query<Projectile> shots{world_};
+        shots.each([&](Entity, Projectile& shot) {
+            if (shot.owner == parked) shot.owner = session.entity;
+            if (shot.creditTo == parked) shot.creditTo = session.entity;
+        });
+        Query<GroundEffect> fields{world_};
+        fields.each([&](Entity, GroundEffect& field) {
+            if (field.owner == parked) field.owner = session.entity;
+        });
+    }
+
     if (armReload) {
         armSplitterReload(session, nowMillis);
         // And hold the split itself off for the same cooldown. The slot's own

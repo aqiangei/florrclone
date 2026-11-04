@@ -111,6 +111,17 @@ TEST(allowances_are_capped_so_idling_does_not_bank_a_flood) {
     CHECK(session.loginAttemptsAllowed <= 5.0 + 1e-9);
 }
 
+TEST(session_accepts_sustained_input_at_simulation_rate) {
+    Session session;
+    session.lastRefillMillis = 1000.0;
+    for (int i = 1; i <= net::kTicksPerSecond * 10; ++i) {
+        refillAllowances(session, 1000.0 + i * net::kTickMillis);
+        CHECK(spend(session.inputAllowance));
+    }
+    session.inputAllowance = 0.0;
+    CHECK(!spend(session.inputAllowance));
+}
+
 TEST(session_stages_gate_what_is_allowed) {
     Session session;
     // A brand new connection has neither an account nor a body.

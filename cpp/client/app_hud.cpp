@@ -510,7 +510,9 @@ NearbyNpc App::nearbyNpc(Vec2 self) const {
         if (entity.kind != net::EntityKind::Npc) continue;
         const NpcService service = content().mob(entity.typeIndex).npc.service;
         if (service == NpcService::None) continue;
-        const double gap = distance(self, entity.position) - entity.radius;
+        const double serviceRadius = service == NpcService::Assembler
+            ? content().mobStats(entity.typeIndex, entity.rarity).radius : entity.radius;
+        const double gap = distance(self, entity.position) - serviceRadius;
         if (gap > nearestGap) continue;
         nearest = {service, entity.typeIndex, entity.rarity, entity.npcRecipe,
                    entity.npcNextRecipe,

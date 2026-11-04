@@ -417,8 +417,9 @@ inline constexpr int kLootFeelSuperMultiplier = 1;
 // each of those is a second force, and stacked on the step they read as forces
 // fighting over the petal.
 //
-// The figures below are gardn's restated for this server's 30 Hz tick so the
-// motion is the same second for second: the friction is 0.5^(20/30), the same
+// The figures below describe a reference 30 Hz step. The petal integrator
+// takes fractional matrix steps at 60 Hz to preserve this motion over time.
+// The friction is 0.5^(20/30), the same
 // decay per second, and the pull is the one that keeps the swing's frequency.
 // Every fifth of a second the two land on the same spot
 // (petal_tests: the_ring_step_moves_a_petal_as_gardns_does), and a flower

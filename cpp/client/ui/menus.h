@@ -232,6 +232,8 @@ inline constexpr std::uint8_t kChatAdminChannel = 1u << 5;
 /// to disk and read back as a unit, and so nothing else has to know which of
 /// these the renderer reads and which the input layer does.
 struct ClientSettings {
+    std::vector<std::string> craftBlacklist; // Stable content IDs, all rarities.
+    bool craftBlacklistDirty = false;
     WorldRenderer::Options render;
     /// Player-chosen camera zoom, multiplied into whatever the loadout asks
     /// for. Persisted, because it is a comfort setting, not a game state.
@@ -839,6 +841,7 @@ private:
     bool fillAllMode_ = false;
     int bulkTarget_ = 2;
     bool bulkArmed_ = false;
+    bool editingBlacklist_ = false;
 
     Phase phase_ = Phase::Idle;
     double phaseStarted_ = 0;

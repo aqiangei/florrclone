@@ -31,8 +31,8 @@ inline bool supportsSuperFarm(const std::string& id) {
     return id=="garden"||id=="desert"||id=="computer"||id=="ocean"||id=="jungle"||
            id=="hel"||id=="ant_hell"||id=="sewers"||id=="pyramid"||id=="cyberspace";
 }
-inline constexpr int kSuperFarmPopulation = 8;
-inline constexpr double kSuperFarmDifficultyWindow = 10.0;
+inline constexpr int kSuperFarmPopulation = 12;
+inline constexpr double kSuperFarmDifficultyWindow = 15.0;
 
 
 /// One point on the difficulty curve: at this difficulty, the ground spawns at

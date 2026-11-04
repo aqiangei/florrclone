@@ -22,6 +22,10 @@ TEST(assemblers_keep_only_eternal_at_small_collision_body){
             const auto e=sys.spawnNpc(w,t,c,index,r,{3000,3000},Realm::Overworld,0);
             CHECK(e!=NULL_ENTITY);if(e==NULL_ENTITY)continue;const double radius=w.get<Body>(e).radius;
             CHECK_NEAR(radius,std::min(60.0,c.mobStats(index,r).radius),1e-7);CHECK(radius>=previous);previous=radius;
+            const auto at=w.get<Transform>(e);
+            const double artRadius=c.mobStats(index,r).radius;
+            CHECK_EQ(sys.findService(w,NpcService::Assembler,at.position+Vec2{artRadius+kNpcServiceReach-1,0},at.realm,kNpcServiceReach,r),e);
+            CHECK_EQ(sys.findService(w,NpcService::Assembler,at.position+Vec2{artRadius+kNpcServiceReach+1,0},at.realm,kNpcServiceReach,r),NULL_ENTITY);
         }
     }
 }

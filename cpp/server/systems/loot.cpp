@@ -542,7 +542,7 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Re
     const NetId* playerId = world.tryGet<NetId>(player);
     if (dropId != nullptr && playerId != nullptr) {
         events.pickedUp(dropId->value, playerId->value, at->position, at->realm,
-                        drop->configIndex, drop->rarity);
+                        drop->configIndex, drop->rarity, drop->quantity, owner);
     }
     drop->pickedUpBy.push_back(LootClaim{player, owner});
     bool finished = drop->singleCopy;

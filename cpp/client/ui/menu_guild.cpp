@@ -162,6 +162,7 @@ enum class Mode : std::uint8_t {
     Edit,           ///< the name and the description are fields
     Invite,         ///< the footer is a username field
     ConfirmLeave,
+    MemberActions,
     ConfirmKick,
 };
 
@@ -213,6 +214,7 @@ ThumbDrag& thumbDrag() {
 }
 
 enum class GuildAction : std::uint8_t {
+    ManageMember,
     None,
     Close,
     Create,
@@ -622,17 +624,15 @@ bool GuildPanel::render(MenuContext& ctx) {
                 text(canvas, "(Leader)", panel.x + kLeaderX, midY, cardText(kDetailTextSize));
             }
 
-            // A row's own actions, only while it is pointed at: a column of
-            // buttons down every row would bury the names it is a list of.
-            if (!hovered) continue;
+            // Keep the invitation visible without first selecting the name.
             double buttonRight = panel.right() - kRowButtonRight;
             const double buttonY = midY - kRowButtonHeight * 0.5;
             if (canKick) {
-                const double w = buttonWidth("Kick", kRowButtonTextSize, 52.0);
+                const double w = buttonWidth("...", kRowButtonTextSize, 32.0);
                 const Rect kick{buttonRight - w, buttonY, w, kRowButtonHeight};
-                cardButton(canvas, kick, "Kick", kCloseFace, kCloseRim, kick.contains(mouse),
+                cardButton(canvas, kick, "...", kGuildThumb, kGuildDeep, kick.contains(mouse),
                            kRowButtonTextSize);
-                regions.push_back({kick, GuildAction::Kick, member.name});
+                regions.push_back({kick, GuildAction::ManageMember, member.name});
                 buttonRight = kick.x - 6.0;
             }
             if (canSquad) {
@@ -729,6 +729,11 @@ bool GuildPanel::render(MenuContext& ctx) {
             case Mode::ConfirmLeave:
                 footerQuestion("Leave this guild?");
                 rightButtons({{"Leave", GuildAction::Confirm}, {"Cancel", GuildAction::Cancel}},
+                             kCloseFace, kCloseRim);
+                break;
+            case Mode::MemberActions:
+                footerQuestion(f.member);
+                rightButtons({{"Kick member...", GuildAction::Kick}, {"Cancel", GuildAction::Cancel}},
                              kCloseFace, kCloseRim);
                 break;
             case Mode::ConfirmKick:
@@ -876,10 +881,11 @@ bool GuildPanel::render(MenuContext& ctx) {
                 f.view();
                 f.mode = Mode::ConfirmLeave;
                 break;
+            case GuildAction::ManageMember:
+                f.view(); f.mode = Mode::MemberActions; f.member = region.member;
+                break;
             case GuildAction::Kick:
-                f.view();
                 f.mode = Mode::ConfirmKick;
-                f.member = region.member;
                 break;
             case GuildAction::Confirm:
                 confirm();

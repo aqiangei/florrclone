@@ -639,7 +639,7 @@ public:
     /// the bar sends it and waits to see what the snapshot says.
     void usePetal(int slot);
     void requestCraft(std::uint16_t petalIndex, Rarity rarity, int count);
-    void requestBulkCraft(Rarity target);
+    void requestBulkCraft(Rarity target, const std::vector<std::uint16_t>& excluded = {});
     /// Buys one guaranteed upgrade of this petal from the oracle the body is
     /// standing at, for oracleCraftCost(rarity) of it.
     void requestOracleCraft(std::uint16_t petalIndex, Rarity rarity);

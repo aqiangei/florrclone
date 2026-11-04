@@ -930,9 +930,11 @@ void App::frame(double dt) {
     // After every field has been hit-tested, which is the only point at which
     // the set is complete.
     publishKeyboardRegions();
-    window_.setCursorVisible(!(screen_ == Screen::Playing && !chatOpen_ &&
-                               !contextMenu_.isOpen() && !menus_.anyOpen() &&
-                               !tutorial_.visible() && !menus_.settings().useMouseControls));
+    // Keyboard movement still needs a pointer for HUD tooltips and menus.
+    window_.setCursorVisible(true);
+    if (menus_.settings().craftBlacklistDirty) {
+        if (menus_.settings().save(settingsPath())) menus_.settings().craftBlacklistDirty = false;
+    }
     window_.present();
 
     // One heartbeat a second while the socket is up, as the reference's own

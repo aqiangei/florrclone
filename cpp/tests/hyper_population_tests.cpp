@@ -70,7 +70,7 @@ TEST(hyper_actual_loot_is_thirty_trials_of_super_eternal_materials_never_hyper){
     CHECK_EQ(total-eternal,100*30*3);CHECK(eternal>20&&eternal<80);
 }
 
-TEST(super_farm_has_eight_independent_slots_and_preserves_roaming_supers){
+TEST(super_farm_has_twelve_independent_slots_and_preserves_roaming_supers){
     ContentRegistry c;WorldMaps maps;Terrain terrain;std::string error;
     CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),error));
     CHECK(maps.load(testsupport::dataDir(),&terrain,error));
@@ -87,7 +87,7 @@ TEST(super_farm_has_eight_independent_slots_and_preserves_roaming_supers){
                 inside=inside||zoneContains(band.bounds,band.polygon,at.position);CHECK(inside);
             if(map.id()=="garden"){victim=e;garden=map.realm();}
         });
-        CHECK(farm>0);CHECK(farm<=8);CHECK_EQ(population(w,map.realm(),Rarity::Super),5);++mapsChecked;
+        CHECK(farm>0);CHECK(farm<=kSuperFarmPopulation);CHECK_EQ(population(w,map.realm(),Rarity::Super),5);++mapsChecked;
     }
     CHECK(mapsChecked>=10);CHECK(victim!=NULL_ENTITY);
     for(const auto& event:spawn.bossSpawns)CHECK(event.rarity!=Rarity::Super);

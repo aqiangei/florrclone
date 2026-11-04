@@ -2188,7 +2188,9 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // The contested H hammer is a sustained-output reward, independent of the
     // temporary E hammer. Restore bite and recovery without restoring old chains.
     if (graded == Rarity::Apex && c.id == "mjolnir") {
-        s.lightningDamagePerHit = 48.0 * strength;
+        s.lightningDamagePerHit = 60.0 * strength;
+        // 50 -> 75 base durability, retaining the existing capped H scaling.
+        s.health *= 1.5;
         s.reloadMillis = 6000.0;
     }
     // Admin starts with universal combat strength and apex utility, then

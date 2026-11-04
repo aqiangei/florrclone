@@ -189,6 +189,7 @@ Vec2 CraftingPanel::size(const Profile& profile) {
 
 void CraftingPanel::reset() {
     bulkArmed_=false;
+    editingBlacklist_=false;
     grid_.reset();
     stagedPetal_ = kNoPetal;
     batches_ = 0;
@@ -473,7 +474,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     // --- the grid ----------------------------------------------------------
     const std::uint32_t held =
         static_cast<std::uint32_t>(std::max(0, batches_)) * static_cast<std::uint32_t>(kBatch);
-    SlotCardLayout bulkCard=card;bulkCard.listView.y+=44;bulkCard.listView.h=std::max(0.0,bulkCard.listView.h-44);
+    SlotCardLayout bulkCard=card;bulkCard.listView.y+=82;bulkCard.listView.h=std::max(0.0,bulkCard.listView.h-82);
     const Rect bulkPrev{panel.x+12,card.listView.y+4,32,30};
     const Rect bulkTarget{bulkPrev.right()+5,bulkPrev.y,170,30};
     const Rect bulkNext{bulkTarget.right()+5,bulkPrev.y,32,30};
@@ -485,6 +486,20 @@ bool CraftingPanel::render(MenuContext& ctx) {
     drawSlotButton(canvas,bulkTarget,bulkTargetLabel.c_str(),rarityColor(static_cast<Rarity>(bulkTarget_)),false,false);
     drawSlotButton(canvas,bulkNext,">",std::nullopt,bulkNext.contains(mouse),false);
     drawSlotButton(canvas,bulkRun,bulkArmed_?(bulkChinese?"确认消耗低阶材料":"Confirm consuming lower tiers"):(bulkChinese?"一键合成全部低阶花瓣":"Craft all lower tiers"),bulkArmed_?0xCC6644u:0x5A9FDBu,bulkRun.contains(mouse),false);
+    const Rect blacklistButton{bulkPrev.x, bulkPrev.y + 36, panel.w - 24 - (editingBlacklist_ ? 100 : 0), 30};
+    const Rect clearBlacklist{blacklistButton.right() + 5, blacklistButton.y, 95, 30};
+    const std::string blacklistLabel = (bulkChinese ? "合成黑名单（" : "Excluded types (") +
+        std::to_string(ctx.settings.craftBlacklist.size()) + (bulkChinese ? "）：" : "): ") +
+        (editingBlacklist_ ? (bulkChinese ? "点击花瓣切换，点此完成 · 自动保存" : "Click petals to toggle · Done")
+                           : (bulkChinese ? "点击设置 · 批量合成跳过这些种类" : "Edit · bulk crafting skips these types"));
+    drawSlotButton(canvas, blacklistButton, blacklistLabel.c_str(), editingBlacklist_ ? 0xCC6644u : 0x5A9FDBu,
+                   blacklistButton.contains(mouse), false);
+    if (editingBlacklist_) drawSlotButton(canvas, clearBlacklist, bulkChinese ? "清空名单" : "Clear list",
+                                          0xCC6644u, clearBlacklist.contains(mouse), false);
+    const auto isExcluded = [&](std::uint16_t index) {
+        const auto& ids = ctx.settings.craftBlacklist;
+        return std::find(ids.begin(), ids.end(), content().petal(index).id) != ids.end();
+    };
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
         ctx, bulkCard, kCraftingSkin, false,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
@@ -499,6 +514,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
             // A lone petal carries no badge; "x1" is noise on every cell of a
             // fresh account.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
+            if (isExcluded(petalIndex)) cell.badge = bulkChinese ? "排除" : "Skip";
             return cell;
         });
 
@@ -619,6 +635,26 @@ bool CraftingPanel::render(MenuContext& ctx) {
         return true;
     }
 
+    if (phase_ == Phase::Idle && blacklistButton.contains(mouse)) {
+        editingBlacklist_ = !editingBlacklist_; bulkArmed_ = false; heldPetal_ = kNoPetal;
+        return true;
+    }
+    if (editingBlacklist_) {
+        if (phase_ == Phase::Idle && clearBlacklist.contains(mouse)) {
+            ctx.settings.craftBlacklist.clear();
+            ctx.settings.craftBlacklistDirty = true;
+            return true;
+        }
+        if (phase_ == Phase::Idle && hovered) {
+            auto& ids = ctx.settings.craftBlacklist;
+            const auto& id = content().petal(hovered->petalIndex).id;
+            const auto found = std::find(ids.begin(), ids.end(), id);
+            if (found == ids.end()) ids.push_back(id); else ids.erase(found);
+            ctx.settings.craftBlacklistDirty = true;
+            bulkArmed_ = false; heldPetal_ = kNoPetal;
+        }
+        return true;
+    }
     if(phase_==Phase::Idle && (bulkPrev.contains(mouse)||bulkNext.contains(mouse))) {
         const int last = rarityIndex(Rarity::Unique);
         bulkTarget_ = 1 + (bulkTarget_ - 1 + (bulkNext.contains(mouse) ? 1 : last - 1)) % last;
@@ -627,7 +663,9 @@ bool CraftingPanel::render(MenuContext& ctx) {
     }
     if(phase_==Phase::Idle && bulkRun.contains(mouse)) {
         if(!bulkArmed_){bulkArmed_=true;return true;}
-        ctx.net.requestBulkCraft(static_cast<Rarity>(bulkTarget_));bulkArmed_=false;stagedPetal_=kNoPetal;batches_=0;return true;
+        std::vector<std::uint16_t> excluded;
+        for (std::uint16_t i = 0; i < content().petalCount(); ++i) if (isExcluded(i)) excluded.push_back(i);
+        ctx.net.requestBulkCraft(static_cast<Rarity>(bulkTarget_), excluded);bulkArmed_=false;stagedPetal_=kNoPetal;batches_=0;return true;
     }
     if (craftRect.contains(mouse)) {
         beginCraft();

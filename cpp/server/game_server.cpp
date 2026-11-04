@@ -1305,6 +1305,23 @@ void GameServer::reapDead() {
             if (session != nullptr ? session->deathReported : bot->deathAnnounced) continue;
         }
 
+        // Ankh is a break-triggered relocation, not a revive. Resolve it before
+        // the reaper deletes the petal's last position and owner link.
+        if (const auto* petal = world_.tryGet<PetalInstance>(e);
+            petal && petal->configIndex < content().petalCount() &&
+            content().petal(petal->configIndex).id == "ankh") {
+            const auto* at = world_.tryGet<Transform>(e);
+            auto* ownerAt = world_.tryGet<Transform>(petal->owner);
+            const auto* health = world_.tryGet<Health>(petal->owner);
+            const auto* body = world_.tryGet<Body>(petal->owner);
+            if (at && ownerAt && health && health->alive() && !world_.has<Dead>(petal->owner) &&
+                at->realm == ownerAt->realm) {
+                ownerAt->position = terrain_->resolveCircle(at->position, body ? body->radius : kPlayerBaseRadius,
+                                                            ownerAt->realm);
+                if (auto* motion = world_.tryGet<Motion>(petal->owner)) motion->velocity = {};
+            }
+        }
+
         if (world_.has<NetId>(e)) {
             const Transform* transform = world_.tryGet<Transform>(e);
             events_.killed(world_.get<NetId>(e).value, transform ? transform->position : Vec2{},
@@ -3149,6 +3166,14 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
 
 void GameServer::handleBulkCraft(Session& session, net::Connection& connection, ByteReader& reader) {
     const unsigned target=reader.u8();
+    const unsigned count = reader.u16();
+    if (!reader.ok() || count > content().petalCount()) return;
+    std::vector<bool> excluded(content().petalCount(), false);
+    for (unsigned i = 0; i < count; ++i) {
+        const auto id = reader.u16();
+        if (!reader.ok() || id >= excluded.size()) return;
+        excluded[id] = true;
+    }
     if(!reader.ok() || !session.authenticated() || target<1 || target>static_cast<unsigned>(rarityIndex(kTopLadderRarity)))return;
     if(clockMillis_<session.nextBulkCraftMillis)return;
     session.nextBulkCraftMillis=clockMillis_+1500;
@@ -3156,7 +3181,7 @@ void GameServer::handleBulkCraft(Session& session, net::Connection& connection, 
     for(unsigned tier=0;tier<target;++tier) {
         const auto rarity=static_cast<Rarity>(tier);if(!craftsOutOf(rarity))break;
         for(std::uint16_t petal=0;petal<content().petalCount();++petal) {
-            if(content().petal(petal).id=="timed_mjolnir" || !petalComesAt(content().petal(petal),rarity))continue;
+            if(excluded[petal] || content().petal(petal).id=="timed_mjolnir" || !petalComesAt(content().petal(petal),rarity))continue;
             const auto owned=record.itemCount(rarity,inventoryKey(petal));
             if(owned<kCraftBatch)continue;
             ByteWriter request;request.u16(petal);request.u8(static_cast<std::uint8_t>(rarity));request.u32(static_cast<std::uint32_t>(std::min<std::int64_t>(owned,kMaxStackCount)));

@@ -34,6 +34,7 @@ const char* const kPetalsJson = R"JSON({
   "shell":    {"name":"Shell","damage":1,"health":5,"size":1,"cooldown":3500,"count":1,"burstShield":22,"burstHealChargeMs":1000,"defendOnly":true,"color":"#FCDD86"},
   "bubble":   {"name":"Bubble","damage":0,"health":1,"size":1,"cooldown":1000,"count":1,"color":"#FFFFFF"},
   "web":      {"name":"Web","damage":5,"health":10,"size":1.2,"cooldown":3000,"count":1,"defendOnly":true,"webRadius":90,"color":"#FFFFFF"},
+  "electric_web":{"name":"Electric Web","damage":5,"health":10,"size":1,"cooldown":3000,"count":1,"defendOnly":true,"webRadius":90,"color":"#44E9D5"},
   "pollen":   {"name":"Pollen","damage":10,"health":10,"size":1,"cooldown":1000,"count":1,"color":"#FFE763"},
   "uranium":  {"name":"Uranium","damage":4,"health":10,"size":1,"cooldown":2500,"count":1,"radiation":{"radius":160,"intervalMs":1000,"poisonDurationMs":2000,"selfPoisonScale":1},"color":"#63bf2e"},
   "sponge":   {"name":"Sponge","damage":10,"health":10,"size":1,"cooldown":2000,"count":1,"spongeDamageDuration":1000,"color":"#FF96E0"},
@@ -450,9 +451,10 @@ TEST(the_ring_step_moves_a_petal_as_gardns_does) {
     double gardnVelocity = 0.0;
     double deepest = 0.0;
     double worst = 0.0;
-    for (int tick = 1; tick <= 30; ++tick) {
+    const int comparisonTicks = net::kTicksPerSecond / 10;
+    for (int tick = 1; tick <= net::kTicksPerSecond; ++tick) {
         rig.tick();
-        if (tick % 3 != 0) continue;
+        if (tick % comparisonTicks != 0) continue;
         for (int step = 0; step < 2; ++step) {
             gardnVelocity *= 1.0 - 0.5;
             gardnVelocity += 0.5 * (0.0 - gardnGap);
@@ -464,7 +466,7 @@ TEST(the_ring_step_moves_a_petal_as_gardns_does) {
         // The first tenth of a second is left out: the two clocks start the
         // swing on different phases of a tick, which is all that separates
         // them, and by the fifth of a second they have met.
-        if (tick >= 6) worst = std::max(worst, std::fabs(ours - gardnGap));
+        if (tick >= comparisonTicks * 2) worst = std::max(worst, std::fabs(ours - gardnGap));
     }
     CHECK(worst < knock * 0.025);
     // And it is gardn's swing, not a settle: it goes a quarter past the point.
@@ -2647,7 +2649,7 @@ TEST(a_shell_homes_grants_one_temporary_shield_and_is_consumed) {
     Rig rig;
     rig.equip(0, "shell");
     rig.settleEquips();
-    rig.tick(40);
+    rig.tick(static_cast<int>(std::ceil((40.0 / 30.0) / net::kTickSeconds)));
 
     const ShieldState& shield = rig.world.get<ShieldState>(rig.player);
     CHECK_NEAR(shield.amount, 22.0, 1e-9);
@@ -3161,10 +3163,58 @@ TEST(attacking_throws_one_web_and_consumes_its_petal) {
         CHECK_NEAR(angularGap((flight.to-launch).angle(),bearing),0,1e-6);
     });
     CHECK(rig.world.has<Dead>(spent));int moving=0;
-    for(int i=0;i<14;++i){rig.tick();if(launched!=NULL_ENTITY&&rig.world.has<WebFlight>(launched))++moving;}
+    for(int i=0;i<static_cast<int>(std::ceil(.45/net::kTickSeconds));++i){rig.tick();if(launched!=NULL_ENTITY&&rig.world.has<WebFlight>(launched))++moving;}
     CHECK(moving>=8);CHECK(launched!=NULL_ENTITY);
     if(launched!=NULL_ENTITY){CHECK(!rig.world.has<WebFlight>(launched));CHECK_NEAR(rig.world.get<GroundEffect>(launched).radius,90,1e-9);}
     CHECK(rig.slot(0).broken);
+}
+
+TEST(electric_web_launches_lands_and_defends_with_damage_and_distinct_art_kind) {
+    if (!contentLoaded()) return;
+    for (const auto flag : {net::InputAttack, net::InputDefend}) {
+        Rig rig;
+        rig.equip(0, "electric_web", Rarity::Rare);
+        rig.freezeRing(); rig.settleEquips(); rig.settleRing();
+        rig.setFlags(flag); rig.tick();
+        const Entity spent = rig.petals(0).front();
+        CHECK(rig.world.has<Dead>(spent));
+        Entity field = NULL_ENTITY;
+        Query<GroundEffect, Transform, Replicated> fields{rig.world};
+        CHECK_EQ(fields.count(), 1u);
+        fields.each([&](Entity e, GroundEffect& effect, Transform&, Replicated& replicated) {
+            field = e;
+            CHECK_EQ(effect.kind, GroundEffectKind::ElectricWeb);
+            CHECK_EQ(replicated.typeIndex, static_cast<std::uint16_t>(GroundEffectKind::ElectricWeb));
+            CHECK_EQ(effect.owner, rig.player);
+            CHECK(effect.damagePerHit > 0.0);
+            CHECK_NEAR(effect.slowFactor, .5, 1e-9);
+            CHECK_NEAR(effect.damageIntervalMillis, 1000.0, 1e-9);
+        });
+        if (field == NULL_ENTITY) continue;
+        if (flag == net::InputAttack) {
+            CHECK(rig.world.has<WebFlight>(field));
+            const auto flight = rig.world.get<WebFlight>(field);
+            CHECK_NEAR(distance(flight.from, flight.to), 620.0, 1e-6);
+            CHECK_NEAR(rig.world.get<GroundEffect>(field).radius, 0.0, 1e-9);
+            rig.reap(); rig.setFlags(0);
+            rig.tick(static_cast<int>(std::ceil(.36 / net::kTickSeconds)));
+            CHECK(!rig.world.has<WebFlight>(field));
+            CHECK_NEAR(distance(rig.position(field), flight.to), 0.0, 1e-6);
+            CHECK_NEAR(rig.world.get<GroundEffect>(field).radius, flight.radius, 1e-6);
+        } else {
+            CHECK(!rig.world.has<WebFlight>(field));
+            CHECK(rig.world.get<GroundEffect>(field).radius > 90.0);
+        }
+        const Entity victim = addMob(rig, rig.position(field));
+        CombatSystem combat;
+        const double before = rig.healthOf(victim);
+        ricochetCombatTick(rig, combat);
+        CHECK(rig.healthOf(victim) < before);
+        const double after = rig.healthOf(victim);
+        ricochetCombatTick(rig, combat);
+        CHECK_NEAR(rig.healthOf(victim), after, 1e-6);
+        CHECK(rig.world.get<Afflictions>(victim).slowFactor < 1.0);
+    }
 }
 
 TEST(defending_drops_pollen_with_discrete_damage_and_consumes_it) {
@@ -3181,8 +3231,8 @@ TEST(defending_drops_pollen_with_discrete_damage_and_consumes_it) {
     fields.each([&](Entity, GroundEffect& field, Lifetime& lifetime) {
         CHECK_EQ(field.kind, GroundEffectKind::Poison);
         CHECK_NEAR(field.damagePerHit, 10.0 * petalStatScale(Rarity::Rare), 1e-9);
-        CHECK_NEAR(field.damageIntervalMillis, 500.0, 1e-9);
-        CHECK_NEAR(lifetime.remainingSeconds, 5.0, 1e-12);
+        CHECK_NEAR(field.damageIntervalMillis, 600.0, 1e-9);
+        CHECK_NEAR(lifetime.remainingSeconds, 4.0, 1e-12);
     });
     CHECK(rig.world.has<Dead>(rig.petals(0).front()));
 }

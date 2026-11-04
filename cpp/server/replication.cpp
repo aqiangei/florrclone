@@ -48,7 +48,8 @@ double replicatedRadius(World& world, Entity e) {
     // An opened tomb, at the size the tomb was drawn.
     if (const MobRemains* remains = world.tryGet<MobRemains>(e)) return remains->radius;
     if (const GroundEffect* effect = world.tryGet<GroundEffect>(e)) {
-        if (effect->kind == GroundEffectKind::Web && effect->radius > 0.0) return effect->radius;
+        if ((effect->kind == GroundEffectKind::Web || effect->kind == GroundEffectKind::ElectricWeb) &&
+            effect->radius > 0.0) return effect->radius;
     }
     return 10.0;
 }
@@ -766,15 +767,18 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         };
         for (const WireEvent& event : frame.events->events()) {
             const bool tile = ownTile(event);
+            const bool ownPickup = event.kind == net::EventKind::PickedUp &&
+                ((viewerOwner != 0 && event.dealtByConnection == viewerOwner) ||
+                 (world.tryGet<NetId>(viewer) && event.otherNetId == world.get<NetId>(viewer).value));
             if (event.wearerOnly && !tile) continue;
             const bool offView = event.positional && outsideView(event.position);
-            if (event.positional && !tile &&
+            if (event.positional && !tile && !ownPickup &&
                 (event.realm != realm || (offView && !squadmateHit(event)))) {
                 continue;
             }
             std::uint8_t flag = event.flag;
             if (dealtByViewer(event)) flag |= net::DamageByViewer;
-            if (offView) flag |= net::DamageOffView;
+            if (offView && event.kind == net::EventKind::Damage) flag |= net::DamageOffView;
             out.u8(static_cast<std::uint8_t>(event.kind));
             out.u32(event.netId);
             out.u32(tile ? event.wornSlot + 1u : event.otherNetId);
@@ -782,6 +786,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.position(event.position);
             out.f32(static_cast<float>(event.radius));
             out.u8(flag);
+            if (event.kind == net::EventKind::PickedUp) { out.u32(event.pickupQuantity); out.boolean(ownPickup); }
             // The one kind with a tail. Written after the fixed fields, so a
             // reader that has already taken the kind byte knows whether to
             // expect it; nothing else on this wire is variable-length.

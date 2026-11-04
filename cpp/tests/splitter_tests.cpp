@@ -23,6 +23,8 @@
 #include "client/net_client.h"
 #include "server/game_server.h"
 #include "server/loot_eligibility.h"
+#include "server/systems/combat.h"
+#include "server/systems/loot.h"
 #include "server_harness.h"
 #include "shared/game/config.h"
 #include "shared/game/shop.h"
@@ -757,4 +759,182 @@ TEST(splitter_spare_fires_blueberries_with_the_active_flower) {
  CHECK(h.stepUntil({&alice},[&]{Query<Projectile> q{world};q.each([&](Entity,Projectile& p){
   if(p.petalConfigIndex==berry&&std::find(fired.begin(),fired.end(),p.owner)==fired.end())fired.push_back(p.owner);
  });return fired.size()==2;},200));
+}
+
+TEST(splitter_parked_pickup_is_banked_once_and_bulk_blacklist_preserves_materials) {
+    Harness h("splitter-pickup-bank", {}, flix::testsupport::dataDir(), 0);
+    CHECK(h.ready); if (!h.ready) return;
+    NetClient alice;
+    CHECK(loginNew(h, alice, "alice", "hunter2!"));
+    alice.joinGame(1280, 720, {}, "alice");
+    CHECK(h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; }));
+    CHECK(equipSplitter(h, alice, "alice", content().petalIndex(kSplitterPetalId)));
+    auto& world = h.server.world();
+    CHECK(h.stepUntil({&alice}, [&] { return bodiesNamed(world, "alice").size() == 2; }));
+    const auto halves = bodiesNamed(world, "alice");
+    if (halves.size() != 2) return;
+    const auto petal = content().petalIndex("rock");
+    const auto initial = alice.profile().stackCount(petal, Rarity::Rare);
+    Entity parked = NULL_ENTITY, active = NULL_ENTITY;
+    for (auto body : halves) {
+        world.get<Health>(body).invulnerableUntilMillis = 1e12;
+        if (world.get<NetId>(body).value == alice.view().self().netId) active = body;
+        else parked = body;
+    }
+    CHECK(parked != NULL_ENTITY); CHECK(active != NULL_ENTITY);
+    if (parked == NULL_ENTITY || active == NULL_ENTITY) return;
+    world.get<Transform>(parked).position += Vec2{10000,0};
+    const auto at = world.get<Transform>(parked);
+    const auto drop = world.create();
+    world.add<DropTag>(drop);
+    world.add<NetId>(drop, NetId{4000000000u});
+    world.add<Transform>(drop, at);
+    world.add<Body>(drop, Body{14.0, 1.0});
+    world.add<Lifetime>(drop, Lifetime{60.0});
+    DropItem item; item.configIndex = petal; item.rarity = Rarity::Rare; item.quantity = 7;
+    item.eligible.push_back(LootClaim{active, world.get<PlayerAccount>(active).connection});
+    world.add<DropItem>(drop, item);
+    CHECK(h.stepUntil({&alice}, [&] { return alice.profile().stackCount(petal, Rarity::Rare) == initial + 7; }));
+    CHECK(!world.isAlive(drop));
+    bool pickupReported=false;
+    for(const auto& event:alice.view().events()) {
+        if(event.kind!=net::EventKind::PickedUp || event.netId!=4000000000u)continue;
+        pickupReported=true; CHECK_EQ(event.pickupQuantity,7u); CHECK(event.pickupByAccount);
+    }
+    CHECK(pickupReported);
+    h.step(10, {&alice});
+    CHECK_EQ(alice.profile().stackCount(petal, Rarity::Rare), initial + 7);
+    const auto leaf = content().petalIndex("leaf");
+    alice.sendChat("/admin give alice leaf rare 30");
+    CHECK(h.stepUntil({&alice}, [&] { return alice.profile().stackCount(leaf, Rarity::Rare) >= 30; }));
+    const auto leavesBefore = alice.profile().stackCount(leaf, Rarity::Rare);
+    alice.requestBulkCraft(Rarity::Epic, {petal});
+    h.step(20, {&alice});
+    CHECK(alice.profile().stackCount(leaf, Rarity::Rare) < leavesBefore);
+    CHECK_EQ(alice.profile().stackCount(petal, Rarity::Rare), initial + 7);
+}
+
+TEST(splitter_parked_kills_keep_loot_entitlement_for_the_active_body) {
+    Harness h("splitter-kill-loot", {}, flix::testsupport::dataDir(), 0);
+    CHECK(h.ready); if (!h.ready) return;
+    NetClient alice; CHECK(loginNew(h, alice, "alice", "hunter2!"));
+    alice.joinGame(1280, 720, {}, "alice");
+    CHECK(h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; }));
+    CHECK(equipSplitter(h, alice, "alice", content().petalIndex(kSplitterPetalId)));
+    auto& world = h.server.world();
+    CHECK(h.stepUntil({&alice}, [&] { return bodiesNamed(world, "alice").size() == 2; }));
+    Entity parked = NULL_ENTITY, active = NULL_ENTITY;
+    for (auto body : bodiesNamed(world, "alice")) {
+        world.get<Health>(body).invulnerableUntilMillis = 1e12;
+        if (world.get<NetId>(body).value == alice.view().self().netId) active = body; else parked = body;
+    }
+    CHECK(parked != NULL_ENTITY); CHECK(active != NULL_ENTITY);
+    if (parked == NULL_ENTITY || active == NULL_ENTITY) return;
+    const auto at = world.get<Transform>(parked);
+    CombatSystem combat;
+    for (int i = 0; i < 40; ++i) {
+        const Entity mob = world.create();
+        world.add<MobTag>(mob);
+        world.add<MobType>(mob, MobType{content().mobIndex(i % 2 ? "server" : "sandstorm"), Rarity::Apex});
+        world.add<Transform>(mob, Transform{at.position + Vec2{300, 0}, 0, at.realm});
+        world.add<Health>(mob, Health{100, 100});
+        world.add<Faction>(mob, Faction{Team::Hostiles});
+        world.add<Bounty>(mob);
+        combat.applyDamage(world, mob, parked, 1000, 100000);
+        CHECK(world.has<Dead>(mob));
+        CHECK_EQ(world.get<Bounty>(mob).contributors.size(), std::size_t{1});
+    }
+    h.step(1, {&alice});
+    int eligible = 0;
+    Query<DropTag, DropItem> drops{world};
+    drops.each([&](Entity, DropTag&, DropItem& d) {
+        if (LootSystem::mayPickUp(d, active, world.get<PlayerAccount>(active).connection)) eligible += d.quantity;
+    });
+    CHECK(eligible > 0);
+    // A shot and cloud already released must keep their account credit when
+    // the spare dies before impact; otherwise their kills have no claimant.
+    const auto shot = world.create();
+    Projectile projectile; projectile.owner = parked; projectile.creditTo = parked;
+    world.add<Projectile>(shot, projectile);
+    const auto cloud = world.create();
+    GroundEffect effect; effect.owner = parked;
+    world.add<GroundEffect>(cloud, effect);
+    world.get<Health>(parked).current = 0;
+    world.add<Dead>(parked);
+    h.step(2, {&alice});
+    CHECK_EQ(CombatSystem::creditedPlayer(world, shot), active);
+    CHECK_EQ(CombatSystem::creditedPlayer(world, cloud), active);
+    for (int i = 0; i < 40; ++i) {
+        const auto mob = world.create();
+        world.add<MobTag>(mob);
+        world.add<MobType>(mob, MobType{content().mobIndex(i % 2 ? "server" : "sandstorm"), Rarity::Apex});
+        world.add<Transform>(mob, Transform{at.position + Vec2{300, 0}, 0, at.realm});
+        world.add<Health>(mob, Health{100, 100});
+        world.add<Faction>(mob, Faction{Team::Hostiles});
+        world.add<Bounty>(mob);
+        combat.applyDamage(world, mob, i % 2 ? shot : cloud, 1000, 100000);
+        CHECK_EQ(world.get<Bounty>(mob).contributors.size(), std::size_t{1});
+    }
+    h.step(1, {&alice});
+    int after = 0;
+    drops.each([&](Entity, DropTag&, DropItem& d) {
+        if (LootSystem::mayPickUp(d, active, world.get<PlayerAccount>(active).connection)) after += d.quantity;
+    });
+    CHECK(after > eligible);
+}
+
+TEST(ankh_break_relocates_only_its_living_owner_without_healing) {
+    Harness h("ankh-break", {}, flix::testsupport::dataDir(), 0);
+    CHECK(h.ready); if (!h.ready) return;
+    NetClient alice; CHECK(loginNew(h, alice, "alice", "hunter2!"));
+    alice.joinGame(1280, 720, {}, "alice");
+    CHECK(h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; }));
+    auto& world = h.server.world();
+    const auto body = soleBody(world, "alice");
+    CHECK(body != NULL_ENTITY); if (body == NULL_ENTITY) return;
+    const auto at = world.get<Transform>(body);
+    const auto healthBefore = world.get<Health>(body).current;
+    const auto makeAnkh = [&]() {
+        auto petal = world.create();
+        PetalInstance instance; instance.owner = body; instance.configIndex = content().petalIndex("ankh");
+        world.add<PetalInstance>(petal, instance);
+        world.add<Transform>(petal, at);
+        world.add<Health>(petal, Health{0, 10});
+        world.add<Dead>(petal);
+        return petal;
+    };
+    const auto petal = makeAnkh();
+    world.get<Transform>(body).position = at.position + Vec2{100, 0};
+    h.step(1, {&alice});
+    CHECK(!world.isAlive(petal));
+    CHECK(distanceSq(world.get<Transform>(body).position, at.position) < 1.0);
+    CHECK(world.get<Health>(body).current <= healthBefore + 1.0);
+    makeAnkh();
+    world.get<Health>(body).current = 0;
+    world.add<Dead>(body);
+    h.step(1, {&alice});
+    CHECK(world.has<Dead>(body));
+}
+
+TEST(dice_real_equipment_server_ticks_deliver_critical_damage) {
+    Harness h("dice-real",{},testsupport::dataDir(),0);CHECK(h.ready);if(!h.ready)return;
+    NetClient alice;CHECK(loginNew(h,alice,"alice","hunter2!"));
+    alice.joinGame(1280,720,{},"alice");
+    CHECK(h.stepUntil({&alice},[&]{return alice.status()==NetClient::Status::Playing;}));
+    CHECK(h.server.grantAdmin(alice.sessionToken()));
+    const auto dice=content().petalIndex("dice");
+    alice.sendChat("/admin give alice dice unique 1");
+    CHECK(h.stepUntil({&alice},[&]{return alice.profile().stackCount(dice,Rarity::Unique)>0;}));
+    alice.setLoadoutSlot(0,dice,Rarity::Unique);
+    CHECK(h.stepUntil({&alice},[&]{return alice.profile().loadout[0].petalIndex==dice;}));
+    auto& world=h.server.world();const auto owner=soleBody(world,"alice");CHECK(owner!=NULL_ENTITY);if(owner==NULL_ENTITY)return;
+    world.get<Health>(owner).invulnerableUntilMillis=1e12;
+    const auto victim=world.create();const auto at=world.get<Transform>(owner);
+    world.add<NetId>(victim,NetId{4000000001u});world.add<MobTag>(victim);world.add<NpcTag>(victim);world.add<Transform>(victim,at);
+    world.add<Body>(victim,Body{200,1});world.add<Health>(victim,Health{1e15,1e15});
+    world.add<Faction>(victim,Faction{Team::Hostiles});world.add<Bounty>(victim);
+    double maximum=0,maximumOnClient=0;int hits=0;bool criticalFlag=false;const double base=content().petalStats(dice,Rarity::Unique).damage;
+    auto total=[&]{double sum=0;for(const auto& v:world.get<Bounty>(victim).contributors)sum+=v.damage;return sum;};
+    for(int i=0;i<2400;++i){const auto before=total();h.step(1,{&alice});for(const auto& event:alice.view().events())if(event.kind==net::EventKind::Damage && event.netId==4000000001u){maximumOnClient=std::max(maximumOnClient,event.amount);if(event.amount>base*30)criticalFlag=criticalFlag||((event.flag&net::DamageCritical)!=0);}alice.view().events().clear();const double delta=total()-before;if(delta>0){++hits;maximum=std::max(maximum,delta);}}
+    CHECK(hits>=100);CHECK(maximum>base*30);CHECK(maximumOnClient>base*30);CHECK(criticalFlag);
 }

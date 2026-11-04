@@ -58,7 +58,13 @@ async function main(){
     // Preserve the original migration snapshot's fixed TP debt without
     // changing passwords, progress or inventory earned since the cutover.
     let next,report;
-    if(process.env.FLORR_RESTORE_SNAPSHOT){
+    if(process.env.FLORR_PRESERVE_SAVE==='1'){
+      assert(!process.env.FLORR_RESTORE_SNAPSHOT && !process.env.FLORR_PASSWORD_RESET_FILE &&
+        !process.env.FLORR_OPERATOR_HYPER_USER && process.env.FLORR_REFUND_ETERNAL_PRICE!=='1',
+        'Preserve-save deployment cannot include account maintenance');
+      next=path.join(local,'inventory.json');
+      report={preservedSave:true};
+    }else if(process.env.FLORR_RESTORE_SNAPSHOT){
       const source=path.resolve(process.env.FLORR_RESTORE_SNAPSHOT);
       const bytes=fs.readFileSync(source);
       const expected=process.env.FLORR_RESTORE_SHA256;

@@ -123,6 +123,7 @@ struct ReplicationTolerances {
 /// One transient thing that happened this tick, for effects the client plays
 /// without the server streaming per-frame animation state.
 struct WireEvent {
+    std::uint32_t pickupQuantity = 1;
     net::EventKind kind = net::EventKind::Damage;
     std::uint32_t netId = 0;
     std::uint32_t otherNetId = 0;
@@ -220,9 +221,12 @@ public:
     /// and loot that lands inside it is collected on the tick it spawned --
     /// before any snapshot has carried the entity. See net::EventKind::PickedUp.
     void pickedUp(std::uint32_t dropNetId, std::uint32_t byNetId, Vec2 at, Realm realm,
-                  std::uint16_t petalIndex, Rarity rarity) {
+                  std::uint16_t petalIndex, Rarity rarity, std::uint32_t quantity = 1,
+                  net::ConnectionId owner = 0) {
         WireEvent e;
         e.kind = net::EventKind::PickedUp;
+        e.pickupQuantity = quantity;
+        e.dealtByConnection = owner;
         e.netId = dropNetId;
         e.otherNetId = byNetId;
         e.amount = static_cast<double>(petalIndex);
@@ -262,6 +266,11 @@ public:
         events_.push_back(std::move(e));
     }
 
+    void markCriticalSince(std::size_t first, std::uint32_t victim) {
+        for (std::size_t i=first;i<events_.size();++i)
+            if (events_[i].kind==net::EventKind::Damage && events_[i].netId==victim)
+                events_[i].flag |= net::DamageCritical;
+    }
     const std::vector<WireEvent>& events() const { return events_; }
 
 private:

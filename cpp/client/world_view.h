@@ -215,6 +215,8 @@ struct RemoteEntity {
 
 /// A transient effect the server reported.
 struct ViewEvent {
+    std::uint32_t pickupQuantity = 1;
+    bool pickupByAccount = false;
     net::EventKind kind = net::EventKind::Damage;
     std::uint32_t netId = 0;
     std::uint32_t otherNetId = 0;

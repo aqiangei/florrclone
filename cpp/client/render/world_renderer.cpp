@@ -430,10 +430,11 @@ constexpr std::uint32_t kLightningTextColor = ui::kStatLightning;
 /// throttle. Sharing one bucket would let a poison tick land inside a petal
 /// hit's window and repaint the whole total purple -- or a strike's cyan repaint
 /// the ring damage that arrived beside it -- and the reverse.
-enum class NumberChannel : std::uint8_t { Hit = 0, Poison = 1, Lightning = 2 };
+enum class NumberChannel : std::uint8_t { Hit = 0, Poison = 1, Lightning = 2, Critical = 3 };
 
 std::uint32_t numberColor(NumberChannel channel) {
     switch (channel) {
+        case NumberChannel::Critical: return 0xFFD54Fu;
         case NumberChannel::Poison: return kPoisonTextColor;
         case NumberChannel::Lightning: return kLightningTextColor;
         case NumberChannel::Hit: break;
@@ -453,6 +454,7 @@ NumberChannel channelOf(std::uint8_t flags) {
     // Poison first: a poisoned strike is not a thing any content can author,
     // and reading the byte in a fixed order beats leaving the answer to
     // whichever bit a future flag happens to occupy.
+    if ((flags & net::DamageCritical) != 0) return NumberChannel::Critical;
     if ((flags & net::DamagePoison) != 0) return NumberChannel::Poison;
     if ((flags & net::DamageLightning) != 0) return NumberChannel::Lightning;
     return NumberChannel::Hit;
@@ -915,6 +917,11 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 // Each channel accumulates under its own key -- see
                 // NumberChannel.
                 const NumberChannel channel = channelOf(event.flag);
+                // Keep rare high hits out of the normal-hit aggregation bucket.
+                if (channel == NumberChannel::Critical) {
+                    pushNumber(event.position,event.amount,kMobNumberSize * 1.25,channel);
+                    break;
+                }
                 if (isPlayer(event.netId)) {
                     pushNumber(event.position, event.amount, kPlayerNumberSize, channel);
                     break;
@@ -4015,8 +4022,12 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                 break;
             }
             if (sprites_ && sprites_->petalDrawable(entity.typeIndex)) {
+                // Imported missile art points down-right (747 x 1124 source),
+                // whereas simulation headings use an east-facing zero.
+                const double artAngle = entity.angle -
+                    (config && config->id == "mecha_missile" ? std::atan2(1124.0, 747.0) : 0.0);
                 sprites_->drawPetal(canvas, entity.typeIndex, entity.rarity, screen.x, screen.y,
-                                    diameter, entity.angle, timeSeconds);
+                                    diameter, artAngle, timeSeconds);
             } else {
                 ui::disc(canvas, screen, std::max(2.0, diameter * 0.5),
                          config ? static_cast<std::uint32_t>(config->colorRgba >> 8)
@@ -4068,6 +4079,44 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                 }
                 case GroundEffectKind::Sacrifice:
                     break;
+                case GroundEffectKind::ElectricWeb: {
+                    // A hexagonal conductor mesh and bright broken arcs; no
+                    // per-frame bitmap allocation or shared white-web stamp.
+                    canvas.save();
+                    canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
+                    canvas.rotate(static_cast<float>(entity.angle));
+                    const double r = radius;
+                    ui::setFill(canvas, 0x12B8A6u, 0.13);
+                    canvas.fillCircle(0, 0, static_cast<float>(r));
+                    ui::setStroke(canvas, 0x44E9D5u, 0.65);
+                    canvas.setLineWidth(static_cast<float>(std::max(1.0, r * 0.016)));
+                    canvas.beginPath();
+                    for (int level = 1; level <= 3; ++level) {
+                        for (int i = 0; i <= 6; ++i) {
+                            const Vec2 p = Vec2::fromAngle(i * kTau / 6, r * level / 3);
+                            if (i == 0) canvas.moveTo(p.x, p.y); else canvas.lineTo(p.x, p.y);
+                        }
+                    }
+                    for (int i = 0; i < 6; ++i) {
+                        const Vec2 p = Vec2::fromAngle(i * kTau / 6, r);
+                        canvas.moveTo(0, 0); canvas.lineTo(p.x, p.y);
+                    }
+                    canvas.stroke();
+                    ui::setStroke(canvas, 0xEDFF87u, 0.8 + 0.2 * std::sin(timeSeconds * 12));
+                    canvas.setLineWidth(static_cast<float>(std::max(1.5, r * 0.025)));
+                    canvas.beginPath();
+                    for (int i = 0; i < 3; ++i) {
+                        const double a = i * kTau / 3;
+                        const Vec2 p = Vec2::fromAngle(a, r * 0.22);
+                        const Vec2 q = Vec2::fromAngle(a + 0.19, r * 0.52);
+                        const Vec2 s = Vec2::fromAngle(a - 0.12, r * 0.57);
+                        const Vec2 t = Vec2::fromAngle(a + 0.04, r * 0.95);
+                        canvas.moveTo(p.x, p.y); canvas.lineTo(q.x, q.y);
+                        canvas.lineTo(s.x, s.y); canvas.lineTo(t.x, t.y);
+                    }
+                    canvas.stroke(); canvas.restore();
+                    break;
+                }
                 case GroundEffectKind::Web: {
                     const auto paintWeb = [](Canvas& target, double r) {
                         constexpr int spokes=10,levels=5;

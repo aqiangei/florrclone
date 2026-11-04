@@ -479,9 +479,8 @@ void App::tallyRunLoot() {
     if (self == 0) return;
     for (const ViewEvent& event : net_.view().events()) {
         // Somebody else's pickup is not the viewer's loot, and a drop pays out
-        // one copy to each eligible flower -- so only the viewer's own cue
-        // counts, and each one is exactly one item.
-        if (event.kind != net::EventKind::PickedUp || event.otherNetId != self) continue;
+        // the account once: either split body counts, including off-screen stacks.
+        if (event.kind != net::EventKind::PickedUp || !event.pickupByAccount) continue;
         const auto petal = static_cast<std::uint16_t>(event.amount);
         if (petal >= content().petalCount()) continue;
         const Rarity rarity = clampRarity(static_cast<int>(event.flag));
@@ -489,9 +488,9 @@ void App::tallyRunLoot() {
             return l.petalIndex == petal && l.rarity == rarity;
         });
         if (found == runLoot_.end()) {
-            runLoot_.push_back({petal, rarity, 1});
+            runLoot_.push_back({petal, rarity, event.pickupQuantity});
         } else if (found->count < UINT32_MAX) {
-            ++found->count;
+            found->count += std::min(event.pickupQuantity, UINT32_MAX - found->count);
         }
     }
 }

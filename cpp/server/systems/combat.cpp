@@ -2629,7 +2629,8 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // A claw's bonus is decided here, per victim, off the health the
             // victim has BEFORE this hit.
             double swing = swingDamage(world, source.damage, source.critDamage, victim);
-            if (source.critChance > 0 && rng_.chance(source.critChance)) swing *= source.critMultiplier;
+            const bool critical = source.critChance > 0 && rng_.chance(source.critChance);
+            if (critical) swing *= source.critMultiplier;
             if(const auto* petal=world.tryGet<FlowerMobPetal>(source.attacker)) {
                 if(petal->damageMax>swing)swing=rng_.range(swing,petal->damageMax);
                 if(petal->critChance>0 && rng_.chance(petal->critChance))
@@ -2655,8 +2656,12 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // ring or a hostile NPC is every collision there is. A petal, a
             // shot, a field or a shock goes past it whole.
             if (mobTouchesPlayer) swing *= collisionDamageTakenScale(world, victim);
+            const auto beforeHitEvents = events_ ? events_->events().size() : 0;
             DamageResult hit =
                 applyDamage(world, victim, source.attacker, swing, nowMillis, source.hitKind);
+            if (critical && events_) {
+                if (const auto* id=world.tryGet<NetId>(victim)) events_->markCriticalSince(beforeHitEvents,id->value);
+            }
             // A swing of NOTHING is still a swing. canHit() has already vouched
             // for this victim one line above -- alive, not a corpse, not
             // invulnerable, on the other side -- so the only refusal
@@ -2960,9 +2965,14 @@ void CombatSystem::resolvePetalPvp(World& world, const MeleeSource& source, Enti
 
     // A claw opens on a fresh duellist exactly as it opens on a fresh mob.
     double swing = swingDamage(world, source.damage, source.critDamage, victim);
-    if (source.critChance > 0 && rng_.chance(source.critChance)) swing *= source.critMultiplier;
+    const bool critical = source.critChance > 0 && rng_.chance(source.critChance);
+    if (critical) swing *= source.critMultiplier;
+    const auto beforeHitEvents = events_ ? events_->events().size() : 0;
     const DamageResult hit =
         applyDamage(world, victim, source.attacker, swing, nowMillis, source.hitKind);
+    if (critical && events_) {
+        if (const auto* id=world.tryGet<NetId>(victim)) events_->markCriticalSince(beforeHitEvents,id->value);
+    }
     // And a fang drinks from one: what the victim's bar lost, never what a
     // shield, a cotton or a sponge took instead.
     if (source.lifesteal > 0.0 && hit.applied > 0.0) {

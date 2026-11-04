@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 89;
+inline constexpr std::uint16_t kProtocolVersion = 92;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -37,21 +37,19 @@ inline constexpr std::uint32_t kMaxFrameBytes = 1u << 20;   // 1 MiB
 
 /// Simulation rate. Fixed, because the physics integrates a constant step:
 /// input, movement and cooldowns are all expressed per tick.
-// The TypeScript server this was ported from advanced gameplay at 30 Hz, and
-// so does this one. This is simulation behaviour, not a transport
-// implementation detail: contact opportunities, fixed-step mob AI and every
-// one-tick transition depend on it.
-inline constexpr int kTicksPerSecond = 30;
+// Shared by client prediction, server scheduling and input allowance refill.
+// Snapshot encoding has a separate, lower frequency below.
+inline constexpr int kTicksPerSecond = 60;
 inline constexpr double kTickSeconds = 1.0 / kTicksPerSecond;
 inline constexpr double kTickMillis = 1000.0 / kTicksPerSecond;
 
 /// How often each client is sent a snapshot.
 ///
-/// Deliberately BELOW the tick rate. Physics and combat want 30 Hz resolution;
+/// Deliberately BELOW the tick rate. Physics and combat want 60 Hz resolution;
 /// the wire does not, and the reference server says so in as many words -- the
 /// snapshot broadcast runs on its own 20 Hz timer so the per-recipient
 /// encode/cull/delta pass and its socket writes are not charged to the tick's
-/// 33 ms budget. A client interpolating between snapshots needs its delay
+/// 16.7 ms budget. A client interpolating between snapshots needs its delay
 /// window to cover this interval, not the tick.
 inline constexpr int kSnapshotsPerSecond = 20;
 inline constexpr double kSnapshotMillis = 1000.0 / kSnapshotsPerSecond;
@@ -235,7 +233,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< tier - 1), plus any fork children whose prerequisite
                         ///< is then unmet. Hold-to-refund on the talent tree;
                         ///< points come back because spent() drops. (Version 69.)
-    BulkCraft,          ///< u8 target rarity; craft every lower unequipped stack up to target.
+    BulkCraft,          ///< u8 target, u16 exclusion count, u16 petal IDs; craft lower unequipped stacks.
     EnterDungeon,       ///< no payload; explicit nearby dungeon entry.
     DailyDropBonus,     ///< u8 action: 0 query, 1 claim, 2 toggle shop lock; daily one-hour drop bonus (v78).
 };
@@ -905,8 +903,7 @@ enum EntityState : std::uint8_t {
 /// on the petal hit that landed in the same tick -- as the TypeScript build
 /// did.
 enum DamageEventFlags : std::uint8_t {
-    /// Set by nothing and read by nothing: a claw's crit bonus (critDamage)
-    /// lands as an ordinary hit.
+    /// A rolled critical hit; displayed separately from ordinary damage.
     DamageCritical = 1 << 0,
     DamagePoison   = 1 << 1,
     /// A lightning strike's damage, which the client paints cyan.
@@ -959,6 +956,7 @@ enum class EventKind : std::uint8_t {
     /// A drop was collected: u32 dropNetId, u32 byNetId, and -- in the fields
     /// no other use of this kind has -- f32 amount carrying the drop's PETAL
     /// INDEX and u8 flag its RARITY, at `position`.
+    /// Tail: u32 stack quantity, bool collected by the viewing account.
     ///
     /// The look rides along because the client may never have held the drop.
     /// Magnetism is a pickup radius, so loot that lands inside it is taken on

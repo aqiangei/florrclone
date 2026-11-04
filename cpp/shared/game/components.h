@@ -1072,6 +1072,8 @@ struct Npc {
     /// this is also where it stands; it is kept apart from the Transform so
     /// that a respawn puts it back on its mark whatever the Transform says.
     Vec2 home;
+    /// Service boundary follows artwork independently of physical collision.
+    double serviceRadius = 0;
     /// When its idle glance next moves on. Only read by an NPC that stands
     /// still, and only while no flower is inside kNpcWatchRange -- with one
     /// there, it looks at the nearest. One that cruises looks where it goes.
@@ -1417,6 +1419,7 @@ enum class GroundEffectKind : std::uint8_t {
     /// What is left of a tomb once it is broken open: see MobRemains.
     OpenTomb = 4,
     PyramidMap = 5, // public one-use map scroll, not an inventory petal
+    ElectricWeb = 6,
 };
 
 /// What is left lying where a mob with `remains_ms` died -- florr's opened
