@@ -3167,6 +3167,7 @@ TEST(daily_bonus_claim_is_account_scoped_and_reported_over_network) {
 }
 
 TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
+    CHECK(ensureShippedContent());
     const auto dir=titanWorld("shop-lock-purchase");const auto old=shopRotation(shopClockNow())-10;
     Harness h("shop-lock-purchase",[&](const std::string& path){seedAccount(path,"buyer");
         Database db;std::string error;CHECK(db.load(path,error));auto& r=db.progress(db.findUser("buyer")->id);
@@ -3178,6 +3179,7 @@ TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
     },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient buyer;CHECK(joinAs(h,buyer,"buyer"));CHECK_EQ(buyer.lockedShopRotation,old);
     CHECK_EQ(buyer.lockedShopOffers.size(),std::size_t(kShopOfferCount));
+    if(buyer.lockedShopOffers.empty()){removeDataDir(dir);return;}
     const auto offer=shopOffers(old-1).front();
     CHECK_EQ(buyer.lockedShopOffers.front().petalIndex,offer.petalIndex);
     CHECK(buyer.lockedShopOffers.front().rarity==offer.rarity);
