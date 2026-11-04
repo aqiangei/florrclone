@@ -1380,6 +1380,10 @@ inline bool petalIsCompass(const PetalConfig& config) { return config.id == "com
 /// A cursor walks its flower's pets of a LOWER tier to the pointer instead of
 /// letting them fight on their own (MobAiSystem::steerPet).
 inline bool petalControlsPets(const PetalConfig& config) { return config.id == "cursor"; }
+inline double eggSummonHealthScale(const PetalConfig& config) {
+    const auto& id=config.id;
+    return id=="egg"||(id.size()>=4&&id.compare(id.size()-4,4,"_egg")==0)?2.0:1.0;
+}
 
 /// The sacrifice: florr's "On death, summons a mob to fight again". Worn on
 /// the active bar, it is spent when its flower dies on ground rough enough to

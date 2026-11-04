@@ -88,6 +88,7 @@ const char* const kPetalsJson = R"JSON({
   "basil":    {"name":"Basil","damage":5,"health":15,"size":1.3,"cooldown":2500,"count":1,"defendOnly":true,"ignoresMobs":true,"color":"#319E40"},
   "disc":     {"name":"Disc","damage":0,"health":null,"size":1,"cooldown":1,"count":0,"range":0,"equipFlags":"Disc","noPhysics":true,"color":"#111111"},
   "bandage":  {"name":"Bandage","damage":0,"health":null,"size":1,"cooldown":1,"count":0,"range":0,"noPhysics":true,"color":"#E5DAA1"},
+  "egg":{"name":"Ant Egg","damage":0,"health":1,"cooldown":60000,"count":4,"petMobType":"critter","petCount":4},
   "golden_leaf":{"name":"Golden Leaf","damage":1,"health":100,"size":1.2,"cooldown":200,"count":1,"color":"#EBEB34"},
   "cursor":   {"name":"Cursor","damage":0,"health":null,"size":1,"cooldown":1,"count":1,"color":"#EEEEEE"},
   "ram":      {"name":"RAM","damage":10,"health":2,"size":1,"cooldown":3000,"count":1,"color":"#3498DB"},
@@ -5962,6 +5963,17 @@ TEST(wiki_mechanism_mecha_missile_fires_straight_with_or_without_antennae){
         shots.each([&](Entity,ProjectileTag&,Projectile& shot,Motion& motion){++seen;
             CHECK_NEAR(motion.velocity.length(),600,1e-8);CHECK_NEAR(shot.remainingDistance,2400,1e-8);CHECK_NEAR(shot.damage,35,1e-8);
         });CHECK_EQ(seen,1);
+    }
+}
+TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead_with_double_summon_health){
+    CHECK(contentLoaded());
+    for(const bool undead:{false,true}){Rig rig;rig.equip(0,"bandage",Rarity::Mythic);rig.settleEquips();
+        if(undead){const auto attacker=addMob(rig,rig.position(rig.player)+Vec2{60,0});CombatSystem combat;
+            combat.applyDamage(rig.world,rig.player,attacker,1e9,rig.now);CHECK(rig.world.has<Undead>(rig.player));CHECK(!rig.world.has<Dead>(rig.player));}
+        rig.equip(1,"egg");int count=0;
+        CHECK(rig.tickUntil([&]{count=0;Query<Pet,Health,ContactDamage> pets{rig.world};pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
+            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,20,1e-8);CHECK_NEAR(hit.amount,1,1e-8);
+        });return count==4;},150));
     }
 }
 

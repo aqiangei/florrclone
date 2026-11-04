@@ -670,7 +670,8 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     // universal` or a nest's offset past the top comes out an apex. Enforced
     // here rather than at each call site so a nest, a script and the ambient
     // roll cannot disagree about it.
-    rarity = clampLadderRarity(std::max(rarityIndex(rarity), rarityIndex(config.minRarity)));
+    const bool nestedQueen=depth>0&&config.id=="queen_ant";
+    rarity = clampLadderRarity(nestedQueen?rarityIndex(rarity):std::max(rarityIndex(rarity), rarityIndex(config.minRarity)));
 
     // A prestige biome has no boss clocks and never fields a unique or an
     // apex, whoever asks -- the console and a sacrifice included, which is why
@@ -976,7 +977,8 @@ Entity SpawnSystem::spawnEscort(World& world, const Terrain& terrain, const Cont
     if (census_.mobs >= mobCap) return NULL_ENTITY;
     // Every such path comes through here -- a hole's opening guard, its
     // waves, a queen's soldiers and a broken tomb's mummy -- so this is where
-    // a minion is held to ultra, however far above that its nest stands.
+    // a minion normally stays at Ultra or below. Ant families explicitly
+    // use one lower tier for soldiers, and the hole's own tier for its queen.
     Rarity childRarity=minionRarity(nestRarity);
     if(const auto* type=world.tryGet<MobType>(parent)){
         const auto& id=content.mob(type->configIndex).id;

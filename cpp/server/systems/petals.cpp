@@ -3766,6 +3766,10 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     // out of a dying ant hole, and as a permanent escort it outclassed every
     // other egg at the same tier. Every other mob's scales are 1.
     mob.health = config.health * ladder * config.petHealthScale * strength;
+    if(const auto* state=world.tryGet<PetalSlotState>(player))if(slot<state->slots.size()){
+        const auto index=state->slots[slot].configIndex;
+        if(index<registry.petalCount())mob.health*=eggSummonHealthScale(registry.petal(index));
+    }
     mob.damage = config.damage * ladder * config.petDamageScale * strength;
     // The Pet Health talent is the Petal Health talent for the squad: the same
     // curve, and on this pool alone. Read at the hatch, as the petal talent is
