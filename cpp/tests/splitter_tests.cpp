@@ -334,7 +334,9 @@ TEST(clicking_the_loaded_splitter_swaps_halves_and_pays_a_reload) {
     auto& held=world.get<PlayerInput>(original).current;
     held.moveStrength=1;held.moveAngle=.75;held.flags=net::InputDefend;
     alice.usePetal(0);
-    CHECK(h.stepUntil({&alice}, [&] { return alice.view().self().netId != steered; }));
+    CHECK(h.stepUntil({&alice}, [&] {
+        return alice.view().self().netId != 0 && alice.view().self().netId != steered;
+    }));
     for(const Entity half:bodiesNamed(world,"alice")){
         const bool active=world.get<NetId>(half).value==alice.view().self().netId;
         CHECK_NEAR(world.get<PlayerInput>(half).current.moveStrength,active?1:0,1e-8);
