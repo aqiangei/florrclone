@@ -12,6 +12,9 @@
 // and naming the C++ functions it runs through, which the release link keeps
 // with --profiling-funcs.
 (() => {
+    // Pthread workers evaluate this glue too; only the Node main thread owns
+    // process-level startup and crash reporting.
+    if (!require("worker_threads").isMainThread) return;
     const fs = require("fs");
 
     // V8 keeps ten frames. A crash spends most of those on abort() and the

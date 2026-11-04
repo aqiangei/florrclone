@@ -1378,17 +1378,30 @@ void GameServer::replicate(double nowMillis) {
     frame.nowMillis = nowMillis;
     frame.events = &events_;
 
-    // Reused across recipients rather than allocated per session: it is at
-    // most three entities and almost always none.
-    std::vector<Entity> squadBodies;
+    if (!parallelSnapshots_) {
+        unsigned workers = 3;
+        if (const char* value = std::getenv("FLIX_SNAPSHOT_WORKERS")) {
+            char* end = nullptr;
+            const long requested = std::strtol(value, &end, 10);
+            if (end != value && *end == '\0' && requested >= 0 && requested <= 3)
+                workers = static_cast<unsigned>(requested);
+        }
+        parallelSnapshots_ = std::make_unique<ParallelSnapshots>(workers);
+        std::printf("[replication] snapshot workers=%u, simulation=%d TPS, snapshots=%d Hz\n",
+                    parallelSnapshots_->workers(), net::kTicksPerSecond, net::kSnapshotsPerSecond);
+    }
+    std::size_t count = 0;
     for (auto& entry : sessions_) {
         Session& session = entry.second;
         if (!session.playing()) continue;
         net::Connection* connection = listener_.find(session.connection);
         if (!connection) continue;
 
-        collectSquadBodies(session, squadBodies);
-        frame.alwaysVisible = squadBodies.empty() ? nullptr : &squadBodies;
+        if (count == snapshotJobs_.size()) snapshotJobs_.emplace_back();
+        auto& job = snapshotJobs_[count++];
+        job.connection = session.connection;
+        job.view = &views_.at(session.connection);
+        collectSquadBodies(session, job.squad);
 
         // Built around the flower this client is WATCHING, which is another
         // player's while an admin steers it -- and culled to the window this
@@ -1405,9 +1418,15 @@ void GameServer::replicate(double nowMillis) {
             }
         }
 
-        scratch_.clear();
-        replicator_.build(world_, viewpoint, views_[session.connection], frame, scratch_);
-        if (!scratch_.empty()) connection->send(scratch_);
+        job.viewer = viewpoint;
+        job.frame = frame;
+    }
+    snapshotJobs_.resize(count);
+    // No ECS, session, event or socket mutation until all readers finish.
+    parallelSnapshots_->build(world_, snapshotJobs_);
+    for (auto& job : snapshotJobs_) {
+        if (auto* connection = listener_.find(job.connection))
+            if (!job.output.empty()) connection->send(job.output);
     }
 }
 

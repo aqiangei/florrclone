@@ -30,18 +30,25 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
 }
 int total(const Counts& counts,const std::string& name){int n=0;for(const auto&[key,value]:counts)if(key.first==name)n+=value;return n;}
 }
+double expectedHyperEternals(const char* id) {
+    const auto& c=registry();DropTables tables;tables.link(c);std::vector<double> weights;
+    for(const auto& e:tables.guaranteedForMob(c.mobIndex(id)))
+        if(e.petalIndex!=kInvalidIndex&&petalComesAt(c.petal(e.petalIndex),Rarity::Unique))weights.push_back(hyperSuperChance(e.rates));
+    double expected=0;for(double chance:hyperEternalChances(weights,kHyperEternalDropBudget/kLootFeelCopies))expected+=chance*kLootFeelCopies;
+    return expected;
+}
 TEST(hyper_drop_budget_is_035_eternal_per_corpse_not_per_drop_row){
     for(const auto id:{"ladybug","bee","beetle"}){
         const auto result=kills(id,Rarity::Apex,2000);int eternal=0;
         for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
-        CHECK(eternal>590&&eternal<810);
+        CHECK_NEAR(eternal/2000.0,expectedHyperEternals(id),0.08);
     }
 }
 TEST(hyper_drop_budget_bonus_preserves_existing_one_point_five_and_double_rates){
     for(int bonus=2;bonus<=3;++bonus){
         const auto result=kills("ladybug",Rarity::Apex,2000,false,bonus);int eternal=0;
         for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
-        CHECK_NEAR(eternal/2000.0,bonus==2?0.525:0.7,0.1);
+        CHECK_NEAR(eternal/2000.0,expectedHyperEternals("ladybug")*(bonus==2?1.5:2.0),0.1);
     }
 }
 TEST(reference_pharaoh_crown_really_drops_at_unique_from_super_and_eternal_beetles){
@@ -222,5 +229,23 @@ TEST(centipede_body_kills_award_loot_without_soul_splitter) {
         loot.run(w,grid,c,rng,1000,net::kTickSeconds,commands,events);commands.flush();
         std::uint32_t quantity=0;Query<DropTag,DropItem> drops{w};drops.each([&](Entity,DropTag&,DropItem& drop){if(LootSystem::mayPickUp(drop,player,77))quantity+=drop.quantity;});
         CHECK(quantity>0);
+    }
+}
+
+TEST(hyper_eternal_allocations_do_not_exceed_super_chances) {
+    const auto& c=registry();DropTables tables;tables.link(c);
+    for(std::uint16_t mob=0;mob<c.mobCount();++mob){
+        std::vector<double> weights;
+        for(const auto& row:tables.guaranteedForMob(mob))
+            if(row.petalIndex!=kInvalidIndex&&petalComesAt(c.petal(row.petalIndex),Rarity::Unique))
+                weights.push_back(hyperSuperChance(row.rates));
+        const auto chances=hyperEternalChances(weights,kHyperEternalDropBudget/kLootFeelCopies);
+        double sum=0;for(std::size_t i=0;i<weights.size();++i){sum+=chances[i];if(weights[i]>=0)CHECK(chances[i]<=weights[i]*0.5+1e-12);}
+        CHECK(sum<=kHyperEternalDropBudget/kLootFeelCopies+1e-12);
+    }
+    const auto result=kills("mecha_flower",Rarity::Apex,4000);
+    for(const char* id:{"battery","cogwheel","fragment","mimic"}){
+        auto number=[&](Rarity rarity){auto i=result.find({id,rarityIndex(rarity)});return i==result.end()?0:i->second;};
+        CHECK(number(Rarity::Super)>number(Rarity::Unique));
     }
 }

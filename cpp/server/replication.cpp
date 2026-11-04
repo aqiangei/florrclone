@@ -209,6 +209,42 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
     return out;
 }
 
+void Replicator::prepareParallelReads() {
+    (void)componentId<Afflictions>();
+    (void)componentId<ArenaScore>();
+    (void)componentId<Body>();
+    (void)componentId<BurrowState>();
+    (void)componentId<Dead>();
+    (void)componentId<DropItem>();
+    (void)componentId<Faction>();
+    (void)componentId<GhostTag>();
+    (void)componentId<GroundEffect>();
+    (void)componentId<Health>();
+    (void)componentId<Loadout>();
+    (void)componentId<ManaPool>();
+    (void)componentId<MobAi>();
+    (void)componentId<MobRemains>();
+    (void)componentId<MobRingPetal>();
+    (void)componentId<NetId>();
+    (void)componentId<Npc>();
+    (void)componentId<Pet>();
+    (void)componentId<PetalInstance>();
+    (void)componentId<PetalSlotState>();
+    (void)componentId<PlayerAccount>();
+    (void)componentId<PlayerInput>();
+    (void)componentId<PlayerLocation>();
+    (void)componentId<PlayerProgress>();
+    (void)componentId<PlayerTag>();
+    (void)componentId<PlayerVisuals>();
+    (void)componentId<Projectile>();
+    (void)componentId<Replicated>();
+    (void)componentId<SacrificeRitual>();
+    (void)componentId<ShieldState>();
+    (void)componentId<TeleporterState>();
+    (void)componentId<Transform>();
+    (void)componentId<Undead>();
+}
+
 void Replicator::build(World& world, Entity viewer, ClientView& view,
                        const Frame& frame, ByteWriter& out) {
     const Transform* viewerTransform = world.tryGet<Transform>(viewer);

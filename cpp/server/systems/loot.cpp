@@ -690,10 +690,14 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // every flower in the game, and then nothing splits.
         const auto baseEligible=eligible_;
         std::vector<std::uint16_t> hyperEternalPool;
+        std::vector<double> hyperSuperWeights;
         if(hyperKill)for(const auto& entry:table)
             if(entry.petalIndex!=kInvalidIndex&&petalComesAt(content.petal(entry.petalIndex),Rarity::Unique)&&
                std::find(hyperEternalPool.begin(),hyperEternalPool.end(),entry.petalIndex)==hyperEternalPool.end())
+            {
                 hyperEternalPool.push_back(entry.petalIndex);
+                hyperSuperWeights.push_back(hyperSuperChance(entry.rates));
+            }
         std::vector<int> bonuses;int maxBonus=1;
         for(const auto claimant:baseEligible) {
             const int bonus=bonusMultiplier
@@ -701,6 +705,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             bonuses.push_back(bonus);maxBonus=std::max(maxBonus,bonus);
         }
         const int baseTrials=baseLootTrialsForRarity(mobRarity);
+        const auto eternalChances=hyperEternalChances(hyperSuperWeights,kHyperEternalDropBudget/baseTrials);
         const bool superBonus=rarityIndex(mobRarity)>=rarityIndex(Rarity::Super);
         const int trials=superBonus?baseTrials*(maxBonus+1)/2:baseTrials*maxBonus;
         const bool grouped=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rollGroup!=0;});
@@ -715,8 +720,14 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 eligibleOrbs_.push_back(tier);anyOrb=anyOrb||tier!=kRarityCount;
             }
             // One shared budget for the entire corpse, never a budget per drop row.
-            if(hyperKill&&!hyperEternalPool.empty()&&rng.chance(kHyperEternalDropBudget/baseTrials)){
-                const auto petal=hyperEternalPool[std::min(hyperEternalPool.size()-1,static_cast<std::size_t>(rng.unit()*hyperEternalPool.size()))];
+            std::size_t eternalPick=hyperEternalPool.size();
+            if(hyperKill&&!hyperEternalPool.empty()) {
+                double roll=rng.unit();
+                for(std::size_t i=0;i<eternalChances.size();++i)
+                    if((roll-=eternalChances[i])<0){eternalPick=i;break;}
+            }
+            if(eternalPick<hyperEternalPool.size()){
+                const auto petal=hyperEternalPool[eternalPick];
                 hyperEternalRoll=true;
                 auto magic=visibleGarbage?kInvalidIndex:content.magicFormOf(petal);
                 if(!visibleGarbage)for(const auto& entry:table)

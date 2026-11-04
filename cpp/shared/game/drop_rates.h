@@ -39,10 +39,32 @@ inline bool parseDropRates(const Json& json, DropRates& out) {
 }
 inline const std::vector<DropRate>& ratesFor(const DropRates& rates,Rarity mob) {
     static const std::vector<DropRate> none;
-    // Hyper material drops promote Eternal's authored S tail to Eternal;
-    // the old unused Hyper row has no such tail and is not the new policy.
+    // Hyper ordinary drops retain Eternal's authored S tail. Extra Eternal
+    // payouts are budgeted separately by hyperEternalChances().
     const auto tier=mob==Rarity::Apex?Rarity::Unique:mob;
     return rates.empty()?none:rates[std::min(rates.size()-1,static_cast<std::size_t>(rarityIndex(tier)))];
+}
+// Negative means a legacy row without an authored tier distribution.
+inline double hyperSuperChance(const DropRates& rates) {
+    if (rates.empty()) return -1.0;
+    double chance=0;
+    for(const auto& rate:ratesFor(rates,Rarity::Apex))
+        if(rate.rarity==Rarity::Super) chance+=rate.probability;
+    return chance;
+}
+// Preserve legacy allocations. Explicit rows share the remaining E budget
+// by S weight, with each E chance capped at half its S chance.
+inline std::vector<double> hyperEternalChances(const std::vector<double>& super, double budget) {
+    std::vector<double> result(super.size(),0);
+    if(super.empty())return result;
+    double remaining=budget,total=0;
+    for(std::size_t i=0;i<super.size();++i) {
+        if(super[i]<0){result[i]=budget/super.size();remaining-=result[i];}
+        else total+=super[i];
+    }
+    const double scale=total>0?std::min(0.5,std::max(0.0,remaining)/total):0;
+    for(std::size_t i=0;i<super.size();++i)if(super[i]>=0)result[i]=super[i]*scale;
+    return result;
 }
 inline int rollDropRates(const DropRates& rates,Rarity mob,double sample) {
     if(sample<0)return -1;

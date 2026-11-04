@@ -244,6 +244,7 @@ add_library(flix_server STATIC
   server/chat_commands.cpp
   server/chat_moderation.cpp
   server/replication.cpp
+  server/parallel_snapshots.cpp
   server/session.cpp
   server/sacrifice.cpp
   server/splitter.cpp
@@ -262,6 +263,9 @@ add_library(flix_server STATIC
   server/systems/dungeons.cpp
 )
 target_link_libraries(flix_server PUBLIC flix_shared)
+if(NOT EMSCRIPTEN)
+  target_link_libraries(flix_server PUBLIC Threads::Threads)
+endif()
 
 add_executable(flowrix_server server/main.cpp)
 target_link_libraries(flowrix_server PRIVATE flix_server)
@@ -777,6 +781,26 @@ if(EMSCRIPTEN)
     ${FLIX_EMBED_DATA}
     # The server sets no text.
     "SHELL:--exclude-file *.ttf")
+
+  # Only the Node server uses shared-memory pthreads. The browser and offline
+  # targets retain their original non-threaded libraries and need no COOP/COEP.
+  foreach(base flix_shared flix_server)
+    get_target_property(parallel_sources ${base} SOURCES)
+    add_library(${base}_parallel STATIC ${parallel_sources})
+    target_include_directories(${base}_parallel PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(${base}_parallel PUBLIC FLIX_WEB_BUILD)
+    target_compile_options(${base}_parallel PUBLIC "-pthread" PRIVATE "-flto")
+  endforeach()
+  target_link_libraries(flix_server_parallel PUBLIC flix_shared_parallel)
+  set_property(TARGET flowrix_server PROPERTY LINK_LIBRARIES flix_server_parallel)
+  target_link_options(flowrix_server PRIVATE "-pthread" "-sPTHREAD_POOL_SIZE=3"
+    "-sPTHREAD_POOL_SIZE_STRICT=2" "-sDEFAULT_PTHREAD_STACK_SIZE=2097152")
+  add_executable(flix_parallel_snapshot_tests EXCLUDE_FROM_ALL
+    tests/runner.cpp tests/parallel_snapshots_tests.cpp)
+  target_link_libraries(flix_parallel_snapshot_tests PRIVATE flix_server_parallel)
+  target_link_options(flix_parallel_snapshot_tests PRIVATE "-pthread" "-sENVIRONMENT=node"
+    "-sPTHREAD_POOL_SIZE=3" "-sPTHREAD_POOL_SIZE_STRICT=2" "-sEXIT_RUNTIME=1"
+    "-sSTACK_SIZE=8388608" "-sINITIAL_MEMORY=64MB" "-sALLOW_MEMORY_GROWTH=1")
 
   # --- the offline build -----------------------------------------------------
   # Both halves in one wasm, in one page, in one file. offline/main.cpp starts

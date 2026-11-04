@@ -22,6 +22,7 @@
 #include "server/bot_ai.h"
 #include "server/db.h"
 #include "server/replication.h"
+#include "server/parallel_snapshots.h"
 #include "server/session.h"
 #include "server/squads.h"
 #include "shared/core/world.h"
@@ -1539,7 +1540,8 @@ private:
     std::unordered_map<std::string, CachedSkinLook> skinLooks_;
 
     NetIdAllocator netIds_;
-    Replicator replicator_;
+    std::unique_ptr<ParallelSnapshots> parallelSnapshots_;
+    std::vector<ParallelSnapshots::Job> snapshotJobs_;
     EventQueue events_;
 
     std::unique_ptr<MovementSystem> movement_;

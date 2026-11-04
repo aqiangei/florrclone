@@ -186,7 +186,7 @@ struct DropDef {
     /// kInvalidIndex for anything that is not a petal, which is exactly the
     /// set of drops the browser build has no icon for either.
     std::uint16_t petalIndex = kInvalidIndex;
-    DropRates rates, magicRates;
+    DropRates rates, magicRates, sourceRates;
     std::uint16_t magicPetal = kInvalidIndex, sourcePetal = kInvalidIndex;
     int orbTier = kRarityCount;
 };
@@ -283,6 +283,7 @@ std::vector<std::vector<DropDef>> loadDropTables() {
             def.petalIndex = content().petalIndex(def.itemType);
             if(entry.contains("rarityChances")&&!parseDropRates(entry["rarityChances"],def.rates))continue;
             def.sourcePetal = def.petalIndex;
+            def.sourceRates = def.rates;
             def.magicPetal = entry.contains("magicItemType")
                 ? content().petalIndex(entry["magicItemType"].asString()) : content().magicFormOf(def.petalIndex);
             if(entry.contains("magicRarityChances") && !parseDropRates(entry["magicRarityChances"],def.magicRates))continue;
@@ -455,7 +456,10 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         for(const auto& drop:table)if(original(drop)!=kInvalidIndex&&petalComesAt(content().petal(original(drop)),Rarity::Unique)&&
             std::none_of(pool.begin(),pool.end(),[&](const DropDef* other){return original(*other)==original(drop);} ))pool.push_back(&drop);
         hyperEternalCell=true;
-        for(const auto* drop:pool)push(*drop,Rarity::Unique,100.0*kHyperEternalDropBudget/(kLootFeelCopies*pool.size()));
+        std::vector<double> weights;
+        for(const auto* drop:pool)weights.push_back(hyperSuperChance(drop->sourceRates));
+        const auto chances=hyperEternalChances(weights,kHyperEternalDropBudget/kLootFeelCopies);
+        for(std::size_t i=0;i<pool.size();++i)push(*pool[i],Rarity::Unique,100.0*chances[i]);
         hyperEternalCell=false;
     }
     // Exact reference tables are per independent trial, without the legacy

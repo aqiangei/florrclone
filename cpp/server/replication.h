@@ -280,6 +280,9 @@ private:
 /// Builds the Snapshot message for one client.
 class Replicator {
 public:
+    // Register every component touched by this reader on the main thread,
+    // before any worker can trigger lazy component registration.
+    static void prepareParallelReads();
     /// Everything the snapshot needs that is not in the world.
     struct Frame {
         std::uint32_t tick = 0;

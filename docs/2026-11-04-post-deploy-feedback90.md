@@ -7,7 +7,7 @@
 - `net_client.h/.cpp`、`game_server.cpp`：BulkCraft携带排除列表，服务端先完整校验再合成，不扣黑名单材料。协议90，需配套构建上线。
 - `cpp/client/ui/menu_guild.cpp`：在线成员行常驻组队按钮；会长的更多菜单单独打开踢出，再确认，不与组队直接相邻。
 - `maps/garden.tmj`：工厂入口由1536方形改为2560；开放的左门洞SVG(80,240)对齐原传送坐标(22493.9393939394,15487.8787878788)。没有改内部地图、传送位置或碰撞层。
-- `cpp/server/systems/petals.cpp`：花粉云寿命5→4秒，重复命中间隔500→750毫秒，单次伤害及原装填时间不变。原代码不是无限寿命，但云可驻留重叠连击，此调整削减驻留收益。
+- `cpp/server/systems/petals.cpp`：花粉云寿命5→4秒，重复命中间隔500→600毫秒，单次伤害及原装填时间不变。原代码不是无限寿命，但云可驻留重叠连击，此调整削减驻留收益。
 - `cpp/server/game_server.cpp`：生命之符(ankh)破碎时将仍活着的拥有者移至破碎位置，并进行地形圆碰撞修正、清掉移动速度；不治疗、不复活，不移动另一具身体。
 - `data/mobs.json`：仅四种丛林/地狱蜈蚣头、身体扩展SVG viewBox与对应visual_scale，避免圆边/触角被矩形裁剪；保留原身体直径及玩法碰撞半径。其他95种怪配置逐项比对未变。
 - `cpp/server/splitter.cpp`：分裂结束时把已释放Projectile的owner/creditTo及GroundEffect.owner转交存活身体。原先分身消失后攻击仍存在，归属追踪却得到NULL_ENTITY，延迟击杀没有任何掉落资格。
@@ -70,3 +70,12 @@
 - 新增centipede_body_kills_award_loot_without_soul_splitter：真实SpawnSystem生成完整链，直接击杀身体并检查头还活着、身体贡献账本存在、LootSystem生成玩家可拾取掉落；五种蜈蚣×S/E/H共15场景。修前仅Hel三档quantity断言失败，修后全部通过。
 - 另跑reported_hyper_screen_and_sandstorm_keep_split_account_loot通过，两种各300次的对比分裂/未分裂总量保持一致。
 - 测试使用源码目录掉落表，未以旧暂存数据冒充新数据。尚未重建dist/提交/部署；数据内容哈希会变，上线必须成对重建与部署。
+
+
+## 收尾：H掉落S/E倒挂修复
+
+- shared/game/drop_rates.h统一计算：显式概率表按S权重分配额外E，每项E单次概率最多同种S的一半；整尸E预算仍以上限0.35为限，S总权重不足时实际E预算减少。没有提高S概率。无显式概率表的旧条目保留原均分配额，防止无依据重算旧表。
+- 服务端systems/loot.cpp按共享概率采样；图鉴menu_gallery.cpp使用同一函数，并保留sourceRates用于魔法球转换前的来源权重，避免图鉴与实际分配不同。
+- hyper_eternal_allocations回归通过：全注册怪物显式表检查E≤S/2、总预算≤0.35/尸体；4000次机械花击杀的电池/cogwheel/fragment/mimic均S数量高于E。hyper_drop_budget两项通过，包括Bonus1.5/2倍率；旧固定0.35断言已改为新封顶规则的计算期望。
+- centipede_body_kills再次通过。剩余回归及完整Web构建进行中，尚未提交/推送/部署。
+- 工作区另有协议92/电网/60TPS/并行快照任务修改与独立release92构建，保留它们；本任务不操作其构建目录或部署。临时原生测试构建补入新parallel_snapshots.cpp以兼容当前工作区，没有把原链接缺文件报错算成通过。
