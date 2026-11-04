@@ -14,6 +14,7 @@
 #include "client/chat_bubbles.h"
 #include "client/world_view.h"
 #include "shared/game/config.h"
+#include "shared/game/shop.h"
 #include "shared/game/skin_format.h"
 #include "shared/game/skills.h"
 #include "shared/game/terrain.h"
@@ -797,6 +798,7 @@ public:
     const WorldView& view() const { return view_; }
     bool pyramidMapRevealed = false;
     std::int64_t lockedShopRotation=-1;
+    std::vector<ShopOffer> lockedShopOffers;
     void toggleShopLock();
     std::uint32_t dropBonusStreak=0;
     int dropBonusMultiplier=1;

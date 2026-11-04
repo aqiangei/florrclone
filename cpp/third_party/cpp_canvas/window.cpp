@@ -340,6 +340,15 @@ EM_JS(void, web_soft_keyboard, (int wanted), {
     Module.cppSoftUp = false;
   }
 });
+EM_JS(void, web_soft_caret, (const char* element, double x, double y, double fit), {
+  const canvas = document.getElementById(UTF8ToString(element));
+  const node = document.getElementById('__flix_soft_keyboard');
+  if (!canvas || !node) return;
+  const rect = canvas.getBoundingClientRect();
+  // Fixed DOM coordinates use CSS pixels, never backing-store/DPR pixels.
+  node.style.left = Math.max(0, Math.min(innerWidth-28, rect.left+x*fit))+'px';
+  node.style.top = Math.max(0, Math.min(innerHeight-28, rect.top+y*fit))+'px';
+});
 EM_JS(int, web_ime_busy, (), {
   const node = document.getElementById('__flix_soft_keyboard');
   return (node && node.__composing) ? 1 : 0;
@@ -1107,7 +1116,10 @@ struct Window::Impl {
     // has to be heard.
     if (i < kKeyCount) impl->droppedKeys[i] = dropped && !impl->down[i];
 
-    if (!dropped && i < kKeyCount) {
+    // A focused DOM input reports Backspace through its input diff. Feeding
+    // the same key into TextEditFrame would erase a second character.
+    const bool softBackspace = impl->softKeyboardUp && key == Key::Backspace;
+    if (!dropped && !softBackspace && i < kKeyCount) {
       // `repeat` is the browser auto-repeating a held key: it must feed text
       // fields but must not read as a fresh press to game logic -- except for
       // the two erase keys, which a field has to see repeat on.
@@ -1748,6 +1760,14 @@ void Window::dismissSoftKeyboard() {
   if (!impl_->touches.empty()) return;
   if (emscripten_get_now() < impl_->ghostUntilMillis) return;
   impl_->lowerKeyboard();
+#endif
+}
+
+void Window::setSoftKeyboardCaret(float x, float y) {
+#ifdef __EMSCRIPTEN__
+  web_soft_caret(impl_->elementId.c_str(), x, y, impl_->fit);
+#else
+  (void)x; (void)y;
 #endif
 }
 

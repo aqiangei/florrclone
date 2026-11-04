@@ -446,6 +446,8 @@ bool trackTextMouse(Window& window, TextFieldState& state, Rect box, const TextR
     // own UI -- the menu that comes up offers the field's Cut and Paste --
     // rather than the defend control it would be over the world.
     if (state.focused) {
+        window.setSoftKeyboardCaret(static_cast<float>(clamp(xOfIndex(run, state.selection.caret), box.x, box.x+box.w-28)),
+                                    static_cast<float>(box.y+(box.h-28)*.5));
         FocusedField field = TextSelect::instance().focusedField();
         if (field.state == &state) {
             field.box = box;
@@ -505,6 +507,7 @@ bool trackTextMouseWith(Window& window, TextFieldState& state, Rect box, const s
                         bool blurOutside) {
     const Vec2 mouse{window.mouseX(), window.mouseY()};
     TextFieldRegions::instance().record(box);
+    if (state.focused) window.setSoftKeyboardCaret(static_cast<float>(box.x+8), static_cast<float>(box.y+box.h-28));
 
     if (state.dragging) {
         if (window.mouseDown(MouseButton::Left)) {

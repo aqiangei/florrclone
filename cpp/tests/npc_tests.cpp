@@ -1,3 +1,4 @@
+#include "server/shop_lock.h"
 #include "shared/game/shop.h"
 #include "server/daily_drop_bonus.h"
 #include "server/timed_hammers.h"
@@ -3169,14 +3170,24 @@ TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
     const auto dir=titanWorld("shop-lock-purchase");const auto old=shopRotation(shopClockNow())-10;
     Harness h("shop-lock-purchase",[&](const std::string& path){seedAccount(path,"buyer");
         Database db;std::string error;CHECK(db.load(path,error));auto& r=db.progress(db.findUser("buyer")->id);
-        r.stars=100000;r.extra["lockedShopRotation"]=Json(static_cast<double>(old));db.markDirty();CHECK(db.save());
+        r.stars=100000;r.extra["lockedShopRotation"]=Json(static_cast<double>(old));
+        // Stored stock deliberately differs from regenerating this rotation.
+        // This simulates adding content between lock and server restart.
+        captureShopLock(r,old-1);r.extra["lockedShopOffersRotation"]=static_cast<double>(old);
+        db.markDirty();CHECK(db.save());
     },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient buyer;CHECK(joinAs(h,buyer,"buyer"));CHECK_EQ(buyer.lockedShopRotation,old);
-    const auto offer=shopOffers(old).front();const auto owned=buyer.profile().stackCount(offer.petalIndex,offer.rarity);
+    CHECK_EQ(buyer.lockedShopOffers.size(),std::size_t(kShopOfferCount));
+    const auto offer=shopOffers(old-1).front();
+    CHECK_EQ(buyer.lockedShopOffers.front().petalIndex,offer.petalIndex);
+    CHECK(buyer.lockedShopOffers.front().rarity==offer.rarity);
+    CHECK_NEAR(buyer.lockedShopOffers.front().price,offer.price,1e-9);
+    const auto owned=buyer.profile().stackCount(offer.petalIndex,offer.rarity);
     const auto stars=buyer.profile().stars;buyer.requestBuyPetal(offer.petalIndex,offer.rarity,0);
     CHECK(awaitProfile(h,buyer,[&](const Profile& p){return p.stackCount(offer.petalIndex,offer.rarity)==owned+1;}));
     CHECK_NEAR(buyer.profile().stars,stars-offer.price,1e-6);
     buyer.toggleShopLock();CHECK(h.stepUntil({&buyer},[&]{return buyer.lockedShopRotation==-1;}));
+    CHECK(buyer.lockedShopOffers.empty());
     buyer.toggleShopLock();CHECK(h.stepUntil({&buyer},[&]{return buyer.lockedShopRotation==shopRotation(shopClockNow());}));
     CHECK_EQ(kShopRotationSeconds,3600);
     const auto current=shopOffers(buyer.lockedShopRotation).front();

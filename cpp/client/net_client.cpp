@@ -323,7 +323,7 @@ void NetClient::forgetAccount() {
     craftOutcome_ = CraftOutcome{};
     craftAttemptCount_ = 0;
     pyramidMapRevealed = false;
-    lockedShopRotation=-1;dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=0;
+    lockedShopRotation=-1;lockedShopOffers.clear();dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=0;
     oracleOutcome_ = OracleOutcome{};
     oracleReadyAtMillis_ = 0;
     tradeOutcome_ = TradeOutcome{};
@@ -1157,7 +1157,9 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::DailyDropBonusState: {
             const auto streak=reader.u32();const auto multiplier=reader.u8();
             const auto remaining=reader.u32();const auto next=reader.u32();const auto locked=reader.i64();
-            if(reader.ok()) {lockedShopRotation=locked;dropBonusStreak=streak;dropBonusMultiplier=multiplier;
+            std::vector<ShopOffer> offers;const auto count=reader.u8();
+            for(unsigned i=0;i<count;++i){ShopOffer offer;offer.petalIndex=reader.u16();offer.rarity=clampRarity(reader.u8());offer.price=reader.f64();offer.discountPercent=reader.u8();offers.push_back(offer);}
+            if(reader.ok()) {lockedShopOffers=std::move(offers);lockedShopRotation=locked;dropBonusStreak=streak;dropBonusMultiplier=multiplier;
                 dropBonusUntil=wallClockMillis()+remaining;dropBonusNextClaim=wallClockMillis()+next;}
             break;
         }

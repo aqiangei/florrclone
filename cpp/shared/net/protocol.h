@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 85;
+inline constexpr std::uint16_t kProtocolVersion = 86;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -459,7 +459,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< squad invite for the top-left Accept/Decline toast.
                         ///< Additive; older clients skip an unknown id.
     PyramidMapState,    ///< u8 realm, u8 revealed; visit-only, never saved (v74).
-    DailyDropBonusState, ///< u32 streak, u8 multiplier, u32 remainingMs, u32 nextClaimMs, i64 lockedShopRotation (-1 unlocked) (v79).
+    DailyDropBonusState, ///< u32 streak, u8 multiplier, u32 remainingMs, u32 nextClaimMs, i64 lockedShopRotation (-1 unlocked), u8 count, {u16 petal,u8 rarity,f64 price,u8 discount} locked offers (v86).
 };
 
 // ---------------------------------------------------------------------------

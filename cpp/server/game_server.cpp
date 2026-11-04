@@ -1,3 +1,4 @@
+#include "server/shop_lock.h"
 #include "server/timed_hammers.h"
 #include "server/daily_drop_bonus.h"
 #include "server/game_server.h"
@@ -2353,7 +2354,11 @@ void GameServer::resyncProfile(Session& session, net::Connection& connection) {
 }
 
 void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
-    const auto now=dropBonusNow();const auto& record=database_.progress(session.userId);
+    const auto now=dropBonusNow();auto& record=database_.progress(session.userId);
+    const auto rotation=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
+    if(rotation>=0 && (!record.extra["lockedShopOffers"].isArray() || record.extra["lockedShopOffersRotation"].asDouble(-1)!=rotation)) {
+        captureShopLock(record,rotation);database_.markDirty();
+    }
     const auto& b=record.extra["dailyDropBonus"];
     const bool claimed=static_cast<std::int64_t>(b["day"].asDouble(-1))>=dropBonusDay(now);
     ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::DailyDropBonusState));
@@ -2361,6 +2366,8 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
     w.u32(static_cast<std::uint32_t>(clamp(b["until"].asDouble()-now,0.0,3600000.0)));
     w.u32(claimed?static_cast<std::uint32_t>((dropBonusDay(now)+1)*86400000-8LL*3600000-now):0);
     w.i64(static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1)));
+    const auto offers=lockedShopOffers(record);w.u8(static_cast<std::uint8_t>(offers.size()));
+    for(const auto& offer:offers){w.u16(offer.petalIndex);w.u8(static_cast<std::uint8_t>(offer.rarity));w.f64(offer.price);w.u8(static_cast<std::uint8_t>(offer.discountPercent));}
     connection.send(w);
 }
 void GameServer::handleDropBonus(Session& session, net::Connection& connection, ByteReader& reader) {
@@ -2368,7 +2375,10 @@ void GameServer::handleDropBonus(Session& session, net::Connection& connection, 
     auto& record=database_.progress(session.userId);
     if(claim==1 && claimDropBonus(record,dropBonusNow())) database_.markDirty();
     if(claim==2){const auto old=record.extra["lockedShopRotation"].asDouble(-1);
-        record.extra["lockedShopRotation"]=Json(old<0?static_cast<double>(shopRotation(shopClockNow())):-1.0);database_.markDirty();}
+        record.extra["lockedShopRotation"]=Json(old<0?static_cast<double>(shopRotation(shopClockNow())):-1.0);
+        if(old<0)captureShopLock(record,static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble()));
+        else {record.extra["lockedShopOffers"]=Json();record.extra["lockedShopOffersRotation"]=Json();}
+        database_.markDirty();}
     sendDropBonus(session,connection);
 }
 
@@ -4125,7 +4135,7 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     double price = shopPrice(petalIndex, rarity);
     if (offerSlot != net::kNoShopOffer) {
         const auto locked=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
-        const std::vector<ShopOffer> offers = shopOffers(locked>=0?locked:shopRotation(shopClockNow()));
+        const std::vector<ShopOffer> offers = (locked>=0?lockedShopOffers(record):shopOffers(shopRotation(shopClockNow())));
         const auto slot = static_cast<std::size_t>(offerSlot);
         if (slot >= offers.size() || offers[slot].petalIndex != petalIndex ||
             offers[slot].rarity != rarity) {

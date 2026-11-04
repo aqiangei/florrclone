@@ -709,9 +709,9 @@ bool ShopPanel::render(MenuContext& ctx) {
 
     if (tab_ == Tab::Offers) {
         const std::int64_t rotation = ctx.net.lockedShopRotation>=0?ctx.net.lockedShopRotation:shopRotation(shopClockNow());
-        if (state.offersRotation != rotation) {
+        if (state.offersRotation != rotation || ctx.net.lockedShopRotation>=0) {
             state.offersRotation = rotation;
-            state.offers = shopOffers(rotation);
+            state.offers = ctx.net.lockedShopRotation>=0 ? ctx.net.lockedShopOffers : shopOffers(rotation);
         }
 
         text(canvas, trEnZh("Today's offers:", "今日特惠："), panel.x + panel.w * 0.5,
