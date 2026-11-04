@@ -7,7 +7,10 @@
     "cpp/shared/core/types.h": "c246361ee7399ba6a26d307806e2cff74250784358f02abe94c1d140ad111637",
     "data/mobs.json": "0429154c10e33e825e96f565b1774b9b0aa1c8771ca4a2c6bce83f4043061440",
     "data/petals.json": "5b955cfd8e42ca5f0f1e8e37eb50950286d941d9e55f67010a6aba89fa4d08a4",
-    "data/mob_drops.json": "d8e4527ea9688ccc9324fdd36e88d202a20434a4b384e1f966c67aa4d580f1eb"
+    "data/mob_drops.json": "d8e4527ea9688ccc9324fdd36e88d202a20434a4b384e1f966c67aa4d580f1eb",
+    "cpp/shared/game/config.cpp": "3aa194a9acc66e23b426eec150825ff24bf7cb9c838bc6a92f3fec81820f088c",
+    "cpp/shared/game/config.h": "6b76af1012e6722973a8ee828394e93694381cab190099a50691518ef8899ee5",
+    "cpp/shared/game/rarity.h": "deb387a70664431660c825a586f455a509a272a880e6abda5472411cb44b6506"
   },
   "accounts": [
     {
