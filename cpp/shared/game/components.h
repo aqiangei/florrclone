@@ -1091,6 +1091,8 @@ struct Npc {
     /// Replicated with the NPC, so the window shows the recipe this one
     /// makes. 0 for every other NPC.
     std::uint8_t recipe = 0;
+    std::uint8_t nextRecipe = 0;
+    double recipeRefreshAtMillis = 0;
 };
 
 /// A nest that periodically produces escorts, up to a live cap.

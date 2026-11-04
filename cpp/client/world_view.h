@@ -182,6 +182,8 @@ struct RemoteEntity {
     /// An NPC's recipe: which of its mob's `npc.recipes` an assembler makes,
     /// from its spawn record. 0 for every other entity.
     std::uint8_t npcRecipe = 0;
+    std::uint8_t npcNextRecipe = 0;
+    double npcRecipeRefreshAtMillis = 0;
     std::uint32_t ownerNetId = 0;
     Vec2 ownerOffset;
     /// The entity `ownerOffset` is measured from: the owner, or the moon its

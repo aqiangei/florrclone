@@ -7,13 +7,13 @@ namespace {
 const ContentRegistry& data(){static ContentRegistry c;static bool ready=false;if(!ready){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));ready=true;}return c;}
 int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(!w.has<HoleTether>(e)&&at.realm==realm&&t.rarity==rarity&&(!b||b->chainHead==e))++n;});return n;}
 }
-TEST(hyper_health_is_six_times_eternal_without_other_stat_inflation){
+TEST(hyper_health_is_thirty_six_times_eternal_with_unchanged_xp_speed_and_pollen){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto e=data().mobStats(i,Rarity::Unique),h=data().mobStats(i,Rarity::Apex);
-        CHECK_NEAR(h.health,e.health*6,1e-5);CHECK_NEAR(h.damage,e.damage*6,1e-5);
+        CHECK_NEAR(h.health,e.health*36,std::max(1e-5,h.health*1e-12));CHECK_NEAR(h.damage,e.damage*12,1e-5);
         CHECK_NEAR(e.health,data().mob(i).health*7122000.0,1e-5);
         CHECK_NEAR(data().mobStats(i,Rarity::Super).health,data().mob(i).health*2374000.0,1e-5);
         CHECK_NEAR(h.xp,e.xp*3,1e-5);
-        CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor*2,1e-9);}
+        CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor*4,1e-9);}
     const auto pollen=data().petalStats(data().petalIndex("pollen"),Rarity::Apex);
     CHECK_NEAR(pollen.damage,249318,1e-9);CHECK_NEAR(pollen.health,32805,1e-9);
     CHECK_EQ(pollen.count,3);CHECK_NEAR(pollen.reloadMillis,2000,1e-9);

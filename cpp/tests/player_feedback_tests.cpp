@@ -7,11 +7,29 @@
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
 #include "server/systems/npcs.h"
+#include "server/systems/loot.h"
 #include "server/loot_eligibility.h"
 #include "shared/game/config.h"
 #include "shared/game/shop.h"
 #include "client/camera.h"
 using namespace flix;
+TEST(feedback_departed_top_contributor_does_not_erase_remaining_split_owner_loot){
+    const auto& c=testsupport::shippedContent();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{82};LootSystem loot;
+    const auto gone=w.create();w.add<PlayerTag>(gone);w.destroy(gone);
+    const auto living=w.create();w.add<PlayerTag>(living);w.add<Transform>(living,Transform{{10000,10000},0});w.add<Health>(living,Health{100,100});
+    const auto corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex("sandstorm"),Rarity::Super,1});
+    w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100});
+    Bounty tally;tally.credit(gone,90,41);tally.credit(living,10,42);w.add<Bounty>(corpse,tally);w.add<Dead>(corpse,Dead{gone});
+    loot.run(w,grid,c,rng,0,0,commands,events);commands.flush();int drops=0;
+    Query<DropTag,DropItem> all{w};all.each([&](Entity,DropTag&,DropItem& d){if(LootSystem::mayPickUp(d,living,42))drops+=d.quantity;});CHECK(drops>0);
+}
+TEST(feedback_hyper_loot_accepts_a_single_effective_hit_below_one_percent){
+    const auto& c=testsupport::shippedContent();World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{29};LootSystem loot;
+    const auto player=w.create();w.add<PlayerTag>(player);w.add<Transform>(player,Transform{{10000,10000},0});w.add<Health>(player,Health{100,100});
+    const auto corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex("sandstorm"),Rarity::Apex,1});
+    w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,1e12});Bounty tally;tally.credit(player,1);w.add<Bounty>(corpse,tally);w.add<Dead>(corpse,Dead{player});
+    loot.run(w,grid,c,rng,0,0,commands,events);commands.flush();int count=0;Query<DropTag,DropItem> drops{w};drops.each([&](Entity,DropTag&,DropItem& d){count+=d.quantity;});CHECK(count>0);
+}
 TEST(feedback_dummy_total_preserves_old_hits_and_excludes_other_players){
     const auto& c=testsupport::shippedContent();WorldRenderer renderer;renderer.setContent(&c);WorldView view;
     RemoteEntity dummy;dummy.netId=123;dummy.kind=net::EntityKind::Npc;dummy.typeIndex=c.mobIndex("target_dummy");view.seedForTest(dummy);

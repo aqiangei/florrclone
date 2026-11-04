@@ -244,6 +244,8 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         std::string equippedSkinId;
         std::uint32_t ownerNetId;
         std::uint8_t npcRecipe;
+        std::uint8_t npcNextRecipe = 0;
+        double npcRecipeRefreshAtMillis = 0;
         std::string name;
     };
     std::vector<Spawn> spawns;
@@ -277,7 +279,11 @@ bool WorldView::applySnapshot(ByteReader& reader) {
             s.equippedSkinId = reader.str();
         }
         if (s.kind == net::EntityKind::Petal) s.ownerNetId = reader.u32();
-        if (s.kind == net::EntityKind::Npc) s.npcRecipe = reader.u8();
+        if (s.kind == net::EntityKind::Npc) {
+            s.npcRecipe = reader.u8();
+            s.npcNextRecipe = reader.u8();
+            s.npcRecipeRefreshAtMillis = reader.f64();
+        }
         if (s.flags & net::SpawnHasName) s.name = reader.str();
         spawns.push_back(std::move(s));
         if (!reader.ok()) return false;
@@ -423,6 +429,9 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         e.equippedSkinId = std::move(s.equippedSkinId);
         e.ownerNetId = s.ownerNetId;
         e.npcRecipe = s.npcRecipe;
+        e.npcNextRecipe = s.npcNextRecipe;
+        e.npcRecipeRefreshAtMillis = s.npcRecipeRefreshAtMillis > 0
+            ? sampleMillis + s.npcRecipeRefreshAtMillis - serverTime : 0;
         if (s.flags & net::SpawnIsSelf) {
             // Continue despawns the corpse and spawns a fresh body. Drop the
             // fallen one immediately so it cannot keep painting next to the

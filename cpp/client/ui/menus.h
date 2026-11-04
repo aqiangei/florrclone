@@ -56,6 +56,8 @@ struct NearbyNpc {
     Rarity rarity = Rarity::Common;
     /// An assembler's one recipe, an index into its mob's `npc.recipes`.
     std::uint8_t recipe = 0;
+    std::uint8_t nextRecipe = 0;
+    double refreshRemainingMillis = 0;
 };
 
 /// Which panel is on screen.
@@ -1144,7 +1146,8 @@ class AssemblerPanel {
 public:
     /// `mobIndex`, `tier` and `recipe` are the assembler the flower is
     /// standing at: whose recipes, at what tier, and which one it makes.
-    bool render(MenuContext&, std::uint16_t mobIndex, Rarity tier, std::uint8_t recipe);
+    bool render(MenuContext&, std::uint16_t mobIndex, Rarity tier, std::uint8_t recipe,
+                std::uint8_t nextRecipe = 0, double refreshRemainingMillis = 0);
     void reset();
     /// florr's window: as wide as its least, and its body deep, no grid.
     static Vec2 size();
@@ -1647,6 +1650,8 @@ public:
         nearbyMob_ = npc.mobIndex;
         nearbyTier_ = npc.rarity;
         nearbyRecipe_ = npc.recipe;
+        nearbyNextRecipe_ = npc.nextRecipe;
+        nearbyRecipeRemaining_ = npc.refreshRemainingMillis;
     }
     /// The craft menu's card for a `w` x `h` view as it stands this frame: the
     /// forge's, or the oracle's, the trader's or the titan's while the flower
@@ -1973,6 +1978,8 @@ private:
     std::uint16_t nearbyMob_ = 0xFFFF;
     Rarity nearbyTier_ = Rarity::Common;
     std::uint8_t nearbyRecipe_ = 0;
+    std::uint8_t nearbyNextRecipe_ = 0;
+    double nearbyRecipeRemaining_ = 0;
 
     InventoryPanel inventory_;
     CraftingPanel crafting_;

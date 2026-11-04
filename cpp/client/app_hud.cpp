@@ -512,7 +512,9 @@ NearbyNpc App::nearbyNpc(Vec2 self) const {
         if (service == NpcService::None) continue;
         const double gap = distance(self, entity.position) - entity.radius;
         if (gap > nearestGap) continue;
-        nearest = {service, entity.typeIndex, entity.rarity, entity.npcRecipe};
+        nearest = {service, entity.typeIndex, entity.rarity, entity.npcRecipe,
+                   entity.npcNextRecipe,
+                   std::max(0.0, entity.npcRecipeRefreshAtMillis - renderClockMillis())};
         nearestGap = gap;
     }
     return nearest;

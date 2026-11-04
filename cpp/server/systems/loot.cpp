@@ -614,7 +614,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const Dead* dead = world.tryGet<Dead>(corpse);
         const Entity killer = dead != nullptr ? dead->killer : NULL_ENTITY;
         const Health* health = world.tryGet<Health>(corpse);
-        const double damageFloor = lootDamageFloor(health != nullptr ? health->max : 0.0);
+        const double damageFloor = mobRarity == Rarity::Apex ? 0.0 :
+            lootDamageFloor(health != nullptr ? health->max : 0.0);
 
         // Loot slots go to the highest positive contributors, just like XP.
         ranked_.clear();
@@ -673,8 +674,11 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // when the killing blow was nobody's -- a poison tick, a mob finishing
         // a mob, a pet whose owner left. If that player is no longer in the
         // world the mob pays out nothing at all, which is the reference's gate.
-        const Entity credit = world.has<PlayerTag>(killer) ? killer : ranked_.front().player;
-        if (!world.has<PlayerTag>(credit)) continue;
+        // A stale final hitter must not erase the rewards earned by remaining
+        // contributors, including a splitter whose credited half has died.
+        const bool hasClaimant = std::any_of(eligible_.begin(), eligible_.end(),
+            [&](Entity player) { return world.has<PlayerTag>(player); });
+        if (!hasClaimant) continue;
 
         // A worn magic orb rewrites what this mob leaves behind: everything
         // with a magic form drops as that form instead, and nothing gets past

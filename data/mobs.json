@@ -2219,6 +2219,31 @@
             }
           ],
           "to": "cutter"
+        },
+        {
+          "from": [
+            "mimic",
+            "ram"
+          ],
+          "to": "sawblade"
+        },
+        {
+          "from": [
+            {
+              "petal": "square",
+              "count": 2
+            }
+          ],
+          "to": "pentagon"
+        },
+        {
+          "from": [
+            {
+              "petal": "fragment",
+              "count": 10
+            }
+          ],
+          "to": "sawblade"
         }
       ]
     },
@@ -3384,6 +3409,24 @@
           "from": [
             "mimic",
             "ram"
+          ],
+          "to": "sawblade"
+        },
+        {
+          "from": [
+            {
+              "petal": "square",
+              "count": 2
+            }
+          ],
+          "to": "pentagon"
+        },
+        {
+          "from": [
+            {
+              "petal": "fragment",
+              "count": 10
+            }
           ],
           "to": "sawblade"
         }

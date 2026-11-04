@@ -50,6 +50,7 @@
 #include "client/ui/menu_style.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
+#include "client/ui/content_i18n.h"
 #include "client/ui/text.h"
 #include "shared/game/config.h"
 #include "shared/game/npc.h"
@@ -62,7 +63,7 @@ namespace {
 
 /// florr's window: its least width, and its body with no grid under it.
 constexpr double kWindowWidth = 610.0;
-constexpr double kWindowHeight = 356.0;
+constexpr double kWindowHeight = 432.0;
 
 /// The seats: 60 across about the slot's centre -- one on it, two 45 either
 /// side of it, three or more on a ring 90 out with the first straight up.
@@ -192,7 +193,8 @@ void AssemblerPanel::reset() {
 }
 
 bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tier,
-                            std::uint8_t recipeIndex) {
+                            std::uint8_t recipeIndex, std::uint8_t nextRecipe,
+                            double refreshRemainingMillis) {
     Canvas& canvas = ctx.canvas;
     const Profile& profile = ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
@@ -373,7 +375,28 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
     } else {
         refusal_.clear();
         drawSlotLine(canvas, card, trEnZh(kAssemblerInstructions,
-                     "每20分钟换配方，使用时延后；长按箭头加速调整数量。"));
+                     "每20分钟轮换；长按箭头加速调整数量。"));
+    }
+    if (nextRecipe < recipes.size()) {
+        const auto describe = [&](const std::vector<AssemblyRecipe::Stack>& stacks) {
+            std::string text;
+            for (const auto& stack : stacks) {
+                if (!text.empty()) text += " + ";
+                const auto& petal = content().petal(stack.petal);
+                text += std::to_string(stack.count) + "×" + petalNameTr(petal.id, petal.name.c_str());
+            }
+            return text;
+        };
+        const auto& upcoming = recipes[nextRecipe];
+        auto line = card;
+        line.lineY += 30;
+        drawSlotLine(canvas, line, trEnZh("Next: ", "下个配方：") +
+                     describe(upcoming.inputs) + " → " + describe(upcoming.outputs));
+        const int seconds = static_cast<int>(std::ceil(std::max(0.0, refreshRemainingMillis) / 1000.0));
+        line.lineY += 28;
+        drawSlotLine(canvas, line, trEnZh("Changes in: ", "下次轮换：") +
+                     std::to_string(seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") +
+                     std::to_string(seconds % 60));
     }
 
     // Tiles on their way out go over everything.

@@ -17,6 +17,7 @@ constexpr Pair kPetals[] = {
     {"magic_cotton", "魔法棉花"},
     {"magic_eye", "魔眼"},
     {"fragment", "碎片"},
+    {"pentagon", "五边形"},
     {"mecha_missile", "机甲导弹"},
     {"dark_mark", "暗黑印记"},
     {"blood_sacrifice", "血祭"},

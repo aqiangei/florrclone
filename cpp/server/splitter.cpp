@@ -312,8 +312,13 @@ void GameServer::switchSplitHalf(Session& session, double nowMillis) {
     // is being steered and a switch back costs the same as a switch out.
     armSplitterReload(session, nowMillis);
 
+    const auto* oldInput = world_.tryGet<PlayerInput>(session.entity);
+    const net::InputFrame heldInput = oldInput ? oldInput->current : net::InputFrame{};
     parkBody(session.entity);
     std::swap(session.entity, session.splitOther);
+    // The steering frame belongs to the connection, not its previous body.
+    // Retain held movement/defend so a ready magic bubble works immediately.
+    if (auto* input = world_.tryGet<PlayerInput>(session.entity)) input->current = heldInput;
 
     // The client learns which flower is its own from the SELF FLAG on a spawn
     // record, and it already holds both of these bodies -- so nothing in the

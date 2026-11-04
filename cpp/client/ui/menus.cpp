@@ -2896,7 +2896,8 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
                        : nearbyNpc_ == NpcService::Trader ? trader_.render(ctx)
                        : nearbyNpc_ == NpcService::Titan  ? titan_.render(ctx)
                        : nearbyNpc_ == NpcService::Assembler
-                           ? assembler_.render(ctx, nearbyMob_, nearbyTier_, nearbyRecipe_)
+                           ? assembler_.render(ctx, nearbyMob_, nearbyTier_, nearbyRecipe_,
+                                               nearbyNextRecipe_, nearbyRecipeRemaining_)
                        : absorbMode_ ? absorb_.render(ctx)
                                      : crafting_.render(ctx);
             // The forge's Switch turns the window over between Craft and

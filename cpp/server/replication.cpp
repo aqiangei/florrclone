@@ -542,6 +542,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             // Which of its mob's recipes an assembler makes; 0 for any other.
             const Npc* npc = world.tryGet<Npc>(candidate.entity);
             out.u8(npc != nullptr ? npc->recipe : 0);
+            out.u8(npc != nullptr ? npc->nextRecipe : 0);
+            out.f64(npc != nullptr ? npc->recipeRefreshAtMillis : 0);
         }
         if (flags & net::SpawnHasName) out.str(account->username);
         ++spawnCount;

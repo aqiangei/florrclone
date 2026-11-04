@@ -188,6 +188,10 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
     const auto recipes=availableRecipes(config,content,rarity);
     if (!recipes.empty()) {
         npc.recipe = recipes[rng_.below(static_cast<std::uint32_t>(recipes.size()))];
+        const auto current = std::find(recipes.begin(), recipes.end(), npc.recipe);
+        npc.nextRecipe = recipes[(static_cast<std::size_t>(current - recipes.begin()) + 1) % recipes.size()];
+        if (npc.service == NpcService::Assembler && recipes.size() > 1)
+            npc.recipeRefreshAtMillis = nowMillis + kAssemblerRecipeRefreshMillis;
     }
     npc.cruises = !still && config.beeFlight && stats.speed > 0.0;
     const BeeCruiseDrive cruise = beeCruiseDrive(stats.speed, stats.cruiseSpeed);
@@ -232,13 +236,7 @@ void NpcSystem::run(World& world, const Terrain& terrain, const ContentRegistry&
             it=assemblerRefreshAt_.erase(it);continue;
         }
         if(nowMillis>=it->second) {
-            const auto* at=world.tryGet<Transform>(it->first);
-            const auto* body=world.tryGet<Body>(it->first);
-            bool busy=false;
-            if(at && body)for(const auto& player:players)
-                if(player.realm==at->realm && distance(player.position,at->position)<=
-                   body->radius+kNpcServiceReach+kNpcServiceSlack) {busy=true;break;}
-            if(!busy)refresh.push_back(it->first);
+            refresh.push_back(it->first);
         }
         ++it;
     }
@@ -249,11 +247,17 @@ void NpcSystem::run(World& world, const Terrain& terrain, const ContentRegistry&
         auto recipes=availableRecipes(content.mob(npc.configIndex),content,npc.rarity);
         recipes.erase(std::remove(recipes.begin(),recipes.end(),npc.recipe),recipes.end());
         if(recipes.empty()){assemblerRefreshAt_.erase(old);continue;}
-        const auto recipe=recipes[rng_.below(static_cast<std::uint32_t>(recipes.size()))];
+        const auto recipe=npc.nextRecipe;
         world.destroy(old);assemblerRefreshAt_.erase(old);
         const auto replacement=spawnNpc(world,terrain,content,npc.configIndex,npc.rarity,
                                          at.position,at.realm,nowMillis,side);
-        if(replacement!=NULL_ENTITY)world.get<Npc>(replacement).recipe=static_cast<std::uint8_t>(recipe);
+        if(replacement!=NULL_ENTITY) {
+            auto& next = world.get<Npc>(replacement);
+            next.recipe = recipe;
+            const auto all = availableRecipes(content.mob(npc.configIndex), content, npc.rarity);
+            const auto found = std::find(all.begin(), all.end(), recipe);
+            next.nextRecipe = all[(static_cast<std::size_t>(found - all.begin()) + 1) % all.size()];
+        }
         for(auto& site:sites_)if(site.entity==old)site.entity=replacement;
     }
 

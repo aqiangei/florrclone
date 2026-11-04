@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 84;
+inline constexpr std::uint16_t kProtocolVersion = 85;
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -713,7 +713,8 @@ enum class EntityKind : std::uint8_t {
 /// carries the u32 net id of the flower it orbits, which is what lets the
 /// client anchor a ring to the DRAWN owner rather than to a snapshot-old one;
 /// an Npc record carries u8 recipe, the index into its mob's `npc.recipes` of
-/// the one recipe an assembler makes (0 for any other NPC). (Version 55.)
+/// the one recipe an assembler makes (0 for any other NPC). Version 85 adds
+/// u8 nextRecipe and f64 recipeRefreshAtMillis (server clock) after that byte.
 enum SpawnFlags : std::uint8_t {
     SpawnHasName    = 1 << 0,   ///< a player name follows
     SpawnIsSelf     = 1 << 1,   ///< this is the viewer's own body

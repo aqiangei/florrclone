@@ -145,19 +145,19 @@ inline constexpr Rarity minionRarity(Rarity asked) {
 /// Mob health per tier. Superlinear on purpose: each tier is meant to be a
 /// wall, not a gentle step, so a common-tier loadout cannot chip down a
 /// legendary by patience alone.
-/// Hyper health/damage are 6x Eternal and armor 2x; XP and rewards are unchanged.
+/// Hyper health is 36x Eternal, damage 12x, armor 4x; XP/rewards unchanged.
 inline constexpr std::array<double, kLadderRarityCount> kMobHealthScale = [] {
     std::array<double, kLadderRarityCount> scale = {
         1.0, 3.75, 13.5, 54.0, 324.0, 3159.0, 126830.0, 2374000.0, 7122000.0, 21366000.0,
     };
-    scale[static_cast<std::size_t>(Rarity::Apex)] *= 2.0;
+    scale[static_cast<std::size_t>(Rarity::Apex)] *= 12.0;
     return scale;
 }();
 
 /// Mob damage per tier -- a clean 3x ladder, so a tier above you roughly
 /// triples what one touch costs.
 inline constexpr std::array<double, kLadderRarityCount> kMobDamageScale = {
-    1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 2187.0, 6561.0, 39366.0,
+    1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 2187.0, 6561.0, 78732.0,
 };
 
 /// Mob armour per tier: a flat amount subtracted from every DIRECT hit.
@@ -170,7 +170,7 @@ inline constexpr std::array<double, kLadderRarityCount> kMobDamageScale = {
 /// a mob is something you find and fight, above it a thing a raid is called
 /// for, and a raid's damage is not what armour is meant to be balanced against.
 inline constexpr std::array<double, kLadderRarityCount> kMobArmorScale = {
-    1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 729.0, 729.0, 1458.0,
+    1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 729.0, 729.0, 2916.0,
 };
 
 /// Mob body size per tier: 1 + 0.5 * 1.7^tier, so a size-1 mob's radius is
