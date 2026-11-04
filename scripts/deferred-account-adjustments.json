@@ -1,6 +1,14 @@
 {
   "actions": [
     {
+      "id": "20261104-release-Hzl-lightning-lentil",
+      "username": "Hzl",
+      "expectedUserId": "oc4h1r4344aj",
+      "petals": ["lightning", "lentil"],
+      "resetClaims": false,
+      "refund": 4
+    },
+    {
       "id": "20261104-release-Hzl-dahlia-ygg",
       "username": "Hzl",
       "petals": [
