@@ -7,7 +7,7 @@ namespace {
 const ContentRegistry& data(){static ContentRegistry c;static bool ready=false;if(!ready){std::string e;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),e));ready=true;}return c;}
 int population(World&w,Realm realm,Rarity rarity){int n=0;Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();q.each([&](Entity e,MobTag&,MobType& t,Transform& at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(!w.has<HoleTether>(e)&&at.realm==realm&&t.rarity==rarity&&(!b||b->chainHead==e))++n;});return n;}
 }
-TEST(hyper_health_is_thirty_six_times_eternal_with_unchanged_xp_speed_and_pollen){
+TEST(hyper_mobs_keep_xp_speed_and_hyper_pollen_uses_one_point_five_eternal){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto e=data().mobStats(i,Rarity::Unique),h=data().mobStats(i,Rarity::Apex);
         CHECK_NEAR(h.health,e.health*36,std::max(1e-5,h.health*1e-12));CHECK_NEAR(h.damage,e.damage*12,1e-5);
         CHECK_NEAR(e.health,data().mob(i).health*7122000.0,1e-5);
@@ -15,8 +15,28 @@ TEST(hyper_health_is_thirty_six_times_eternal_with_unchanged_xp_speed_and_pollen
         CHECK_NEAR(h.xp,e.xp*3,1e-5);
         CHECK_NEAR(h.speed,e.speed,1e-9);CHECK_NEAR(h.chaseSpeed,e.chaseSpeed,1e-9);CHECK_NEAR(h.armor,e.armor*4,1e-9);}
     const auto pollen=data().petalStats(data().petalIndex("pollen"),Rarity::Apex);
-    CHECK_NEAR(pollen.damage,249318,1e-9);CHECK_NEAR(pollen.health,32805,1e-9);
+    const auto eternalPollen=data().petalStats(data().petalIndex("pollen"),Rarity::Unique);
+    CHECK_NEAR(pollen.damage,eternalPollen.damage*1.5,1e-9);
+    CHECK_NEAR(pollen.health,eternalPollen.health*1.5,1e-9);
     CHECK_EQ(pollen.count,3);CHECK_NEAR(pollen.reloadMillis,2000,1e-9);
+}
+TEST(hyper_petal_combat_values_and_authored_specials_are_capped_at_one_point_five_eternal){
+    for(std::uint16_t i=0;i<data().petalCount();++i){
+        const auto e=data().petalStats(i,Rarity::Unique),h=data().petalStats(i,Rarity::Apex);
+        for(const auto field:{&PetalStats::damage,&PetalStats::health,&PetalStats::heal,
+            &PetalStats::passiveHealPerSecond,&PetalStats::lightningDamagePerHit,
+            &PetalStats::flowerHealthBonus,&PetalStats::armorReduction,&PetalStats::shield,
+            &PetalStats::maxMana,&PetalStats::requiredMana,&PetalStats::petManaCost}){
+            if(e.*field>0)CHECK(h.*field<=e.*field*1.5+std::max(1e-9,e.*field*1e-12));
+        }
+    }
+    for(const auto id:{"pollen","battery","soil","leaf","rose","lightning","bone"}){
+        const auto index=data().petalIndex(id);CHECK(index!=kInvalidIndex);
+        const auto e=data().petalStats(index,Rarity::Unique),h=data().petalStats(index,Rarity::Apex);
+        if(e.damage>0)CHECK_NEAR(h.damage,e.damage*1.5,std::max(1e-8,e.damage*1e-12));
+    }
+    CHECK_NEAR(petalStatScale(Rarity::Unique),6561,1e-9);
+    CHECK_NEAR(petalStrengthScale(Rarity::Apex),9841.5,1e-9);
 }
 TEST(hyper_one_per_regular_map_preserves_supers_eternals_and_waits_thirty_minutes){
     WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));

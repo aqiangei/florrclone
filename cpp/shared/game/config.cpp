@@ -1892,7 +1892,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     const Rarity graded = clampRarity(rarityIndex(r));
     const Rarity tier = ladderRarity(graded);
     const double strength = petalStrengthScale(graded == Rarity::Admin ? Rarity::Universal : graded);
-    const double stat = petalStatScale(tier);
+    const double stat = petalStatScale(graded);
     const double heal = petalHealScale(tier);
     const double modifier = petalModifierScale(tier);
     const double mana = petalManaScale(tier);
@@ -2154,6 +2154,35 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         if (row.flowerHealthBonus && c.id == "cactus") s.modifiers.maxHealth = 1.0;
         if (row.luck) s.modifiers.luck = *row.luck;
         if (row.magnetism) s.modifiers.magnetism = *row.magnetism;
+    }
+    // Hyper's combat growth is capped at 1.5x the SAME petal at Eternal.
+    // Apply after authored overrides so special damage/healing rows cannot
+    // bypass it. Counts, reloads, proc conditions and probabilities stay put.
+    if (graded == Rarity::Apex) {
+        const auto eternal = buildPetalStats(c, Rarity::Unique);
+        const auto cap = [](double& value, double base) {
+            if (base > 0.0 && value > base * 1.5) value = base * 1.5;
+        };
+        for (const auto field : {
+            &PetalStats::damage, &PetalStats::health, &PetalStats::bodyDamage,
+            &PetalStats::armorReduction, &PetalStats::armorPerStack, &PetalStats::petalArmor,
+            &PetalStats::critDamage, &PetalStats::poisonPerSecond, &PetalStats::heal,
+            &PetalStats::passiveHealPerSecond, &PetalStats::conditionalHealPerSecond,
+            &PetalStats::totemHealPerSecond, &PetalStats::lightningDamagePerHit,
+            &PetalStats::flowerHealthBonus, &PetalStats::maxMana, &PetalStats::mana,
+            &PetalStats::passiveManaPerSecond, &PetalStats::shield, &PetalStats::knockback}) {
+            cap(s.*field, eternal.*field);
+        }
+        // Keep the resource budget and its costs on the same curve, so a
+        // previously affordable magic petal does not become impossible to cast.
+        cap(s.requiredMana, eternal.requiredMana);
+        cap(s.petManaCost, eternal.petManaCost);
+        cap(s.modifiers.poisonArmor, eternal.modifiers.poisonArmor);
+        for (const auto field : {&PetalModifiers::maxHealth, &PetalModifiers::damage}) {
+            if (eternal.modifiers.*field > 1.0)
+                s.modifiers.*field = std::min(s.modifiers.*field,
+                    1.0 + (eternal.modifiers.*field - 1.0) * 1.5);
+        }
     }
     // Admin starts with universal combat strength and apex utility, then
     // boosts the useful effects. Apply AFTER all named-petal overrides so

@@ -213,6 +213,8 @@ inline double mobSizeRamp(Rarity r, double scaleAtUnique) {
 /// numbers that ride the 3x ladder without being health or damage -- a bur's
 /// armour strip, a root's stack -- read it here, so universal gives them apex.
 inline double petalStatScale(Rarity r) {
+    // Hyper no longer triples Eternal. Universal/Admin retain their own tier.
+    if (r == Rarity::Apex) return std::pow(3.0, rarityIndex(Rarity::Unique)) * 1.5;
     return std::pow(3.0, ladderIndex(r));
 }
 
