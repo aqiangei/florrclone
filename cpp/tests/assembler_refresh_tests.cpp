@@ -23,6 +23,9 @@ TEST(assembler_recipe_pool_contains_all_reference_recipes_and_fragment_sawblade)
     }
     CHECK_EQ(moonRecipes,2);
     CHECK(fragment);CHECK(pentagon);
+    const auto& saw=config.npc.recipes.back();
+    CHECK_EQ(saw.takes(c.petalIndex("cogwheel")),1u);
+    CHECK_EQ(saw.takes(c.petalIndex("fragment")),20u);
 }
 TEST(assembler_refreshes_after_twenty_minutes_with_a_new_recipe_and_network_id){
     World w;Terrain terrain;NpcSystem npcs;NetIdAllocator ids;npcs.netIds=&ids;
