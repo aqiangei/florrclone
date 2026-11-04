@@ -648,6 +648,10 @@ constexpr ChangelogEntry kChangelog[] = {
       "骰子同步真实1至6点结果；首页新增GitHub开源链接。",
       "商店价格统一上调至此前1.75倍，批量购买和锁定商品沿用统一定价。"}},
 
+    {"2026年11月4日 · 商店锁定与输入修复",
+     {"锁定保存完整商品，更新内容池不再换货；恢复更新前仍保持锁定玩家的原商品。",
+      "修复退格一次删除两个字，电脑输入法候选框跟随光标定位。"}},
+
 };
 
 constexpr int kEntryCount = static_cast<int>(sizeof(kChangelog) / sizeof(kChangelog[0]));
