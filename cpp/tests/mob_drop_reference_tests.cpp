@@ -63,7 +63,7 @@ TEST(all_imported_mob_tables_link_without_obsolete_generated_eggs){
         ++imported;const auto& entries=tables.guaranteedForMob(c.mobIndex(id));CHECK_EQ(entries.size(),json[id]["drops"].size());
         for(const auto& e:entries){CHECK(e.petalIndex!=kNoPetal);CHECK(!c.petal(e.petalIndex).isAdminPetal);CHECK(!e.rates.empty());for(int tier=0;tier<kLadderRarityCount;++tier){double sum=0;for(const auto&r:ratesFor(e.rates,static_cast<Rarity>(tier)))sum+=r.probability;CHECK(sum<=1.0000000001);}}
     }
-    CHECK_EQ(imported,76); // Reference definitions, Fire Ant Hole and two corrected body aliases
+    CHECK_EQ(imported,77); // Current imported definitions and corrected body aliases
 }
 
 TEST(super_sandstorm_drops_only_sand_glass_and_stick_at_reference_tiers){
