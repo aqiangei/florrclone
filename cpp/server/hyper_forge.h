@@ -53,13 +53,13 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
                                    const std::string& operatorRequest = {},const std::string& titan={}) {
     HyperForgeResult out;
     if(!hyperForgeEligible(input)){
-        out.reason="超凡锤子只能使用5个永恒碎片，限时永恒锤不能用于争夺。";return out;
+        out.reason="超凡锤子只能使用10个永恒碎片，限时永恒锤不能用于争夺。";return out;
     }
     const std::string petal=hyperForgeOutput(input);
     const auto forgeKey=hyperForgeKey(petal,titan);
     const auto state=hyperForgeState(db,petal,titan);
     if(hyperHoldingCount(db,userId)>=kMaxHyperHoldings){out.reason="账号超凡持有已达5份上限；已有物品保留，数量降低后才能继续锻造。";return out;}
-    const int cost=hyperForgeCost(state.claims);
+    const int cost=hyperForgeCost(state.claims,input);
     if(state.owner==userId){out.reason="你已经持有该超凡花瓣。";return out;}
     if(state.protectedUntil>now){out.reason="保护期尚未结束，剩余"+
         std::to_string((state.protectedUntil-now+59999)/60000)+"分钟。";return out;}
@@ -77,7 +77,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     const auto previousInput=oldTable[forgeKey]["input"].asString(
         petal=="mjolnir"?"fragment":petal);
     const std::string refundMaterial="petal_"+previousInput;
-    const int refundPerCopy=kHyperForgeRefund;
+    const int refundPerCopy=hyperForgeRefund(std::max(1,oldTable[forgeKey]["paid"].asInt(5)));
     for(const auto& [id,record]:before){
         if(id==userId)continue;
         auto& changed=db.progress(id);int lost=0;

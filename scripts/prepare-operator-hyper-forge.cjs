@@ -16,10 +16,10 @@ if(process.env.FLORR_OPERATOR_TEMP_HAMMER==='1'){
 const fragment=s=>s?.petalType==='fragment'&&s.rarity==='unique';
 const worn=(p.loadout||[]).filter(fragment).length;
 const count=(p?.inventory?.unique?.petal_fragment||0)-(p.loadoutInInventory?worn:0);
-assert(count>=5,'Account needs five unequipped Eternal fragments; timed hammers cannot be converted');
+assert(count>=10,'Account needs ten unequipped Eternal fragments; timed hammers cannot be converted');
 assert(!process.env.FLORR_OPERATOR_HAMMER_EVIDENCE,'Expired timed hammers cannot be restored as Hyper forge materials');
 assert(db.operatorHyperForgeRequest?.status!=='pending'||db.operatorHyperForgeRequest.userId===user.id,'Another account operator request is pending');
 db.operatorHyperForgeRequest={id,userId:user.id,input:'fragment',status:'pending',announced:false,maintenanceGate:gate,readyFile:ready};
 const compare=structuredClone(db);if(Object.hasOwn(original,'operatorHyperForgeRequest'))compare.operatorHyperForgeRequest=original.operatorHyperForgeRequest;else delete compare.operatorHyperForgeRequest;
 assert.deepEqual(compare,original);fs.writeFileSync(output,JSON.stringify(db));
-console.log(JSON.stringify({id,userId:user.id,username,input:'fragment',rarity:'unique',quantity:5,readyFile:ready}));
+console.log(JSON.stringify({id,userId:user.id,username,input:'fragment',rarity:'unique',quantity:10,readyFile:ready}));

@@ -3389,16 +3389,17 @@ void WorldRenderer::drawGarbagePile(Canvas& canvas, Vec2 at, double baseSize,
         const auto petalSeed=contents[static_cast<std::size_t>(i)].poseSeed;
         const auto index=contents[static_cast<std::size_t>(i)].index;
 
-        const double angle = static_cast<double>(i) / count * kTau;
-        const double maxRadius = (baseSize * 0.5) * 0.8;
-        const double radius = maxRadius * (0.84 + static_cast<double>(petalSeed % 120) / 1000.0);
-        const double x = std::cos(angle) * radius;
-        const double y = std::sin(angle) * radius + (i % 3) * 3.0;
-        const double rotation = static_cast<double>(petalSeed % 360) * kPi / 180.0;
+        // Every seeded item remains visible, in staggered rows peeking from
+        // the bag. Fixed poses never flicker or turn into a bright spinner.
+        const int columns=3, row=i/columns, inRow=std::min(columns,count-row*columns);
+        const double x=(i%columns-(inRow-1)*.5)*baseSize*.24;
+        const double y=baseSize*(-.32+row*.205);
+        const double rotation=(static_cast<int>(petalSeed%31)-15)*kPi/180.0;
         const PetalConfig& config = content_->petal(index);
-        const double size = baseSize * (0.23 + static_cast<double>(petalSeed % 50) / 1000.0) *
-                            clamp(config.size * petalArtScale(&config),0.7,1.0);
+        const double size=baseSize*.205*clamp(config.size*petalArtScale(&config),.8,1.0);
+        canvas.save();canvas.setGlobalAlpha(canvas.globalAlpha()*.58f);
         sprites_->drawPetal(canvas, index, content_->petal(index).minRarity, x, y, size, rotation, 0.0);
+        canvas.restore();
     }
 }
 
@@ -3610,13 +3611,25 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
     static const std::string kNoId;
     const std::string& id = config ? config->id : kNoId;
     if (id == "garbage") {
-        // Its entry in mobs.json is an empty document: the pile IS the artwork,
-        // laid out in world units off the mob's COLLISION size -- the browser
-        // build sizes the pile from that and never from the death scale.
+        // Keep the original sack behind its deterministic visible contents.
+        // Stable poses and softened colours avoid a flashing pile of icons.
         canvas.save();
         canvas.translate(static_cast<float>(art.x), static_cast<float>(art.y));
         canvas.scale(static_cast<float>(mirrored ? -zoom : zoom), static_cast<float>(zoom));
+        const double bagSize=mob.radius*2.0;
+        if(sprites_&&sprites_->mobDrawable(mob.typeIndex))
+            sprites_->drawMob(canvas,mob.typeIndex,mob.rarity,0,bagSize*.07,bagSize,0,0);
+        // Dark opening separates the soft-coloured contents from the sack.
+        ui::setFill(canvas,0x232323u,.86);canvas.beginPath();
+        canvas.ellipse(0,static_cast<float>(-bagSize*.10),static_cast<float>(bagSize*.36),static_cast<float>(bagSize*.29),0,0,static_cast<float>(kTau));canvas.fill();
         drawGarbagePile(canvas, mob.position, mob.radius * 2.0, 0.0, mob.netId, mob.rarity);
+        // Front lip wraps the lowest row without hiding its identifying shape.
+        ui::setFill(canvas,0x333333u);ui::setStroke(canvas,0x292929u);
+        canvas.setLineWidth(static_cast<float>(bagSize*.025));canvas.beginPath();
+        canvas.moveTo(static_cast<float>(-bagSize*.36),static_cast<float>(bagSize*.20));
+        canvas.quadraticCurveTo(0,static_cast<float>(bagSize*.31),static_cast<float>(bagSize*.36),static_cast<float>(bagSize*.20));
+        canvas.lineTo(static_cast<float>(bagSize*.28),static_cast<float>(bagSize*.37));
+        canvas.lineTo(static_cast<float>(-bagSize*.27),static_cast<float>(bagSize*.37));canvas.closePath();canvas.fill();canvas.stroke();
         canvas.restore();
     } else if (id == "digger") {
         // A flower carrying a cutter rather than a bug, the way gardn draws it.
@@ -4065,40 +4078,38 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                 case GroundEffectKind::Sacrifice:
                     break;
                 case GroundEffectKind::Web: {
-                    // Ten spokes out to the rim, then five concentric rings of
-                    // quadratic segments sagging between them.
-                    constexpr int kSpokes = 10;
-                    constexpr int kLevels = 5;
+                    const auto paintWeb = [](Canvas& target, double r) {
+                        constexpr int spokes=10,levels=5;
+                        ui::setStroke(target,0xFFFFFFu);target.setLineCap("round");
+                        target.setLineWidth(static_cast<float>(std::max(1.0,r*.075)));
+                        target.beginPath();
+                        for(int i=0;i<spokes;++i){const double angle=kTau*i/spokes;
+                            target.moveTo(0,0);target.lineTo(static_cast<float>(std::cos(angle)*r),static_cast<float>(std::sin(angle)*r));}
+                        for(int j=0;j<levels;++j){const double ring=j*r/levels,sag=ring-r/(2*levels);
+                            target.moveTo(static_cast<float>(ring),0);
+                            for(int i=0;i<spokes;++i){const double to=kTau*(i+1)/spokes,mid=kPi*(2*i+1)/spokes;
+                                target.quadraticCurveTo(static_cast<float>(std::cos(mid)*sag),static_cast<float>(std::sin(mid)*sag),
+                                    static_cast<float>(std::cos(to)*ring),static_cast<float>(std::sin(to)*ring));}}
+                        target.stroke();
+                    };
                     canvas.save();
-                    canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
+                    canvas.translate(static_cast<float>(screen.x),static_cast<float>(screen.y));
                     canvas.rotate(static_cast<float>(entity.angle));
-                    canvas.setGlobalAlpha(static_cast<float>(0x60 / 255.0));
-                    ui::setStroke(canvas, 0xFFFFFFu);
-                    canvas.setLineCap("round");
-                    canvas.setLineWidth(static_cast<float>(std::max(1.0, radius * 0.075)));
-                    canvas.beginPath();
-                    for (int i = 0; i < kSpokes; ++i) {
-                        const double angle = kTau * i / kSpokes;
-                        canvas.moveTo(0, 0);
-                        canvas.lineTo(static_cast<float>(std::cos(angle) * radius),
-                                      static_cast<float>(std::sin(angle) * radius));
-                    }
-                    for (int j = 0; j < kLevels; ++j) {
-                        const double ring = j * radius / kLevels;
-                        const double sag = ring - radius / (2 * kLevels);
-                        canvas.moveTo(static_cast<float>(ring), 0);
-                        for (int i = 0; i < kSpokes; ++i) {
-                            const double to = kTau * (i + 1) / kSpokes;
-                            const double between = kPi * (2 * i + 1) / kSpokes;
-                            canvas.quadraticCurveTo(static_cast<float>(std::cos(between) * sag),
-                                                    static_cast<float>(std::sin(between) * sag),
-                                                    static_cast<float>(std::cos(to) * ring),
-                                                    static_cast<float>(std::sin(to) * ring));
-                        }
-                    }
-                    canvas.stroke();
-                    canvas.restore();
-                    break;
+                    canvas.setGlobalAlpha(static_cast<float>(0x60/255.0));
+#ifdef __EMSCRIPTEN__
+                    // Padding keeps rounded spoke ends intact. The bitmap is
+                    // shared by every size/rotation, so memory stays at 1 MiB.
+                    constexpr float stampSide=512,stampRadius=244;
+                    if(webStampCache_){
+                        if(!webStamp_){webStamp_=std::make_unique<Canvas>(Canvas::createVirtual(512,512));
+                            webStamp_->translate(256,256);paintWeb(*webStamp_,stampRadius);}
+                        const float side=static_cast<float>(radius*stampSide/stampRadius);
+                        canvas.drawCanvas(*webStamp_,-side*.5f,-side*.5f,side,side);
+                    }else paintWeb(canvas,radius);
+#else
+                    paintWeb(canvas,radius);
+#endif
+                    canvas.restore();break;
                 }
                 case GroundEffectKind::Radiation: {
                     const std::uint32_t tint = 0x9B59B6u;

@@ -3352,7 +3352,10 @@ void CombatSystem::pushFromImpact(World& world, Entity victim, Vec2 offset, doub
     // mob without the component -- none is spawned that way -- falls back to
     // an immediate displacement.
     if (Knockback* kb = world.tryGet<Knockback>(victim)) {
-        kb->carry += direction * push;
+        // A four-pea burst, especially fired during a bubble dash, must not
+        // bank an unbounded chain of momentum shoves on one monster.
+        const double limit = std::max(kProjectileMaxPush, kb->carry.length());
+        kb->carry = (kb->carry + direction * push).clampedLength(limit);
         return;
     }
     transform->position += direction * push;

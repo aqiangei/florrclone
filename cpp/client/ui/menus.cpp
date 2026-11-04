@@ -1233,6 +1233,7 @@ const std::array<MenuSystem::StripSlot, kStripSlotCount>& MenuSystem::strip() {
     static const std::array<StripSlot, kStripSlotCount> kSlots = {{
         // Far-left like ashflor: Feedback (moss notepad) then QQ badge.
         {MenuId::None,          A::Feedback, "feedback",      true,  0x4ECB71u, 0x3EA35Au},
+        {MenuId::None,          A::Github,   "github",        true,  0x24292Fu, 0x161B22u},
         {MenuId::None,          A::Qq,       "qq",            true,  0x12B7F5u, 0x0E92C4u},
         {MenuId::Settings,      A::OpenMenu, "settings",      true,  0xB3B3B3u, 0x8F8F8Fu},
         {MenuId::Changelog,     A::OpenMenu, "changelog",     true,  0x00DB3Eu, 0x00AF32u},
@@ -1265,6 +1266,7 @@ void MenuSystem::activateStripSlot(int index) {
         case StripAction::Feedback: openAshflorFeedbackBoard(feedbackUsername_); return;
         case StripAction::Discord: openExternalLink(kDiscordInvite); return;
         case StripAction::Qq: openAshflorQqGroup(); return;
+        case StripAction::Github: openExternalLink("https://github.com/aqiangei/florrclone"); return;
         case StripAction::OpenMenu: break;
     }
     // Opening the panel is what marks the changelog read, which is what stops
@@ -1289,7 +1291,7 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
         // What changed and where to talk about it are read before a run, not
         // during one: both belong to the title screen only.
         else if (slot.action == StripAction::Feedback || slot.action == StripAction::Discord ||
-                 slot.action == StripAction::Qq)
+                 slot.action == StripAction::Qq || slot.action == StripAction::Github)
             visible[static_cast<std::size_t>(i)] = !inGame_;
         else if (slot.menu == MenuId::Debug)
             visible[static_cast<std::size_t>(i)] = settings_.showDebugButton;
@@ -1433,6 +1435,9 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
         if (slot.action == StripAction::Qq) {
             drawRemoteImage(canvas, QQ_LOGO_DATA, r.x + (r.w - style.glyph) * 0.5,
                             r.y + (r.h - style.glyph) * 0.5, style.glyph, style.glyph);
+        } else if (slot.action == StripAction::Github) {
+            TextStyle label; label.size=style.side*.30; label.align=Align::Centre;
+            text(canvas,"GH",r.x+r.w*.5,r.y+r.h*.5,label);
         } else if (const SvgDocument* glyph = icon(ui::menuIconIndex(slot.icon))) {
             glyph->renderFitted(canvas, static_cast<float>(r.x + (r.w - style.glyph) * 0.5),
                                 static_cast<float>(r.y + (r.h - style.glyph) * 0.5),
@@ -2054,6 +2059,8 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         tile.timeSeconds = timeSeconds;
         if (inGame_ && entry.slot < kLoadoutActiveSlots && tile.petalIndex != kNoPetal &&
             content().petal(tile.petalIndex).id == "dice") {
+            const auto face=net.view().self().slotCounter[static_cast<std::size_t>(entry.slot)];
+            if(face>=1&&face<=6)tile.diceFace=static_cast<int>(face);
             const auto self = net.view().entities().find(net.view().self().netId);
             if (self != net.view().entities().end() &&
                 (self->second.state & net::StateAttacking) != 0)

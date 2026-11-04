@@ -150,6 +150,7 @@ struct ItemTile {
     /// Only the owner's own loadout bar is told, as with `reload` and
     /// `health`; every other surface leaves this empty.
     std::string counter;
+    int diceFace = 0;
 
     /// gardn's cooldown wedge, swept as the petal reloads. 1.0 draws nothing.
     /// The owner's own bar is the only surface the server tells about a reload;

@@ -3898,3 +3898,17 @@ TEST(a_digger_fights_until_its_last_tenth_then_runs_from_its_target) {
     sim.tick(30);
     CHECK(sim.gap(digger, player) > before + 100.0);
 }
+
+TEST(hornet_family_shipped_ammunition_resolves_and_all_variants_fire_real_missiles){
+    CHECK(contentReady());
+    for(const auto* id:{"hornet","wasp","hel_wasp","mecha_wasp"}){
+        const auto index=content().mobIndex(id);CHECK(index!=kInvalidIndex);const auto& config=content().mob(index);
+        CHECK(config.projectile.present);CHECK(config.projectile.ammoPetalIndex!=kInvalidIndex);
+        for(const auto rarity:{Rarity::Common,Rarity::Super}){
+            Sim sim;const auto mob=sim.spawnMob(id,kOrigin,rarity);const auto stats=content().mobStats(index,rarity);
+            sim.spawnPlayer(kOrigin+Vec2{std::min(stats.aggroRange*.5,stats.radius+80),0});
+            const auto shot=fireAndCatch(sim,450);CHECK(shot!=NULL_ENTITY);
+            if(shot!=NULL_ENTITY){CHECK(sim.world.has<ProjectileTag>(shot));CHECK(sim.world.get<Projectile>(shot).damage>0);}
+        }
+    }
+}

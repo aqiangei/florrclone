@@ -1081,7 +1081,7 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
         m.petHealthScale = 0.5;
         m.petDamageScale = 0.5;
     }
-    if (id == "centipede" || id == "desert_centipede" || id == "evil_centipede" ||
+    if (id == "centipede" || id == "jungle_centipede" || id == "desert_centipede" || id == "evil_centipede" ||
         id == "leech") {
         m.segmentBodyIndex = ctx.link(mobIds, id + "_body", "body segment");
         m.segmentCount = m.segmentBodyIndex != kInvalidIndex ? kCentipedeSegmentCount : 0;
@@ -1092,7 +1092,7 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
     m.sharedSegmentHealth = id == "leech" || id == "leech_body";
     // gardn's centipedes are bodies like any other; see MobConfig::gardnChain.
     // The beads carry it too: they are what collides and what gets pushed.
-    for (const char* centipede : {"centipede", "desert_centipede", "evil_centipede"}) {
+    for (const char* centipede : {"centipede", "jungle_centipede", "desert_centipede", "evil_centipede"}) {
         if (id == centipede || id == std::string(centipede) + "_body") m.gardnChain = true;
     }
 
@@ -1911,7 +1911,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     }
 
     if (c.id == "mjolnir" || c.id == "timed_mjolnir") {
-        s.lightningDamagePerHit = 50.0 * strength;
+        s.lightningDamagePerHit = (graded == Rarity::Unique || graded == Rarity::Apex ? 25.0 : 50.0) * strength;
         s.lightningBounces = 0;
     }
 

@@ -565,8 +565,15 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
             // as it does everywhere else.
             const bool anchored = anchoredAgainstKnockback(world, registry, mob);
             const double mobMass = bodyMass(world.tryGet<Body>(mob));
+            const auto* instance=world.tryGet<PetalInstance>(disc.entity);
+            const bool wax=instance && instance->configIndex<registry.petalCount() &&
+                registry.petal(instance->configIndex).id=="wax";
+            // Wax is a deployable barrier. Its light carry-weight should not
+            // make every monster flatten it; players can still push the slab.
+            const double slabShare=anchored ? 1.0 : wax ?
+                std::min(0.2,mobMass/(mobMass+disc.mass)) : mobMass/(mobMass+disc.mass);
             softLooseContact(terrain, disc.realm, disc.position, disc.radius,
-                             anchored ? 1.0 : mobMass / (mobMass + disc.mass),
+                             slabShare,
                              transform->position, kMobWallRadius, !anchored, out,
                              loosePetalContactPush(reach - gap));
         }

@@ -3568,7 +3568,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
 
     const auto& petal = content().petal(petalIndex);
     if (!(hyper ? hyperForgeEligible(petal.id) : titanForgeEligible(petal.id))) {
-        reply(false, hyper ? "超凡锤子需5个永恒碎片，不能用限时永恒锤或血祭。" : "该花瓣不能用于泰坦锻造。");
+        reply(false, hyper ? "超凡锤子需10个永恒碎片，不能用限时永恒锤或血祭。" : "该花瓣不能用于泰坦锻造。");
         return;
     }
     if(hyper) {
@@ -3580,7 +3580,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         if(state.protectedUntil>database_.nowMillis()){
             reply(false,"保护期尚未结束，剩余"+std::to_string((state.protectedUntil-database_.nowMillis()+59999)/60000)+"分钟。");return;
         }
-        const int cost=hyperForgeCost(state.claims);
+        const int cost=hyperForgeCost(state.claims,petal.id);
         if(liveRecord(session).itemCount(Rarity::Unique,inventoryKey(petalIndex))<cost){
             reply(false,"需要"+std::to_string(cost)+"个未装备的同种永恒材料。");return;
         }
@@ -3653,7 +3653,7 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
     const auto* owner=database_.findUserById(state.owner);
     w.str(owner?owner->username:"");
     w.u32(static_cast<std::uint32_t>(std::max<std::int64_t>(0,state.protectedUntil-database_.nowMillis())));
-    w.u8(static_cast<std::uint8_t>(hyperForgeCost(state.claims)));
+    w.u8(static_cast<std::uint8_t>(hyperForgeCost(state.claims,content().petal(petalIndex).id)));
     w.u8(static_cast<std::uint8_t>(std::min(255,hyperHoldingCount(database_,session.userId))));
     connection.send(w);
 }

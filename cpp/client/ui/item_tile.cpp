@@ -545,7 +545,18 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         const Color outerTint = canvas.colorTint();
         if (tile.flash.a != 0) canvas.setColorTint(tile.flash);
         const double iconCap = kFaceSide / kItemTileIconScale;
-        drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,
+        if(tile.diceFace>=1&&tile.diceFace<=6){
+            const float half=static_cast<float>(iconCap*.30),pip=half*.13f,d=half*.55f;
+            ui::setFill(canvas,0xFFFFFFu);canvas.fillRect(-half,-half,half*2,half*2);
+            ui::setStroke(canvas,0x555555u);canvas.setLineWidth(2);canvas.strokeRect(-half,-half,half*2,half*2);
+            ui::setFill(canvas,0x333333u);
+            const auto dot=[&](float x,float y){canvas.fillCircle(x,y,pip);};
+            const int face=tile.diceFace;
+            if(face%2)dot(0,0);
+            if(face>=2){dot(-d,-d);dot(d,d);}
+            if(face>=4){dot(d,-d);dot(-d,d);}
+            if(face==6){dot(-d,0);dot(d,0);}
+        }else drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,
                          0.0, 0.0, iconCap, tile.timeSeconds, facesInward);
         canvas.setColorTint(outerTint);
         canvas.restore();

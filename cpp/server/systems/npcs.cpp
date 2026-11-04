@@ -52,6 +52,10 @@ void NpcSystem::loadSites(const WorldMaps& maps, const ContentRegistry& content,
                                    "nothing stands there");
                 continue;
             }
+            if (content.mob(mobIndex).npc.service==NpcService::Assembler &&
+                std::any_of(sites_.begin(),sites_.end(),[&](const Site& old){
+                    return old.realm==map.realm() && content.mob(old.mobIndex).npc.service==NpcService::Assembler;
+                })) continue;
             Site site;
             site.realm = map.realm();
             // A point object's box is the point itself; an area's NPC is put
@@ -62,6 +66,11 @@ void NpcSystem::loadSites(const WorldMaps& maps, const ContentRegistry& content,
             site.area = element.bounds;
             site.outline = element.polygon;
             site.mobIndex = mobIndex;
+            if (content.mob(mobIndex).npc.service==NpcService::Assembler) {
+                site.rarity=Rarity::Unique;
+                sites_.push_back(site);
+                continue;
+            }
             if (!element.npcEveryRarity) {
                 site.rarity = element.npcRarity;
                 sites_.push_back(site);
@@ -83,6 +92,7 @@ double NpcSystem::npcRadius(const ContentRegistry& content, std::uint16_t mobInd
     const MobConfig& config = content.mob(mobIndex);
     rarity = clampRarity(std::max(rarityIndex(rarity), rarityIndex(config.minRarity)));
     const double radius = content.mobStats(mobIndex, rarity).radius;
+    if (config.npc.service == NpcService::Assembler) return std::min(60.0, radius);
     // A dummy placed as an NPC shrinks with its tier exactly as one a band
     // plants does (MobConfig::fixtureSizeScale).
     return (radius > 0.0 ? radius : kMobBaseRadius) * config.fixtureSizeScale(rarity);

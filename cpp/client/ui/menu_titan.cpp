@@ -34,7 +34,7 @@ constexpr double kBodyTop = 53.6;
 constexpr double kFirstLineY = kBodyTop + 250.0 + 11.2;
 constexpr double kLinePitch = 22.4;
 constexpr std::array<const char*, 3> kLines = {
-    "普通花瓣永久保留；每5个超级碎片兑换1把锤子。",
+    "普通花瓣永久保留；每15个超级碎片兑换1把限时锤子，碎片不返还。",
     "普通花瓣首次10、之后固定15个超级。",
     "锤子可持有多把，每把独立计时1小时，离线计时。",
 };
@@ -57,7 +57,8 @@ constexpr double kRefusalSeconds = 3.0;
 
 /// An apex stack as the staging counts it, held below what an int holds.
 int forgeCost(const Profile& profile, std::uint16_t index, bool hyper, const NetClient& net) {
-    if(hyper)return net.hyperInputCost(index);
+    if(hyper)return std::max(net.hyperInputCost(index),
+        hyperForgeCost(0,index<content().petalCount()?content().petal(index).id:std::string{}));
     return titanForgeCost(profile.titanForgeCount(index),
         index < content().petalCount() ? content().petal(index).id : std::string());
 }
@@ -197,7 +198,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
-            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需5个永恒碎片；限时锤不能参与争夺。","固定耗5、被夺返4；两处泰坦独立，账号最多5份。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:kLines[i]);
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需10个永恒碎片；限时锤不能参与争夺。","锤耗10返9，其他耗5返4；两处独立，总计最多5份。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;
@@ -294,7 +295,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             refusal_.clear();
         } else {
             const auto& id=content().petal(hovered->petalIndex).id;
-            refusal_=hyper_&&(id=="timed_mjolnir"||id=="mjolnir")?"超凡锤子需5个永恒碎片，限时锤不能参与争夺。":
+            refusal_=hyper_&&(id=="timed_mjolnir"||id=="mjolnir")?"超凡锤子需10个永恒碎片，限时锤不能参与争夺。":
                 "材料不足或不可锻造；超凡需5个未装备的同种永恒。";
             refusalUntil_=now+kRefusalSeconds;
         }

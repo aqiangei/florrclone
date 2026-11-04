@@ -97,6 +97,9 @@ struct PetalSlotState {
         /// snapshot stays a dumb copy. It is re-derived every tick, so a slot
         /// whose petal was swapped for one with nothing to say clears itself.
         double counter = -1;
+        int diceFace = 0;
+        double nextDiceRollMillis = 0;
+        bool diceAttacking = false;
 
         /// When cluster member i comes back, or 0 when it is already out.
         /// Sized to the petal's count; meaningful only while `independent`.

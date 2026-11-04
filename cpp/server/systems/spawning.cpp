@@ -232,6 +232,7 @@ SpawnFootprint spawnFootprint(const ContentRegistry& content, std::uint16_t mobI
     SpawnFootprint footprint;
     if (mobIndex >= content.mobCount()) return footprint;
     const MobConfig& config = content.mob(mobIndex);
+
     footprint.radius = content.mobStats(mobIndex, rarity).radius * config.maxRandomSize();
     if (config.segmentCount > 0 && config.segmentBodyIndex < content.mobCount()) {
         // spawnBodyChain's own layout: segments stepped off the NOMINAL body.
@@ -673,6 +674,15 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     const bool nestedQueen=depth>0&&config.id=="queen_ant";
     rarity = clampLadderRarity(nestedQueen?rarityIndex(rarity):std::max(rarityIndex(rarity), rarityIndex(config.minRarity)));
 
+    if (config.id=="termite_mound" && zone!=kInvalidIndex) {
+        bool occupied=false;
+        Query<DungeonEntrance,MobType,Transform> entrances{world};entrances.without<Dead>();
+        entrances.each([&](Entity,DungeonEntrance&,MobType& type,Transform& at){
+            if(at.realm==realm && type.rarity==rarity && type.configIndex==mobIndex)occupied=true;
+        });
+        if(occupied)return NULL_ENTITY;
+    }
+
     // A prestige biome has no boss clocks and never fields a unique or an
     // apex, whoever asks -- the console and a sacrifice included, which is why
     // this is not under `clockGated`.
@@ -694,7 +704,9 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     const MobStats stats = content.mobStats(mobIndex, rarity);
 
     const double jitter = rollSizeJitter(config, rarity, rng);
-    const double radius = stats.radius * jitter;
+    // Wild animals shrink visually and physically, without lowering mass and
+    // making the same projectile throw them further. Pets/NPCs use other paths.
+    const double radius = stats.radius * jitter * 0.75;
 
     // A mob meets walls as a point, so any open spot will do; resolveCircle
     // is for the callers -- a nest, a script, a summon -- that hand over a
@@ -1036,6 +1048,7 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
     if (nowMillis >= nextPopulationMillis_) {
         nextPopulationMillis_ = nowMillis + kPopulationIntervalMillis;
         cullExtraTopBosses(world, commands);
+        trimMounds(world,content,commands);
         takeCensus(world, content, viewers_, nowMillis, commands);
         returnVanished(world, terrain, content, viewers_, rng, nowMillis);
         // The one ambient spawn path, and it runs whether or not anybody is
@@ -1829,7 +1842,7 @@ void SpawnSystem::cullExtraTopBosses(World& world, CommandBuffer& commands) {
         const TopBoss& extra = topBosses_[i];
         standing = extra.biome == first.biome && extra.rarity == first.rarity ? standing + 1 : 1;
         const int cap = extra.rarity == Rarity::Unique ? kEternalPopulationTarget : 1;
-        if (standing > cap) {
+        if (standing > cap && !world.has<KeepAwake>(extra.entity)) {
             culled_.push_back(extra.entity);
         }
     }
@@ -1977,6 +1990,32 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
                 state.population.spawned();const int family=antHabitat(index);if(family>=0)++habitats[family];
             }
         }
+    }
+}
+
+void SpawnSystem::trimMounds(World& world,const ContentRegistry& content,CommandBuffer& commands) {
+    struct Mound {Entity entity;Realm realm;Rarity rarity;bool occupied;std::uint64_t order;};
+    std::vector<Realm> occupied;
+    Query<PlayerTag,Transform> players{world};
+    players.each([&](Entity,PlayerTag&,Transform& at){occupied.push_back(at.realm);});
+    std::vector<Mound> mounds;
+    Query<DungeonEntrance,MobType,Transform,AmbientMob> all{world};all.without<Dead>();
+    all.each([&](Entity e,DungeonEntrance& entrance,MobType& type,Transform& at,AmbientMob& mob){
+        if(type.configIndex>=content.mobCount()||content.mob(type.configIndex).id!="termite_mound")return;
+        const bool active=entrance.claimed&&std::find(occupied.begin(),occupied.end(),entrance.realm)!=occupied.end();
+        mounds.push_back({e,at.realm,type.rarity,active,mob.spawnOrder});
+    });
+    std::stable_sort(mounds.begin(),mounds.end(),[](const Mound& a,const Mound& b){
+        if(a.realm!=b.realm)return static_cast<int>(a.realm)<static_cast<int>(b.realm);
+        if(a.rarity!=b.rarity)return rarityIndex(a.rarity)<rarityIndex(b.rarity);
+        if(a.occupied!=b.occupied)return a.occupied;
+        return a.order<b.order;
+    });
+    int kept=0;Realm realm=Realm::Overworld;Rarity rarity=Rarity::Common;
+    for(std::size_t i=0;i<mounds.size();++i){const auto& mound=mounds[i];
+        if(i==0||mound.realm!=realm||mound.rarity!=rarity){kept=0;realm=mound.realm;rarity=mound.rarity;}
+        if(mound.occupied||kept==0){++kept;continue;}
+        commands.destroy(mound.entity); // Cleanup is not a kill and grants no drops.
     }
 }
 
@@ -2236,6 +2275,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     std::uint16_t type = roster == &zone ? chooseZoneMobType(content, zone, at, rarity, rng)
                                         : rollResolvedRows(content, roster->resolved, rarity, rng);
     if (type == kInvalidIndex) return false;
+    if (superFarm && content.mob(type).dungeon.present) return false;
     // A band naming a mob outright can name one below its own tier; the mob's
     // floor wins, exactly as it does on every other spawn path. Read the tier
     // AFTER the floor, because that is the tier that decides whether this is a

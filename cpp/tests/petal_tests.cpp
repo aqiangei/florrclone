@@ -22,6 +22,7 @@ namespace {
 
 const char* const kPetalsJson = R"JSON({
   "lentil":{"name":"Lentil","damage":13,"health":12,"size":1,"cooldown":2000,"count":1,"attractionForce":2000,"playerModifiers":{"petalAttractionRadius":20}},
+  "dice":{"name":"Dice","damage":10,"health":10,"size":2,"cooldown":1200,"count":1},
   "basic":    {"name":"Basic","damage":10,"health":10,"size":2,"cooldown":1200,"count":1,"color":"#90EE90"},
   "icosahedron":{"name":"Icosahedron","damage":10,"health":10,"size":2,"cooldown":2500,"count":1,"color":"#8B5CF6"},
   "sandy":    {"name":"Sandy","damage":4,"health":12,"size":1,"cooldown":800,"count":4,"clumped":true,"color":"#8B0000"},
@@ -151,6 +152,7 @@ struct Rig {
     Terrain terrain;
     MovementSystem movement;
     bool stepMovement = false;
+    bool useHatchTerrain = false;
 
     Rig() {
         player = world.create();
@@ -221,7 +223,7 @@ struct Rig {
             // momentum -- the bubble -- is only observable through the
             // movement that spends it.
             if (stepMovement) movement.runPlayerPhase(world, terrain, now, net::kTickSeconds);
-            system.run(world, fixture().registry, now, net::kTickSeconds, commands, nullptr,
+            system.run(world, fixture().registry, now, net::kTickSeconds, commands, useHatchTerrain ? &terrain : nullptr,
                        &events);
             commands.flush();
         }
@@ -6034,4 +6036,39 @@ TEST(wiki_mechanism_lentil_attracts_close_sawblade_and_its_mimic) {
         CHECK(rig.world.get<PetalInstance>(petal).attractedTo==mob);
         CHECK(distance(rig.position(petal),orbit)>20);
     }
+}
+
+TEST(wiki_mechanism_egg_hatches_on_owner_side_of_thin_wall_clear_of_shells){
+    CHECK(contentLoaded());Rig rig;rig.useHatchTerrain=true;
+    const int column=static_cast<int>(1000/kTileSize)+1;
+    for(int row=0;row<rig.terrain.tileRows();++row)rig.terrain.setTile(column,row,Tile::Solid);
+    const Vec2 owner{column*kTileSize-40,1000};rig.world.get<Transform>(rig.player).position=owner;
+    rig.equip(0,"egg");int count=0;
+    CHECK(rig.tickUntil([&]{count=0;Query<Pet,Transform,Body> pets{rig.world};pets.each([&](Entity,Pet& pet,Transform& at,Body& body){
+        if(pet.owner!=rig.player)return;++count;
+        CHECK(!rig.terrain.segmentBlocked(owner,at.position,Realm::Overworld));
+        CHECK(!rig.terrain.resolveWall(at.position,body.radius,Realm::Overworld).collided);
+        for(const auto shell:rig.petals(0))if(rig.world.has<Body>(shell))
+            CHECK(distance(at.position,rig.position(shell))>=body.radius+rig.world.get<Body>(shell).radius);
+    });return count==4;},180));
+}
+
+
+TEST(wiki_mechanism_dice_rolls_all_six_faces_and_keeps_equipment_counter_synchronized) {
+    CHECK(contentLoaded());
+    Rig rig; rig.equip(0,"dice"); rig.settleEquips();
+    bool seen[7]{};
+    rig.setFlags(net::InputAttack);
+    for(int roll=0;roll<256;++roll){
+        rig.tick(9);
+        const auto& state=rig.world.get<PetalSlotState>(rig.player).slots[0];
+        CHECK(state.diceFace>=1 && state.diceFace<=6);
+        CHECK_NEAR(rig.slotCounter(0),static_cast<double>(state.diceFace),1e-9);
+        seen[state.diceFace]=true;
+    }
+    for(int face=1;face<=6;++face)CHECK(seen[face]);
+    rig.setFlags(0);rig.tick();
+    const double restingFace=rig.slotCounter(0);
+    rig.tick(90);
+    CHECK_NEAR(rig.slotCounter(0),restingFace,1e-9);
 }

@@ -17,7 +17,7 @@ struct Fixture {
 };
 }
 TEST(hyper_temporary_hammer_preserves_protected_owner_and_materials_expires_and_cannot_regrant){
-    Fixture f;f.give(f.a,"fragment");f.give(f.b,"timed_mjolnir");
+    Fixture f;f.give(f.a,"fragment",10);f.give(f.b,"timed_mjolnir");
     CHECK(forgeHyper(f.db,f.a,"fragment",1000).ok);
     const auto protectedState=f.db.storedTable("hyperForges").dump();
     CHECK(grantTemporaryHyperHammer(f.db,f.b,2000,"compensation").ok);
@@ -37,10 +37,10 @@ TEST(hyper_temporary_hammer_preserves_protected_owner_and_materials_expires_and_
     CHECK_EQ(record.itemCount(Rarity::Apex,"petal_mjolnir"),0);
 }
 TEST(hyper_forge_price_and_protection_curve_match_the_requested_progression){
-    for(int n=0;n<20;++n)CHECK_EQ(hyperForgeCost(n),5);
-    CHECK_EQ(hyperForgeRefund(5),4);CHECK_EQ(hyperForgeRefund(6),4);CHECK_EQ(hyperForgeRefund(10),4);
+    for(int n=0;n<20;++n){CHECK_EQ(hyperForgeCost(n),5);CHECK_EQ(hyperForgeCost(n,"fragment"),10);}
+    CHECK_EQ(hyperForgeRefund(5),4);CHECK_EQ(hyperForgeRefund(6),5);CHECK_EQ(hyperForgeRefund(10),9);
     CHECK_EQ(titanForgeCost(0,"rose"),10);CHECK_EQ(titanForgeCost(1,"rose"),15);CHECK_EQ(titanForgeCost(2000,"rose"),15);
-    CHECK_EQ(titanForgeCost(0,"fragment"),5);CHECK_EQ(titanForgeCost(2000,"fragment"),5);
+    CHECK_EQ(titanForgeCost(0,"fragment"),15);CHECK_EQ(titanForgeCost(2000,"fragment"),15);
     CHECK_EQ(hyperProtectionMillis(1),15LL*3600000);CHECK_EQ(hyperProtectionMillis(2),14LL*3600000);
     CHECK_EQ(hyperProtectionMillis(15),3600000);CHECK_EQ(hyperProtectionMillis(10000),3600000);
 }
@@ -125,8 +125,8 @@ TEST(hyper_forge_persists_owner_counter_and_protection_across_restart){
     CHECK(forgeHyper(restored,f.b,"rose",1000+15LL*3600000).ok);
     CHECK_EQ(hyperForgeState(restored,"rose").claims,2);
 }
-TEST(hyper_hammer_uses_five_eternal_fragments_and_ignores_combat_hammer_expiry){
-    Fixture f;f.give(f.a,"fragment");f.give(f.b,"fragment");
+TEST(hyper_hammer_uses_ten_eternal_fragments_and_ignores_combat_hammer_expiry){
+    Fixture f;f.give(f.a,"fragment",10);f.give(f.b,"fragment",10);
     for(int n=0;n<7;++n)addHammerLease(f.db.progress(f.a),0);
     CHECK(forgeHyper(f.db,f.a,"fragment",0).ok);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),1);
@@ -136,11 +136,11 @@ TEST(hyper_hammer_uses_five_eternal_fragments_and_ignores_combat_hammer_expiry){
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),1);
     CHECK(forgeHyper(f.db,f.b,"fragment",15LL*3600000).ok);
     CHECK_EQ(hyperForgeState(f.db,"mjolnir").protectedUntil,29LL*3600000);
-    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),4);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),9);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),0);
 }
 TEST(hyper_hammer_rejects_timed_hammers_and_super_fragments_without_charging){
-    Fixture f;f.give(f.a,"fragment",4);
+    Fixture f;f.give(f.a,"fragment",9);
     f.db.progress(f.a).addItem(Rarity::Super,"petal_fragment",25);
     for(int n=0;n<5;++n)addHammerLease(f.db.progress(f.a),0);
     const auto before=f.db.progress(f.a).inventory.dump();
@@ -151,7 +151,7 @@ TEST(hyper_hammer_rejects_timed_hammers_and_super_fragments_without_charging){
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),0);
 }
 TEST(hyper_hammer_legacy_holder_receives_original_material_without_opening_a_new_conversion){
-    Fixture f;f.db.progress(f.a).addItem(Rarity::Apex,"petal_mjolnir",1);f.give(f.b,"fragment");
+    Fixture f;f.db.progress(f.a).addItem(Rarity::Apex,"petal_mjolnir",1);f.give(f.b,"fragment",10);
     Json entry=Json::object();entry["owner"]=f.a;entry["input"]="timed_mjolnir";
     entry["claims"]=1;entry["protectedUntil"]=Json(15.0*3600000);
     f.db.rawTable("hyperForges")["mjolnir"]=entry;
@@ -219,4 +219,21 @@ TEST(hyper_forge_failed_save_rolls_back_inputs_output_and_protection){
     CHECK_EQ(db.progress(id).itemCount(Rarity::Unique,"petal_rose"),5);
     CHECK_EQ(db.progress(id).itemCount(Rarity::Apex,"petal_rose"),0);
     CHECK_EQ(hyperForgeState(db,"rose").claims,0);
+}
+
+TEST(hyper_hammer_old_five_fragment_claim_refunds_only_its_actual_paid_minus_one){
+    Fixture f;f.give(f.b,"fragment",10);f.db.progress(f.a).addItem(Rarity::Apex,"petal_mjolnir",1);
+    Json old=Json::object();old["owner"]=f.a;old["input"]="fragment";old["paid"]=5;old["claims"]=1;old["protectedUntil"]=0;
+    f.db.rawTable("hyperForges")["mjolnir"]=old;
+    const auto result=forgeHyper(f.db,f.b,"fragment",1);CHECK(result.ok);CHECK_EQ(result.consumed,10);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),4);
+    CHECK_EQ(f.db.storedTable("hyperForges")["mjolnir"]["paid"].asInt(),10);
+}
+TEST(hyper_hammer_ten_fragment_cost_applies_independently_to_both_titans_and_counts_in_cap){
+    Fixture f;f.give(f.a,"fragment",20);
+    CHECK(forgeHyper(f.db,f.a,"fragment",0).ok);CHECK(forgeHyper(f.db,f.a,"fragment",0,{},"garden").ok);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_fragment"),0);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_mjolnir"),2);CHECK_EQ(hyperHoldingCount(f.db,f.a),2);
+    f.db.progress(f.a).addItem(Rarity::Apex,"petal_leaf",3);f.give(f.a,"rose");
+    const auto before=f.db.serialise();CHECK(!forgeHyper(f.db,f.a,"rose",0).ok);CHECK_EQ(f.db.serialise(),before);
 }

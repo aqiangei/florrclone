@@ -1370,3 +1370,16 @@ TEST(a_flowers_first_tick_on_a_map_pulls_no_other_flower) {
     CHECK(distance(f.positionOf(refused), refusedAt) < 1e-9);
     CHECK(distance(f.positionOf(walker), walkerAt) < 1e-9);
 }
+
+TEST(wax_barrier_displaces_surrounding_mobile_mobs_without_changing_moon_mass_contact){
+    std::string error;CHECK(testsupport::loadContent(testsupport::dataDir(),error));
+    for(const auto* id:{"wax","moon_rock"}){Fixture fx;
+        const auto slab=fx.spawnLoose({3000,3000},30);PetalInstance instance;
+        instance.configIndex=content().petalIndex(id);CHECK(instance.configIndex!=kInvalidIndex);fx.world.add<PetalInstance>(slab,instance);
+        const auto mob=fx.spawnMob({3040,3000},30,20);fx.step(1,0);
+        const double slabMove=3000-fx.positionOf(slab).x,mobMove=fx.positionOf(mob).x-3040;
+        CHECK(mobMove>0);CHECK(slabMove>=0);
+        if(std::string(id)=="wax")CHECK(mobMove>slabMove*2);
+        else CHECK(slabMove>mobMove*2);
+    }
+}

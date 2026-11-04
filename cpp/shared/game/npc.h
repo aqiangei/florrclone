@@ -128,14 +128,14 @@ inline constexpr int kTitanForgeCost = 5;
 
 /// 30 independent loot rolls: each petal has its own permanent progression.
 inline constexpr int titanForgeCost(unsigned completed, const std::string& inputId = {}) {
-    if (inputId == "fragment") return 5;
+    if (inputId == "fragment") return 15;
     return completed == 0 ? 10 : 15;
 }
 inline constexpr int kHyperForgeCost=5;
 inline constexpr int kMaxHyperHoldings=5;
 inline constexpr int kHyperForgeRefund=4;
-inline constexpr int hyperForgeCost(int /*completed*/){return 5;}
-inline constexpr int hyperForgeRefund(int /*paid*/){return 4;}
+inline int hyperForgeCost(int /*completed*/,const std::string& input={}){return input=="fragment"?10:5;}
+inline constexpr int hyperForgeRefund(int paid){return std::max(0,paid-1);}
 inline std::string hyperForgeOutput(const std::string& input) {
     return input=="fragment"?"mjolnir":input;
 }

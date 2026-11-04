@@ -177,7 +177,7 @@ inline constexpr const char* kAshflorFeedbackBoard = "https://ashflor.com/feedba
 /// bottom-left one. Not every one is shown at once -- see drawIconStrip -- and
 /// three of the top row open no panel (Discord / QQ are links and exit leaves
 /// the game), so this is not `kMenuCount`.
-inline constexpr int kStripSlotCount = 18;
+inline constexpr int kStripSlotCount = 19;
 
 /// The range ClientSettings::zoom is held to, and how far one press of a zoom
 /// key moves it. The step is the browser's own ZOOM_STEP; the range is this
@@ -1703,7 +1703,7 @@ private:
     /// One slot of the icon strip. The strip is not a projection of MenuId:
     /// three of its buttons open no panel at all, and the order on screen is
     /// the browser's, not the enum's.
-    enum class StripAction : std::uint8_t { OpenMenu, Discord, Qq, Feedback, Exit };
+    enum class StripAction : std::uint8_t { OpenMenu, Discord, Qq, Feedback, Github, Exit };
     struct StripSlot {
         MenuId menu;
         StripAction action;

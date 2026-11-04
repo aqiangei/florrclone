@@ -654,7 +654,7 @@ inline constexpr double kProjectilePushPerMomentum = 0.27 / 1.8;
 /// Ceiling on that shove. A heavy shot from an apex is still a push, not a
 /// teleport, and this is what stops one landing on a common mob from firing it
 /// clean off the screen.
-inline constexpr double kProjectileMaxPush = 40.0;
+inline constexpr double kProjectileMaxPush = 8.0;
 
 /// Recoil as a fraction of the reaction a shot's momentum actually implies,
 /// and its own ceiling.

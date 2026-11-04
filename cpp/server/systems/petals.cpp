@@ -1113,7 +1113,17 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         // banks on the flower's timer rather than on its petal being out. A
         // number that vanished at the moment it mattered most would read as
         // the effect having been cancelled.
-        if (stats.spongeDamageDurationMillis > 0.0) slotState.counter = storedSpongeDamage;
+        if(config.id=="dice"){
+            const auto* input=world.tryGet<PlayerInput>(player);
+            const bool attacking=input&&input->current.attacking()&&!live.empty();
+            if(slotState.diceFace==0 || (attacking&&(!slotState.diceAttacking||nowMillis>=slotState.nextDiceRollMillis))){
+                slotState.diceFace=1+static_cast<int>(rng_.below(6));
+                slotState.nextDiceRollMillis=nowMillis+250;
+            }
+            slotState.diceAttacking=attacking;
+            slotState.counter=slotState.diceFace;
+        }
+        else if (stats.spongeDamageDurationMillis > 0.0) slotState.counter = storedSpongeDamage;
         else if (stats.armorPerStack > 0.0) slotState.counter = bankedArmorStacks;
         else if (petalLendsBasic(config)) slotState.counter = crownLoansOutOf(player);
         else slotState.counter = -1.0;
@@ -3867,6 +3877,26 @@ void PetalSystem::summonPets(World& world, const ContentRegistry& registry, Enti
     // its body, every segment one more of the owner's pets.
     const bool chain = config.segmentCount > 0 && config.segmentBodyIndex != kInvalidIndex;
 
+    // Snapshot the relevant circles once per brood, not once per candidate.
+    // No entity pointers survive hatchPetBody's structural changes.
+    const auto* ownerBody=world.tryGet<Body>(player);
+    const double ownerRadius=ownerBody?ownerBody->radius:kPlayerBaseRadius;
+    const double maxRadius=mob.radius*petSizeScale*config.maxRandomSize();
+    const double searchReach=ownerRadius+6.0*maxRadius+10.0;
+    struct HatchCircle {Vec2 at;double radius;};
+    std::vector<HatchCircle> occupied;
+    const auto collect=[&](const Transform& pos,const Body& body){
+        const double reach=searchReach+body.radius;
+        if(pos.realm==realm&&(pos.position-at).lengthSq()<reach*reach)
+            occupied.push_back({pos.position,body.radius});
+    };
+    Query<Pet,Transform,Body> pets{world};pets.without<Dead>();
+    pets.each([&](Entity,Pet&,Transform& pos,Body& body){collect(pos,body);});
+    Query<PetalInstance,Transform,Body> eggs{world};
+    eggs.each([&](Entity,PetalInstance& source,Transform& pos,Body& body){
+        if(source.configIndex<registry.petalCount()&&registry.petal(source.configIndex).petMobIndex!=kInvalidIndex)
+            collect(pos,body);
+    });
     // Counted once and carried, because the summons below are what change it.
     int owned = countOwnedPets(world, state);
     for (int i = 0; i < count; ++i) {
@@ -3875,12 +3905,28 @@ void PetalSystem::summonPets(World& world, const ContentRegistry& registry, Enti
         if (owned >= kMaxPetEntitiesPerPlayer) return;
         const double sizeJitter = config.rollRandomSize(rng_) * petSizeScale;
         const double radius = mob.radius * sizeJitter;
-        const Vec2 spawnAt = at + rng_.insideCircle(radius * 2.0 + kPlayerBaseRadius);
+        // Hatch on the owner's connected side of a wall, clear of the flower,
+        // surviving summons and egg shells. Random points alone could land
+        // across a one-tile wall or directly inside the incubating egg.
+        Vec2 spawnAt;bool placed=false;
+        for(int attempt=0;attempt<80 && !placed;++attempt){
+            const double reach=ownerRadius+radius+8+radius*(attempt/20.0);
+            const auto candidate=at+Vec2::fromAngle(rng_.angle(),reach);
+            if(terrain_ && (terrain_->blocked(candidate,realm) ||
+                terrain_->segmentBlocked(at,candidate,realm) ||
+                terrain_->resolveWall(candidate,radius,realm).collided)) continue;
+            bool overlaps=false;
+            for(const auto& circle:occupied){const double clearance=radius+circle.radius+2;
+                if((circle.at-candidate).lengthSq()<clearance*clearance){overlaps=true;break;}}
+            if(!overlaps){spawnAt=candidate;placed=true;}
+        }
+        if(!placed)continue;
         const double angle = rng_.angle();
         const Entity pet = hatchPetBody(world, registry, player, slot, mobIndex, rarity, spawnAt,
                                         angle, realm, radius, sizeJitter, strength,
                                         expiresAtMillis);
         slotState.pets.push_back(pet);
+        occupied.push_back({spawnAt,radius});
         ++owned;
 
         // The queen's soldiers: her own clock, hatched as more of the owner's
@@ -3922,6 +3968,7 @@ void PetalSystem::summonPets(World& world, const ContentRegistry& registry, Enti
             world.add<BodySegment>(segment, link);
             if (BodySegment* leader = world.tryGet<BodySegment>(ahead)) leader->behind = segment;
             slotState.pets.push_back(segment);
+            occupied.push_back({place,bodyRadius});
             ++owned;
             ahead = segment;
         }

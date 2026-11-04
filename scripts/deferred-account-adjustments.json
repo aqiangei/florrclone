@@ -1,0 +1,41 @@
+{
+  "actions": [
+    {
+      "id": "20261104-release-Hzl-dahlia-ygg",
+      "username": "Hzl",
+      "petals": [
+        "dahlia",
+        "yggdrasil"
+      ],
+      "resetClaims": false,
+      "expectedUserId": "oc4h1r4344aj"
+    },
+    {
+      "id": "20261104-clear-old-hyper-hammer-abc53",
+      "username": "abc53",
+      "petals": [
+        "mjolnir"
+      ],
+      "resetClaims": true,
+      "expectedUserId": "3e7417c1-d293-43f0-8bb4-254162bc88d4"
+    },
+    {
+      "id": "20261104-clear-old-hyper-hammer-55090221",
+      "username": "User55090221",
+      "petals": [
+        "mjolnir"
+      ],
+      "resetClaims": true,
+      "expectedUserId": "143tq75r9rmy"
+    },
+    {
+      "id": "20261104-clear-old-hyper-hammer-Cyber",
+      "username": "Cyber",
+      "petals": [
+        "mjolnir"
+      ],
+      "resetClaims": true,
+      "expectedUserId": "80la7njyqrr9"
+    }
+  ]
+}

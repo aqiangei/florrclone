@@ -66,6 +66,15 @@ async function main(){
     }
     assert.deepEqual(compare,before);
     fs.writeFileSync(path.join(local,'tp-reconciliation.json'),JSON.stringify(report,null,2));
+    // Explicitly requested releases, idempotent per account. This is AFTER
+    // the stopped-save download/SHA gate and before the candidate is installed.
+    const adjustments=path.join(root,'scripts/deferred-account-adjustments.json');
+    if(fs.existsSync(adjustments)){
+      const adjusted=path.join(local,'inventory.adjusted.json');
+      report.accountAdjustments=JSON.parse(run(process.execPath,[path.join(__dirname,'release-selected-hypers.cjs'),next,adjusted,adjustments]));
+      fs.writeFileSync(path.join(local,'account-adjustments.json'),JSON.stringify(report.accountAdjustments,null,2));
+      next=adjusted;
+    }
     if(process.env.FLORR_REFUND_ETERNAL_PRICE==='1'){
       const refunded=path.join(local,'inventory.refunded.json');
       report.eternalRefund=JSON.parse(run(process.execPath,[path.join(__dirname,'refund-eternal-forging.cjs'),next,refunded]));

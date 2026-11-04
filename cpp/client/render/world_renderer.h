@@ -348,6 +348,10 @@ public:
         int bubbles = 0;
     };
     const SectionOps& sectionOps() const { return ops_; }
+    // One reusable web stamp, rather than 60 curve segments per field/frame.
+    mutable std::unique_ptr<Canvas> webStamp_;
+    bool webStampCache_ = true;
+    void setWebStampCache(bool on) { webStampCache_=on; }
 
     /// Whether the terrain goes through the chunk cache (drawTerrainChunks).
     /// On in the web build and off natively, for the reason art_cache.h gives:

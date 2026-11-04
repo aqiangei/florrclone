@@ -47129,7 +47129,7 @@
             {
               "name": "rarity",
               "type": "string",
-              "value": "all"
+              "value": "unique"
             }
           ],
           "rotation": 0,

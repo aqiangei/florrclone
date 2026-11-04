@@ -103,3 +103,26 @@ TEST(super_farm_health_and_loot_budget_change_without_touching_eternal_or_hyper_
     CHECK_EQ(baseLootTrialsForRarity(Rarity::Super),20);CHECK_EQ(baseLootTrialsForRarity(Rarity::Unique),30);CHECK_EQ(baseLootTrialsForRarity(Rarity::Apex),30);
     CHECK(kAnnouncedRarity==Rarity::Unique);
 }
+
+TEST(termite_mound_backlog_prunes_idle_duplicates_but_keeps_occupied_instances){
+    const auto& c=data();World w;Terrain terrain;CommandBuffer commands{w};SpawnSystem spawn;Rng rng{25};
+    const auto index=c.mobIndex("termite_mound");std::vector<Entity> nests;
+    for(int n=0;n<4;++n)nests.push_back(spawn.spawnMob(w,terrain,c,index,Rarity::Rare,{1000.0+n*300,1000},Realm::Overworld,0,rng));
+    for(const auto e:nests)CHECK(e!=NULL_ENTITY);
+    auto& occupied=w.get<DungeonEntrance>(nests[3]);occupied.claimed=true;occupied.realm=Realm::Arena;
+    const auto p=w.create();w.add<PlayerTag>(p);w.add<Transform>(p,Transform{{1000,1000},0,Realm::Arena});w.add<Dead>(p);
+    spawn.run(w,terrain,c,{},rng,1000,net::kTickSeconds,commands);commands.flush();
+    CHECK(w.isAlive(nests[3]));int living=0;for(const auto e:nests)living+=w.isAlive(e);CHECK_EQ(living,1);
+    CHECK(!w.has<Dead>(nests[3]));
+}
+
+TEST(jungle_centipede_spawns_a_complete_networked_body_chain){
+    const auto& c=data();const auto index=c.mobIndex("jungle_centipede");const auto& config=c.mob(index);
+    CHECK_EQ(config.segmentCount,kCentipedeSegmentCount);CHECK(config.segmentBodyIndex!=kInvalidIndex);
+    CHECK(c.mob(config.segmentBodyIndex).chainBody);CHECK(c.mob(config.segmentBodyIndex).groups.empty());
+    World w;Terrain terrain;SpawnSystem spawn;Rng rng{66};NetIdAllocator ids;spawn.netIds=&ids;
+    const auto head=spawn.spawnMob(w,terrain,c,index,Rarity::Super,{3000,3000},Realm::Overworld,0,rng);
+    CHECK(head!=NULL_ENTITY);int bodies=0;Query<BodySegment,MobType> q{w};q.each([&](Entity e,BodySegment& part,MobType& type){
+        if(part.chainHead!=head||e==head)return;++bodies;CHECK_EQ(type.configIndex,config.segmentBodyIndex);CHECK(type.rarity==Rarity::Super);CHECK(w.has<Replicated>(e));
+    });CHECK_EQ(bodies,kCentipedeSegmentCount);
+}

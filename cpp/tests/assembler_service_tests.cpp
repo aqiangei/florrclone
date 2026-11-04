@@ -53,7 +53,7 @@ TEST(imported_factory_assemblers_are_friendly_services_with_regional_recipes) {
                 for (const auto& row : e.mobDistribution) CHECK(row.name != "assembler");
             }
         }
-        CHECK_EQ(services, 8);
+        CHECK_EQ(services, 1);
         for (const auto& site : npcs.sites()) {
             if (site.realm != map.realm() || site.mobIndex != type) continue;
             const Entity npc = npcs.findService(world, NpcService::Assembler, site.position,
@@ -155,7 +155,7 @@ TEST(assembler_batches_charge_exact_recipe_inputs_and_refuse_invalid_requests) {
     Query<PlayerTag,PlayerAccount> players{server.world()};
     players.each([&](Entity e,PlayerTag&,PlayerAccount& a){if(a.connection==82)flower=e;});
     Query<NpcTag,Npc> stations{server.world()};
-    stations.each([&](Entity e,NpcTag&,Npc& n){if(n.service==NpcService::Assembler&&n.rarity==Rarity::Common)npc=e;});
+    stations.each([&](Entity e,NpcTag&,Npc& n){if(n.service==NpcService::Assembler&&n.rarity==Rarity::Unique)npc=e;});
     CHECK(flower!=NULL_ENTITY&&npc!=NULL_ENTITY);
     if(flower==NULL_ENTITY||npc==NULL_ENTITY)return;
     const auto uid=server.world().get<PlayerAccount>(flower).userId;
@@ -165,23 +165,23 @@ TEST(assembler_batches_charge_exact_recipe_inputs_and_refuse_invalid_requests) {
     server.world().get<Transform>(flower)=at;
     const auto& recipes=content().mob(server.world().get<Npc>(npc).configIndex).npc.recipes;
     const auto key=[](std::uint16_t p){return "petal_"+content().petal(p).id;};
-    const auto request=[&](int recipe,int quantity){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ClientMessage::Assemble));w.u8(0);w.u8(recipe);w.u16(quantity);deliver(w);};
+    const auto request=[&](int recipe,int quantity){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ClientMessage::Assemble));w.u8(static_cast<std::uint8_t>(Rarity::Unique));w.u8(recipe);w.u16(quantity);deliver(w);};
     for(std::size_t i=0;i<recipes.size();++i){
         const auto& recipe=recipes[i];
         server.world().get<Npc>(npc).recipe=static_cast<std::uint8_t>(i);
         record.inventory=Json::object();
         std::map<std::string,int> expected;
         for(const auto& input:recipe.inputs)expected[key(input.petal)]+=static_cast<int>(input.count*3);
-        for(const auto& [id,count]:expected)record.setItemCount(Rarity::Common,id,count);
+        for(const auto& [id,count]:expected)record.setItemCount(Rarity::Unique,id,count);
         request(static_cast<int>(i),3);
         for(const auto& input:recipe.inputs)expected[key(input.petal)]-=static_cast<int>(input.count*3);
         for(const auto& output:recipe.outputs)expected[key(output.petal)]+=static_cast<int>(output.count*3);
-        for(const auto& [id,count]:expected)CHECK_EQ(record.itemCount(Rarity::Common,id),count);
+        for(const auto& [id,count]:expected)CHECK_EQ(record.itemCount(Rarity::Unique,id),count);
     }
     CHECK(!recipes.empty());
     server.world().get<Npc>(npc).recipe=0;
     record.inventory=Json::object();
-    for(const auto& input:recipes[0].inputs)record.setItemCount(Rarity::Common,key(input.petal),static_cast<int>(input.count*2));
+    for(const auto& input:recipes[0].inputs)record.setItemCount(Rarity::Unique,key(input.petal),static_cast<int>(input.count*2));
     const auto before=record.inventory.dump();
     request(0,3);CHECK_EQ(record.inventory.dump(),before); // short bag: all or nothing
     request(0,0);CHECK_EQ(record.inventory.dump(),before);

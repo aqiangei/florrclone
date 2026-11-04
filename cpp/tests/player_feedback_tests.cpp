@@ -453,3 +453,19 @@ TEST(feedback_chip_has_independent_ninety_percent_self_evasion_but_not_lightning
     combat.applyPoison(w,chip,enemy,10,1000,now+2000);const auto* status=w.tryGet<Afflictions>(chip);CHECK(!status||status->poisonPerSecond==0);
     const auto ownerHit=combat.applyDamage(w,player,enemy,1,now+3000,DamageKind::Direct);CHECK(!ownerHit.dodged);CHECK_NEAR(ownerHit.applied,1,1e-12);
 }
+
+TEST(feedback_bubble_speed_pea_bursts_cannot_accumulate_unbounded_mob_push){
+    World w;CombatSystem combat;const auto mob=w.create();w.add<MobTag>(mob);w.add<Transform>(mob);w.add<Motion>(mob);w.add<Body>(mob,Body{30,2});w.add<Knockback>(mob);
+    for(int n=0;n<100;++n)combat.pushFromImpact(w,mob,{1,0},20,12000);
+    CHECK(w.get<Knockback>(mob).carry.length()<=8.000001);
+    w.get<Knockback>(mob).carry={100,0};combat.pushFromImpact(w,mob,{1,0},20,12000);
+    CHECK_NEAR(w.get<Knockback>(mob).carry.length(),100,1e-8);
+    combat.applyKnockback(w,mob,{1,0},2000);
+    CHECK_NEAR(w.get<Knockback>(mob).impulse.length(),1000,1e-8);
+}
+TEST(feedback_wild_mob_size_shrinks_without_reducing_knockback_resistance){
+    const auto& c=testsupport::shippedContent();World w;SpawnSystem spawn;Terrain terrain;Rng rng{452};
+    const auto index=c.mobIndex("soldier_ant");const auto stats=c.mobStats(index,Rarity::Super);
+    const auto mob=spawn.spawnMob(w,terrain,c,index,Rarity::Super,{2000,2000},Realm::Overworld,0,rng);CHECK(mob!=NULL_ENTITY);
+    if(mob!=NULL_ENTITY){CHECK_NEAR(w.get<Body>(mob).radius,stats.radius*.75,1e-7);CHECK_NEAR(w.get<Body>(mob).mass,stats.mass,1e-8);}
+}

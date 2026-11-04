@@ -31,7 +31,8 @@ inline double shopPrice(std::uint16_t petalIndex, Rarity rarity) {
     // The previous 1.5 ceiling priced a 99999-base Mimic almost like a basic
     // item. Respect authored acquisition costs without lowering cheap petals.
     const double variety=std::max(affordable,std::min(10.0,std::sqrt(base/20.0)));
-    return std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
+    const double previous=std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
+    return std::ceil(previous*1.75);
 }
 
 /// By id. An id no petal answers to has no price at all and quotes zero --

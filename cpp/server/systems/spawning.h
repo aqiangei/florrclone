@@ -1051,6 +1051,7 @@ private:
     std::vector<SuperMapState> superFarmPopulations_;
     void stockSuperFarms(World&,const Terrain&,const ContentRegistry&,
                          const std::vector<Viewer>&,Rng&,double);
+    void trimMounds(World&,const ContentRegistry&,CommandBuffer&);
     struct EternalMapState { Realm realm; int previousLiving = 0; };
     std::vector<EternalMapState> eternalPopulations_;
     std::vector<EternalMapState> hyperPopulations_;
@@ -1121,4 +1122,5 @@ void spawnMobRingSeeds(World& world, const ContentRegistry& content, Entity mob,
 } // namespace flix
 
 FLIX_COMPONENT(flix::AmbientMob);
+FLIX_COMPONENT(flix::SuperFarmMob);
 FLIX_COMPONENT(flix::NestWaves);
