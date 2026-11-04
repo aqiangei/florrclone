@@ -170,7 +170,7 @@ inline constexpr std::array<double, kLadderRarityCount> kMobDamageScale = {
 /// a mob is something you find and fight, above it a thing a raid is called
 /// for, and a raid's damage is not what armour is meant to be balanced against.
 inline constexpr std::array<double, kLadderRarityCount> kMobArmorScale = {
-    1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 729.0, 729.0, 2916.0,
+    1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 729.0, 729.0, 1458.0,
 };
 
 /// Mob body size per tier: 1 + 0.5 * 1.7^tier, so a size-1 mob's radius is

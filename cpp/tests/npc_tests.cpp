@@ -2925,6 +2925,8 @@ TEST(each_assembler_rolls_one_recipe_and_the_client_is_told_which) {
     CHECK(seenBy != client.view().entities().end());
     if (seenBy != client.view().entities().end() && npc != NULL_ENTITY) {
         CHECK_EQ(seenBy->second.npcRecipe, h.server.world().get<Npc>(npc).recipe);
+        CHECK_EQ(seenBy->second.npcNextRecipe, h.server.world().get<Npc>(npc).nextRecipe);
+        CHECK(seenBy->second.npcRecipeRefreshAtMillis > 0);
     }
     removeDataDir(dir);
 }

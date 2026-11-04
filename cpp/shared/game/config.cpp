@@ -1835,7 +1835,8 @@ MobStats ContentRegistry::mobStats(std::uint16_t index, Rarity r) const {
     const double scaledSize = c.size * kMobSizeScale[t];
     s.health = c.health * kMobHealthScale[t];
     s.damage = c.damage * kMobDamageScale[t];
-    s.armor = c.armor * kMobArmorScale[t];
+    // This extra Hyper tuning is mob-only; Bone shares the base armour ladder.
+    s.armor = c.armor * kMobArmorScale[t] * (tier == Rarity::Apex ? 2.0 : 1.0);
     s.evasion = c.evasion;
     s.radius = scaledSize * kMobBaseRadius;
     s.mass = bodyMassForRadius(s.radius) * (c.speed == 0.0 ? kAnchoredMassScale : 1.0);

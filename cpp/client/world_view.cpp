@@ -243,7 +243,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         double shieldFraction;
         std::string equippedSkinId;
         std::uint32_t ownerNetId;
-        std::uint8_t npcRecipe;
+        std::uint8_t npcRecipe = 0;
         std::uint8_t npcNextRecipe = 0;
         double npcRecipeRefreshAtMillis = 0;
         std::string name;
