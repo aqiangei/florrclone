@@ -774,6 +774,10 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                     ? scaleDropRarity(clampRarity(entry->rarityOffset), mobRarity, rng)
                     : chaffDropRarity(mobRarity);
                 Rarity rarity = graded ? finishDropRarity(base, mobRarity, rng) : base;
+                // Legacy custom rows have no authored CDF. Hyper must use the
+                // same Ultra body / 1.5% Super tail as ordinary high-tier rows,
+                // rather than making every chaff row a guaranteed Super.
+                if (hyperKill) rarity = rng.chance(.015) ? Rarity::Super : Rarity::Ultra;
                 // The Random sentinel resolves per COPY, not per row.
                 std::uint16_t petalIndex = entry->kind == DropTables::Kind::RandomPetal
                                                ? tables_.randomPetal(rng, rarity)
@@ -855,7 +859,14 @@ void LootSystem::rollTable(const std::vector<DropTables::Entry>& table, Rarity m
     // drop any more, it is a reliably WEAK one. The table handed in is the
     // merged one, so two authored lines naming one petal are one drop rather
     // than two.
-    for (const DropTables::Entry& entry : table) selected_.push_back(&entry);
+    for (const DropTables::Entry& entry : table) {
+        // Random jackpot rows are not ordinary guaranteed item types. Their
+        // authored chance must survive the non-Common merged-table path.
+        if (entry.rates.empty() &&
+            (mobRarity == Rarity::Apex || entry.kind == DropTables::Kind::RandomPetal) &&
+            !rng.chance(entry.probability)) continue;
+        selected_.push_back(&entry);
+    }
 }
 
 std::size_t LootSystem::pickFeatured(Rng& rng) const {
