@@ -2421,7 +2421,7 @@ TEST(the_shipped_assembler_makes_a_sawblade_out_of_a_mimic_and_a_ram) {
     // (its client's table, 0x10234f910) whose petals all exist here -- ten of
     // its twenty (user, 2026-10-14) -- and two squares = pentagon (user,
     // 2026-10-26).
-    CHECK_EQ(config.npc.recipes.size(), std::size_t(12));
+    CHECK_EQ(config.npc.recipes.size(), std::size_t(13));
     const int saw = recipeMaking(assembler, "sawblade");
     CHECK(saw >= 0);
     if (saw < 0) return;
@@ -2438,7 +2438,7 @@ TEST(the_shipped_assembler_makes_a_sawblade_out_of_a_mimic_and_a_ram) {
         CHECK_EQ(config.npc.recipes[static_cast<std::size_t>(wax)].takes(
                      content().petalIndex("honey")), std::int64_t(3));
     }
-    const int moon = recipeMaking(assembler, "moon");
+    const int moon = recipeMaking(assembler, "moon_rock");
     CHECK(moon >= 0);
     if (moon >= 0) {
         CHECK_EQ(config.npc.recipes[static_cast<std::size_t>(moon)].takes(
@@ -2451,7 +2451,7 @@ TEST(the_shipped_assembler_makes_a_sawblade_out_of_a_mimic_and_a_ram) {
         CHECK_EQ(r.outputs.size(), std::size_t(2));
         CHECK_EQ(r.takes(content().petalIndex("battery")), std::int64_t(3));
     }
-    // A pentagon is two squares, and twice a square's damage and health.
+    // The reference pentagon costs two squares and has its own base stats.
     const int pentagon = recipeMaking(assembler, "pentagon");
     CHECK(pentagon >= 0);
     if (pentagon >= 0) {
@@ -2460,9 +2460,8 @@ TEST(the_shipped_assembler_makes_a_sawblade_out_of_a_mimic_and_a_ram) {
         CHECK_EQ(r.takes(content().petalIndex("square")), std::int64_t(2));
         CHECK_EQ(r.outputs.size(), std::size_t(1));
         const PetalConfig& five = content().petal(content().petalIndex("pentagon"));
-        const PetalConfig& four = content().petal(content().petalIndex("square"));
-        CHECK_EQ(five.damage, 2.0 * four.damage);
-        CHECK_EQ(five.health, 2.0 * four.health);
+        CHECK_EQ(five.damage, 20.0);
+        CHECK_EQ(five.health, 20.0);
     }
 }
 
@@ -2625,7 +2624,7 @@ TEST(the_computer_holds_one_assembler_of_every_tier_somewhere_inside_it) {
     Realm computer = Realm::Overworld;
     bool haveComputer = false;
     for (const MapData& map : maps.maps()) {
-        if (map.id() != "computer") continue;
+        if (map.id() != "cyberspace") continue;
         computer = map.realm();
         haveComputer = true;
     }
@@ -2641,7 +2640,7 @@ TEST(the_computer_holds_one_assembler_of_every_tier_somewhere_inside_it) {
     std::vector<int> perTier(kRarityCount, 0);
     std::vector<int> prestigePerTier(kRarityCount, 0);
     for (const NpcSystem::Site& site : npcs.sites()) {
-        if (content().mob(site.mobIndex).npc.service != NpcService::Assembler) continue;
+        if (content().mob(site.mobIndex).id != "cyber_assembler") continue;
         CHECK(site.roams);
         if (site.realm == prestigeComputer) {
             ++prestigePerTier[static_cast<std::size_t>(rarityIndex(site.rarity))];
