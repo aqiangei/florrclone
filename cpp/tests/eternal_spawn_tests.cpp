@@ -2,12 +2,13 @@
 #include "test_data.h"
 #include "server/systems/spawning.h"
 using namespace flix;
-TEST(eternal_stats_are_three_times_super_without_speed_or_armor_inflation) {
+TEST(eternal_stats_double_online_health_without_other_stat_inflation) {
     ContentRegistry c;std::string error;
     CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),error));
     for(std::uint16_t n=0;n<c.mobCount();++n){
         const auto s=c.mobStats(n,Rarity::Super),e=c.mobStats(n,Rarity::Unique);
-        CHECK_NEAR(e.health,s.health*3,1e-5);CHECK_NEAR(e.damage,s.damage*3,1e-5);
+        CHECK_NEAR(e.health,c.mob(n).health*14244000.0,std::max(1e-5,e.health*1e-12));
+        CHECK_NEAR(e.damage,s.damage*3,1e-5);
         CHECK_NEAR(e.speed,s.speed,1e-9);CHECK_NEAR(e.chaseSpeed,s.chaseSpeed,1e-9);
         CHECK_NEAR(e.armor,s.armor,1e-9);
     }
