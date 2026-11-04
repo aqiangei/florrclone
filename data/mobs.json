@@ -2238,9 +2238,10 @@
         },
         {
           "from": [
+            "cogwheel",
             {
               "petal": "fragment",
-              "count": 10
+              "count": 20
             }
           ],
           "to": "sawblade"
@@ -3423,9 +3424,10 @@
         },
         {
           "from": [
+            "cogwheel",
             {
               "petal": "fragment",
-              "count": 10
+              "count": 20
             }
           ],
           "to": "sawblade"
