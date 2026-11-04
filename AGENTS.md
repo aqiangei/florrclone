@@ -1,5 +1,13 @@
 # Project rules
 
+## 项目上下文入口与任务边界
+
+- 新会话先读本文件和 `docs/current-status.md`；随后只读与任务相关的 `docs/architecture.md`、`docs/game-canon.md`、`docs/development-rules.md` 及实现文件，不要默认通读全部历史日志。
+- 通常一个独立功能对应一个会话、一个 `codex/` 分支及一个PR。同一Bug的诊断、修复和验收保持在原任务内；不要为每个小修改拆会话。仅在用户明确要求时创建新的用户对话。
+- 开始前核对Git状态和任务范围，保留其他任务修改；并行工作须明确文件归属、协议/数据变更和统一部署负责人，禁止并行操作同一构建目录或同时部署。
+- 未经当前任务明确授权，不提交、推送、合并或部署。功能完成后记录修改位置、实际测试与结果、未完成事项、风险和未提交修改；更新现有状态文档并给出简短交接说明。
+- 文档不是完成证据：未测试的功能不能标记为已验收，历史部署结果不能冒充当前线上健康检查。具体规则冲突时先检查当前代码、数据和用户最新明确要求，不凭旧聊天静默改动游戏平衡。
+
 ## The TypeScript version is gone — recover it from git history
 
 The TypeScript implementation was deleted on 2026-10-08: the browser client
