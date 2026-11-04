@@ -79,3 +79,19 @@
 - hyper_eternal_allocations回归通过：全注册怪物显式表检查E≤S/2、总预算≤0.35/尸体；4000次机械花击杀的电池/cogwheel/fragment/mimic均S数量高于E。hyper_drop_budget两项通过，包括Bonus1.5/2倍率；旧固定0.35断言已改为新封顶规则的计算期望。
 - centipede_body_kills再次通过。剩余回归及完整Web构建进行中，尚未提交/推送/部署。
 - 工作区另有协议92/电网/60TPS/并行快照任务修改与独立release92构建，保留它们；本任务不操作其构建目录或部署。临时原生测试构建补入新parallel_snapshots.cpp以兼容当前工作区，没有把原链接缺文件报错算成通过。
+
+
+### 2026-11-05收尾验证
+
+- 当前工作区60TPS/并行快照条件下，splitter_parked两项、dice_real、defending_drops_pollen、ankh_break、assemblers_keep、carrot_projectile_speed、super_farm_has均通过。原生只运行列出的定向用例，不代表全仓测试全绿。
+- Chrome夹具通过图鉴S/E上限断言，机械花实际读到battery S0.279%/E0.100370%、cogwheel及fragment S1.476%/E0.530990%、mimic S0.012%/E0.004317%；瓢虫和Hel身体也核对通过。黑名单增删清空及刷新持久化复测通过，机械导弹四向和金色暴击截图重新生成。
+- 完整flowrix_client/flowrix_server构建使用本仓cpp/build-web（与另一个任务D:/ashflor/temp/release92-20261104构建目录分开）；客户端链接已完成，服务端仍在构建。不会据此声称另一个发布快照包含本次最新掉落修复。
+
+
+### 构建与隔离启动收尾（2026-11-05）
+
+- 完整flowrix_client与flowrix_server构建成功；保留构建日志/root/feedback92-complete.log。仅编译产物，没有暂存或提交dist。三份JSON暂存文件与源码逐字节一致。
+- Windows Node运行新cpp/build-web/server.js，临时数据库D:/ashflor/temp/feedback92-local-smoke/inventory.json、端口13091；实际监听、游客注册、账号注册/登录、错误密码拒绝全部通过。smoke-auth显示协议92/内容哈希2859263876。测试进程已退出，未触碰正式数据库。
+- 首次脚本错误等待裸服务端不存在的/health路径而超时，未计为通过；改为实际TCP监听与完整鉴权握手验证。/api/health属于部署包装层，本次未把它冒充线上健康检查。
+- 以上本轮明确实现项收尾；骰子玩家所有同伤场景仍未在线上复现，本地完整链路有暴击且已独立金色显示，不能把这一限制隐去。旧未知账号存档缺身份材料，不宣称恢复。
+- 同工作区其他任务的电网/60TPS/并行快照和发布快照状态由其记录负责；本次没有提交、推送或部署，也未操作其release目录。
