@@ -611,8 +611,6 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const Rarity mobRarity = type->rarity;
         const Vec2 at = transform->position;
         const Realm realm = transform->realm;
-        const Dead* dead = world.tryGet<Dead>(corpse);
-        const Entity killer = dead != nullptr ? dead->killer : NULL_ENTITY;
         const Health* health = world.tryGet<Health>(corpse);
         const double damageFloor = mobRarity == Rarity::Apex ? 0.0 :
             lootDamageFloor(health != nullptr ? health->max : 0.0);
@@ -669,11 +667,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         world.add<LootAwarded>(corpse);
         if (eligible_.empty()) continue;
 
-        // A drop is ONE roll for the whole mob, and it needs a live player to
-        // credit it to: the killer, falling back to the biggest damage dealer
-        // when the killing blow was nobody's -- a poison tick, a mob finishing
-        // a mob, a pet whose owner left. If that player is no longer in the
-        // world the mob pays out nothing at all, which is the reference's gate.
+        // Resolve rights from surviving eligible contributors, rather than
+        // requiring the last hitter or first ledger body to still exist.
         // A stale final hitter must not erase the rewards earned by remaining
         // contributors, including a splitter whose credited half has died.
         const bool hasClaimant = std::any_of(eligible_.begin(), eligible_.end(),
