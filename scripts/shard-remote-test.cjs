@@ -1,9 +1,10 @@
 'use strict';
 // Runs the same synthetic integration test on the two real deployment hosts.
-// SSH forwards expose only this test's private listeners to the local runner.
+// Use the deployment check's loopback relay to reach isolated test listeners.
 const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),assert=require('node:assert/strict');
 const q=s=>"'"+String(s).replace(/'/g,"'\\''")+"'";
-module.exports=function remoteTest(configPath,home){
+const {openSshRelay}=require('./shards/ops/live-paired-check.cjs');
+module.exports=async function remoteTest(configPath,home){
   const c=JSON.parse(fs.readFileSync(configPath,'utf8'));
   assert.match(c.release,/^\/opt\/florrclone\/releases\/[a-zA-Z0-9_-]+$/);
   const stamp=path.basename(home).replace(/[^a-zA-Z0-9-]/g,'');
@@ -15,7 +16,15 @@ module.exports=function remoteTest(configPath,home){
     assert.equal(ssh(t,'cat /etc/machine-id').trim(),t.machineId);
     ssh(t,'install -d -m 700 '+q(remoteHome));
   }
+  const relays=[];
+  const close=()=>Promise.all(relays.map(relay=>relay.close()));
+  try{
+    relays.push(await openSshRelay(c.targets.one,19090,19092));
+    relays.push(await openSshRelay(c.targets.one,3093,3093));
+    relays.push(await openSshRelay(c.targets.two,3094,3094));
+  }catch(error){await close();throw error;}
   return {
+    close,
     launch(name,args,env,fd){
       const role=name==='two'?'two':'one',t=c.targets[role];
       const coordinator=name==='coordinator';
@@ -35,8 +44,7 @@ module.exports=function remoteTest(configPath,home){
       if(!coordinator)assignments.push('FLIX_AUTHORITY_MODULE='+c.release+'/shard-game-authority.cjs');
       const command=coordinator?[c.release+'/shard-coordinator-host.cjs']:
         ['-r',c.release+'/deploy-runtime.cjs',c.release+'/server.js','--port',name==='one'?'3093':'3094','--db',remoteHome+'/'+name+'/db/forbidden-local.json','--bots','0','--web-root',c.release];
-      const forward=coordinator?'19092:127.0.0.1:19090':name==='one'?'3093:127.0.0.1:3093':'3094:127.0.0.1:3094';
-      const child=cp.spawn('ssh',[...options(t),'-L',forward,'root@'+t.host,
+      const child=cp.spawn('ssh',[...options(t),'root@'+t.host,
         'systemd-run --quiet --wait --pipe --collect --unit='+q(unit)+' --property='+q('WorkingDirectory='+c.release)+' /usr/bin/env '+assignments.map(q).join(' ')+' /opt/florrclone/runtime/bin/node '+command.map(q).join(' ')],
         {stdio:['ignore',fd,fd],windowsHide:true});
       child.kill=signal=>{

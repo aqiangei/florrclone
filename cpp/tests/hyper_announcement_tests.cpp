@@ -9,7 +9,7 @@ TEST(hyper_spawn_announcements_translate_rarity_and_mob_in_both_locations) {
         ui::setLanguage(ui::Language::Zh);const auto result=ui::localizeChatText(line);
         CHECK(result.find("超凡")!=std::string::npos);CHECK(result.find("蜘蛛")!=std::string::npos);
         CHECK(result.find("Hyper")==std::string::npos);CHECK(result.find("</b>")!=std::string::npos);
-        CHECK(result.find(std::string(tail)=="!"?"已出现":"已在某处出现")!=std::string::npos);
+        CHECK(result.find(std::string(tail)=="!"?"已生成":"已在某处生成")!=std::string::npos);
         ui::setLanguage(ui::Language::En);CHECK_EQ(ui::localizeChatText(line),line);
     }
     ui::setLanguage(before);

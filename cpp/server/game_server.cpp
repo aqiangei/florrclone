@@ -1518,41 +1518,38 @@ void GameServer::announceBossSpawns() {
             continue;
         }
 
-        // The mob's display name, never its id: ids are for commands only.
-        const std::string& name = content().mob(boss.mobIndex).name;
-        // Only meaningful for a boss on the overworld: `section` is that map's
-        // 3x3 grid, and another map's coordinates read as a section number that
-        // means nothing. See `here` below.
-        const int section = sectionAt(boss.position);
-        const std::string tier = rarityLabel(boss.rarity);
-        // Wrapped in the tier's own colour, as the reference server wraps it.
-        // The client parses the markup; sending the announcement bare left it
-        // the one boss line in the game with no tier colour on it.
-        char colorAttribute[32];
-        std::snprintf(colorAttribute, sizeof colorAttribute, "#%06x",
-                      rarityColor(boss.rarity));
-
-        for (auto& entry : sessions_) {
-            Session& session = entry.second;
-            if (!session.playing()) continue;
-            net::Connection* connection = listener_.find(session.connection);
-            if (connection == nullptr) continue;
-            // Personalised: a player standing in the boss's own section is told
-            // it spawned, everyone else that it spawned "somewhere". A band on
-            // ANY staged world map can fill with supers now -- difficulty is
-            // what makes bosses -- so the boss's OWN realm has to match before
-            // its position means anything: two maps are two coordinate spaces,
-            // and (9000, 9000) on one is not near (9000, 9000) on the other.
-            const Transform* transform = world_.tryGet<Transform>(session.entity);
-            const bool here = transform != nullptr && transform->realm == boss.realm &&
-                              transform->realm == Realm::Overworld &&
-                              sectionAt(transform->position) == section;
-            sendChatTo(*connection, net::ChatChannel::System, "",
-                       std::string("<b style=\"color: ") + colorAttribute + ";\">A " + tier +
-                           " " + name + " has spawned" + (here ? "" : " somewhere") + "!</b>");
-        }
+        announceMob(boss.mobIndex, boss.rarity, boss.realm, false);
     }
     spawning_->bossSpawns.clear();
+}
+
+void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
+                             std::optional<Realm> localRealm, bool summoned) {
+    if (mobIndex >= content().mobCount()) return;
+    char color[16];
+    std::snprintf(color, sizeof color, "#%06x", rarityColor(rarity));
+    const auto prefix = std::string("<b style=\"color: ") + color + ";\">A " +
+        rarityLabel(rarity) + " " + content().mob(mobIndex).name +
+        (summoned ? " has been summoned" : " has spawned");
+    for (auto& entry : sessions_) {
+        Session& session = entry.second;
+        if (!session.playing()) continue;
+        net::Connection* connection = listener_.find(session.connection);
+        if (connection == nullptr) continue;
+        const Transform* transform = world_.tryGet<Transform>(session.entity);
+        const bool here = localRealm && transform && transform->realm == *localRealm;
+        sendChatTo(*connection, net::ChatChannel::System, "",
+                   prefix + (here ? "" : " somewhere") + "!</b>");
+    }
+    // Only the originating world publishes. Receiving worlds never learn the realm.
+    if (localRealm && config_.authorityAuth) {
+        Json event = Json::object();
+        event["action"] = "mobAnnouncement";
+        event["mob"] = int(mobIndex);
+        event["rarity"] = rarityIndex(rarity);
+        event["summoned"] = summoned;
+        config_.authorityAuth(event);
+    }
 }
 
 void GameServer::bankPickups() {
@@ -5638,6 +5635,13 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
             input["rows"].push(std::move(item));
         }
         const auto shared=config_.authorityAuth(input);const auto local=shared["current"].asString();
+        for (const auto& notice : shared["notices"].items()) {
+            const int mob = notice["mob"].asInt(-1);
+            const int tier = notice["rarity"].asInt(-1);
+            if (mob < 0 || mob >= kInvalidIndex || tier < 0 || tier >= kRarityCount) continue;
+            announceMob(static_cast<std::uint16_t>(mob), static_cast<Rarity>(tier),
+                        std::nullopt, notice["summoned"].asBool());
+        }
         for(auto& row:rows)row.shard=local=="one"?1:local=="two"?2:0;
         for(const auto& item:shared["rows"].items()) {
             const auto shard=item["shard"].asString();if(shard==local||(shard!="one"&&shard!="two"))continue;

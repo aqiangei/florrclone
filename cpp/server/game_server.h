@@ -1138,6 +1138,8 @@ private:
     /// player standing in the boss's own section is told it spawned, everyone
     /// else that it spawned "somewhere".
     void announceBossSpawns();
+    void announceMob(std::uint16_t mobIndex, Rarity rarity,
+                     std::optional<Realm> localRealm, bool summoned);
 
     Session* sessionFor(net::ConnectionId id);
     Session* sessionForEntity(Entity e);

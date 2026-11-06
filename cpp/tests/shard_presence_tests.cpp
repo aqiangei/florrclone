@@ -19,3 +19,28 @@ TEST(shard_presence_ownership_handoff_expiry_and_safe_fields) {
  CHECK(!p.exchange(state,Node{"evil","boot",Role::Game},empty,9002)["ok"].asBool());
 
 }
+
+TEST(shard_presence_mob_announcements_are_ephemeral_and_hide_location) {
+    Presence presence;
+    const Json state = Json::object(), rows = Json::array();
+    const Node source{"one", "boot1", Role::Game}, destination{"two", "boot2", Role::Game};
+    Json notice = Json::object(), batch = Json::array();
+    notice["id"] = "0123456789abcdef0123456789abcdef";
+    notice["mob"] = 7;
+    notice["rarity"] = rarityIndex(Rarity::Unique);
+    notice["realm"] = "private test map";
+    notice["x"] = 100;
+    batch.push(notice);
+    notice["rarity"] = -1;
+    batch.push(notice);
+
+    CHECK(presence.exchange(state, source, rows, 0, batch)["notices"].size() == 0);
+    presence.exchange(state, source, rows, 100, batch);
+    const Json notices = presence.exchange(state, destination, rows, 200)["notices"];
+    CHECK(notices.size() == 1);
+    CHECK(notices[0]["mob"].asInt() == 7);
+    CHECK(notices[0]["rarity"].asInt() == rarityIndex(Rarity::Unique));
+    CHECK(notices[0]["realm"].isNull());
+    CHECK(notices[0]["x"].isNull());
+    CHECK(presence.exchange(state, destination, rows, 30000)["notices"].size() == 0);
+}

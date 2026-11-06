@@ -18,7 +18,8 @@
 #include "shared/net/protocol.h"
 
 namespace flix {
-inline constexpr double kMinimumUserCameraZoom = 0.25;
+// Extra vision must come from equipment/talents, not the zoom-out control.
+inline constexpr double kMinimumUserCameraZoom = 1.0;
 
 // ---------------------------------------------------------------------------
 // World

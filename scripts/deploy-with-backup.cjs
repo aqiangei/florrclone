@@ -187,6 +187,14 @@ async function main(){
       next=queued;
     }
     }
+    if(process.env.FLORR_PETAL_GRANT_FILE){
+      assert(process.env.FLORR_PRESERVE_SAVE==='1','Explicit petal grant requires preserve-save mode');
+      const db=JSON.parse(fs.readFileSync(next,'utf8'));
+      const request=JSON.parse(fs.readFileSync(process.env.FLORR_PETAL_GRANT_FILE,'utf8'));
+      report.authorizedPetals=require('./grant-authorized-petals.cjs').apply(db,request);
+      next=path.join(local,'inventory.authorized-petals.json');fs.writeFileSync(next,JSON.stringify(db));
+      fs.writeFileSync(path.join(local,'authorized-petals.json'),JSON.stringify(report.authorizedPetals,null,2));
+    }
     if(process.env.FLORR_COUNCIL_HISTORY_FILE){
       assert(process.env.FLORR_PRESERVE_SAVE==='1','History import requires preserve-save mode');
       const saved=JSON.parse(fs.readFileSync(next,'utf8'));

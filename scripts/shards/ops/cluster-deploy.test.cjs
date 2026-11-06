@@ -1,6 +1,25 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto');
-const {acceptance,load}=require('./cluster-deploy.cjs');
+const {acceptance,load,create}=require('./cluster-deploy.cjs');
+test('maintenance continuation requires confirmed announcements, matching backup and closed gate',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'florr-maintenance-'));
+  try{
+    const prior=path.join(root,'prior');fs.mkdirSync(prior);const bytes=Buffer.from('{}');
+    const sha=crypto.createHash('sha256').update(bytes).digest('hex');
+    fs.writeFileSync(path.join(prior,'inventory.json'),bytes);
+    fs.writeFileSync(path.join(prior,'backup-metadata.json'),JSON.stringify({timestamp:'20261106T090604Z',nextRelease:'/opt/florrclone/releases/hotfix',sha256:sha}));
+    fs.writeFileSync(path.join(prior,'maintenance-bonus.json'),JSON.stringify({resumedAt:Date.now()-1000}));
+    const log=path.join(root,'announcement.log');
+    const config={mode:'initial',backupRoot:root,privateDirectory:root,targets:{one:{expectedRelease:'/opt/florrclone/releases/hotfix'}},maintenanceContinuation:{backupDirectory:prior,announcementLog:log}};
+    let gated=true;
+    const one={ssh(cmd){if(cmd.startsWith('sha256sum'))return sha+' inventory.json';assert(gated,'gate open');return '';}};
+    fs.writeFileSync(log,'已确认全服广播：120秒后维护');
+    await assert.rejects(create(config,{}, {one}).announce(),/Missing confirmed/);
+    fs.writeFileSync(log,[120,60,30,10].map(n=>'已确认全服广播：'+n+'秒后维护').join('\n'));
+    await create(config,{}, {one}).announce();
+    gated=false;await assert.rejects(create(config,{}, {one}).announce(),/gate open/);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
 test('deployment requires actual checks for both simulations, progress, exclusivity and global rules',()=>{
   const checks={roundTrip:true,progress:true,exclusiveLogin:true,hyperUnique:true,council:true,independentWorlds:true};
   assert(acceptance({ok:true,checks}));

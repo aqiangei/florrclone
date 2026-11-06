@@ -507,9 +507,9 @@ std::string localizeMarkupAware(std::string text) {
                 std::string zhBody;
                 if (std::string(enVerb) == " has spawned") {
                     if (startsWith(rest, " somewhere")) {
-                        zhBody = entity + " 已在某处出现！";
+                        zhBody = entity + " 已在某处生成！";
                     } else {
-                        zhBody = entity + " 已出现！";
+                        zhBody = entity + " 已生成！";
                     }
                 } else if (std::string(enVerb) == " has been summoned") {
                     if (startsWith(rest, " somewhere")) {

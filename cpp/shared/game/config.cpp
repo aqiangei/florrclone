@@ -2135,7 +2135,10 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         s.cameraZoom = 1.0 / antennaeVisionRangeScale(tier);
     }
     if (c.id == "observer") {
-        s.cameraZoom = std::min(s.cameraZoom, 0.9 / antennaeVisionRangeScale(tier));
+        // The legacy subtractive growth crosses zero at Super. Preserve its
+        // original floor before applying the stronger antenna vision table.
+        s.cameraZoom = std::min(std::max(0.3, s.cameraZoom),
+                                0.9 / antennaeVisionRangeScale(tier));
     }
     // Apply explicit exceptions only on the authored ladder. Devine/Admin retain
     // their separate server-specific rules, not guessed extra wiki tiers.
@@ -2307,8 +2310,7 @@ double petalCameraZoom(const ContentRegistry& registry, std::uint16_t petalIndex
     if (petalIndex >= registry.petalCount()) return 1.0;
     constexpr double kFloor = 0.3;
     const double asked = registry.petalStats(petalIndex, rarity).cameraZoom;
-    // No positive-only guard: a tier that takes the figure through zero lands
-    // on the floor, not back on 1.
+    if (!std::isfinite(asked) || asked <= 0.0) return kFloor;
     const auto& id = registry.petal(petalIndex).id;
     return id == "antennae" || id == "observer" ? asked : std::max(kFloor, asked);
 }

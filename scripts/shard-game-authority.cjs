@@ -14,6 +14,7 @@ const publicDirectory=directory(config);
 const sync=new ShardRpc(config),asyncRpc=new AsyncShardRpc(config);
 let state=null,pending=null,failed=false;
 let presencePending=false,presenceRows=[],presenceAt=0;
+const outgoingNotices=[],incomingNotices=[],seenNotices=new Map();
 const sequence=new RequestSequence();
 const leases=new Map();
 const authJobs=new Map(),reserved=new Map();
@@ -190,15 +191,33 @@ module.exports={
     const job=pending={key,result:null};mutate(()=>commitAsync(clone(delta))).then(result=>{job.result=result;});return 'pending';
   },
   invoke(input){
+    if(input.action==='mobAnnouncement'){
+      if(outgoingNotices.length===256)outgoingNotices.shift();
+      outgoingNotices.push({id:crypto.randomBytes(16).toString('hex'),mob:input.mob,
+        rarity:input.rarity,summoned:input.summoned});
+      return {ok:true};
+    }
     if(input.action==='presence') {
       if(!presencePending&&!failed&&!quiescing) {
         presencePending=true;
-        asyncRpc.call({op:'presence',rows:input.rows}).then(reply=>{
-          if(reply?.ok&&Array.isArray(reply.rows)){presenceRows=reply.rows;presenceAt=Date.now();}
+        const notices=outgoingNotices.slice(0,64);
+        asyncRpc.call({op:'presence',rows:input.rows,notices}).then(reply=>{
+          if(reply?.ok&&Array.isArray(reply.rows)){
+            presenceRows=reply.rows;presenceAt=Date.now();
+            const acknowledged=new Set(notices.map(notice=>notice.id));
+            for(let i=outgoingNotices.length-1;i>=0;--i)
+              if(acknowledged.has(outgoingNotices[i].id))outgoingNotices.splice(i,1);
+            for(const [id,at] of seenNotices)if(presenceAt-at>60000)seenNotices.delete(id);
+            for(const notice of reply.notices||[]){
+              if(seenNotices.has(notice.id))continue;
+              seenNotices.set(notice.id,presenceAt);
+              incomingNotices.push(notice);
+            }
+          }
           else {presenceRows=[];presenceAt=0;}
         },()=>{presenceRows=[];presenceAt=0;}).finally(()=>{presencePending=false;});
       }
-      return {current:config.node,rows:Date.now()-presenceAt<8000?presenceRows:[]};
+      return {current:config.node,rows:Date.now()-presenceAt<8000?presenceRows:[],notices:incomingNotices.splice(0)};
     }
 
     if(input.action==='publicView')return pollAuthJob(input,()=>asyncRpc.call({op:'public_view',input:input.query}));

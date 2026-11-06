@@ -87,7 +87,8 @@ int main(int argc,char** argv) {
             else {auto reply=success();reply["state"]=authority.snapshot();output["result"]=std::move(reply);}
         } else if(input["request"]["op"].asString()=="presence") {
             const auto now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-            output["result"]=authority.inspect([&](const Json& current){return presence.exchange(current,node,input["request"]["rows"],now);});
+            const auto& request=input["request"];
+            output["result"]=authority.inspect([&](const Json& current){return presence.exchange(current,node,request["rows"],now,request["notices"]);});
         } else if(input["request"]["op"].asString()=="public_view") {
             auto result=success();result["body"]=publicShardView(council.database(),input["request"]["input"]);output["result"]=result;
         } else if(input["request"]["op"].asString()=="hyper_status") {

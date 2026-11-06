@@ -5210,13 +5210,8 @@ TEST(a_hard_band_is_where_every_boss_in_the_world_comes_from) {
 }
 
 TEST(an_announced_boss_carries_the_map_it_spawned_on) {
-    // The chat line is personalised: a player in the boss's own SECTION is told
-    // it spawned, everyone else that it spawned somewhere. A section is the
-    // OVERWORLD's grid, so the boss's position only means anything once its
-    // realm is known -- and since the boss pass was deleted, a band on ANY
-    // staged map can queue one. Without the realm, a super filling a band on
-    // map two was announced as "here" to flowers standing at the same numbers
-    // on the overworld, which they cannot even reach.
+    // Recipients in the same realm see the local wording. Coordinates from
+    // different maps can overlap, so every spawn band must preserve its realm.
     const Realm other = worldRealm(1);
     const std::string path = writeTiledFixture(
         "flix_hard_band_realm1.tmj",

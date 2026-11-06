@@ -449,23 +449,19 @@ TEST(a_boss_from_the_console_is_announced_to_the_whole_server) {
 
     NetClient client;
     CHECK(loginAs(h, client, "boss", "password7"));
-    client.joinGame(1920, 1080, {}, "Boss");
+    // The generated arena has no biome boss cooldown.
+    client.joinGame(1920, 1080, kArenaSpawnChoice, "Boss");
     CHECK(h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::Playing; }, 200));
 
-    CHECK(say(h, client, "/admin spawn bee super 1"));
-    // The queue is drained on the tick after the command, and the line is
-    // worded per recipient: this one is standing on the boss, so it is told
-    // where rather than that it happened "somewhere".
+    CHECK(say(h, client, "/admin spawn bee unique 1"));
+    // The arena recipient is on the boss's map.
     CHECK(h.stepUntil({&client}, [&] { return sawText(client, "has spawned"); }, 60));
-    CHECK(sawText(client, "A Super Bee has spawned"));
+    CHECK(sawText(client, "A Eternal Bee has spawned!"));
 
-    // And nothing below the line says a word, an ultra included. Named
-    // precisely rather than "no spawn line at all", because the world is
-    // stocking itself the whole time this runs and its own difficulty-100
-    // band is entitled to roll a super while we watch.
-    CHECK(say(h, client, "/admin spawn bee ultra 1"));
+    // Super is below the existing announcement threshold.
+    CHECK(say(h, client, "/admin spawn bee super 1"));
     h.step(30, {&client});
-    CHECK(!sawText(client, "Ultra bee has spawned"));
+    CHECK(!sawText(client, "Super Bee has spawned"));
 }
 
 TEST(the_console_cannot_spawn_a_unique_while_its_biome_clock_cools_down) {

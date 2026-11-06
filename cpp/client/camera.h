@@ -52,7 +52,10 @@ public:
     /// of the window size and of the display's pixel density, both of which
     /// are absorbed by the frame's base transform long before anything asks
     /// the camera anything.
-    double zoom() const { return userZoom * loadoutZoom; }
+    double zoom() const {
+        const double z = userZoom * loadoutZoom;
+        return std::isfinite(z) && z > 0.0 ? z : 1.0;
+    }
 
     Vec2 worldToScreen(Vec2 world) const {
         const double z = zoom();
@@ -84,7 +87,7 @@ public:
     int viewportHeight() const { return viewportHeight_; }
 
     /// Player-controlled zoom: the settings value the wheel and the zoom keys
-    /// move, floored at 0.25 -- see kMinZoom in client/ui/menus.h.
+    /// move, floored at 1.0 -- see kMinZoom in client/ui/menus.h.
     double userZoom = 1.0;
     /// What the worn loadout asks for: the smallest cameraZoom on the active
     /// bar, or 1 -- see loadoutCameraZoom. Antennae and observer are the

@@ -77,6 +77,25 @@ function create(config,manifest,connections){
     async lock(){for(const id of roles){held.push(id);connections[id].ssh('mkdir /var/lib/florrclone/deploy.lock && printf %s '+q(token)+' > /var/lib/florrclone/deploy.lock/owner');}},
     async unlock(){for(const id of held.reverse())connections[id].ssh('if test -f /var/lib/florrclone/deploy.lock/owner && test "$(cat /var/lib/florrclone/deploy.lock/owner)" = '+q(token)+'; then rm /var/lib/florrclone/deploy.lock/owner && rmdir /var/lib/florrclone/deploy.lock; fi');},
     async announce(){
+      if(config.maintenanceContinuation){
+        assert.equal(config.mode,'initial','Maintenance continuation is only for initial migration');
+        const prior=path.resolve(config.maintenanceContinuation.backupDirectory);
+        assert.equal(path.dirname(prior),path.resolve(config.backupRoot),'Continuation backup outside backup root');
+        const meta=JSON.parse(fs.readFileSync(path.join(prior,'backup-metadata.json'),'utf8'));
+        assert.match(meta.timestamp,/^\d{8}T\d{6}Z$/);
+        assert.equal(meta.nextRelease,config.targets.one.expectedRelease,'Continuation release changed');
+        assert.equal(sha(fs.readFileSync(path.join(prior,'inventory.json'))),meta.sha256,'Continuation backup changed');
+        assert.equal(connections.one.ssh('sha256sum '+q('/var/lib/florrclone/cutover-backups/'+meta.timestamp+'/inventory.json')).split(/\s+/)[0],meta.sha256);
+        const log=fs.readFileSync(config.maintenanceContinuation.announcementLog,'utf8');
+        for(const seconds of [120,60,30,10])assert(log.includes('已确认全服广播：'+seconds+'秒后维护'),'Missing confirmed announcement');
+        connections.one.ssh('test -f '+marker);
+        const bonus=JSON.parse(fs.readFileSync(path.join(prior,'maintenance-bonus.json'),'utf8'));
+        assert(Number.isSafeInteger(bonus.resumedAt)&&bonus.resumedAt>0&&Date.now()-bonus.resumedAt<3600000,'Stale maintenance continuation');
+        bonusStoppedAt=bonus.resumedAt;
+        fs.writeFileSync(path.join(local,'continued-maintenance.json'),JSON.stringify({prior,sha256:meta.sha256,bonusStoppedAt}));
+        console.log('Continuing the already-announced maintenance; public gate remains closed.');
+        return;
+      }
       const announcements=require('../../deploy-announcement.cjs'),clients=[];
       try{
         for(const id of config.mode==='initial'?['one']:roles)clients.push(await announcements.connect(announcements.readConfig(config.adminFiles[id])));
@@ -99,7 +118,7 @@ function create(config,manifest,connections){
       assert(!errors.length,errors.join('; '));
     },
     async stopGames(){
-      bonusStoppedAt=Number(connections.one.ssh('date +%s%3N').trim());assert(Number.isSafeInteger(bonusStoppedAt)&&bonusStoppedAt>0);
+      if(!bonusStoppedAt)bonusStoppedAt=Number(connections.one.ssh('date +%s%3N').trim());assert(Number.isSafeInteger(bonusStoppedAt)&&bonusStoppedAt>0);
       fs.writeFileSync(path.join(local,'maintenance-start.json'),JSON.stringify({id:stamp,stoppedAt:bonusStoppedAt}));
       for(const id of roles){if(!(id==='two'&&config.mode==='initial'))connections[id].ssh('systemctl stop florrclone');stopped(connections[id],'florrclone',id==='two'&&config.mode==='initial');}
     },

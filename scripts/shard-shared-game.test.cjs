@@ -11,7 +11,7 @@ test('two real WASM games share one account and forbid simultaneous ownership',a
   assert(process.env.SHARD_COORDINATOR_BIN,'native coordinator required');
   const home=fs.mkdtempSync(path.join(os.tmpdir(),'shards-shared-game-'));
   const children=[],sockets=[],logs=[];
-  const remote=process.env.SHARD_REMOTE_CONFIG?require('./shard-remote-test.cjs')(process.env.SHARD_REMOTE_CONFIG,home):null;
+  const remote=process.env.SHARD_REMOTE_CONFIG?await require('./shard-remote-test.cjs')(process.env.SHARD_REMOTE_CONFIG,home):null;
   const keys={one:crypto.randomBytes(32).toString('hex'),two:crypto.randomBytes(32).toString('hex')};
   const coordinatorPort=19092,ports={one:3093,two:3094};
   const endpoint=`http://127.0.0.1:${coordinatorPort}/rpc`;
@@ -245,6 +245,46 @@ test('two real WASM games share one account and forbid simultaneous ownership',a
     }
     console.log('active-play round trip preserved time and inventory; both health endpoints responsive');
     await trigger.close();
+    const {checkPair}=require('./shards/ops/live-paired-check.cjs');
+    await checkPair({protocolVersion:wire.ver,contentHash:wire.CONTENT_HASH},
+      {username:'sharedplayer',password:'test-password-123'},inspector,ports);
+    console.log('production acceptance replay: account round trip and council passed');
+    if (process.env.SHARD_TEST_ANNOUNCEMENTS === '1') {
+      await offline(id);
+      const state = inspector.call({op:'snapshot'}).state;
+      const grant = inspector.call({op:'global_patch',requestId:'announcement-admin-fixture',
+        globalRevision:state.globalRevision,writes:[],
+        patch:{users:{hyperholder:{...state.globals.users.hyperholder,admin:true}}}});
+      assert(grant.ok, JSON.stringify(grant));
+      const host = await connect('two'), remotePlayer = await connect('one'), otherMap = await connect('two');
+      assert.equal((await authenticate(host,wire.ClientMessage.Login,'hyperholder','test-password-456')).auth?.status,wire.AuthStatus.Ok);
+      assert.equal((await authenticate(remotePlayer,wire.ClientMessage.Login,'sharedplayer','test-password-123')).auth?.status,wire.AuthStatus.Ok);
+      assert.equal((await authenticate(otherMap,wire.ClientMessage.Register,'announceprobe','test-password-789')).auth?.status,wire.AuthStatus.Ok);
+      const recipients = [host, remotePlayer, otherMap];
+      const joined = recipients.map(socket=>wire.readMessages(socket,3000));
+      for (const [i,socket] of recipients.entries()) {
+        wire.send(socket, Buffer.concat([Buffer.from([wire.ClientMessage.JoinGame]),dimensions,
+          wire.encStr(i===2?'garden':'pvp'),wire.encStr('AnnouncementProbe'+i),Buffer.from([0])]));
+      }
+      for (const messages of await Promise.all(joined)) {
+        assert(messages.some(message=>message[0]===wire.ServerMessage.Snapshot), 'announcement recipient joined');
+      }
+      const observed = recipients.map(socket=>wire.readMessages(socket,10500));
+      wire.send(host,Buffer.concat([Buffer.from([wire.ClientMessage.Chat]),wire.encStr('/admin spawn spider unique')]));
+      const transcripts = (await Promise.all(observed)).map(messages=>messages
+        .filter(message=>message[0]===wire.ServerMessage.Chat)
+        .map(message=>{
+          const textAt=4+message.readUInt16LE(2);
+          return message.toString('utf8',textAt+2,textAt+2+message.readUInt16LE(textAt));
+        }));
+      const chat = transcripts.map(lines=>lines.filter(line=>line.includes('A Eternal Spider has spawned'))
+        .map(line=>line.replace(/^<b style="color: #[0-9a-f]+;">(.*)<\/b>$/,'$1')));
+      assert.deepEqual(chat,[['A Eternal Spider has spawned!'],
+        ['A Eternal Spider has spawned somewhere!'],['A Eternal Spider has spawned somewhere!']],
+        'announcement transcripts: '+JSON.stringify(transcripts));
+      console.log('boss announcement delivered once to each recipient, with location privacy');
+      for (const socket of recipients) socket.end();
+    }
     if(process.env.SHARD_UI_HOLD==='1') {
       console.log('SHARD_UI_READY pid='+process.pid);
       await new Promise(resolve=>{
@@ -275,6 +315,7 @@ test('two real WASM games share one account and forbid simultaneous ownership',a
       const timer=setTimeout(()=>{if(child.exitCode===null)child.kill('SIGKILL');},16000);
       await done;clearTimeout(timer);
     }
+    if(remote)await remote.close();
     for(const fd of logs)fs.closeSync(fd);
     assert.equal(path.dirname(path.resolve(home)),path.resolve(os.tmpdir()));
     assert(path.basename(home).startsWith('shards-shared-game-'));
