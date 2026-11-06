@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 92;
+inline constexpr std::uint16_t kProtocolVersion = 96; // Input appends bounded rotation speed step
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -38,19 +38,16 @@ inline constexpr std::uint32_t kMaxFrameBytes = 1u << 20;   // 1 MiB
 /// Simulation rate. Fixed, because the physics integrates a constant step:
 /// input, movement and cooldowns are all expressed per tick.
 // Shared by client prediction, server scheduling and input allowance refill.
-// Snapshot encoding has a separate, lower frequency below.
-inline constexpr int kTicksPerSecond = 60;
+// Rendering remains independent; both ends use this simulation cadence.
+inline constexpr int kTicksPerSecond = 20;
 inline constexpr double kTickSeconds = 1.0 / kTicksPerSecond;
 inline constexpr double kTickMillis = 1000.0 / kTicksPerSecond;
 
 /// How often each client is sent a snapshot.
 ///
-/// Deliberately BELOW the tick rate. Physics and combat want 60 Hz resolution;
-/// the wire does not, and the reference server says so in as many words -- the
-/// snapshot broadcast runs on its own 20 Hz timer so the per-recipient
-/// encode/cull/delta pass and its socket writes are not charged to the tick's
-/// 16.7 ms budget. A client interpolating between snapshots needs its delay
-/// window to cover this interval, not the tick.
+/// The wire remains at 20 Hz. The scheduler is separate from simulation so
+/// changing rendering FPS cannot increase snapshot work; interpolation covers
+/// this interval independently of the browser's drawing frame rate.
 inline constexpr int kSnapshotsPerSecond = 20;
 inline constexpr double kSnapshotMillis = 1000.0 / kSnapshotsPerSecond;
 
@@ -459,7 +456,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< squad invite for the top-left Accept/Decline toast.
                         ///< Additive; older clients skip an unknown id.
     PyramidMapState,    ///< u8 realm, u8 revealed; visit-only, never saved (v74).
-    DailyDropBonusState, ///< u32 streak, u8 multiplier, u32 remainingMs, u32 nextClaimMs, i64 lockedShopRotation (-1 unlocked), u8 count, {u16 petal,u8 rarity,f64 price,u8 discount} locked offers (v86).
+    DailyDropBonusState, ///< v93: bonus fields, i64 locked rotation, locked offers, i64 current rotation, current offers. Each list: u8 count, {u16 petal,u8 rarity,f64 price,u8 discount,u16 remaining (65535 unlimited)}.
 };
 
 // ---------------------------------------------------------------------------
@@ -597,6 +594,8 @@ struct InputFrame {
     /// itself (MobAiSystem::steerPet). Zero is "on the flower", which is what
     /// a bot, which has no pointer, sends.
     std::uint16_t aimDistance = 0;
+    std::uint8_t rotationStep = 4; // 1..4 = 25%, 50%, 75%, normal speed
+    double rotationScale() const { return (rotationStep < 1 ? 1 : rotationStep > 4 ? 4 : rotationStep) * 0.25; }
 
     void write(ByteWriter& w) const {
         w.u32(sequence);
@@ -607,6 +606,7 @@ struct InputFrame {
         w.u16(viewportWidth);
         w.u16(viewportHeight);
         w.u16(aimDistance);
+        w.u8(rotationStep);
     }
 
     static InputFrame read(ByteReader& r) {
@@ -619,6 +619,7 @@ struct InputFrame {
         f.viewportWidth = r.u16();
         f.viewportHeight = r.u16();
         f.aimDistance = r.u16();
+        f.rotationStep = r.u8();
         return f;
     }
 

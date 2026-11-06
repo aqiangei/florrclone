@@ -35,6 +35,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <functional>
 
 #include "shared/net/forwarded.h"
 
@@ -42,6 +43,8 @@ namespace flix::net::web {
 
 /// No channel. Returned by every call that could not produce one.
 inline constexpr int kInvalid = -1;
+using CouncilHandler = std::function<std::string(const std::string&, const std::string&)>;
+void setCouncilHandler(CouncilHandler handler);
 
 enum class State : int {
     Connecting = 0,

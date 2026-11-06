@@ -409,12 +409,17 @@ constexpr int kTightClusterCount = 5;
 
 void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t petalIndex,
                       Rarity rarity, double sizeStat, int count, double cx, double cy,
-                      double maxDiameter, double timeSeconds, bool facesInward) {
+                      double maxDiameter, double timeSeconds, bool facesInward, bool equipmentFan) {
     if (petalIndex == kNoPetal || !sprites.petalDrawable(petalIndex)) return;
 
     // A configured count below one means "not a stack" -- third eye, antennae
     // and the observer all declare zero and are drawn as a single icon.
     const int drawCount = count >= 1 ? count : 1;
+    // Only the confirmed upright oval egg silhouettes share this slot layout.
+    // Other silhouettes retain their authored cluster (including world drops).
+    const auto& iconId = content().petal(petalIndex).id;
+    const bool fan = equipmentFan && drawCount > 1 &&
+                     (iconId == "egg" || iconId == "beetle_egg");
     ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
     const int authoredCount = std::max(1, content().petalStats(petalIndex, rarity).count);
     if (drawCount > authoredCount) {
@@ -448,6 +453,18 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
         if (drawCount == 1) {
             sprites.drawPetal(into, petalIndex, rarity, ox, oy, diameter, shape.tilt,
                               timeSeconds);
+            return;
+        }
+        if (fan) {
+            const double fanDiameter = std::min(maxDiameter > 0 ? maxDiameter * .68 : diameter, diameter * 1.35);
+            const double anchorY = oy + fanDiameter * .32;
+            const double stem = fanDiameter * .40;
+            for (int i = 0; i < drawCount; ++i) {
+                const double turn = -.65 + 1.30 * i / (drawCount - 1);
+                sprites.drawPetal(into, petalIndex, rarity,
+                    ox + std::sin(turn) * stem, anchorY - std::cos(turn) * stem,
+                    fanDiameter, turn, timeSeconds);
+            }
             return;
         }
         for (int i = 0; i < drawCount; ++i) {
@@ -495,6 +512,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
         variant = variant * 1000003u + q(ring);
         variant = variant * 1000003u + q(shape.tilt);
         variant = variant * 2u + (facesInward ? 1u : 0u);
+        variant = variant * 2u + (fan ? 1u : 0u);
         if (drawCachedPicture(canvas, &sprites, variant, cx - side * 0.5, cy - side * 0.5, side,
                               side, [&](Canvas& bitmap) {
                                   paintCluster(bitmap, side * 0.5, side * 0.5);
@@ -619,7 +637,7 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
                 canvas.restore();
             }
         }else drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,
-                         0.0, 0.0, iconCap, tile.timeSeconds, facesInward);
+                         0.0, 0.0, iconCap, tile.timeSeconds, facesInward, tile.loadoutSlot >= 0);
         canvas.setColorTint(outerTint);
         canvas.restore();
     }

@@ -26,6 +26,9 @@
 #include <cstdio>
 #include <fstream>
 #include <utility>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "client/app_internal.h"
 #include "client/ease.h"
@@ -250,7 +253,8 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // Before the first frame rather than only from frame(): a --frames run
     // short enough to be one screenshot would otherwise photograph the
     // default resolution whatever the file says.
-    window_.setRenderScale(menus_.settings().renderScale);
+    window_.setRenderScale(config_.lowMemoryGraphics
+        ? std::min(0.5, menus_.settings().renderScale) : menus_.settings().renderScale);
     window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
     if (!net_.connect(config.host, config.port)) {
         errorOut = net_.lastError();
@@ -597,7 +601,8 @@ void App::frame(double dt) {
     // costs nothing on the frames where nothing moved. setDesynchronized
     // likewise, and it may rebuild the canvas too, so it also goes before the
     // frame takes hold of it.
-    window_.setRenderScale(menus_.settings().renderScale);
+    window_.setRenderScale(config_.lowMemoryGraphics
+        ? std::min(0.5, menus_.settings().renderScale) : menus_.settings().renderScale);
     window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
 
 #ifdef __EMSCRIPTEN__
@@ -751,6 +756,8 @@ void App::frame(double dt) {
     camera_.loadoutZoom = loadoutCameraZoom(net_.profile(), content());
     const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
     menus_.setInGame(inWorld);
+    menus_.setTouchLayout(config_.forceTouchControls || menus_.settings().touchControlsWanted(
+        coarsePointer_ || window_.touchSeen()));
     // Re-measured every frame, so the craft panel turns into the oracle's (or
     // the trader's) as the flower walks up and back into the forge as it walks
     // off. Only a living, placed flower is standing anywhere: the corpse on the
@@ -932,6 +939,32 @@ void App::frame(double dt) {
     publishKeyboardRegions();
     // Keyboard movement still needs a pointer for HUD tooltips and menus.
     window_.setCursorVisible(true);
+#ifdef __EMSCRIPTEN__
+    // Use this frame's actual menu bounds, in the same design coordinates as
+    // the daily card. The link occupies the free top gap, never the icon strip.
+    EM_ASM({
+        const link=document.getElementById("council-link");const canvas=Module.canvas;
+        if(!link||!canvas)return;
+        link.hidden=!$0;if(!$0)return;
+        const box=canvas.getBoundingClientRect();const scale=box.width/$1;
+        const left=$2+12;const right=$1-($4?252:16);const space=right-left;
+        const compact=space*scale<220;
+        const belowStrip=space*scale<84;
+        const width=belowStrip?Math.min(128/scale,right-16):Math.min(Math.max(384,220/scale),space);
+        const x=belowStrip?Math.max(16,right-width):(left+right-width)/2;
+        const y=belowStrip?$3+12:12;
+        const key=([x,y,width,scale,box.left,box.top,compact]).join(',');
+        if(Module.councilPlacement!==key){Module.councilPlacement=key;
+            link.style.left=(box.left+x*scale)+'px';link.style.top=(box.top+y*scale)+'px';
+            link.style.width=(width*scale)+'px';
+            link.style.minHeight=Math.max(44,58*scale)+'px';
+            link.style.fontSize=Math.max(compact?14:17,(compact?16:23)*scale)+'px';
+            link.toggleAttribute('data-compact',compact);
+            link.querySelector('span').textContent=compact?'议会投票 ↗':'玩家议会 · 更新投票 ↗';
+        }
+    }, (screen_==Screen::Login||screen_==Screen::Lobby)&&!menus_.anyOpen()&&!net_.joinPending(),
+       window_.width(),menus_.stripRight(),menus_.stripBottom(),screen_==Screen::Lobby&&net_.dailyStreak().known);
+#endif
     if (menus_.settings().craftBlacklistDirty) {
         if (menus_.settings().save(settingsPath())) menus_.settings().craftBlacklistDirty = false;
     }
@@ -1519,6 +1552,9 @@ void App::loadSession() {
     // at most one revocable, expiring handle. A file written by an older build
     // has only the first line, which reads back as an empty name.
     std::getline(in, storedToken_);
+#ifdef __EMSCRIPTEN__
+    EM_ASM({try{localStorage.setItem("florrCouncilToken",UTF8ToString($0));}catch(e){}},storedToken_.c_str());
+#endif
     std::getline(in, playerName_);
     std::string chosen;std::getline(in,chosen);
     playerNameChosen_=chosen=="chosen" || (chosen.empty()&&!playerName_.empty());
@@ -1526,9 +1562,12 @@ void App::loadSession() {
 }
 
 void App::saveSession() const {
+    const auto& token=net_.sessionToken().empty()?storedToken_:net_.sessionToken();
+#ifdef __EMSCRIPTEN__
+    EM_ASM({try{localStorage.setItem("florrCouncilToken",UTF8ToString($0));}catch(e){}},token.c_str());
+#endif
     if (net_.sessionToken().empty() && playerName_.empty()) return;
     std::ofstream out(config_.sessionFile, std::ios::trunc);
-    const auto& token=net_.sessionToken().empty()?storedToken_:net_.sessionToken();
     if (out) out << token << "\n" << playerName_ << "\n" << (playerNameChosen_?"chosen":"default") << "\n" << playerNameAccount_ << "\n";
 }
 

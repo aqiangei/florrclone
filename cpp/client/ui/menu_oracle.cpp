@@ -247,7 +247,7 @@ bool OraclePanel::render(MenuContext& ctx) {
             }
             const std::uint32_t price =
                 static_cast<std::uint32_t>(std::max(1, oracleCraftCost(rarity)));
-            cell.greyed = waiting || cell.count < price;
+            cell.greyed = !craftsOutOf(rarity) || waiting || cell.count < price;
             cell.badge = waiting ? "x" + stackCountText(cell.count)
                                  : stackCountText(cell.count) + "/" + std::to_string(price);
             cell.badgeCentred = true;

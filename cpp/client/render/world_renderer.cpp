@@ -2836,7 +2836,9 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         canvas.translate(static_cast<float>(config->visualOffsetX * zoom),
                          static_cast<float>(config->visualOffsetY * zoom));
     }
-    if (config && config->id == "dust") {
+    if (config && config->id == "domino" && entity.petalVariant < 49) {
+        SpriteCache::drawDomino(canvas, diameter, entity.petalVariant);
+    } else if (config && config->id == "dust") {
         SpriteCache::drawDustGrain(canvas, diameter);
     } else if (sprites_) {
         // The sprite cache falls back to a disc in the petal's own colour when

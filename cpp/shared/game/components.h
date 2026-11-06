@@ -579,6 +579,8 @@ struct PlayerVisuals {
     /// marking it, which is why it rides faceFlags and not renderFlags.
     bool corrupted = false;
     bool equippedCorruption = false;
+    bool hyperCorruption = false;
+    bool nearbyCorruption = false;
     bool seesGhosts = false;
 };
 
@@ -588,6 +590,7 @@ struct PlayerVisuals {
 /// incremental version has to unwind exactly what it applied, and a single
 /// missed unwind is a permanent stat the player keeps forever.
 struct PlayerModifiers {
+    std::array<std::uint8_t, kRarityCount> computerParts{};
     double maxHealthScale = 1.0;
     double speedScale = 1.0;
     /// The flower's BODY damage: equipped petal damage modifiers times the
@@ -690,6 +693,10 @@ struct PlayerLocation {
 /// every pad -- suction included -- for five, so it does not bounce straight
 /// back through the one it arrived on.
 struct TeleporterState {
+    // Server-only; never persisted or renewed by another mark. Death clears it.
+    double markHoldUntilMillis = 0;
+    bool markReturnAvailable = false;
+    RealmPoint markOrigin;
     /// Index into MapData's element list, or -1 when standing on no pad.
     int pad = -1;
     double enteredAtMillis = 0;
@@ -820,8 +827,8 @@ struct MobAi {
     /// owner that has not closed for kPetTrappedMillis is trapped.
     double petBestGap = 0;
     double petProgressMillis = 0;
-    /// Set by the AI on a trapped pet. The petal system retires it and charges
-    /// the reload to the egg that hatched it (PetalSystem::retireDistantPets).
+    /// Set by the AI on a trapped pet. Recover it on safe ground beside its
+    /// owner, preserving health and lifetime (PetalSystem::recoverDistantPets).
     bool petRecall = false;
 };
 
@@ -1120,6 +1127,11 @@ struct Spawner {
 // ---------------------------------------------------------------------------
 
 struct PetalInstance {
+    std::uint8_t dominoPips = 0;
+    // A placed Dark Mark stays over its corpse while it charges. Ordinary
+    // petal replication carries its position; no message layout changes.
+    Entity markTarget = NULL_ENTITY;
+    double markReadyAtMillis = 0;
     /// Server-only Icosahedron flight state; positions use ordinary petal replication.
     struct Ricochet {
         bool enabled = false;

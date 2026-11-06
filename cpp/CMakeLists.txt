@@ -946,6 +946,11 @@ target_link_libraries(projectile_bench PRIVATE flix_server flix_client)
 target_compile_definitions(projectile_bench PRIVATE FLIX_TEST_DATA_DIR="${FLIX_DATA_DIR}")
 add_dependencies(projectile_bench flix_data)
 
+# Single-slot outgoing damage against a stationary, harmless dummy.
+add_executable(petal_dps_bench tools/petal_dps_bench.cpp)
+target_link_libraries(petal_dps_bench PRIVATE flix_server)
+add_dependencies(petal_dps_bench flix_data)
+
 # What one mob type costs the mob layer, in milliseconds -- the figure that
 # says whether a mob is drawing something expensive every frame. See the
 # file's own header.

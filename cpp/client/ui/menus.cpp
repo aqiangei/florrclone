@@ -298,7 +298,7 @@ struct LoadoutMetrics {
     /// the other.
     bool capsBelow;
     /// The trash slot on the end of the second row, the [T] that empties the
-    /// armed slot, and the Q/E selection that arms it. The reference game has
+    /// armed slot, and the legacy selection state. The reference game has
     /// none of the three -- its second row is reached with the number keys
     /// alone, and a petal is thrown away by dragging it off the bar -- so they
     /// belong to the classic shape only.
@@ -354,7 +354,7 @@ constexpr std::uint32_t kLoadoutTrashFill = 0xCF8888u;
 constexpr double kDragGhostSize = 50.0;
 
 /// How much a loadout tile swells, in design units, when it is on the cursor
-/// and when Q/E has armed it. gardn's `parent_slot->width + 10` and `+ 20`.
+/// and when it is armed. gardn's `parent_slot->width + 10` and `+ 20`.
 constexpr double kLoadoutTileLift = 10.0;
 constexpr double kLoadoutTileArmed = 20.0;
 
@@ -813,6 +813,7 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "invertAttack") invertAttack = number != 0;
         else if (key == "invertDefend") invertDefend = number != 0;
         else if (key == "classicLoadout") classicLoadoutBar = number != 0;
+        else if (key == "rotationStep") rotationStep = std::clamp(static_cast<int>(number), 1, 4);
         // The key being on disk at all is the choice: an absent one leaves the
         // device to answer, which is what touchControlsWanted does with it.
         else if (key == "requestMobile") { requestMobile = number != 0; requestMobileChosen = true; }
@@ -871,6 +872,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "invertAttack " << (invertAttack ? 1 : 0) << '\n'
          << "invertDefend " << (invertDefend ? 1 : 0) << '\n'
          << "classicLoadout " << (classicLoadoutBar ? 1 : 0) << '\n'
+         << "rotationStep " << rotationStep << '\n'
          << "tutorialDone " << (tutorialCompleted ? 1 : 0) << '\n'
          << "tutorialStep " << tutorialStep << '\n'
          << "language " << (language == ui::Language::En ? "en" : "zh") << '\n';
@@ -1044,17 +1046,13 @@ bool MenuSystem::handleKeys(Window& window) {
     // The loadout keys are recorded rather than acted on: only drawLoadoutBar
     // has the network client and the account's loadout to act with.
     //
-    // And they are the game screen's alone. The browser binds Q/E/T and the
-    // number row inside Game's own keydown; the title screen's inventory
-    // manager has no keyboard path to the bar at all, only drag and drop.
-    //
-    // Q/E/T go with the trash slot they arm and empty, so the modern bar --
-    // which has neither -- leaves all three keys free rather than recording
-    // presses nothing will ever act on.
+    // In-game Q/E adjusts petal rotation immediately for both bar layouts.
+    // Number keys and the classic bar's T action need the network client
+    // below; title-screen loadout editing remains pointer-driven.
     if (inGame_) {
+        if (window.keyPressed(Key::Q)) { settings_.rotationStep = std::max(1, settings_.rotationStep - 1); return true; }
+        if (window.keyPressed(Key::E)) { settings_.rotationStep = std::min(4, settings_.rotationStep + 1); return true; }
         if (loadoutMetrics(settings_.classicLoadoutBar).secondaryPicker) {
-            if (window.keyPressed(Key::E)) { pendingCycle_ = 1; return true; }
-            if (window.keyPressed(Key::Q)) { pendingCycle_ = -1; return true; }
             if (window.keyPressed(Key::T)) { pendingSecondaryDelete_ = true; return true; }
         }
         static constexpr Key kLoadoutKeys[kLoadoutBarPrimary] = {
@@ -1647,6 +1645,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     easeToward(loadoutSlide_, target, kLoadoutSlideEaseSeconds);
     if (std::fabs(loadoutSlide_ - target) < 0.005) loadoutSlide_ = target;
     if (loadoutSlide_ <= 0.005) {
+        rotationDial_ = {};
         // Nothing painted means nothing to hit: a bar that has sunk off-screen
         // must not go on answering for clicks where it used to be, and it has
         // no selection or queued keystroke to carry into the next screen.
@@ -1688,11 +1687,9 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     const double scale = natural * loadoutFitScale(metrics, box.w, natural);
     const LoadoutLayout layout = layoutLoadout(box, metrics, scale);
 
-    // Q/E/T and the number keys were recorded by handleKeys, which has no
-    // network client; this is the first place that can act on them. The first
-    // three only ever arrive with the classic shape up, and a bar that loses
-    // the picker mid-game -- the setting is live -- drops the armed slot with
-    // them rather than leaving a ring on a row nothing can reach.
+    // T and the number keys were recorded by handleKeys, which has no
+    // network client. Changing away from the classic bar clears its legacy
+    // picker state; Q/E is handled separately as rotation speed control.
     if (!metrics.secondaryPicker) {
         selectedSecondary_ = -1;
         pendingCycle_ = 0;
@@ -1700,8 +1697,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     }
     if (selectedSecondary_ >= 0 && timeSeconds - lastSelectTime_ > 5.0) selectedSecondary_ = -1;
     if (pendingCycle_ != 0) {
-        // Q with nothing selected behaves as E: there is no "previous" to step
-        // back to, and doing nothing would read as a dead key.
+        // A backward legacy cycle with no selection starts at the first slot.
         const int step = (pendingCycle_ < 0 && selectedSecondary_ < 0) ? 1 : pendingCycle_;
         selectedSecondary_ = cycleSecondary(shown, selectedSecondary_, step);
         lastSelectTime_ = timeSeconds;
@@ -1930,8 +1926,8 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     const TileDraw inHand{onTop, dropTarget < 0 || dropTarget == onTop};
 
     // Where each primary slot's caption is centred. The captions name the
-    // primary slots only -- the second row is reached with Q/E, not with a key
-    // of its own -- but they sit along whichever row the metrics put them on.
+    // primary slots only; each number exchanges its matching reserve slot.
+    // They sit along whichever row the metrics put them on.
     const auto captionAt = [&](int i) {
         const Rect under =
             layout.slots[static_cast<std::size_t>(metrics.capsBelow ? kLoadoutBarPrimary + i : i)];
@@ -2105,6 +2101,41 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     if (onTop >= 0) drawTile(canvas, inHand);
     canvas.restore();
 
+    rotationDial_ = {};
+    if (inGame_ && loadoutSlide_ > .99) {
+        const bool touch = touchLayout_;
+        // Keep each touch target at least 44 CSS pixels high even when the
+        // fixed design canvas is scaled down on a phone.
+        const double dialScale = touch ? std::max(1.0, window.devicePixelRatio() *
+            window.renderScale() / std::max(.01, window.uiScale())) : 1.0;
+        const double dialWidth = 104 * dialScale, dialHeight = 44 * dialScale;
+        const Rect lastSecondary = layout.slots.back();
+        double x = lastSecondary.right() + 8.0;
+        double y = firstSecondary.y;
+        if (x + dialWidth > window.width() - 8) {
+            x = firstSecondary.x - dialWidth - 40;
+            if (x < 8) { x = std::max(8.0, window.width() * .5 - dialWidth*.5); y = layout.slots.front().y - dialHeight - 6; }
+        }
+        y = std::max(8.0, std::min(y, window.height() - dialHeight - 8));
+        rotationDial_ = {x, y, dialWidth, dialHeight};
+        canvas.save();canvas.translate(x,y);canvas.scale(dialScale,dialScale);
+        drawLoadoutSlot(canvas, {0,0,104,44}, 0x355C4Fu,
+            rotationDial_.contains(mouse) && !panelRect_.contains(mouse));
+        const double cx=52, cy=21;
+        ui::setStroke(canvas,0xD3E6ABu);canvas.setLineWidth(2);
+        canvas.beginPath();canvas.arc(cx,cy,12,-kPi*.8,kPi*.8);canvas.stroke();
+        for(int n=0;n<4;++n){
+            const double a=-kPi*.8+n*kPi*1.6/3;
+            ui::setFill(canvas,n<settings_.rotationStep?0xF8E687u:0x678776u);
+            canvas.beginPath();canvas.arc(cx+std::cos(a)*12,cy+std::sin(a)*12,2.5,0,kTau);canvas.fill();
+        }
+        TextStyle dialText;dialText.size=11;dialText.fill=0xFFFFFFu;dialText.align=Align::Centre;dialText.baseline=Baseline::Middle;
+        text(canvas,std::to_string(settings_.rotationStep*25),cx,cy,dialText);
+        dialText.size=14;text(canvas,"−",18,cy,dialText);text(canvas,"+",86,cy,dialText);
+        if(!touch){dialText.size=9;text(canvas,"Q",18,35,dialText);text(canvas,"E",86,35,dialText);}
+        canvas.restore();
+    }
+
     // Petal card: same lines / dwell / ALT exacts as the inventory. Painted
     // after the bar's slide restore so the box is not translucent-plated with
     // the hotbar, and suppressed while a drag or press is in flight.
@@ -2236,6 +2267,13 @@ void MenuSystem::clickLoadoutSlot(NetClient& net, double timeSeconds, int slot) 
 }
 
 void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeSeconds) {
+    if (rotationDial_.w > 0 && rotationDial_.contains({window.mouseX(),window.mouseY()}) &&
+        window.mousePressed(MouseButton::Left) && !drag_.active() &&
+        !panelRect_.contains({window.mouseX(),window.mouseY()})) {
+        settings_.rotationStep = std::clamp(settings_.rotationStep +
+            (window.mouseX() < rotationDial_.x + rotationDial_.w*.5 ? -1 : 1), 1, 4);
+        return;
+    }
     // The bar's own view of the loadout, not the profile's: a petal picked up
     // one frame after a swap was sent must be the one the player can SEE in
     // that slot. See expectedLoadout_.
@@ -3339,7 +3377,15 @@ double MenuSystem::stripBottom() const {
     return kTopIcon.inset + kTopIcon.side + kTopIcon.gap;
 }
 
+double MenuSystem::stripRight() const {
+    double right=0;
+    for(std::size_t i=0;i<stripRects_.size();++i)
+        if(strip()[i].topRow&&stripRects_[i].w>0) right=std::max(right,stripRects_[i].right());
+    return right;
+}
+
 bool MenuSystem::capturesMouse(Vec2 mouse) const {
+    if(rotationDial_.w>0 && rotationDial_.contains(mouse))return true;
     if(dungeonEntryRect_.w>0 && dungeonEntryRect_.contains(mouse))return true;
     if (panelRect_.w > 0 && panelRect_.contains(mouse)) return true;
     if (releaseRect_.w > 0 && releaseRect_.contains(mouse)) return true;

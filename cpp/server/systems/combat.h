@@ -670,10 +670,11 @@ private:
     /// ever want flowers or mobs query the main grid directly and never pay
     /// for the shots at all.
     void queryBodies(const SpatialGrid& grid, Realm realm, Vec2 center, double radius,
-                     std::vector<Entity>& out);
+                     std::vector<Entity>& out, Entity excludeShotPlayer = NULL_ENTITY);
     /// Appends every filed shot that could overlap the circle -- candidates,
     /// as a grid query returns, for the caller's exact test.
-    void queryShots(Realm realm, Vec2 center, double radius, std::vector<Entity>& out) const;
+    void queryShots(Realm realm, Vec2 center, double radius, std::vector<Entity>& out,
+                    Entity excludePlayer = NULL_ENTITY) const;
     /// Spread a shared chain's pool across the bodies that draw on it: every
     /// segment behind `owner` is given the owner's health FRACTION and its
     /// flash, and -- when the hit was fatal -- the same death.
@@ -786,6 +787,14 @@ private:
         std::uint32_t slot = 0;
     };
     std::vector<ShotCell> shotCells_;
+    // A homogeneous cell can be skipped before enumerating a flower's own
+    // shots. Keep each mixed cell's original slot order for impact tie ordering.
+    struct ShotCellRun {
+        std::uint64_t key = 0;
+        std::size_t begin = 0, end = 0;
+        Entity commonPlayer = NULL_ENTITY;
+    };
+    std::vector<ShotCellRun> shotRuns_;
     double maxShotRadius_ = 0;
     /// The rows any shot was filed in, whatever its realm, so that a query
     /// with an absurd radius walks the rows that exist rather than millions.

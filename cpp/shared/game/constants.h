@@ -734,9 +734,9 @@ inline constexpr double kMobPetalRingHitScale = 0.5;
 // passive -- and moves the way its wild counterpart does: it idles on the same
 // hop, and a fighting one chases on the same pursuit. What it gains is an
 // owner: it fights the wild mob nearest that owner, and walks back to them
-// when it leaves their screen. A wall between the two leaves it stuck where it
-// is; a pet that gets way too far (kPetRecallDistance) or is trapped in sight
-// of its owner is retired, and its egg hatches a fresh one after its reload.
+// when it leaves their guard radius. A pet that gets way too far
+// (kPetRecallDistance) or is trapped returns to safe ground near its owner,
+// preserving its health and remaining lifetime.
 // A sandstorm is the exception and runs its own leash below.
 
 /// Ring distance a sandstorm pet is placed at when it teleports back to its
@@ -747,16 +747,15 @@ inline constexpr double kPetTeleportDistance = 80.0;
 /// back to idling or fighting. Well inside the screen, so a pet that gets home
 /// does not wander straight back off it.
 inline constexpr double kPetHomeDistance = 300.0;
+inline constexpr double kPetFollowDistance = 700.0;
+inline constexpr double kPetOwnerTargetRadius = 900.0;
+inline constexpr double kPetOwnerPriorityRadius = 600.0;
+inline constexpr double kPetFollowSpeedFactor = 1.15;
 
-/// Past this from its owner -- or in another realm -- a pet is way too far:
-/// it is retired and its egg pays a reload, wall or no wall. About one and a
-/// half screens.
+/// Past this distance, or across realms, recover the same pet near its owner.
 inline constexpr double kPetRecallDistance = 3000.0;
 
-/// A returning pet with a clear line to its owner that has not closed on them
-/// by kPetProgressStep for this long is trapped, and is retired like one that
-/// got too far. A wall in the way stops this clock: that pet is stuck, and
-/// stays stuck.
+/// A returning pet making no progress is recovered, including behind walls.
 inline constexpr double kPetTrappedMillis = 5000.0;
 inline constexpr double kPetProgressStep = 25.0;
 
@@ -786,6 +785,7 @@ inline constexpr double kSandstormPetReturnSpeedFactor = 1.5;
 
 /// Extra chase range per rarity tier a summon is spawned at.
 inline constexpr double kPetAggroRangePerRarity = 200.0;
+inline constexpr double kHyperCorruptionRadius = 600.0;
 
 /// What a unique pet's size is, as a fraction of its base size on the pet
 /// ladder (kPetSizeScale) -- the endpoint of its mobSizeRamp. A common pet is

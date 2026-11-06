@@ -3222,18 +3222,27 @@ TEST(defending_drops_pollen_with_discrete_damage_and_consumes_it) {
     Rig rig;
     rig.equip(0, "pollen", Rarity::Rare);
     rig.settleEquips();
+    const Entity worn = rig.petals(0).front();
+    rig.world.get<Health>(worn).current *= 0.5;
+    const double wornHealth = rig.world.get<Health>(worn).current;
     rig.setFlags(net::InputDefend);
     rig.tick();
 
     Query<GroundEffect, Lifetime> fields{rig.world};
     // Rare pollen has two independently-consumed instances.
     CHECK_EQ(fields.count(), std::size_t(2));
-    fields.each([&](Entity, GroundEffect& field, Lifetime& lifetime) {
+    bool foundWorn = false;
+    fields.each([&](Entity entity, GroundEffect& field, Lifetime& lifetime) {
+        CHECK(rig.world.has<Health>(entity));
+        const Health& health = rig.world.get<Health>(entity);
+        CHECK(health.current <= health.max);
+        if (std::abs(health.current - wornHealth) < 1e-9) foundWorn = true;
         CHECK_EQ(field.kind, GroundEffectKind::Poison);
         CHECK_NEAR(field.damagePerHit, 10.0 * petalStatScale(Rarity::Rare), 1e-9);
         CHECK_NEAR(field.damageIntervalMillis, 600.0, 1e-9);
-        CHECK_NEAR(lifetime.remainingSeconds, 4.0, 1e-12);
+        CHECK_NEAR(lifetime.remainingSeconds, 8.0, 1e-12);
     });
+    CHECK(foundWorn);
     CHECK(rig.world.has<Dead>(rig.petals(0).front()));
 }
 
@@ -3546,7 +3555,7 @@ TEST(a_sandstorm_pet_is_never_retired_for_distance) {
     CHECK(!rig.slot(0).broken);
 }
 
-TEST(a_pet_way_too_far_from_its_owner_is_retired_and_its_egg_reloads) {
+TEST(pet_recovery_preserves_the_same_far_summon_and_egg_cooldown) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "summoner");
@@ -3557,13 +3566,13 @@ TEST(a_pet_way_too_far_from_its_owner_is_retired_and_its_egg_reloads) {
     rig.world.get<Transform>(lost).position =
         rig.position(rig.player) + Vec2{kPetRecallDistance + 10.0, 0.0};
     rig.tick();
-    CHECK_EQ(rig.petCount(), std::size_t(1));
-    CHECK(rig.slot(0).broken);
+    CHECK_EQ(rig.petCount(), std::size_t(2));
+    CHECK(rig.world.isAlive(lost));
+    CHECK(!rig.slot(0).broken);
+    CHECK(distance(rig.position(lost), rig.position(rig.player)) < kPetHomeDistance);
     // Destroyed, not killed: nothing for the reaper to award.
     Query<Dead> dead{rig.world};
     CHECK_EQ(dead.count(), std::size_t(0));
-    // The reload hatches a whole fresh squad.
-    CHECK(rig.tickUntil([&] { return rig.petCount() == 2 && !rig.slot(0).broken; }));
 }
 
 TEST(a_pet_just_inside_the_recall_distance_is_kept) {
@@ -3582,18 +3591,46 @@ TEST(a_pet_just_inside_the_recall_distance_is_kept) {
     CHECK(!rig.slot(0).broken);
 }
 
-TEST(a_trapped_pet_is_retired_and_its_egg_reloads) {
+TEST(pet_recovery_preserves_health_and_lifetime_of_trapped_summons) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "summoner");
     CHECK(rig.tickUntil([&] { return rig.petCount() == 2; }));
 
     Query<Pet> pets{rig.world};
-    rig.world.get<MobAi>(pets.collect().front()).petRecall = true;
+    const Entity trapped = pets.collect().front();
+    rig.world.get<MobAi>(trapped).petRecall = true;
+    rig.world.get<Health>(trapped).current = 1;
+    rig.world.get<Pet>(trapped).expiresAtMillis = rig.now + 10000;
+    const double expires = rig.world.get<Pet>(trapped).expiresAtMillis;
     rig.tick();
-    CHECK_EQ(rig.petCount(), std::size_t(1));
-    CHECK(rig.slot(0).broken);
-    CHECK(rig.tickUntil([&] { return rig.petCount() == 2 && !rig.slot(0).broken; }));
+    CHECK_EQ(rig.petCount(), std::size_t(2));
+    CHECK(!rig.slot(0).broken);
+    CHECK(!rig.world.get<MobAi>(trapped).petRecall);
+    CHECK_NEAR(rig.world.get<Health>(trapped).current, 1, 0);
+    CHECK_NEAR(rig.world.get<Pet>(trapped).expiresAtMillis, expires, 0);
+}
+
+TEST(pet_recovery_waits_for_safe_ground_instead_of_clipping_through_walls) {
+    if (!contentLoaded()) return;
+    Rig rig; rig.equip(0, "summoner");
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 2; }));
+    Query<Pet> pets{rig.world}; const Entity pet = pets.collect().front();
+    const Vec2 far = rig.position(rig.player) + Vec2{kPetRecallDistance + 100,0};
+    rig.world.get<Transform>(pet).position = far;
+    rig.world.get<Health>(pet).current = 1;
+    rig.useHatchTerrain = true;
+    const int x = Terrain::toTileCoord(rig.position(rig.player).x);
+    const int y = Terrain::toTileCoord(rig.position(rig.player).y);
+    for (int dx=-3; dx<=3; ++dx) for (int dy=-3; dy<=3; ++dy) rig.terrain.setTile(x+dx,y+dy,Tile::Solid);
+    rig.tick();
+    CHECK(rig.world.isAlive(pet)); CHECK_NEAR(rig.world.get<Health>(pet).current,1,0);
+    CHECK(distanceSq(rig.position(pet),far)<1e-8);
+    for (int dx=-3; dx<=3; ++dx) for (int dy=-3; dy<=3; ++dy) rig.terrain.setTile(x+dx,y+dy,Tile::Open);
+    rig.tick();
+    CHECK(distance(rig.position(pet),rig.position(rig.player))<kPetHomeDistance);
+    CHECK(!rig.terrain.resolveWall(rig.position(pet),rig.world.get<Body>(pet).radius,Realm::Overworld).collided);
+    CHECK_NEAR(rig.world.get<Health>(pet).current,1,0);
 }
 
 TEST(a_summoned_ring_mob_wears_its_seeds_on_its_owners_side) {
@@ -6031,7 +6068,7 @@ TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead_with_double_summon
                     CHECK(combat.applyDamage(rig.world,shell,enemy,1e9,rig.now).refused);}
             }
             count=0;Query<Pet,Health,ContactDamage> pets{rig.world};pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
-            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,30,1e-8);CHECK_NEAR(hit.amount,1.5,1e-8);
+            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,50,1e-8);CHECK_NEAR(hit.amount,2.0,1e-8);
         });return count==4;},150));
     }
 }
@@ -6134,10 +6171,11 @@ TEST(ant_and_beetle_egg_summons_gain_health_and_damage_at_every_rarity){
         const auto petRarity=ladderRarity(rarity)==Rarity::Apex?Rarity::Unique:rarity;
         const double scale=petalStatScale(petRarity)*strengthBoost(rarity);
         int count=0;Query<Pet,Health,ContactDamage> pets{rig.world};
-        pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
+        pets.each([&](Entity entity,Pet& tag,Health& hp,ContactDamage& hit){
             if(tag.owner!=rig.player)return;++count;
-            CHECK_NEAR(hp.max,config.health*scale*3.0,std::max(1e-7,hp.max*1e-10));
-            CHECK_NEAR(hit.amount,config.damage*scale*1.5,std::max(1e-7,hit.amount*1e-10));
+            CHECK_NEAR(hp.max,config.health*scale*5.0,std::max(1e-7,hp.max*1e-10));
+            CHECK_NEAR(hit.amount,config.damage*scale*2.0,std::max(1e-7,hit.amount*1e-10));
+            CHECK_NEAR(rig.world.get<MobAi>(entity).aggroRange,std::max(kEnemyChaseRange,fixture().registry.mobStats(fixture().registry.mobIndex("critter"),petRarity).aggroRange)+rarityIndex(petRarity)*kPetAggroRangePerRarity,1e-9);
         });CHECK(count>0);
     }
 }
@@ -6159,8 +6197,8 @@ TEST(every_egg_id_takes_the_same_summon_buff){
     // other `<mob>_egg` is a name the rule has to recognise all the same.
     PetalConfig generated;
     generated.id = "matriarch_egg";
-    CHECK_NEAR(eggSummonCombatScale(generated),1.5,1e-9);
-    CHECK_NEAR(eggSummonHealthScale(generated),2.0,1e-9);
+    CHECK_NEAR(eggSummonCombatScale(generated),2.0,1e-9);
+    CHECK_NEAR(eggSummonHealthScale(generated),2.5,1e-9);
     PetalConfig ordinary;
     ordinary.id = "basic";
     CHECK_NEAR(eggSummonCombatScale(ordinary),1.0,1e-9);

@@ -478,6 +478,11 @@ void MobAiSystem::layWeb(World& world, Entity self, double nowMillis,
                          CommandBuffer& commands) {
     WebClock* clock = world.tryGet<WebClock>(self);
     if (clock == nullptr || nowMillis < clock->nextMillis) return;
+    const MobAi* ai = world.tryGet<MobAi>(self);
+    if (!ai || !world.has<PlayerTag>(ai->target) || !isStanding(world, ai->target)) return;
+    const Transform* target = world.tryGet<Transform>(ai->target);
+    const Transform* origin = world.tryGet<Transform>(self);
+    if (!target || !origin || target->realm != origin->realm) return;
     const MobType* type = world.tryGet<MobType>(self);
     const Transform* transform = world.tryGet<Transform>(self);
     const Body* body = world.tryGet<Body>(self);
@@ -1922,8 +1927,8 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
     const auto* pet = world.tryGet<Pet>(self);
     const auto* ownerAt = hasOwner && pet ? world.tryGet<Transform>(pet->owner) : nullptr;
     const auto withinLeash = [&](Vec2 position) {
-        return !ownerAt || (std::abs(position.x - ownerAt->position.x) <= kPetViewHalfWidth &&
-                            std::abs(position.y - ownerAt->position.y) <= kPetViewHalfHeight);
+        return !ownerAt || distanceSq(position, ownerAt->position) <=
+            kPetOwnerTargetRadius * kPetOwnerTargetRadius;
     };
 
     // Map training posts are NPCs, not MobTag entities. Keep an established
@@ -1967,7 +1972,14 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
         } else if (const Replicated* replicated = world.tryGet<Replicated>(candidate)) {
             tier = rarityIndex(replicated->rarity);
         }
-        double score = std::sqrt(gapSq) - tier * kPetTargetTierStride;
+        // Guard the flower's nearby fight first, then prefer rarity inside
+        // that area. A remote boss cannot pull the pet away from its owner.
+        const double ownerGap = ownerAt ? distance(at->position, ownerAt->position) : std::sqrt(gapSq);
+        const double priorityRange = kPetOwnerPriorityRadius +
+            (candidate == ai.target ? kPetRetargetMargin : 0.0);
+        const bool nearOwner = ownerAt && ownerGap <= priorityRange;
+        double score = ownerGap - tier * kPetTargetTierStride;
+        if (nearOwner) score -= kPetTargetTierStride * kRarityCount;
         if (candidate == ai.target) score -= kPetRetargetMargin;
         candidates_.push_back(Candidate{candidate, at->position, score});
     }
@@ -2063,7 +2075,7 @@ bool MobAiSystem::walkToOwner(World& world, const Terrain& terrain, Entity self,
     const Vec2 toOwner = ownerPosition - transform.position;
     const double gap = toOwner.length();
     if (!ai.petReturning) {
-        if (std::abs(toOwner.x) <= kPetViewHalfWidth && std::abs(toOwner.y) <= kPetViewHalfHeight) {
+        if (gap <= kPetFollowDistance) {
             return false;
         }
         // Off the owner's screen. The fight is DROPPED, not paused: a pet that
@@ -2086,18 +2098,12 @@ bool MobAiSystem::walkToOwner(World& world, const Terrain& terrain, Entity self,
         return false;
     }
 
-    if (terrain.segmentBlocked(transform.position, ownerPosition, transform.realm)) {
-        // Behind a wall it keeps walking at its owner and the wall holds it
-        // there. That is stuck, not trapped: the clock starts over, and only
-        // getting way too far (kPetRecallDistance) retires it.
-        ai.petBestGap = gap;
-        ai.petProgressMillis = nowMillis;
-    } else if (gap < ai.petBestGap - kPetProgressStep) {
+    if (gap < ai.petBestGap - kPetProgressStep) {
         ai.petBestGap = gap;
         ai.petProgressMillis = nowMillis;
     } else if (nowMillis - ai.petProgressMillis >= kPetTrappedMillis) {
-        // In plain sight of its owner and getting no closer: trapped. The
-        // petal system retires it and charges its egg the reload.
+        // Walls must not reset this clock forever. The petal pass recovers
+        // the SAME pet on safe ground, preserving health and its lifetime.
         ai.petRecall = true;
     }
 
@@ -2206,8 +2212,11 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
 
     // Off the owner's screen, it walks back before anything else: at the pace
     // it would chase at, as a nest's escort marches home.
+    const auto* ownerMotion = world.tryGet<Motion>(owner);
+    const double followSpeed = std::max(kPlayerMaxSpeed,
+        ownerMotion ? ownerMotion->velocity.length() : 0.0) * kPetFollowSpeedFactor * slow;
     bool driven = walkToOwner(world, terrain, self, transform, ai, ownerPosition,
-                              std::max(chaseSpeed, speed), nowMillis, desired);
+                              std::max({chaseSpeed, speed, followSpeed}), nowMillis, desired);
     if (!driven) {
         if (attacks) {
             ai.target = acquirePetPrey(world, terrain, grid, self, transform.position,

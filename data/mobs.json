@@ -1392,8 +1392,8 @@
     "gardn_ai": true,
     "range": 600,
     "web": {
-      "intervalMs": 1000,
-      "lifetimeMs": 10000,
+      "intervalMs": 15000,
+      "lifetimeMs": 6000,
       "radiusScale": 1.6667,
       "slowFactor": 0.5,
       "minRarity": "legendary"

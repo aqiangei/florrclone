@@ -1,9 +1,12 @@
 #include "server/hyper_board.h"
+#include "server/council.h"
+#include "shared/net/web_channel.h"
 #include "server/shop_lock.h"
 #include "server/timed_hammers.h"
 #include "server/daily_drop_bonus.h"
 #include "server/game_server.h"
 #include "server/hyper_forge.h"
+#include "shared/game/dark_mark.h"
 
 #include "shared/core/process_stats.h"
 
@@ -479,8 +482,12 @@ net::NotificationKind notificationKind(const std::string& type) {
     return net::NotificationKind::Generic;
 }
 
-GameServer::GameServer() = default;
-GameServer::~GameServer() = default;
+GameServer::GameServer() {
+    net::web::setCouncilHandler([this](const std::string& token,const std::string& body) {
+        return council::request(database_,token,Json::parseOrNull(body)).dump();
+    });
+}
+GameServer::~GameServer() { net::web::setCouncilHandler({}); }
 
 std::string GameServer::adminDbKey() const {
     if (!config_.fixedAdminDbKey.empty()) return config_.fixedAdminDbKey;
@@ -504,6 +511,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // with an empty one would serve every returning player a blank account and,
     // worse, save that over the file they still had.
     if (!database_.load(config.databasePath, errorOut)) return false;
+    if (!council::initializeLegacyActivity(database_)) {errorOut="Could not persist council legacy activity credit";return false;}
     foldLookAlikeSkins();
 
     // Kept in a file beside the database, never anywhere a client can reach:
@@ -640,6 +648,12 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // connection layer can do that.
     petals_->onPlayerRevived = [this](Entity revived, Entity reviver) {
         onPlayerRevived(revived, reviver);
+    };
+    petals_->canMarkPlayer = [this](Entity target, Entity marker, Rarity rarity) {
+        return canMarkPlayer(target, marker, rarity);
+    };
+    petals_->onPlayerMarked = [this](Entity target, Entity marker, Rarity rarity) {
+        return sendMarkedPlayerToHel(target, marker, rarity);
     };
 
     // The maze is a daily-seeded region of the world with its own walls. Its
@@ -889,6 +903,20 @@ void GameServer::tick(double nowMillis) {
     }
 
     for (auto& entry : sessions_) refillAllowances(entry.second, nowMillis);
+    // At most one credited second per account and server second; idle input heartbeats do not count.
+    if(tick_%net::kTicksPerSecond==0) {
+        std::unordered_map<std::string,bool> credited;
+        for(auto& entry:sessions_) {
+            auto& s=entry.second;
+            const double elapsed=s.councilSampleAt>0?std::min(1.0,std::max(0.0,(nowMillis-s.councilSampleAt)/1000)):0;
+            s.councilSampleAt=nowMillis;
+            const auto* a=database_.findUserById(s.userId);
+            if(!s.playing()||s.councilActiveUntil<nowMillis||!a||a->guest||a->admin||credited[s.userId]) continue;
+            credited[s.userId]=true;
+            auto& activity=database_.rawTable("councilActivity");
+            activity[s.userId]=activity[s.userId].asDouble()+elapsed;database_.markDirty();
+        }
+    }
 
     // Invitations lapse on the server's own clock rather than on a timer per
     // invite, which is a timer that has to be cancelled when its target
@@ -1292,6 +1320,7 @@ void GameServer::reapDead() {
         // over the body. That means this loop meets the same corpse on every
         // later tick, so everything below has to happen exactly once.
         if (isPlayer) {
+            if (auto* pads = world_.tryGet<TeleporterState>(e)) pads->markHoldUntilMillis = 0;
             if (session == nullptr && bot == nullptr) {
                 // Nobody is watching through this body and nothing owns it. It
                 // leaves no corpse and no death notice, and its ring goes with
@@ -2395,6 +2424,7 @@ void GameServer::resyncProfile(Session& session, net::Connection& connection) {
 
 void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
     const auto now=dropBonusNow();auto& record=database_.progress(session.userId);
+    if(resumeDropBonusAfterMaintenance(record,now))database_.markDirty();
     const auto rotation=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
     if(rotation>=0 && (!record.extra["lockedShopOffers"].isArray() || record.extra["lockedShopOffersRotation"].asDouble(-1)!=rotation)) {
         captureShopLock(record,rotation);database_.markDirty();
@@ -2406,8 +2436,20 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
     w.u32(static_cast<std::uint32_t>(clamp(b["until"].asDouble()-now,0.0,3600000.0)));
     w.u32(claimed?static_cast<std::uint32_t>((dropBonusDay(now)+1)*86400000-8LL*3600000-now):0);
     w.i64(static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1)));
-    const auto offers=lockedShopOffers(record);w.u8(static_cast<std::uint8_t>(offers.size()));
-    for(const auto& offer:offers){w.u16(offer.petalIndex);w.u8(static_cast<std::uint8_t>(offer.rarity));w.f64(offer.price);w.u8(static_cast<std::uint8_t>(offer.discountPercent));}
+    const auto writeOffers = [&](std::vector<ShopOffer> offers, std::int64_t rotation) {
+        applyShopStock(record, rotation, offers);
+        w.u8(static_cast<std::uint8_t>(offers.size()));
+        for (const auto& offer : offers) {
+            w.u16(offer.petalIndex); w.u8(static_cast<std::uint8_t>(offer.rarity));
+            w.f64(offer.price); w.u8(static_cast<std::uint8_t>(offer.discountPercent));
+            w.u16(offer.remaining < 0 ? 65535 : static_cast<std::uint16_t>(offer.remaining));
+        }
+    };
+    const auto current = shopRotation(shopClockNow());
+    // A lock preserves the selection, not the stock epoch. Both tabs share
+    // this account's per-item allowance for the current global rotation.
+    writeOffers(lockedShopOffers(record), current);
+    w.i64(current); writeOffers(shopOffers(current), current);
     connection.send(w);
 }
 void GameServer::handleDropBonus(Session& session, net::Connection& connection, ByteReader& reader) {
@@ -2632,7 +2674,14 @@ void GameServer::handleInput(Session& session, ByteReader& reader) {
         const Session* target = sessionFor(session.controlling);
         steered = target != nullptr && target->playing() ? target->entity : NULL_ENTITY;
     }
-    if (PlayerInput* state = world_.tryGet<PlayerInput>(steered)) state->current = input;
+    if (PlayerInput* state = world_.tryGet<PlayerInput>(steered)) {
+        if(session.controlling==0 && session.controlledBy==0 &&
+           (std::abs(input.moveAngle-state->current.moveAngle)>.1 ||
+            std::abs(input.moveStrength-state->current.moveStrength)>.1 ||
+            std::abs(input.aimAngle-state->current.aimAngle)>.1 || input.flags!=state->current.flags))
+            session.councilActiveUntil=clockMillis_+30000;
+        state->current = input;
+    }
 
     // The window the client is drawing rides every input packet, so a resize or
     // a zoom widens what is replicated on the next tick rather than at the next
@@ -3193,7 +3242,7 @@ void GameServer::handleBulkCraft(Session& session, net::Connection& connection, 
         if (!reader.ok() || id >= excluded.size()) return;
         excluded[id] = true;
     }
-    if(!reader.ok() || !session.authenticated() || target<1 || target>static_cast<unsigned>(rarityIndex(kTopLadderRarity)))return;
+    if(!reader.ok() || !session.authenticated() || target<1 || target>static_cast<unsigned>(rarityIndex(Rarity::Super)))return;
     if(clockMillis_<session.nextBulkCraftMillis)return;
     session.nextBulkCraftMillis=clockMillis_+1500;
     auto& record=liveRecord(session);int groups=0;
@@ -4176,9 +4225,15 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     // and a slot whose petal and tier do not match the current rotation's is a
     // click on a store that has since changed.
     double price = shopPrice(petalIndex, rarity);
+    std::int64_t purchaseRotation = shopRotation(shopClockNow());
+    if (offerSlot == net::kNoShopOffer && (rarity == Rarity::Ultra || rarity == Rarity::Super)) {
+        sendShopResult(connection, net::ShopResultKind::Purchase, false, 0,
+                       "U/S花瓣只能购买当前或锁定商店中的商品。");
+        return;
+    }
     if (offerSlot != net::kNoShopOffer) {
         const auto locked=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
-        const std::vector<ShopOffer> offers = (locked>=0?lockedShopOffers(record):shopOffers(shopRotation(shopClockNow())));
+        const std::vector<ShopOffer> offers = (locked>=0?lockedShopOffers(record):shopOffers(purchaseRotation));
         const auto slot = static_cast<std::size_t>(offerSlot);
         if (slot >= offers.size() || offers[slot].petalIndex != petalIndex ||
             offers[slot].rarity != rarity) {
@@ -4187,6 +4242,13 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
             return;
         }
         price = offers[slot].price;
+    }
+    const int remaining = shopStockRemaining(record, purchaseRotation, petalIndex, rarity);
+    if (remaining >= 0 && quantity > static_cast<std::uint32_t>(remaining)) {
+        sendShopResult(connection, net::ShopResultKind::Purchase, false, 0,
+                       "该商品本轮库存不足；下次商店换轮补货，重新锁定或登录不会补货。");
+        sendDropBonus(session, connection);
+        return;
     }
     // A split flower carries the balance on both halves, and the tick levels
     // them to the HIGHER of the two -- so a charge to the steered half alone
@@ -4221,8 +4283,10 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
         }
     }
     giveToInventory(record, petalIndex, rarity, quantity);
+    consumeShopStock(record, purchaseRotation, petalIndex, rarity, static_cast<int>(quantity));
     database_.markDirty();
     sendProfile(session, connection);
+    sendDropBonus(session, connection);
     sendShopResult(connection, net::ShopResultKind::Purchase, true, 0, {});
 }
 
@@ -6208,6 +6272,17 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
     for (auto& entry : sessions_) {
         Session& corpse = entry.second;
         const Entity victim = corpse.entity;
+        if (auto* pads = world_.tryGet<TeleporterState>(victim)) {
+            if (pads->markHoldUntilMillis > 0 && nowMillis >= pads->markHoldUntilMillis) {
+                pads->markHoldUntilMillis = 0;
+                if (isStanding(world_, victim)) {
+                    if (auto* connection = listener_.find(corpse.connection)) {
+                        sendNotice(*connection, net::NoticeSeverity::Info,
+                            "H Mark滞留已解除，可用 /mark-return 返回原处或正常传送。");
+                    }
+                }
+            }
+        }
         const auto* at = world_.tryGet<Transform>(victim);
         const auto* hp = world_.tryGet<Health>(victim);
         if (!corpse.playing() || !world_.has<Dead>(victim) || !at || !hp) {
@@ -6320,7 +6395,82 @@ void GameServer::collectSpawnBlockers(Realm realm, std::vector<MobDisc>& out) co
     });
 }
 
+bool GameServer::canMarkPlayer(Entity target, Entity marker, Rarity rarity) {
+    if (target == marker || !isStanding(world_, marker) || !world_.has<Dead>(target)) return false;
+    Session* victim = sessionForEntity(target);
+    Session* caster = sessionForEntity(marker);
+    if (!victim || !caster || victim->entity != target || caster->entity != marker ||
+        victim->splitOther != NULL_ENTITY || caster->splitOther != NULL_ENTITY ||
+        victim->userId == caster->userId) return false;
+    const auto* at = world_.tryGet<Transform>(target);
+    const auto* from = world_.tryGet<Transform>(marker);
+    const auto* progress = world_.tryGet<PlayerProgress>(target);
+    const auto* ownerProgress = world_.tryGet<PlayerProgress>(marker);
+    if (!at || !from || at->realm != from->realm || !progress || !ownerProgress ||
+        progress->level < 20 || ownerProgress->level < 20) return false;
+    const auto* map = worldMaps_.forRealm(at->realm);
+    // Ordinary biomes only. Do not extract players from arena/dungeon runs or
+    // move a victim around Hel repeatedly. Prestige stays in prestige.
+    if (!map || (map->id() != map->biome() && !map->prestige()) ||
+        map->biome() == "hel") return false;
+    if (const auto* loadout = world_.tryGet<Loadout>(target)) {
+        for (const auto& slot : loadout->slots) {
+            if (slot.configIndex != kNoPetal &&
+                rarityIndex(slot.rarity) > rarityIndex(rarity)) return false;
+        }
+    }
+    const auto found = markProtectedUntil_.find(victim->userId);
+    return found == markProtectedUntil_.end() || clockMillis_ >= found->second;
+}
+
+bool GameServer::sendMarkedPlayerToHel(Entity target, Entity marker, Rarity rarity) {
+    if (!canMarkPlayer(target, marker, rarity)) return false;
+    const Transform origin = world_.get<Transform>(target);
+    bool found = false;
+    Realm realm = worldMaps_.realmOfId("hel", found);
+    if (!found) return false;
+    if (worldMaps_.isPrestige(origin.realm)) {
+        realm = worldMaps_.prestigeRealm(realm, found);
+        if (!found) return false;
+    }
+    const auto* map = worldMaps_.forRealm(realm);
+    if (!map) return false;
+    std::vector<MobDisc> blockers;
+    collectSpawnBlockers(realm, blockers);
+    Vec2 spawn = map->defaultSpawn(rng_, *terrain_, &blockers);
+    const auto* body = world_.tryGet<Body>(target);
+    spawn = playerRespawnPosition(*terrain_, realm, spawn, body ? body->radius : 25.0);
+    // Protection is per account, not per corpse/petal/caster. Expired rows are
+    // discarded on application so the transient table stays bounded.
+    for (auto it = markProtectedUntil_.begin(); it != markProtectedUntil_.end();) {
+        if (clockMillis_ >= it->second) it = markProtectedUntil_.erase(it);
+        else ++it;
+    }
+    Session* victim = sessionForEntity(target);
+    markProtectedUntil_[victim->userId] = clockMillis_ + kDarkMarkProtectionMillis;
+    auto& hp = world_.get<Health>(target);
+    hp.current = hp.max;
+    hp.invulnerableUntilMillis = clockMillis_ + kRespawnInvulnerabilitySeconds * 1000.0;
+    world_.remove<Dead>(target);
+    if (world_.has<Unrevivable>(target)) world_.remove<Unrevivable>(target);
+    onPlayerRevived(target, NULL_ENTITY);
+    moveEntityToRealm(target, realm, spawn);
+    auto& pads = world_.ensure<TeleporterState>(target);
+    const bool hyper = ladderRarity(rarity) == Rarity::Apex;
+    pads.markHoldUntilMillis = hyper ? clockMillis_ + kHyperMarkHoldMillis : 0;
+    pads.markOrigin = {origin.position, origin.realm};
+    pads.markReturnAvailable = true;
+    victim->hasDeathSite = false;
+    if (auto* connection = listener_.find(victim->connection)) {
+        sendNotice(*connection, net::NoticeSeverity::Info, hyper
+            ? "H Mark：已传送至地狱，30秒后可用 /mark-return 返回原处。死亡或返回菜单解除滞留；5分钟内免疫其他Mark。"
+            : "Mark：已传送至地狱，可立即用 /mark-return 返回原处；5分钟内免疫其他Mark。");
+    }
+    return true;
+}
+
 void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
+    if (auto* pads = world_.tryGet<TeleporterState>(revived)) pads->markHoldUntilMillis = 0;
     Session* session = sessionForEntity(revived);
     if (session == nullptr) return;
 
@@ -6429,11 +6579,12 @@ Entity GameServer::spawnPlayerNear(Session& session, Realm realm, Vec2 around) {
         endSplit(session, clockMillis_, false);
     }
 
-    // Keep the exact death position whenever it is open, correcting walls only.
-    Vec2 spawn = terrain_->resolveCircle(around, kPlayerBaseRadius, realm);
-    if (terrain_->blocked(spawn, realm))
-        spawn = terrain_->findOpenSpawn(rng_, around, 200.0, realm);
-    return finishPlayerSpawn(session, realm, spawn);
+    const Entity entity = finishPlayerSpawn(session, realm, around);
+    // The new body's level determines its hull; the base radius can leave a
+    // high-level flower embedded and eject it through a rail on the next tick.
+    auto& at = world_.get<Transform>(entity);
+    at.position = playerRespawnPosition(*terrain_, realm, around, world_.get<Body>(entity).radius);
+    return entity;
 }
 
 Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) {
@@ -6680,10 +6831,17 @@ void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
     if (!world_.isAlive(entity)) return;
     Transform* transform = world_.tryGet<Transform>(entity);
     if (transform == nullptr) return;
+    if (transform->realm != realm && isStanding(world_, entity)) {
+        const auto* pads = world_.tryGet<TeleporterState>(entity);
+        if (pads && clockMillis_ < pads->markHoldUntilMillis) return;
+    }
     if (transform->realm == realm && distanceSq(transform->position, position) < 1.0) return;
 
     const Realm from = transform->realm;
     const bool sameRealm = from == realm;
+    if (!sameRealm) {
+        if (auto* pads = world_.tryGet<TeleporterState>(entity)) pads->markReturnAvailable = false;
+    }
     transform->realm = realm;
     transform->position = position;
     // Velocity and knockback describe where the body WAS going, in a space it

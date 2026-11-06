@@ -182,6 +182,28 @@ Vec2 sanitizeMovementVelocity(Vec2 velocity) {
     return velocity.clampedLength(kMaxMovementSpeed);
 }
 
+Vec2 playerRespawnPosition(const Terrain& terrain, Realm realm, Vec2 around, double radius) {
+    radius = sanitizeCollisionRadius(radius);
+    const bool inside = terrain.blocked(around, realm);
+    const auto safe = [&](Vec2 p) {
+        const auto wall = terrain.resolveWall(p, radius, realm);
+        return !wall.unresolved && distanceSq(wall.position, p) < 1e-8 &&
+            (inside || !terrain.segmentTouchesBlockingTile(around, p, 0.0, realm));
+    };
+    if (safe(around)) return around;
+    const Vec2 resolved = terrain.resolveWall(around, radius, realm).position;
+    if (safe(resolved)) return resolved;
+    // Search locally on the same side before the generic resolver can choose
+    // an open tile across a thin sewer rail.
+    for (double reach = 8; reach <= std::max(512.0, radius * 4); reach += 8) {
+        for (int angle = 0; angle < 64; ++angle) {
+            const Vec2 candidate = around + Vec2::fromAngle(kTau * angle / 64, reach);
+            if (safe(candidate)) return candidate;
+        }
+    }
+    return terrain.resolveCircle(around, radius, realm);
+}
+
 StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec2 velocity,
                         double radius, double dt, bool collideTerrain,
                         bool refuseWallCrossing) {
@@ -429,8 +451,8 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // That is placement, not a movement attempt: repair an already-invalid
         // hull before the containment guard refuses every possible escape.
         if (isWorldRealm(transform.realm) &&
-            terrain.resolveWall(transform.position, body.radius, transform.realm).unresolved) {
-            transform.position = terrain.resolveCircle(transform.position, body.radius, transform.realm);
+            terrain.resolveWall(transform.position, body.radius, transform.realm).collided) {
+            transform.position = playerRespawnPosition(terrain, transform.realm, transform.position, body.radius);
             motion.velocity = {};
             if (auto* shove = world.tryGet<Knockback>(e)) shove->impulse = {};
         }
@@ -493,18 +515,15 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // projectile take the resolver's word for it. A player arrives here
         // from a contact knockback that already overlapped wall geometry
         // often enough that without it, diagonal seams are passable.
-        stepCollide(terrain, transform.realm, transform.position, velocity, body.radius, dt, true,
+        const StepOutcome movement = stepCollide(terrain, transform.realm, transform.position, velocity, body.radius, dt, true,
                     true);
         // Loose petals before NPCs: a wax gives way and an NPC does not, so an
         // NPC is the last word on where the flower may stand, as a wall is.
         if (!looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
         if (!npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
-        // TypeScript's stepPlayerMovement returns the friction-integrated
-        // velocity unchanged when wall resolution alters the position. Keeping
-        // the attempted velocity is observable on the following tick (the
-        // flower continues pressing/sliding); rebuilding it from achieved
-        // displacement changes both acceleration and the wall trajectory.
-        motion.velocity = velocity;
+        // Discard velocity into a wall while retaining the achieved slide.
+        // Otherwise turning away first has to cancel a full inward velocity.
+        motion.velocity = velocityAfterStep(velocity, movement, dt, 1.0);
     });
     storeLooseDiscs(world);
 }
@@ -655,6 +674,9 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
         // pulled by one: the suction is the pad's first act, and a bot half
         // dragged onto a pad it can never take would stand there forever.
         if (takesTeleporters && !takesTeleporters(e)) continue;
+        if (const auto* pads = world.tryGet<TeleporterState>(e)) {
+            if (nowMillis < pads->markHoldUntilMillis && isStanding(world, e)) continue;
+        }
         Transform* transform = world.tryGet<Transform>(e);
         if (!transform) continue;
         // Every world map has its own pads. The arena and the maze have none:

@@ -2037,7 +2037,9 @@ TEST(a_squadmate_is_sent_the_drop_their_squad_earned) {
     // the map is eligible for a drop the replicator never sends them, which
     // is correct and would make this test ask the wrong question.
     const Vec2 at = world.get<Transform>(fighterBody).position;
-    world.get<Transform>(mateBody).position = at + Vec2{60, 0};
+    // Outside automatic pickup reach, but still inside the viewport. At 60
+    // units the item may already be banked before a snapshot can show it.
+    world.get<Transform>(mateBody).position = at + Vec2{300, 0};
 
     // A common mob dropped ON the fighter, killed by the flower's own body
     // damage. Only the fighter ever touches it.
@@ -2084,10 +2086,26 @@ TEST(a_squadmate_is_sent_the_drop_their_squad_earned) {
     const NetId* dropId = world.tryGet<NetId>(dropped.front());
     CHECK(dropId != nullptr);
     if (dropId == nullptr) return;
+    const std::uint32_t visibleDropId = dropId->value;
     CHECK(h.stepUntil({&fighter, &mate}, [&] {
-        return mate.view().entities().count(dropId->value) != 0;
+        return mate.view().entities().count(visibleDropId) != 0;
     }, 120));
-    CHECK(mate.view().entities().count(dropId->value) != 0);
+    CHECK(mate.view().entities().count(visibleDropId) != 0);
+    // The member who did no damage can collect their own copy after the
+    // fighter's pickup; verify the actual account bag and its client profile.
+    const DropItem reserved = world.get<DropItem>(dropped.front());
+    auto* mateSession = GameServerPeer::sessionOf(h.server, "mate");
+    CHECK(mateSession != nullptr);
+    if (!mateSession) return;
+    const auto key = "petal_" + content().petal(reserved.configIndex).id;
+    const auto beforeCount = h.server.database().findProgress(mateSession->userId)->itemCount(reserved.rarity, key);
+    world.get<Transform>(mateBody).position = world.get<Transform>(dropped.front()).position;
+    CHECK(h.stepUntil({&fighter, &mate}, [&] {
+        return h.server.database().findProgress(mateSession->userId)->itemCount(reserved.rarity, key) >= beforeCount + reserved.quantity;
+    }, 120));
+    CHECK(awaitProfile(h, mate, [&](const Profile& profile) {
+        return profile.stackCount(reserved.configIndex, reserved.rarity) >= beforeCount + reserved.quantity;
+    }));
 
     // And the console can say all of that out loud, which is what an operator
     // has to go on when a player reports that sharing is not working.

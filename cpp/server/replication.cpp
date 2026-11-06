@@ -159,7 +159,7 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
         // Corruption is a FACE, not a skin: the flower that cracked a Flower
         // petal open turns on everyone, and the face is the only warning the
         // players around it get before its ring starts biting them.
-        if (visuals->corrupted || visuals->equippedCorruption) out.faceFlags |= FaceHasCorruption;
+        if (visuals->corrupted || visuals->equippedCorruption || visuals->nearbyCorruption) out.faceFlags |= FaceHasCorruption;
     }
     if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
         if (afflictions->poisoned(nowMillis)) out.faceFlags |= FacePoisoned;
@@ -578,6 +578,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             std::uint32_t ownerNetId = 0;
             if (const NetId* ownerId = world.tryGet<NetId>(owner)) ownerNetId = ownerId->value;
             out.u32(ownerNetId);
+            const auto* instance = world.tryGet<PetalInstance>(candidate.entity);
+            out.u8(instance ? instance->dominoPips : 255); // v93 per-reload petal variant
         }
         if (info.kind == net::EntityKind::Npc) {
             // Which of its mob's recipes an assembler makes; 0 for any other.

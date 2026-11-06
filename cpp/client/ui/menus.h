@@ -309,6 +309,7 @@ struct ClientSettings {
     /// top row. Off by default -- the bar's own shape now follows the
     /// reference game's, which is bigger, tighter and captioned underneath.
     bool classicLoadoutBar = false;
+    int rotationStep = 4;
     /// Whether the on-screen touch controls are up: the stick, and the two
     /// buttons that stand in for the extend/retract keys. The TypeScript
     /// client kept the same flag in `localStorage.requestMobile` and resolved
@@ -1297,7 +1298,7 @@ public:
     void reset();
     static double preferredWidth();
     /// Fixed: the title row, the tab strip, the header and two rows of offer
-    /// cards come to this, and the other two tabs are laid out inside it.
+    /// cards come to this, and the remaining tabs are laid out inside it.
     static double preferredHeight();
     static Rect bounds(int viewWidth, int viewHeight);
     /// How far the window has slid in (0..1), and whether it is on its way
@@ -1309,7 +1310,7 @@ public:
     }
 
 private:
-    enum class Tab : std::uint8_t { Offers, Challenges, Bonus };
+    enum class Tab : std::uint8_t { Offers, Current, Challenges, Bonus };
     Tab tab_ = Tab::Offers;
     double open_ = 1.0;
     bool closing_ = false;
@@ -1564,6 +1565,7 @@ public:
     /// The screen owns the loadout bar's slide: the browser builds a fresh
     /// `CanvasLoadoutBar` per screen, so crossing between them replays the
     /// rise rather than leaving the bar already seated from last time.
+    void setTouchLayout(bool touch) { touchLayout_ = touch; }
     void setInGame(bool inGame) {
         if (inGame == inGame_) return;
         inGame_ = inGame;
@@ -1638,6 +1640,7 @@ public:
     double reservedLeft() const;
     /// The first y below the top icon row, strip inset included.
     double stripBottom() const;
+    double stripRight() const;
 
     /// True while the strip's changelog button should shake: while the
     /// changelog holds more releases than the player had seen the last time
@@ -1805,6 +1808,7 @@ private:
     bool altMode_ = false;
 
     bool inGame_ = false;
+    bool touchLayout_ = false;
     bool exitRequested_ = false;
     bool logoutRequested_ = false;
     bool adminGrantOffered_ = false;
@@ -1896,6 +1900,7 @@ private:
     /// A K/L + number chord: the preset it names, or -1, and whether Shift
     /// was down, which makes it a save rather than a load.
     int pendingPreset_ = -1;
+    Rect rotationDial_{};
     bool pendingPresetSave_ = false;
     /// In game, K and L are held down to name a preset, so whatever ELSE they
     /// are bound to -- mouse controls, the leaderboard -- cannot fire on the

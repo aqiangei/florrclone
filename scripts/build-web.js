@@ -106,6 +106,7 @@ const TARGETS = {
         // Referenced by the shell, not part of the link.
         sidecars: [
             [path.join(CPP_DIR, 'client', 'web', 'favicon.ico'), 'favicon.ico'],
+            [path.join(CPP_DIR, 'client', 'web', 'council.html'), 'council.html'],
         ],
         // Staged deflated beside themselves, as <name>.bin. These are the
         // two files the page pulls over the network; index.html is served

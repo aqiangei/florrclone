@@ -1,7 +1,6 @@
 // The star shop.
 //
-// Three tabs over one window: the store's ten rotating offers, the challenges
-// that pay the stars to buy them with, and the code redeemer.
+// Four tabs: saved offers, the current rotation, challenges and code redemption.
 //
 // It is florr's premium shop window, measured out of florr's own client rather
 // than off screenshots: its draw (0x1008f84a0, called from the screen render)
@@ -253,6 +252,7 @@ struct ShopState {
     int pendingSlot = -1;
     double pendingPrice = 0;
     int pendingQuantity = 1;
+    int pendingLimit = 10000;
     /// The scrim, the stage that holds the box back, and the box's scale.
     double scrim = 0;
     double stage = 0;
@@ -265,6 +265,8 @@ struct ShopState {
     /// The rotation the cards below were generated for, so the store is built
     /// once an hour rather than once a frame. `INT64_MIN` is "nothing yet".
     std::int64_t offersRotation = INT64_MIN;
+    bool offersLocked = false;
+    double nextOfferQuerySeconds = 0;
     std::vector<ShopOffer> offers;
 
     std::vector<FallingStar> stars;
@@ -651,14 +653,15 @@ bool ShopPanel::render(MenuContext& ctx) {
     setFill(canvas, kWindowRim);
     canvas.fillRect(static_cast<float>(panel.x), static_cast<float>(panel.y + kStripTop),
                     static_cast<float>(panel.w), static_cast<float>(kStripHeight));
-    const std::array<const char*, 3> kTabLabels{
+    const std::array<const char*, 4> kTabLabels{
         trEnZh("Shop", "商店"),
+        trEnZh("Current", "当前"),
         trEnZh("Challenge", "挑战"),
         trEnZh("Bonus", "奖励"),
     };
-    const double tabsWidth = 3.0 * kTabWidth + 2.0 * kTabGap;
-    std::array<Rect, 3> tabRects{};
-    for (int i = 0; i < 3; ++i) {
+    const double tabsWidth = kTabLabels.size() * kTabWidth + (kTabLabels.size() - 1) * kTabGap;
+    std::array<Rect, 4> tabRects{};
+    for (int i = 0; i < static_cast<int>(kTabLabels.size()); ++i) {
         const Rect rect{panel.x + (panel.w - tabsWidth) * 0.5 + i * (kTabWidth + kTabGap),
                         panel.y + kStripTop + 10.0, kTabWidth, kTabHeight};
         tabRects[static_cast<std::size_t>(i)] = rect;
@@ -672,7 +675,7 @@ bool ShopPanel::render(MenuContext& ctx) {
     }
 
     // --- the footer, on every tab -------------------------------------------
-    // The balance is the one number all three tabs are about, so it is the
+    // The balance is shared by every tab, so it is the
     // window's footer rather than the store's.
     {
         const std::string balance = withSeparators(stars);
@@ -707,24 +710,34 @@ bool ShopPanel::render(MenuContext& ctx) {
     Rect bonusButton{};
     Rect lockButton{};
 
-    if (tab_ == Tab::Offers) {
-        const std::int64_t rotation = ctx.net.lockedShopRotation>=0?ctx.net.lockedShopRotation:shopRotation(shopClockNow());
-        if (state.offersRotation != rotation || ctx.net.lockedShopRotation>=0) {
+    if (tab_ == Tab::Offers || tab_ == Tab::Current) {
+        if (ctx.net.currentShopRotation != shopRotation(shopClockNow()) && ctx.timeSeconds >= state.nextOfferQuerySeconds) {
+            ctx.net.requestDailyDropBonus(false);
+            state.nextOfferQuerySeconds = ctx.timeSeconds + 5.0;
+        }
+        const bool locked = ctx.net.lockedShopRotation >= 0;
+        const bool showingLocked = locked && tab_ == Tab::Offers;
+        const bool preview = locked && tab_ == Tab::Current;
+        const std::int64_t rotation = showingLocked ? ctx.net.lockedShopRotation :
+            (ctx.net.currentShopRotation >= 0 ? ctx.net.currentShopRotation : shopRotation(shopClockNow()));
+        {
             state.offersRotation = rotation;
-            state.offers = ctx.net.lockedShopRotation>=0 ? ctx.net.lockedShopOffers : shopOffers(rotation);
+            state.offersLocked = showingLocked;
+            state.offers = showingLocked ? ctx.net.lockedShopOffers : ctx.net.currentShopOffers;
         }
 
         text(canvas, trEnZh("Today's offers:", "今日特惠："), panel.x + panel.w * 0.5,
              panel.y + kHeadingMiddle, shopText(kOffersHeadingSize));
-        const std::int64_t remaining = shopRotationEnd(rotation) - shopClockNow();
-        text(canvas, ctx.net.lockedShopRotation>=0?trEnZh("Offers locked until you unlock them","商品已锁定，解锁后恢复刷新"):rotationCaption(remaining), panel.x + panel.w * 0.5, panel.y + kSubMiddle,
+        const std::int64_t remaining = shopRotationEnd(
+            ctx.net.currentShopRotation >= 0 ? ctx.net.currentShopRotation : shopRotation(shopClockNow())) - shopClockNow();
+        const std::string caption = showingLocked
+            ? trEnZh("Locked selection; unlimited stock", "商品已锁定，不限购买数量")
+            : rotationCaption(remaining) + (preview ? trEnZh(" — Preview; unlock in Shop to buy", " · 仅预览，购买请先在商店页解锁") : "");
+        text(canvas, caption, panel.x + panel.w * 0.5, panel.y + kSubMiddle,
              shopText(kSubSize));
 
-        // Locking an offer through a rotation is florr's; nothing on this
-        // server keeps per-account offers, so the button is drawn where it
-        // belongs and left inert -- no hover, no press -- rather than made to
-        // lie about what it did.
-        {
+        // Keep lock controls on the original tab; browsing never changes the lock.
+        if (tab_ == Tab::Offers) {
             const char* lockLabel = ctx.net.lockedShopRotation>=0?trEnZh("Unlock","解锁"):trEnZh("Lock", "锁定");
             const double width = measure(lockLabel, kLockSize) + textPad(kLockSize) + kLockExtra;
             const double right = panel.x + kGridLeft + 4.0 * kCellWidth + kPlateWidth;
@@ -749,6 +762,7 @@ bool ShopPanel::render(MenuContext& ctx) {
             ItemTile tile;
             tile.petalIndex = offer.petalIndex;
             tile.rarity = offer.rarity;
+            if (offer.remaining >= 0) tile.badge = trEnZh("Left ", "余 ") + std::to_string(offer.remaining);
             tile.timeSeconds = ctx.timeSeconds;
             drawItemTile(canvas, ctx.sprites, tiles[i], tile);
 
@@ -762,13 +776,14 @@ bool ShopPanel::render(MenuContext& ctx) {
             // server's refusal rather than by a card that quietly does nothing.
             const Rect price{plateAt.x + kPriceLeft, plateAt.y + kPriceTop, kPriceWidth,
                              kPriceHeight};
-            priceButtons[i] = price;
-            const bool hot = price.contains(under);
+            const bool soldOut = offer.remaining == 0;
+            if (!preview && !soldOut) priceButtons[i] = price;
+            const bool hot = !preview && !soldOut && price.contains(under);
             if (hot) cursor = CursorShape::Hand;
-            drawFlorrButton(canvas, price, kPriceFace, kButtonBorder, kButtonRadius, hot,
-                            !modalUp && pressing(price));
-            drawStarRow(canvas, price, formatPrice(offer.price), kPriceIconBox, kPriceStar,
-                        kPriceSize);
+            drawFlorrButton(canvas, price, (preview || soldOut) ? kButtonIdle : kPriceFace, kButtonBorder, kButtonRadius, hot,
+                            !preview && !soldOut && !modalUp && pressing(price));
+            if (soldOut) text(canvas, trEnZh("Sold out", "本轮售罄"), price.x + price.w * 0.5, price.y + price.h * 0.5, shopText(kPriceSize));
+            else drawStarRow(canvas, price, formatPrice(offer.price), kPriceIconBox, kPriceStar, kPriceSize);
         }
     } else if (tab_ == Tab::Bonus) {
         text(canvas, trEnZh("Redeem a Code", "兑换兑换码"), panel.x + panel.w * 0.5,
@@ -877,7 +892,9 @@ bool ShopPanel::render(MenuContext& ctx) {
         const std::vector<std::string> lines =
             confirming ? std::vector<std::string>{
                              trEnZh("Are you sure you want to buy this?", "确定要购买吗？"),
-                             trEnZh("Petal purchases are not refundable", "花瓣购买后不可退款")}
+                             trEnZh("Petal purchases are not refundable", "花瓣购买后不可退款"),
+                             trEnZh("No purchase quota; charged at the displayed price",
+                                    "不限购，按显示价格扣除星星")}
                        : state.lines;
         const char* cancelLabel =
             confirming ? trEnZh("Cancel", "取消") : trEnZh("OK", "确定");
@@ -1044,9 +1061,9 @@ bool ShopPanel::render(MenuContext& ctx) {
         if (state.modal == ShopState::Modal::Confirm && clicked(lessRect))
             state.pendingQuantity=std::max(1,state.pendingQuantity-1);
         else if (state.modal == ShopState::Modal::Confirm && clicked(moreRect))
-            state.pendingQuantity=std::min(10000,state.pendingQuantity+1);
+            state.pendingQuantity=std::min(state.pendingLimit,state.pendingQuantity+1);
         else if (state.modal == ShopState::Modal::Confirm && clicked(maxRect))
-            state.pendingQuantity=static_cast<int>(clamp(std::floor(ctx.net.profile().stars / std::max(1.0,state.pendingPrice)),1.0,10000.0));
+            state.pendingQuantity=static_cast<int>(clamp(std::floor(ctx.net.profile().stars / std::max(1.0,state.pendingPrice)),1.0,static_cast<double>(state.pendingLimit)));
         else if (clicked(confirmRect)) resolveModal(true);
         else if (clicked(cancelRect)) resolveModal(false);
         // The scrim swallows everything else, including the close button.
@@ -1055,7 +1072,7 @@ bool ShopPanel::render(MenuContext& ctx) {
 
     if (clicked(closeRect)) return false;
 
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < static_cast<int>(kTabLabels.size()); ++i) {
         if (!clicked(tabRects[static_cast<std::size_t>(i)])) continue;
         // Leaving the code field behind clears its focus, or the shop would go
         // on eating keystrokes from a tab with no field on it.
@@ -1084,6 +1101,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         state.pendingSlot = static_cast<int>(i);
         state.pendingPrice = offer.price;
         state.pendingQuantity = 1;
+        state.pendingLimit = offer.remaining < 0 ? 10000 : offer.remaining;
         break;
     }
     return true;

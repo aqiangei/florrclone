@@ -20,14 +20,27 @@ TEST(hyper_mobs_keep_xp_speed_and_hyper_pollen_uses_one_point_five_eternal){
     CHECK_NEAR(pollen.health,eternalPollen.health*1.5,1e-9);
     CHECK_EQ(pollen.count,3);CHECK_NEAR(pollen.reloadMillis,2000,1e-9);
 }
-TEST(hyper_petal_combat_values_and_authored_specials_are_capped_at_one_point_five_eternal){
+TEST(hyper_petal_combat_caps_preserve_the_authored_hammer_exception){
     for(std::uint16_t i=0;i<data().petalCount();++i){
         const auto e=data().petalStats(i,Rarity::Unique),h=data().petalStats(i,Rarity::Apex);
         for(const auto field:{&PetalStats::damage,&PetalStats::health,&PetalStats::heal,
             &PetalStats::passiveHealPerSecond,&PetalStats::lightningDamagePerHit,
             &PetalStats::flowerHealthBonus,&PetalStats::armorReduction,&PetalStats::shield,
             &PetalStats::maxMana,&PetalStats::requiredMana,&PetalStats::petManaCost}){
-            if(e.*field>0)CHECK(h.*field<=e.*field*1.5+std::max(1e-9,e.*field*1e-12));
+            // Protocol 92 deliberately buffs the contested H hammer after
+            // the general cap. Verify its authored values instead of treating
+            // this existing exception as a regression in every other petal.
+            if(data().petal(i).id=="mjolnir" && field==&PetalStats::health){
+                CHECK_NEAR(h.health,e.health*2.25,1e-7);continue;
+            }
+            if(data().petal(i).id=="mjolnir" && field==&PetalStats::lightningDamagePerHit){
+                CHECK_NEAR(h.lightningDamagePerHit,60.0*petalStrengthScale(Rarity::Apex),1e-7);continue;
+            }
+            if(e.*field>0) {
+                if(h.*field>e.*field*1.5+std::max(1e-9,e.*field*1e-12))
+                    std::fprintf(stderr,"Hyper cap: %s E=%g H=%g\n",data().petal(i).id.c_str(),e.*field,h.*field);
+                CHECK(h.*field<=e.*field*1.5+std::max(1e-9,e.*field*1e-12));
+            }
         }
     }
     for(const auto id:{"pollen","battery","soil","leaf","rose","lightning","bone"}){
@@ -46,7 +59,7 @@ TEST(hyper_one_per_regular_map_preserves_supers_eternals_and_waits_thirty_minute
     for(int i=0;i<30;++i)step(2000+i*500);
     int checked=0;Entity boss=NULL_ENTITY;bool found=false;const auto garden=maps.realmOfId("garden",found);CHECK(found);
     for(const auto& map:maps.maps())if(!maps.isPrestige(map.realm())&&map.usesReferenceSpawnCurve()){
-        CHECK_EQ(population(w,map.realm(),Rarity::Apex),1);CHECK_EQ(population(w,map.realm(),Rarity::Unique),3);CHECK_EQ(population(w,map.realm(),Rarity::Super),5);++checked;
+        CHECK_EQ(population(w,map.realm(),Rarity::Apex),1);CHECK_EQ(population(w,map.realm(),Rarity::Unique),3);CHECK_EQ(population(w,map.realm(),Rarity::Super),10);++checked;
     }
     CHECK_EQ(checked,10);Query<MobTag,MobType,Transform,AmbientMob> q{w};q.without<Dead>();
     q.each([&](Entity e,MobTag&,MobType&t,Transform&at,AmbientMob&){const auto* b=w.tryGet<BodySegment>(e);if(t.rarity==Rarity::Apex&&at.realm==garden&&(!b||b->chainHead==e))boss=e;});
@@ -70,30 +83,41 @@ TEST(hyper_actual_loot_is_thirty_trials_of_super_eternal_materials_never_hyper){
     CHECK_EQ(total-eternal,100*30*3);CHECK(eternal>20&&eternal<80);
 }
 
-TEST(super_farm_has_twelve_independent_slots_and_preserves_roaming_supers){
+TEST(super_farm_has_thirty_six_slots_and_refills_the_deepest_sewer_room){
     ContentRegistry c;WorldMaps maps;Terrain terrain;std::string error;
     CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),error));
     CHECK(maps.load(testsupport::dataDir(),&terrain,error));
     World w;CommandBuffer commands{w};SpawnSystem spawn;spawn.worldMaps=&maps;Rng rng{2853};
     auto step=[&](double at){spawn.run(w,terrain,c,std::vector<RealmPoint>{},rng,at,net::kTickSeconds,commands);commands.flush();};
     step(1000);step(1500);Entity victim=NULL_ENTITY;Realm garden=Realm::Overworld;int mapsChecked=0;
+    std::vector<Entity> deepSewers;
+    const MapData* sewerMap=nullptr;double sewerHighest=0;
     for(const auto& map:maps.maps()){
         if(maps.isPrestige(map.realm())||!map.usesReferenceSpawnCurve()||!supportsSuperFarm(map.id()))continue;
         int farm=0;double highest=-1;
         for(const auto& band:map.elements())if(band.isSpawnBand()&&!band.singular&&band.forceRarity<0)highest=std::max(highest,band.difficulty);
+        if(map.id()=="sewers"){sewerMap=&map;sewerHighest=highest;}
         Query<SuperFarmMob,MobType,Transform> q{w};q.without<Dead>();q.each([&](Entity e,SuperFarmMob&,MobType& type,Transform& at){
             if(at.realm!=map.realm())return;++farm;CHECK(type.rarity==Rarity::Super);
             bool inside=false;for(const auto& band:map.elements())if(band.isSpawnBand()&&!band.singular&&band.forceRarity<0&&band.difficulty>=highest-kSuperFarmDifficultyWindow)
                 inside=inside||zoneContains(band.bounds,band.polygon,at.position);CHECK(inside);
             if(map.id()=="garden"){victim=e;garden=map.realm();}
+            if(map.id()=="sewers")for(const auto& band:map.elements())
+                if(band.isSpawnBand()&&!band.singular&&band.forceRarity<0&&band.difficulty==highest&&zoneContains(band.bounds,band.polygon,at.position)){deepSewers.push_back(e);break;}
         });
-        CHECK(farm>0);CHECK(farm<=kSuperFarmPopulation);CHECK_EQ(population(w,map.realm(),Rarity::Super),5);++mapsChecked;
+        CHECK(farm>0);CHECK(farm<=kSuperFarmPopulation);CHECK_EQ(population(w,map.realm(),Rarity::Super),10);++mapsChecked;
     }
     CHECK(mapsChecked>=10);CHECK(victim!=NULL_ENTITY);
+    CHECK_EQ(kSuperFarmPopulation,36);CHECK(deepSewers.size()>=12);
     for(const auto& event:spawn.bossSpawns)CHECK(event.rarity!=Rarity::Super);
     auto count=[&](){int n=0;Query<SuperFarmMob,Transform> q{w};q.without<Dead>();q.each([&](Entity,SuperFarmMob&,Transform& at){if(at.realm==garden)++n;});return n;};
-    const int before=count();w.add<Dead>(victim);step(2000);CHECK_EQ(count(),before-1);
-    step(31999);CHECK_EQ(count(),before-1);step(32500);CHECK_EQ(count(),before);
+    const auto deepCount=[&](){int n=0;if(!sewerMap)return n;Query<SuperFarmMob,Transform> q{w};q.without<Dead>();
+        q.each([&](Entity,SuperFarmMob&,Transform& at){if(at.realm!=sewerMap->realm())return;
+            for(const auto& band:sewerMap->elements())if(band.isSpawnBand()&&!band.singular&&band.forceRarity<0&&band.difficulty==sewerHighest&&zoneContains(band.bounds,band.polygon,at.position)){++n;break;}});return n;};
+    const int before=count();w.add<Dead>(victim);for(auto e:deepSewers)w.add<Dead>(e);
+    step(2000);CHECK_EQ(count(),before-1);CHECK_EQ(deepCount(),0);
+    step(31999);CHECK_EQ(count(),before-1);CHECK_EQ(deepCount(),0);
+    step(32500);CHECK_EQ(count(),before);CHECK(deepCount()>=12);
 }
 TEST(super_farm_health_and_loot_budget_change_without_touching_eternal_or_hyper_rewards){
     for(std::uint16_t i=0;i<data().mobCount();++i){const auto& mob=data().mob(i);

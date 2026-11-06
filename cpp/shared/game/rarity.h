@@ -160,6 +160,9 @@ inline constexpr std::array<double, kLadderRarityCount> kMobHealthScale = [] {
 inline constexpr std::array<double, kLadderRarityCount> kMobDamageScale = {
     1.0, 3.0, 9.0, 27.0, 81.0, 243.0, 729.0, 2187.0, 6561.0, 78732.0,
 };
+// Wild H bodies used a 12x Eternal jump. Contact now uses 6x; projectile,
+// poison and other ability ladders retain their existing authored strength.
+inline constexpr double mobContactScale(Rarity rarity) { return rarity == Rarity::Apex ? 0.5 : 1.0; }
 
 /// Mob armour per tier: a flat amount subtracted from every DIRECT hit.
 ///
@@ -359,10 +362,9 @@ inline double craftSuccessChance(Rarity from) {
 }
 
 /// Whether anything -- the forge or the oracle -- crafts out of this tier.
-/// Not apex, which has no rung above it, and not universal, which is only
-/// ever given.
+/// Ordinary crafting stops at Super; Eternal and Hyper use their dedicated recipes.
 inline constexpr bool craftsOutOf(Rarity from) {
-    return rarityIndex(from) < rarityIndex(Rarity::Unique);
+    return rarityIndex(from) >= 0 && rarityIndex(from) < rarityIndex(Rarity::Super);
 }
 
 /// What an oracle charges for ONE guaranteed upgrade out of `from`: this many

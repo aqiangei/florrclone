@@ -1,4 +1,5 @@
-﻿#include "server/systems/petals.h"
+#include "shared/game/computer_set.h"
+#include "server/systems/petals.h"
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,8 @@
 #include "server/systems/movement.h"
 #include "server/systems/spawning.h"
 #include "shared/game/terrain.h"
+#include "shared/game/dark_mark.h"
+#include "shared/game/domino.h"
 
 namespace flix {
 namespace {
@@ -22,8 +25,8 @@ constexpr double kPollenRadiusPerSize = 6.0;
 
 constexpr double kWebThrowDistance = 620.0;
 constexpr double kWebLifetimeSeconds = 10.0;
-constexpr double kPollenLifetimeSeconds = 4.0;
-constexpr double kPollenHitIntervalMillis = 600.0;
+constexpr double kPollenLifetimeSeconds = 6.0;
+constexpr double kPollenHitIntervalMillis = 750.0;
 
 /// How long the ring takes to fly across when what it is laid out around
 /// changes -- a moon coming out, or breaking and handing the ring back to the
@@ -537,10 +540,11 @@ bool oneConnection(World& world, Entity a, Entity b) {
 
 /// A live petal's stats, with the reload a mimic's copy pays in place of its
 /// own tier's.
-PetalStats instanceStats(const ContentRegistry& registry, const PetalInstance& instance) {
-    return equippedPetalStats(
+PetalStats instanceStats(World& world, const ContentRegistry& registry, const PetalInstance& instance) {
+    auto stats = equippedPetalStats(
         registry, EquippedPetal{instance.configIndex, instance.rarity,
                                 instance.mimicked ? instance.reloadRarity : instance.rarity});
+    return computerSetStats(registry,world,instance.owner,instance.configIndex,instance.rarity,stats);
 }
 
 } // namespace
@@ -584,6 +588,13 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         if (t >= 1.0) { field.radius = flight.radius; landedWebs.push_back(e); }
     });
     for (Entity e : landedWebs) world.remove<WebFlight>(e);
+    // A ring can only advance petals whose owner still has a loadout. Reap
+    // orphans even if the owner's removal bypassed the normal body teardown.
+    // Released shots and planted effects have their own lifetime components.
+    Query<PetalInstance> attachedPetals{world};
+    attachedPetals.each([&](Entity e, PetalInstance& petal) {
+        if (!world.has<Loadout>(petal.owner)) commands.destroy(e);
+    });
     // A snapshot of handles, not a live query: everything this system does --
     // spawning a petal, breaking one, firing a volley -- is structural, and
     // none of it may happen while a query holds column pointers. Taking the
@@ -619,7 +630,7 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         }
         // Before the slot pass, because retiring a pet puts the petal that
         // hatched it back on cooldown and the slot pass is what serves that.
-        retireDistantPets(world, registry, player, nowMillis);
+        recoverDistantPets(world, player);
         expireTimedPets(world, player, nowMillis);
         runPetBroods(world, registry, player, nowMillis);
         carryLoosePetalsAcrossRealms(world, player);
@@ -641,6 +652,26 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         // about to be reaped from.
         strikeBatteries(world, registry, player, nowMillis);
     }
+
+    // Rebuild the aura from actual H wearers, never from affected players.
+    // Clearing first makes leaving a radius, unequipping and death reversible.
+    struct CorruptionSource { Vec2 position; Realm realm; };
+    std::vector<CorruptionSource> corruptionSources;
+    Query<PlayerTag, PlayerVisuals, Transform, PlayerProgress> corruptionFlowers{world};
+    corruptionFlowers.each([&](Entity e, PlayerTag&, PlayerVisuals& visuals, Transform& at, PlayerProgress& progress) {
+        visuals.nearbyCorruption = false;
+        if (visuals.hyperCorruption && progress.level >= 20 && !playerIsDown(world, e))
+            corruptionSources.push_back({at.position, at.realm});
+    });
+    if (!corruptionSources.empty()) corruptionFlowers.each([&](Entity e, PlayerTag&, PlayerVisuals& visuals, Transform& at, PlayerProgress& progress) {
+        if (progress.level < 20 || playerIsDown(world, e)) return;
+        for (const auto& source : corruptionSources) {
+            if (at.realm == source.realm && (at.position-source.position).lengthSq() <= kHyperCorruptionRadius*kHyperCorruptionRadius) {
+                visuals.nearbyCorruption = true;
+                break;
+            }
+        }
+    });
 
     // Not left dangling between ticks, for the reason CombatSystem states: the
     // queue is cleared once the snapshot has carried it, and a stray strike
@@ -847,7 +878,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         // from this rather than from what the bar shows.
         const EquippedPetal equipped = equippedPetal(registry, loadout, i);
         const PetalConfig& config = registry.petal(equipped.configIndex);
-        PetalStats stats = equippedPetalStats(registry, equipped);
+        PetalStats stats = computerSetStats(registry,world,player,equipped.configIndex,equipped.rarity,equippedPetalStats(registry, equipped));
         // The Petal Health talent is folded in HERE, before the pool is sized,
         // rather than at each of the four places a pool figure is written. A
         // petal's health reaches the field through poolMax, poolHealth,
@@ -870,13 +901,15 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
                               : petalCopies(std::max(0, stats.count), skills, i, rarityIndex(equipped.rarity), config.stackable);
         const double reload = reloadMillisFor(stats, reloadScale);
 
-        if (slotState.configIndex != equipped.configIndex || slotState.rarity != equipped.rarity ||
+        if (slotState.equippedIndex != slot.configIndex ||
+            slotState.configIndex != equipped.configIndex || slotState.rarity != equipped.rarity ||
             slotState.reloadRarity != equipped.reloadRarity || slotState.count != count) {
             destroySlotPetals(world, loadout, slotId);
             recallPets(world, slotState);
             live.clear();
             slotState = PetalSlotState::Slot{};
             slotState.configIndex = equipped.configIndex;
+            slotState.equippedIndex = slot.configIndex;
             slotState.rarity = equipped.rarity;
             slotState.reloadRarity = equipped.reloadRarity;
             slotState.count = count;
@@ -1385,6 +1418,11 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     instance.owner = player;
     instance.configIndex = configIndex;
     instance.rarity = rarity;
+    if (config.id == "domino") {
+        instance.dominoPips = rollDominoPips(rng_, rarity);
+        if (auto* contact = world.tryGet<ContactDamage>(petal))
+            contact->amount *= dominoDamageMultiplier(instance.dominoPips, rarity);
+    }
     instance.mimicked = equipped.reloadRarity != equipped.rarity;
     instance.reloadRarity = equipped.reloadRarity;
     instance.slot = slot;
@@ -1486,7 +1524,8 @@ bool PetalSystem::spendSlot(World& world, const ContentRegistry& registry, Entit
         if (!anyOut) return false;
     }
 
-    const PetalStats stats = equippedPetalStats(registry, equippedPetal(registry, *loadout, slot));
+    const auto worn=equippedPetal(registry,*loadout,slot);
+    const PetalStats stats=computerSetStats(registry,world,player,worn.configIndex,worn.rarity,equippedPetalStats(registry,worn));
     const double reload = reloadMillisFor(stats, reloadScaleOf(world, registry, player));
     destroySlotPetals(world, *loadout, slot);
     if (recallSummons) recallPets(world, slotState);
@@ -1528,6 +1567,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     aggregate.modifiers.passiveHealPerSecond = 1.0;
     std::uint16_t equipFlags = EquipNone;
     bool equippedCorruption = false;
+    bool hyperCorruption = false;
     bool seesGhosts = false;
     // Whether the ring is physically pulled in, by updateRing's rule rather
     // than runActions': with both keys held the ring LUNGES, so a flower doing
@@ -1554,6 +1594,11 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         const int activeSlots=world.has<PlayerTag>(player)&&activeTree?activeTree->skills.loadoutSlots():kLoadoutActiveSlots;
         for (int i = 0; i < activeSlots; ++i) {
             const LoadoutSlot& slot = loadout->slots[static_cast<std::size_t>(i)];
+            if(!slot.empty()) {
+                const unsigned part=computerPart(registry.petal(slot.configIndex).id);
+                for(int tier=0;tier<=rarityIndex(slot.rarity);++tier)
+                    aggregate.modifiers.computerParts[tier]|=part;
+            }
             // A mimic grants what the petal it copies grants, at its own tier.
             const EquippedPetal equipped = equippedPetal(registry, *loadout, i);
             if (!equipped.empty()) {
@@ -1562,7 +1607,10 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 equipFlags |= registry.petal(equipped.configIndex).equipFlags;
                 const auto& worn = registry.petal(equipped.configIndex);
                 if (worn.id == "pharaoh_s_crown") equipFlags |= EquipPharaohCrown;
-                if (worn.id == "corruption") equippedCorruption = true;
+                if (worn.id == "corruption") {
+                    equippedCorruption = true;
+                    hyperCorruption |= ladderRarity(equipped.rarity) == Rarity::Apex;
+                }
                 if (worn.id == "paranormal_goggles") seesGhosts = true;
             }
             // TypeScript derives modifiers from equipped loadout entries, not
@@ -1633,7 +1681,13 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // decision the bar is there to make -- unlike lotus's poison
             // armour just below, which is a threshold a second copy cannot
             // raise.
-            aggregate.modifiers.maxMana += stats.maxMana;
+            // Capacity follows talent-created equipment copies, as reload-cut
+            // equipment does. Do not count transient live entities: breaking or
+            // reloading a copy must not repeatedly shrink and refill the pool.
+            const auto& manaConfig = registry.petal(equipped.configIndex);
+            const int manaCopies = petalCopies(1, activeTree ? &activeTree->skills : nullptr,
+                i, rarityIndex(equipped.rarity), manaConfig.stackable);
+            aggregate.modifiers.maxMana += stats.maxMana * manaCopies;
             aggregate.modifiers.passiveManaPerSecond += stats.passiveManaPerSecond;
             aggregate.modifiers.poisonArmor =
                 std::max(aggregate.modifiers.poisonArmor, mods.poisonArmor);
@@ -1758,6 +1812,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
         aggregate.modifiers.magnetism += tree->skills.magnetismBonus();
     }
 
+    if (input) aggregate.spinScale *= input->current.rotationScale();
     // Written wholesale. The component is never edited in place on equip: an
     // incremental version has to unwind exactly what it applied, and one missed
     // unwind is a stat the player keeps for the rest of the session.
@@ -1798,6 +1853,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     if (PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(player)) {
         visuals->equipFlags = equipFlags;
         visuals->equippedCorruption = equippedCorruption;
+        visuals->hyperCorruption = hyperCorruption;
         visuals->seesGhosts = seesGhosts;
     }
     aggregate.modifiers.luck += cloverLuck;
@@ -2150,7 +2206,7 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
             petalCanBeAttracted(config) ? attractionRadius : 0.0;
         if (instance->ricochet.active &&
             flyRicochetPetal(world, petal, *instance, *transform, orbit, committedFlower,
-                             instanceStats(registry, *instance).reloadMillis, nowMillis, dt)) {
+                             instanceStats(world, registry, *instance).reloadMillis, nowMillis, dt)) {
             // Flight placement is complete; the usual wall resolution below still applies.
         } else if (config.noPhysics || config.hasFixedDirection) {
             transform->position = orbit;
@@ -2185,6 +2241,10 @@ void PetalSystem::stepPetalPhysics(World& world, const ContentRegistry& registry
                                    PetalInstance& instance, Transform& transform, Vec2 home,
                                    Vec2 orbit, double attractionRadius, double spinSpeed,
                                    double nowMillis, double dt) {
+    if (instance.markTarget != NULL_ENTITY) {
+        instance.ringVelocity = Vec2{};
+        return;
+    }
     Vec2 target = orbit;
 
     if (instance.homing) {
@@ -2337,7 +2397,37 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         if (!instance || !transform || instance->slot >= kLoadoutSlots) continue;
 
         const PetalConfig& config = registry.petal(instance->configIndex);
-        const PetalStats stats = instanceStats(registry, *instance);
+        const PetalStats stats = instanceStats(world, registry, *instance);
+        if (config.id == "dark_mark") {
+            if (!canMarkPlayer || !onPlayerMarked || !isStanding(world, petal)) continue;
+            if (instance->markTarget != NULL_ENTITY) {
+                const Entity target = instance->markTarget;
+                const Rarity rarity = instance->rarity;
+                const auto* corpse = world.tryGet<Transform>(target);
+                const bool valid = corpse && corpse->realm == transform->realm &&
+                    distanceSq(corpse->position, transform->position) <= kDarkMarkRange * kDarkMarkRange &&
+                    canMarkPlayer(target, player, rarity);
+                if (!valid || nowMillis >= instance->markReadyAtMillis) {
+                    // Spend the placed petal even if a revive/disconnect cancels it.
+                    // Do not carry ECS references across the session callback.
+                    world.get<Health>(petal).current = 0;
+                    if (valid) onPlayerMarked(target, player, rarity);
+                }
+            } else if (attacking) {
+                for (const Entity target : playerList_) {
+                    const auto* corpse = world.tryGet<Transform>(target);
+                    if (!corpse || corpse->realm != transform->realm ||
+                        distanceSq(corpse->position, transform->position) > kDarkMarkRange * kDarkMarkRange ||
+                        !canMarkPlayer(target, player, instance->rarity)) continue;
+                    instance->markTarget = target;
+                    instance->markReadyAtMillis = nowMillis + darkMarkDelayMillis(instance->rarity);
+                    instance->ringVelocity = Vec2{};
+                    world.get<Transform>(petal).position = corpse->position;
+                    break;
+                }
+            }
+            continue;
+        }
         if (config.id == "pharaoh_s_crown") {
             if (pharaohSummoned) continue;
             pharaohSummoned = true;
@@ -2350,7 +2440,10 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             if (mob != kInvalidIndex && current && at && countOwnedPets(world,*current) < kMaxPetEntitiesPerPlayer) {
                 const Vec2 position = at->position;
                 const auto slot = instance->slot;
-                summonPets(world,registry,player,slot,mob,Rarity::Mythic,1,position,*current,1.0,nowMillis+6000.0);
+                // Eternal crown summons Super beetles; Hyper improves their
+                // combat strength by 50% without inflating pet count/frequency.
+                const double strength = ladderRarity(instance->rarity) == Rarity::Apex ? 1.5 : 1.0;
+                summonPets(world,registry,player,slot,mob,Rarity::Super,1,position,*current,strength,nowMillis+6000.0);
             }
             continue;
         }
@@ -2425,12 +2518,16 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 if (const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(player)) {
                     damage *= modifiers->petalDamageScale;
                 }
-                emitGroundEffect(world, player, transform->position,
+                // Dropping pollen transfers its remaining durability; it must
+                // not become an invulnerable damage field or heal on release.
+                const Health durability = world.get<Health>(petal);
+                const Entity cloud = emitGroundEffect(world, player, transform->position,
                                  GroundEffectKind::Poison,
                                  stats.size * kPollenRadiusPerSize,
                                  0.0, 1.0, instance->rarity,
                                  kPollenLifetimeSeconds, damage,
                                  kPollenHitIntervalMillis);
+                world.add<Health>(cloud, Health{durability.current, durability.max});
                 world.add<Dead>(petal, Dead{player});
                 continue;
             }
@@ -3410,7 +3507,9 @@ void PetalSystem::dischargeCapacitors(World& world, const ContentRegistry& regis
         const double charge =
             std::min(instance->contactMillis * kCapacitorChargePerMillis, kCapacitorMaxCharge);
         instance->contactMillis = 0.0;
-        strikeLightning(world, player, at, charge * petalStrengthScale(rarity), rarity);
+        const auto* modifiers = world.tryGet<PlayerModifiers>(player);
+        const double setScale = modifiers && computerPartCount(modifiers->computerParts[rarityIndex(rarity)]) >= 3 ? 1.12 : 1.0;
+        strikeLightning(world, player, at, charge * petalStrengthScale(rarity) * setScale, rarity);
     }
 }
 
@@ -3494,54 +3593,42 @@ double PetalSystem::compassBearing(World& world, const ContentRegistry& registry
     return wrapAngle(toward.angle() + wobble);
 }
 
-void PetalSystem::retireDistantPets(World& world, const ContentRegistry& registry, Entity player,
-                                    double nowMillis) {
-    PetalSlotState* state = world.tryGet<PetalSlotState>(player);
-    Loadout* loadout = world.tryGet<Loadout>(player);
-    const Transform* ownerTransform = world.tryGet<Transform>(player);
-    if (state == nullptr || loadout == nullptr || ownerTransform == nullptr) return;
-
-    for (PetalSlotState::Slot& slotState : state->slots) {
-        std::size_t kept = 0;
-        for (const Entity pet : slotState.pets) {
-            if (!world.isAlive(pet)) continue;
-            const MobAi* ai = world.tryGet<MobAi>(pet);
-            const Transform* transform = world.tryGet<Transform>(pet);
-            // A summon something killed is not one that got lost: it keeps its
-            // handle for maintainPets to prune, and its egg reloads on the
-            // ordinary schedule rather than this one. A sandstorm is leashed
-            // to its owner by MobAiSystem::steerPet instead, and is never
-            // retired for distance.
-            const bool candidate = ai != nullptr && transform != nullptr &&
-                                   !world.has<Dead>(pet) && ai->kind != AiKind::Sandstorm;
-            // Way too far -- a wall between them or not -- or trapped in sight
-            // of the owner (MobAi::petRecall, which the AI sets).
-            const bool lost =
-                candidate &&
-                (ai->petRecall || transform->realm != ownerTransform->realm ||
-                 distanceSq(transform->position, ownerTransform->position) >
-                     kPetRecallDistance * kPetRecallDistance);
-            if (!lost) {
-                slotState.pets[kept++] = pet;
-                continue;
-            }
-
-            const MobType* type = world.tryGet<MobType>(pet);
-            const std::uint16_t mobIndex = type ? type->configIndex : kInvalidIndex;
-            const Pet* tag = world.tryGet<Pet>(pet);
-            const bool timed = tag != nullptr && tag->expiresAtMillis > 0.0;
-            const std::uint8_t hatchedBy = tag != nullptr ? tag->slot : 0;
-            // Destroyed rather than killed: a summon that got lost has not
-            // died, so it raises no death event and drops nothing.
-            world.destroy(pet);
-            // Its egg hatches a fresh one on the reload. A timed summon was
-            // paid for in mana, one at a time, and is simply gone.
-            if (!timed) {
-                reloadEggForPet(world, registry, *state, *loadout, hatchedBy, mobIndex,
-                                reloadScaleOf(world, registry, player), nowMillis);
-            }
+void PetalSystem::recoverDistantPets(World& world, Entity player) {
+    auto* state = world.tryGet<PetalSlotState>(player);
+    const auto* owner = world.tryGet<Transform>(player);
+    if (!state || !owner) return;
+    const auto* ownerBody = world.tryGet<Body>(player);
+    for (const auto& slot : state->slots) for (const Entity pet : slot.pets) {
+        if (!isStanding(world, pet)) continue;
+        auto* ai = world.tryGet<MobAi>(pet);
+        auto* at = world.tryGet<Transform>(pet);
+        const auto* body = world.tryGet<Body>(pet);
+        if (!ai || !at || ai->kind == AiKind::Sandstorm) continue;
+        if (!ai->petRecall && at->realm == owner->realm &&
+            distanceSq(at->position, owner->position) <= kPetRecallDistance * kPetRecallDistance) continue;
+        const double radius = body ? body->radius : kMobWallRadius;
+        const double separation = radius + (ownerBody ? ownerBody->radius : kPlayerBaseRadius) + 12.0;
+        bool placed = false;
+        Vec2 destination;
+        // Keep the whole hull out of walls and on the owner's side. If a huge
+        // pet cannot fit, retry after the owner moves; never destroy or heal it.
+        for (int ring = 0; ring < 3 && !placed; ++ring) for (int i = 0; i < 16 && !placed; ++i) {
+            const Vec2 candidate = owner->position + Vec2::fromAngle(kPi * i / 8.0, separation + ring * 100.0);
+            if (terrain_ && (terrain_->outside(candidate, owner->realm) ||
+                distanceSq(candidate, terrain_->clampInside(candidate, radius, owner->realm)) > 1e-8 ||
+                terrain_->blocked(candidate, owner->realm) ||
+                terrain_->segmentBlocked(owner->position, candidate, owner->realm) ||
+                terrain_->resolveWall(candidate, radius, owner->realm).collided)) continue;
+            destination = candidate; placed = true;
         }
-        slotState.pets.resize(kept);
+        if (!placed) continue;
+        at->position = destination; at->realm = owner->realm;
+        ai->target = NULL_ENTITY; ai->petRecall = false; ai->petReturning = false;
+        ai->crabPhase = CrabPhase::None;
+        if (auto* motion = world.tryGet<Motion>(pet)) motion->velocity = {};
+        if (auto* knockback = world.tryGet<Knockback>(pet)) {
+            knockback->impulse = {}; knockback->carry = {};
+        }
     }
 }
 
@@ -3675,12 +3762,10 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     if (!ownerTransform) return;
     const Vec2 ownerPosition = ownerTransform->position;
 
-    // A squad REPLACES its predecessor rather than joining it: the slot's
-    // pets of the type are cleared before summoning, so a squad rebuilt after
-    // one of its members died comes back whole rather than as a mixture. Only
-    // this slot's -- another egg's squad is its own.
-    recallPetsOfType(world, state, slot, config.petMobIndex);
-    summonPets(world, registry, player, slot, config.petMobIndex, petRarity, wanted, ownerPosition,
+    // Replace only missing hatchlings. Recalling surviving siblings whenever
+    // one dies made Hyper eggs visibly reset the whole brood on every hatch.
+    const int missing = std::min(wanted - current, room - current);
+    summonPets(world, registry, player, slot, config.petMobIndex, petRarity, missing, ownerPosition,
                state, strengthBoost(rarity));
 }
 
@@ -3826,11 +3911,10 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     if (const PlayerSkillTree* tree = world.tryGet<PlayerSkillTree>(player)) {
         mob.health *= tree->skills.healthScale(SkillId::Summoner);
     }
-    // Zero means "unstated", and an unstated range reads as the default chase
-    // range wherever a pet's target acquisition consumes it -- so the bonus is
-    // added first and the fallback only covers a pet that still has none.
-    const double range = mob.aggroRange + rarityIndex(rarity) * kPetAggroRangePerRarity;
-    const double aggroRange = range > 0.0 ? range : kEnemyChaseRange;
+    // Summons get at least the default chase range before rarity bonuses.
+    // In particular, small ants should notice enemies before body contact.
+    const double aggroRange = std::max(mob.aggroRange, kEnemyChaseRange)
+                           + rarityIndex(rarity) * kPetAggroRangePerRarity;
 
     const Entity pet = world.create();
     world.add<MobTag>(pet);

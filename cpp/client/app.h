@@ -52,6 +52,7 @@ enum class Screen : std::uint8_t {
 };
 
 struct AppConfig {
+    bool lowMemoryGraphics = false;
     std::string host = "127.0.0.1";
     std::uint16_t port = 3000;
     std::string dataDir = "data";

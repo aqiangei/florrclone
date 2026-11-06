@@ -1,4 +1,5 @@
 #include "shared/game/config.h"
+#include "shared/game/dark_mark.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1901,7 +1902,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     PetalStats s;
     s.damage = c.damage * strength;
     if(c.id=="magic_peas"){
-        s.lightningDamagePerHit=30.0*strength;
+        // Five times fewer volleys, four times the hit: 80% sustained output.
+        s.lightningDamagePerHit=120.0*strength;
         s.lightningBounces=0;
     }
     if (c.id == "battery" || c.id == "lightning") {
@@ -2157,6 +2159,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         if (row.magnetism) s.modifiers.magnetism = *row.magnetism;
     }
     // Hyper's combat growth is capped at 1.5x the SAME petal at Eternal.
+    if (c.id == "domino") s.damage *= 9.0; // mean of two independent 0..6 ends
     // Apply after authored overrides so special damage/healing rows cannot
     // bypass it. Counts, reloads, proc conditions and probabilities stay put.
     if (graded == Rarity::Apex) {
@@ -2185,6 +2188,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
                     1.0 + (eternal.modifiers.*field - 1.0) * 1.5);
         }
     }
+    if (c.id == "dark_mark") s.reloadMillis = kDarkMarkReloadMillis;
     // The contested H hammer is a sustained-output reward, independent of the
     // temporary E hammer. Restore bite and recovery without restoring old chains.
     if (graded == Rarity::Apex && c.id == "mjolnir") {

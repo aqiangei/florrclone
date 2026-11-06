@@ -464,7 +464,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
             std::to_string(outcome.crafted) + (chinese ? "，消耗 ×" : ", consumed x") +
             std::to_string(outcome.consumed));
     } else {
-        drawSlotLine(canvas, card, language() == Language::Zh ? "使用5个相同花瓣合成更高稀有度" : "Combine 5 of the same petal to craft an upgrade");
+        drawSlotLine(canvas, card, language() == Language::Zh ? "使用5个相同花瓣合成，最高至超级" : "Combine 5 of the same petal; upgrades stop at Super");
     }
     // The warning only once there is something to lose.
     if (stagedPetal_ != kNoPetal) {
@@ -505,6 +505,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;
+            cell.greyed = !craftsOutOf(rarity);
             // Staged petals are gone from the player's point of view the
             // moment they land in the ring, so the badge counts down with each
             // click.
@@ -656,7 +657,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
         return true;
     }
     if(phase_==Phase::Idle && (bulkPrev.contains(mouse)||bulkNext.contains(mouse))) {
-        const int last = rarityIndex(Rarity::Unique);
+        const int last = rarityIndex(Rarity::Super);
         bulkTarget_ = 1 + (bulkTarget_ - 1 + (bulkNext.contains(mouse) ? 1 : last - 1)) % last;
         bulkArmed_ = false;
         return true;

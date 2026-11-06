@@ -1114,6 +1114,8 @@ private:
     /// client that was told the body died has to be told it stood back up or
     /// it keeps the death card over a flower it will not steer.
     void onPlayerRevived(Entity revived, Entity reviver);
+    bool canMarkPlayer(Entity target, Entity marker, Rarity rarity);
+    bool sendMarkedPlayerToHel(Entity target, Entity marker, Rarity rarity);
 
     /// Every mob body in `realm`, as the discs a spawn point has to clear. One
     /// realm's, because a spawn is judged crowded by what stands on ITS map,
@@ -1528,6 +1530,8 @@ private:
     int botCountOverride_ = -1;
 
     std::unordered_map<net::ConnectionId, Session> sessions_;
+    // Account-keyed protection survives bodies/reconnects; never persisted.
+    std::unordered_map<std::string, double> markProtectedUntil_;
     std::unordered_map<net::ConnectionId, ClientView> views_;
 
     /// catalogSkinLook's memo, by skin id. Memory only: a look is cheap to

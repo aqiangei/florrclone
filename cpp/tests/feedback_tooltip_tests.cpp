@@ -30,7 +30,7 @@ TEST(ant_and_beetle_tooltips_match_the_buffed_summon_stats){
         const auto rarity=clampRarity(tier);const auto index=content().petalIndex(id);const auto& config=content().petal(index);
         const auto lines=ui::petalTooltipLines(index,rarity,{},1.0);bool health=false,damage=false;
         for(const auto& line:lines){health|=line.text.find("Summon health: ")==0;damage|=line.text.find("Summon damage: ")==0;}
-        CHECK(health);CHECK(damage);CHECK_NEAR(eggSummonCombatScale(config),1.5,1e-9);
+        CHECK(health);CHECK(damage);CHECK_NEAR(eggSummonCombatScale(config),2.0,1e-9);
     }
 }
 

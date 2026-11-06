@@ -25,18 +25,23 @@ namespace flix {
 /// Tier prices track the server star bounty; scarce petals retain a premium.
 /// Rare missing pieces remain affordable without selling the top reward tiers.
 inline double shopPrice(std::uint16_t petalIndex, Rarity rarity) {
-    static constexpr double tierPrices[]={3,5,10,20,40,80,180,600,1800,5400,16200,48600};
+    static constexpr double tierPrices[]={3,5,10,20,40,80,360,1800,1800,5400,16200,48600};
     const double base=std::max(1.0,content().petal(petalIndex).price);
     const double affordable=clamp(1.0+std::log(base/20.0)*0.10,0.75,1.50);
     // The previous 1.5 ceiling priced a 99999-base Mimic almost like a basic
     // item. Respect authored acquisition costs without lowering cheap petals.
-    const double variety=std::max(affordable,std::min(10.0,std::sqrt(base/20.0)));
+    double variety=std::max(affordable,std::min(10.0,std::sqrt(base/20.0)));
+    if (rarity == Rarity::Ultra || rarity == Rarity::Super) {
+        const auto& id = content().petal(petalIndex).id;
+        if (id == "golden_leaf") variety = std::max(variety, 5.0);
+        if (id == "sawblade") variety = std::max(variety, 8.0);
+    }
     const double previous=std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
     return 2.0 * std::ceil(previous*1.75);
 }
 
 // Apply the economy multiplier after the old discounted rounding too, so
-// every offer (including saved locks) is exactly twice its previous quote.
+// locked and current offers use the same discounted rounding.
 inline double shopOfferPrice(std::uint16_t index, Rarity rarity, int discount) {
     return 2.0 * std::floor((shopPrice(index, rarity) / 2.0) *
                             (100 - clamp(discount, 0, 30)) / 100.0);
@@ -85,10 +90,9 @@ inline bool shopSellsPetal(std::uint16_t petalIndex) {
 // ---------------------------------------------------------------------------
 //
 // The shop does not sell the catalogue. It sells ten cards that change on the
-// hour, some of them discounted, and both sides DERIVE those ten from the
-// clock rather than one sending the other a list: the client draws a price the
-// server will honour because the two ran the same generator over the same
-// content, and a purchase carries only which card was clicked.
+// hour, some of them discounted. The server derives those cards from its clock
+// and sends the account's remaining stock and prices to the client. A purchase
+// carries only which card was clicked; the server validates the current offer.
 
 /// How long one set of offers stands. The panel counts down to the next
 /// rotation against this and the server prices a purchase by the rotation the
@@ -98,6 +102,8 @@ inline constexpr std::int64_t kShopRotationSeconds = 3600;
 /// Two rows of five. The panel's grid is built to this.
 inline constexpr int kShopOfferCount = 10;
 inline constexpr int kShopOfferColumns = 5;
+// All shop cards have unlimited stock. Prices and available cards still apply.
+inline int shopStockLimit(Rarity) { return -1; }
 
 /// Seconds since the epoch: the one clock the offers hang off.
 inline std::int64_t shopClockNow() {
@@ -129,6 +135,7 @@ struct ShopOffer {
     double price = 0;
     /// 0, or the 10/20/30 the discounted cards wear on their ribbon.
     int discountPercent = 0;
+    int remaining = -1; // -1 = unlimited; server sends the account's remainder
 };
 
 /// The ten cards a rotation offers.
@@ -181,6 +188,8 @@ inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
         ShopOffer offer;
         offer.petalIndex = pool[taken];
         offer.rarity = tiers[static_cast<std::size_t>(rng.rangeInt(lowest, highest))];
+        // Regular stock now starts at Ultra; retain the two fixed Super slots.
+        offer.rarity = Rarity::Ultra;
         // Two fixed Super positions; the other eight cards roll below Super.
         if (slot >= count - 2 && shopSellsRarity(Rarity::Super)) offer.rarity = Rarity::Super;
         // A petal that only comes from some tier up is offered there at the
@@ -190,6 +199,7 @@ inline std::vector<ShopOffer> shopOffers(std::int64_t rotation) {
         if (rarityIndex(offer.rarity) < rarityIndex(floor)) offer.rarity = floor;
         offer.discountPercent = rng.chance(0.2) ? 10 * (1 + static_cast<int>(rng.below(3))) : 0;
         offer.price = shopOfferPrice(offer.petalIndex, offer.rarity, offer.discountPercent);
+        offer.remaining = shopStockLimit(offer.rarity);
         offers.push_back(offer);
     }
     return offers;

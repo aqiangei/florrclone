@@ -185,6 +185,7 @@ struct RemoteEntity {
     std::uint8_t npcNextRecipe = 0;
     double npcRecipeRefreshAtMillis = 0;
     std::uint32_t ownerNetId = 0;
+    std::uint8_t petalVariant = 0;
     Vec2 ownerOffset;
     /// The entity `ownerOffset` is measured from: the owner, or the moon its
     /// ring orbits. When it changes the offset is rebased onto the new frame

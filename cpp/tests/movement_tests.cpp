@@ -390,7 +390,7 @@ TEST(a_player_driven_at_a_wall_stops_against_it) {
     // lies inside the tile, so the rectangle is where the body stops.
     CHECK(at.x <= kWallWest - kPlayerBaseRadius + 1e-6);
     CHECK(at.x >= kWallWest - kPlayerBaseRadius - 0.1);
-    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 1.0);
+    CHECK_NEAR(fx.velocityOf(player).x, 0.0, 1e-6);
 }
 
 TEST(a_wall_removes_only_the_velocity_that_points_into_it) {
@@ -1383,5 +1383,28 @@ TEST(wax_barrier_displaces_surrounding_mobile_mobs_without_changing_moon_mass_co
         CHECK(mobMove>0);CHECK(slabMove>=0);
         if(std::string(id)=="wax")CHECK(mobMove>slabMove*2);
         else CHECK(slabMove>mobMove*2);
+    }
+}
+
+TEST(feedback1105_turn_away_from_wall_moves_on_first_tick) {
+    for (double dt : {1.0/30, 1.0/60}) {
+        Fixture fx; fx.wallColumn(10);
+        const Entity p=fx.spawnPlayer({kWallWest-kPlayerBaseRadius,5000});
+        fx.world.get<Motion>(p).velocity={kPlayerMaxSpeed,0};
+        fx.drive(p,0,1);fx.movement.run(fx.world,fx.terrain,1000,dt);
+        const double before=fx.positionOf(p).x;
+        fx.drive(p,kPi,1);fx.movement.run(fx.world,fx.terrain,1000+dt*1000,dt);
+        CHECK(fx.positionOf(p).x<before);
+    }
+}
+TEST(feedback1105_respawn_full_hull_stays_on_corpse_side) {
+    Fixture fx;fx.wallColumn(10);
+    for(double radius:{25.0,45.0,75.0}) {
+        const Vec2 corpse{kWallWest-26,5000};
+        const Vec2 p=playerRespawnPosition(fx.terrain,Realm::Overworld,corpse,radius);
+        CHECK(p.x<=kWallWest-radius+1e-6);
+        const auto wall=fx.terrain.resolveWall(p,radius,Realm::Overworld);
+        CHECK(!wall.unresolved);CHECK(distanceSq(wall.position,p)<1e-8);
+        CHECK(!fx.terrain.segmentTouchesBlockingTile(corpse,p,0,Realm::Overworld));
     }
 }

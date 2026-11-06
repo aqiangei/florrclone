@@ -3,6 +3,34 @@
 #include "shared/game/shop.h"
 
 namespace flix {
+inline std::string shopStockKey(std::uint16_t petal, Rarity rarity) {
+    return content().petal(petal).id + "@" + rarityName(rarity);
+}
+inline int shopStockRemaining(const PlayerRecord& record, std::int64_t rotation,
+                              std::uint16_t petal, Rarity rarity) {
+    const int limit = shopStockLimit(rarity);
+    if (limit < 0) return -1;
+    const int bought = record.extra["shopPurchases"][std::to_string(rotation)]
+        [shopStockKey(petal, rarity)].asInt();
+    return std::max(0, limit - std::max(0, bought));
+}
+inline void consumeShopStock(PlayerRecord& record, std::int64_t rotation,
+                             std::uint16_t petal, Rarity rarity, int quantity) {
+    if (shopStockLimit(rarity) < 0) return;
+    const auto current = std::to_string(shopRotation(shopClockNow()));
+    const auto locked = std::to_string(static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1)));
+    const auto buying = std::to_string(rotation);
+    Json kept = Json::object();
+    for (const auto& entry : record.extra["shopPurchases"].members()) {
+        if (entry.first == current || entry.first == locked || entry.first == buying) kept[entry.first] = entry.second;
+    }
+    auto& row = kept[buying][shopStockKey(petal, rarity)];
+    row = std::max(0, row.asInt()) + quantity;
+    record.extra["shopPurchases"] = std::move(kept);
+}
+inline void applyShopStock(const PlayerRecord& record, std::int64_t rotation, std::vector<ShopOffer>& offers) {
+    for (auto& offer : offers) offer.remaining = shopStockRemaining(record, rotation, offer.petalIndex, offer.rarity);
+}
 // Store stable content IDs, never registry indices or prices. Locked stock stays
 // the same through content updates; prices still follow the current economy.
 inline void captureShopLock(PlayerRecord& record, std::int64_t rotation) {

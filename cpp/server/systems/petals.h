@@ -70,6 +70,7 @@ struct PetalSlotState {
         /// matches is rebuilt, which is also what makes swapping a petal hand
         /// you a fresh one instead of the previous occupant's health bar.
         std::uint16_t configIndex = kNoPetal;
+        std::uint16_t equippedIndex = kNoPetal;
         Rarity rarity = Rarity::Common;
         /// And the tier whose reload it pays, which differs from `rarity` only
         /// for a mimic (see equippedPetal). Swapping the petal a mimic copies
@@ -297,6 +298,8 @@ public:
     /// flag that stops a second death being announced. Left unset the flower
     /// still stands up; its own client simply is not told.
     std::function<void(Entity revived, Entity reviver)> onPlayerRevived;
+    std::function<bool(Entity target, Entity marker, Rarity rarity)> canMarkPlayer;
+    std::function<bool(Entity target, Entity marker, Rarity rarity)> onPlayerMarked;
 
 private:
     /// The tick's summed passive bonuses. PlayerModifiers has no field for the
@@ -519,13 +522,9 @@ private:
                             double radius, double damagePerSecond, double slowFactor,
                             Rarity rarity, double lifetimeSeconds,
                             double damagePerHit = 0.0, double damageIntervalMillis = 0.0);
-    /// Retire the summons that got lost: way too far from their owner
-    /// (kPetRecallDistance, or another realm) or flagged trapped by the AI
-    /// (MobAi::petRecall). Each is let go and its loss charged to the petal
-    /// that hatched it, which hatches a fresh one after its reload. A
-    /// sandstorm is leashed instead and never retired here.
-    void retireDistantPets(World& world, const ContentRegistry& registry, Entity player,
-                           double nowMillis);
+    /// Recover lost/trapped summons on safe ground without replacing them,
+    /// healing them or resetting lifetime. Sandstorms have their own leash.
+    void recoverDistantPets(World& world, Entity player);
     /// Take back the timed summons (Pet::expiresAtMillis) whose time is up.
     /// Their petal owes no reload for it: it has been hatching more all along.
     void expireTimedPets(World& world, Entity player, double nowMillis);

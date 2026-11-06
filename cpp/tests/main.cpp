@@ -452,7 +452,7 @@ TEST(universal_sits_above_the_ladder_and_nothing_climbs_to_it) {
     CHECK(upgradeRarity(Rarity::Apex) == Rarity::Apex);
     CHECK(upgradeRarity(Rarity::Universal) == Rarity::Universal);
     CHECK(downgradeRarity(Rarity::Universal) == Rarity::Apex);
-    CHECK(craftsOutOf(Rarity::Unique));
+    CHECK(!craftsOutOf(Rarity::Unique));
     CHECK(!craftsOutOf(Rarity::Apex));
     CHECK(!craftsOutOf(Rarity::Universal));
     CHECK_EQ(oracleCraftCost(Rarity::Universal), 0);

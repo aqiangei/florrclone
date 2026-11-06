@@ -801,6 +801,8 @@ public:
     bool pyramidMapRevealed = false;
     std::int64_t lockedShopRotation=-1;
     std::vector<ShopOffer> lockedShopOffers;
+    std::int64_t currentShopRotation = -1;
+    std::vector<ShopOffer> currentShopOffers;
     void toggleShopLock();
     std::uint32_t dropBonusStreak=0;
     int dropBonusMultiplier=1;
@@ -1174,6 +1176,7 @@ private:
     const WorldMaps* worldMaps_ = nullptr;
     Vec2 realmArrival_;
     bool realmChanged_ = false;
+    bool clearViewOnSnapshot_ = false;
     bool teleported_ = false;
     Profile profile_;
     std::string sessionToken_;

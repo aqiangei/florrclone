@@ -220,13 +220,15 @@ bool GameServer::splitSession(Session& session) {
     const PlayerProgress progress = earned != nullptr ? *earned : PlayerProgress{};
     Vec2 left{centre.x - reach, centre.y};
     Vec2 right{centre.x + reach, centre.y};
-    // A seam that puts either half inside a wall is not a seam: that half
-    // stays where the flower was standing, and the ordinary body separation
-    // pushes the pair apart on the next tick. Tested on the CENTRE alone --
-    // the flower already fits where it is standing, and a swept test that
-    // refused every seam touching a wall would refuse most of the maze.
-    if (terrain_->blocked(left, realm)) left = centre;
-    if (terrain_->blocked(right, realm)) right = centre;
+    // Place the entire body, not only its centre. Reject any correction
+    // crossing a wall so a split cannot escape into the adjacent corridor.
+    const double radius = shape != nullptr ? shape->radius : kPlayerBaseRadius;
+    const auto safeHalf = [&](Vec2 proposed) {
+        const Vec2 resolved = terrain_->resolveCircle(proposed, radius, realm);
+        return terrain_->segmentBlocked(centre, resolved, realm) ? centre : resolved;
+    };
+    left = safeHalf(left);
+    right = safeHalf(right);
 
     const Entity clone = createPlayerBody(session, realm, right);
     if (clone == NULL_ENTITY) return false;

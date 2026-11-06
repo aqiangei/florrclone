@@ -1,3 +1,4 @@
+#include "client/ui/touch_scroll.h"
 // The top-right corner: the world map, the maze map, and the arena's
 // scoreboard where neither of those applies.
 //
@@ -594,7 +595,9 @@ void App::drawOnlineRoster(Canvas& canvas) {
     const double listH = std::max(0.0, boxH - kRosterHeader - 4.0);
     const double contentH = static_cast<double>(roster.size()) * kRosterRow;
     const double maxScroll = std::max(0.0, contentH - listH);
-    if (onlineRosterScroll_ > maxScroll) onlineRosterScroll_ = maxScroll;
+    const Rect listBox{x + 1.0, listTop, kRosterWidth - 2.0, listH};
+    onlineRosterScroll_ = clamp(onlineRosterScroll_ -
+        ui::touchScroll(window_, listBox, maxScroll > 0.0), 0.0, maxScroll);
 
     canvas.beginPath();
     canvas.rect(static_cast<float>(x + 1.0), static_cast<float>(listTop),

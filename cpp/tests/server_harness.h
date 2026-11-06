@@ -768,6 +768,17 @@ struct GameServerPeer {
     // Drive the production death reporter without a transport poll.
     static void reportDeaths(GameServer& server) { server.reapDead(); }
     static void flushCommands(GameServer& server) { server.commands_.flush(); }
+    static void markClock(GameServer& server, double now) { server.clockMillis_ = now; }
+    static bool canMark(GameServer& server, Entity target, Entity owner, Rarity rarity) {
+        return server.canMarkPlayer(target, owner, rarity);
+    }
+    static bool applyMark(GameServer& server, Entity target, Entity owner, Rarity rarity) {
+        return server.sendMarkedPlayerToHel(target, owner, rarity);
+    }
+    static void markTeleport(GameServer& server, Entity target, Realm realm, Vec2 position) {
+        server.moveEntityToRealm(target, realm, position);
+    }
+    static PetalSystem& markPetals(GameServer& server) { return *server.petals_; }
     /// Sets when Hel's next sacrifice appears, on the server's clock -- zero
     /// is "on the next tick that simulates". The sacrifice on the ground, if any.
     static void windSacrificeClock(GameServer& server, double readyMillis) {

@@ -106,6 +106,7 @@ public:
                    double diameter, double rotation, double timeSeconds) const;
     /// A small soft dust grain in the world; inventory artwork is unchanged.
     static void drawDustGrain(Canvas&, double diameter);
+    static void drawDomino(Canvas&, double diameter, std::uint8_t pips);
 
     /// True when the sprite compiled; false when the fallback disc is used.
     bool mobDrawable(std::uint16_t index) const;

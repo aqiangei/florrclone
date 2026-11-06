@@ -2232,7 +2232,7 @@
     "damage": 8,
     "health": 5,
     "size": 1,
-    "cooldown": 2500,
+    "cooldown": 3125,
     "price": 10,
     "description": "It goes poof.",
     "color": "#000000",
@@ -2252,61 +2252,61 @@
       "0": {
         "damage": 8,
         "health": 5,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "1": {
         "damage": 24,
         "health": 15,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "2": {
         "damage": 72,
         "health": 45,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "3": {
         "damage": 216,
         "health": 135,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "4": {
         "damage": 648,
         "health": 405,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "5": {
         "damage": 1944,
         "health": 1215,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "6": {
         "damage": 5832,
         "health": 3645,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "7": {
         "damage": 17496,
         "health": 10935,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "8": {
         "damage": 52488,
         "health": 32805,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       },
       "9": {
         "damage": 157464,
         "health": 98415,
-        "reloadMillis": 2500,
+        "reloadMillis": 3125,
         "count": 4
       }
     }
@@ -2316,7 +2316,7 @@
     "damage": 3,
     "health": 5,
     "size": 1,
-    "cooldown": 1500,
+    "cooldown": 1875,
     "price": 15,
     "poison": 0.00625,
     "poisonDuration": 500,
@@ -2339,70 +2339,70 @@
         "damage": 3,
         "health": 5,
         "poisonPerSecond": 35.714285714285715,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "1": {
         "damage": 9,
         "health": 15,
         "poisonPerSecond": 107.14285714285714,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "2": {
         "damage": 27,
         "health": 45,
         "poisonPerSecond": 321.42857142857144,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "3": {
         "damage": 81,
         "health": 135,
         "poisonPerSecond": 964.2857142857143,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "4": {
         "damage": 243,
         "health": 405,
         "poisonPerSecond": 2892.857142857143,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "5": {
         "damage": 729,
         "health": 1215,
         "poisonPerSecond": 8678.57142857143,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "6": {
         "damage": 2187,
         "health": 3645,
         "poisonPerSecond": 26035.714285714286,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "7": {
         "damage": 6561,
         "health": 10935,
         "poisonPerSecond": 78107.14285714286,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "8": {
         "damage": 19683,
         "health": 32805,
         "poisonPerSecond": 234321.42857142858,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       },
       "9": {
         "damage": 59049,
         "health": 98415,
         "poisonPerSecond": 702964.2857142857,
-        "reloadMillis": 1500,
+        "reloadMillis": 1875,
         "count": 4
       }
     }
@@ -2412,9 +2412,9 @@
     "damage": 0,
     "health": 5,
     "size": 1,
-    "cooldown": 50,
+    "cooldown": 250,
     "price": 20,
-    "requiredMana": 1.2,
+    "requiredMana": 1.0,
     "lightningDamage": true,
     "description": "It goes poof. Now with the extra secret ingredient: lightning.",
     "color": "#000000",
@@ -2434,61 +2434,61 @@
       "0": {
         "damage": 0,
         "health": 5,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "1": {
         "damage": 0,
         "health": 15,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "2": {
         "damage": 0,
         "health": 45,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "3": {
         "damage": 0,
         "health": 135,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "4": {
         "damage": 0,
         "health": 405,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "5": {
         "damage": 0,
         "health": 1215,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "6": {
         "damage": 0,
         "health": 3645,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "7": {
         "damage": 0,
         "health": 10935,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "8": {
         "damage": 0,
         "health": 32805,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       },
       "9": {
         "damage": 0,
         "health": 98415,
-        "reloadMillis": 50,
+        "reloadMillis": 250,
         "count": 4
       }
     }
@@ -8843,7 +8843,7 @@
     "description": "闪电有概率对同一目标再次结算；每次独立判定，重击次数有上限，仅最强红宝石生效。",
     "color": "#ef3658",
     "count": 1,
-    "lightningRepeatChance": 0.3,
+    "lightningRepeatChance": 0.4,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"-16 -16 32 32\"><path d=\"M-7-13H7L13-7V7L7 13H-7L-13 7V-7Z\" fill=\"#e82d54\" stroke=\"#98213f\" stroke-width=\"2.5\" stroke-linejoin=\"round\"/><path d=\"M-7-13 0-6 7-13 6 0 13-7 13 7 6 0 7 13 0 6-7 13-6 0-13 7-13-7-6 0Z\" fill=\"#c71d49\"/><path d=\"M0-6 6 0 0 6-6 0Z\" fill=\"#ff6b82\"/><path d=\"M-7-13H7L0-6-6 0-13-7Z\" fill=\"#ff8ca0\"/><path d=\"M0-6 6 0 0 6-6 0Z\" fill=\"none\" stroke=\"#f49bad\" stroke-width=\"1.2\" stroke-linejoin=\"round\"/></svg>"
   }
 ,

@@ -1,4 +1,5 @@
 #include "server/db.h"
+#include "server/hyper_history.h"
 
 #include <algorithm>
 #include <chrono>
@@ -801,6 +802,16 @@ bool Database::save() {
     // can still repair into total, permanent account loss.
     if (loadFailed_ || path_.empty()) return false;
 
+    // A mutable Table::find invalidates that player's cached JSON. Inspect
+    // through the const table first: most accounts own no H, so rebuilding
+    // every offline inventory here turned each autosave into a server stall.
+    const auto& observedPlayers = static_cast<const decltype(players_)&>(players_);
+    const double observedAt = static_cast<double>(nowMillis());
+    for (const auto& id : players_.keys()) {
+        const auto holdings = currentHyperHoldings(*observedPlayers.find(id), observedAt);
+        if (std::any_of(holdings.begin(), holdings.end(), [](const auto& entry) { return entry.second > 0; }))
+            rememberHyperHoldings(*players_.find(id), observedAt);
+    }
     const std::string text = serialise();
     lastSaveBytes_ = text.size();
     const std::string tmp = path_ + ".tmp";

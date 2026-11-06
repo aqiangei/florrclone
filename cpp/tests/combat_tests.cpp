@@ -752,6 +752,39 @@ TEST(a_bandage_holds_a_killing_blow_off_until_its_time_is_up) {
     CHECK(!a.world.has<Unrevivable>(player));
 }
 
+TEST(corruption_disables_bandage_and_ends_existing_undead) {
+    for (int kind=0;kind<2;++kind) {
+        Arena a;const auto player=a.player({1000,1000});const auto mob=a.mob({5000,5000},100);
+        a.world.add<PlayerModifiers>(player).undeadMillis=2000;
+        auto& v=a.world.add<PlayerVisuals>(player);
+        v.corrupted=kind==0;v.equippedCorruption=kind==1;v.nearbyCorruption=kind==2;
+        CHECK(a.combat.applyDamage(a.world,player,mob,500,1000).killed);
+        CHECK(!a.world.has<Undead>(player));
+    }
+    Arena a;const auto player=a.player({1000,1000});const auto mob=a.mob({5000,5000},100);
+    a.world.add<PlayerModifiers>(player).undeadMillis=2000;
+    CHECK(!a.combat.applyDamage(a.world,player,mob,500,1000).killed);
+    a.world.add<PlayerVisuals>(player).corrupted=true;
+    a.step(1001);CHECK(a.world.has<Dead>(player));CHECK(!a.world.has<Undead>(player));
+    Arena b;const auto recovered=b.player({1000,1000});const auto enemy=b.mob({5000,5000},100);
+    b.world.add<PlayerModifiers>(recovered).undeadMillis=2000;
+    auto& visuals=b.world.add<PlayerVisuals>(recovered);visuals.nearbyCorruption=true;visuals.nearbyCorruption=false;
+    CHECK(!b.combat.applyDamage(b.world,recovered,enemy,500,1000).killed);
+    CHECK(b.world.has<Undead>(recovered));
+}
+
+TEST(hyper_corruption_and_its_aura_preserve_bandage_undead) {
+    for (const bool wearer : {false,true}) {
+        Arena a;const auto player=a.player({1000,1000});const auto mob=a.mob({5000,5000},100);
+        a.world.add<PlayerModifiers>(player).undeadMillis=2000;
+        auto& v=a.world.add<PlayerVisuals>(player);
+        v.equippedCorruption=wearer;v.hyperCorruption=wearer;v.nearbyCorruption=true;
+        CHECK(!a.combat.applyDamage(a.world,player,mob,500,1000).killed);
+        a.step(1001);CHECK(!a.world.has<Dead>(player));CHECK(a.world.has<Undead>(player));
+        a.step(3001);CHECK(a.world.has<Dead>(player));
+    }
+}
+
 TEST(without_a_bandage_a_killing_blow_kills) {
     Arena a;
     const Entity player = a.player({1000, 1000});
@@ -1863,6 +1896,89 @@ TEST(pollen_hits_each_mob_at_most_once_per_half_second) {
     CHECK_NEAR(a.health(mob), 93.0, 1e-9);
     a.step(1500.0);
     CHECK_NEAR(a.health(mob), 86.0, 1e-9);
+}
+
+TEST(pollen_durability_pays_once_per_hit_and_stops_when_broken) {
+    Arena a;
+    const Entity owner = a.player({2000, 2000});
+    const Entity mob = a.mob({1000, 1000}, 100.0);
+    a.world.add<ContactDamage>(mob, ContactDamage{2.0});
+    const Entity field = a.world.create();
+    a.world.add<GroundEffectTag>(field);
+    a.world.add<GroundEffect>(field, GroundEffect{GroundEffectKind::Poison, owner, 100.0,
+                                                0.0, 1.0, Rarity::Common, 7.0, 600.0});
+    a.world.add<Transform>(field, Transform{{1000, 1000}, 0.0});
+    a.world.add<Health>(field, Health{3.0, 10.0});
+    a.step(1000.0);
+    CHECK_NEAR(a.health(mob), 93.0, 1e-9);
+    CHECK_NEAR(a.health(field), 1.0, 1e-9);
+    a.step(1200.0);
+    CHECK_NEAR(a.health(field), 1.0, 1e-9);
+    a.step(1600.0);
+    CHECK_NEAR(a.health(mob), 86.0, 1e-9);
+    CHECK(a.world.has<Dead>(field));
+    a.step(2200.0);
+    CHECK_NEAR(a.health(mob), 86.0, 1e-9);
+}
+
+TEST(pollen_full_durability_survives_four_contacts_with_stronger_mob) {
+    Arena a;
+    const Entity owner = a.player({2000, 2000});
+    const Entity mob = a.mob({1000, 1000}, 100.0);
+    a.world.add<ContactDamage>(mob, ContactDamage{1000000.0});
+    const Entity field = a.world.create();
+    a.world.add<GroundEffectTag>(field);
+    a.world.add<GroundEffect>(field, GroundEffect{GroundEffectKind::Poison, owner, 100.0,
+                                                0.0, 1.0, Rarity::Common, 7.0, 600.0});
+    a.world.add<Transform>(field, Transform{{1000, 1000}, 0.0});
+    a.world.add<Health>(field, Health{5.0, 5.0});
+    for (int i=1; i<=4; ++i) {
+        a.step(1000.0+(i-1)*600.0);
+        CHECK_NEAR(a.health(field), 5.0-i*1.25, 1e-9);
+        CHECK_EQ(a.world.has<Dead>(field), i==4);
+    }
+    CHECK_NEAR(a.health(mob), 72.0, 1e-9);
+    a.step(3400.0);
+    CHECK_NEAR(a.health(mob), 72.0, 1e-9);
+}
+
+TEST(pollen_contact_uses_actual_body_radius_for_both_damage_and_wear) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    Arena a;
+    const Entity owner = a.player({2000, 2000});
+    const Entity mob = a.mob({1035, 1000}, 100.0, 0.0, 30.0);
+    a.world.add<MobType>(mob, MobType{0, Rarity::Common});
+    const Entity field = a.world.create();
+    a.world.add<GroundEffectTag>(field);
+    a.world.add<GroundEffect>(field, GroundEffect{GroundEffectKind::Poison, owner, 10.0,
+                                                0.0, 1.0, Rarity::Common, 7.0, 600.0});
+    a.world.add<Transform>(field, Transform{{1000, 1000}, 0.0});
+    a.world.add<Health>(field, Health{5.0, 5.0});
+    a.step(1000.0, f.registry);
+    CHECK_NEAR(a.health(mob), 93.0, 1e-9);
+    CHECK_NEAR(a.health(field), 4.0, 1e-9);
+    // No contact beyond the physical edge, even if configured art is larger.
+    a.world.get<Body>(mob).radius = 5.0;
+    a.step(1600.0, f.registry);
+    CHECK_NEAR(a.health(mob), 93.0, 1e-9);
+    CHECK_NEAR(a.health(field), 4.0, 1e-9);
+}
+
+TEST(pollen_broken_on_first_contact_cannot_hit_another_mob_same_tick) {
+    Arena a;
+    const Entity owner = a.player({2000, 2000});
+    const Entity first = a.mob({1000, 1000}, 100.0);
+    const Entity second = a.mob({1005, 1000}, 100.0);
+    const Entity field = a.world.create();
+    a.world.add<GroundEffectTag>(field);
+    a.world.add<GroundEffect>(field, GroundEffect{GroundEffectKind::Poison, owner, 100.0,
+                                                0.0, 1.0, Rarity::Common, 7.0, 600.0});
+    a.world.add<Transform>(field, Transform{{1000, 1000}, 0.0});
+    a.world.add<Health>(field, Health{0.25, 1.0});
+    a.step(1000.0);
+    CHECK(a.world.has<Dead>(field));
+    CHECK_NEAR(a.health(first) + a.health(second), 193.0, 1e-9);
 }
 
 // ---------------------------------------------------------------------------
@@ -4202,4 +4318,17 @@ TEST(training_dummy_reports_full_damage_regardless_of_health_pool){
  }
  Arena a;auto player=a.player({5000,5000}),mob=a.mob({1000,1000},100);
  CHECK_NEAR(a.combat.applyDamage(a.world,mob,player,5000,1000).applied,100,1e-9);
+}
+
+TEST(pollen_crowds_share_wear_cadence_and_keep_area_damage) {
+    Arena a; const Entity owner=a.player({2000,2000});
+    std::vector<Entity> mobs;for(int i=0;i<8;++i){const auto m=a.mob({1000.0+i,1000},100);a.world.add<ContactDamage>(m,ContactDamage{1000000});mobs.push_back(m);}
+    const auto f=a.world.create();a.world.add<GroundEffectTag>(f);
+    a.world.add<GroundEffect>(f,GroundEffect{GroundEffectKind::Poison,owner,100,0,1,Rarity::Common,7,600});
+    a.world.add<Transform>(f,Transform{{1000,1000},0});a.world.add<Health>(f,Health{4,4});
+    a.step(1000);CHECK_NEAR(a.health(f),3,1e-9);CHECK(!a.world.has<Dead>(f));
+    for(auto m:mobs)CHECK_NEAR(a.health(m),93,1e-9);
+    a.step(1300);CHECK_NEAR(a.health(f),3,1e-9);
+    a.step(1600);CHECK_NEAR(a.health(f),2,1e-9);
+    for(auto m:mobs)CHECK_NEAR(a.health(m),86,1e-9);
 }

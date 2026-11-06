@@ -902,6 +902,26 @@ Vec2 SpriteCache::petalOrigin(std::uint16_t index) const {
             -(doc.viewBoxY() + doc.viewBoxHeight() * 0.5) / side};
 }
 
+void SpriteCache::drawDomino(Canvas& canvas, double diameter, std::uint8_t pips) {
+    canvas.save();
+    const float scale = static_cast<float>(diameter / 60.0);
+    canvas.scale(scale, scale);
+    canvas.setFillStyle("#eee9db"); canvas.setStrokeStyle("#343431"); canvas.setLineWidth(3);
+    canvas.beginPath(); canvas.roundRect(-17,-30,34,60,5); canvas.fill(); canvas.stroke();
+    canvas.beginPath(); canvas.moveTo(-14,0); canvas.lineTo(14,0); canvas.stroke();
+    canvas.setFillStyle("#343431");
+    const auto end = [&](int n, float y) {
+        const auto dot = [&](float x, float dy) { canvas.fillCircle(x,y+dy,2.6f); };
+        if (n % 2) dot(0,0);
+        if (n >= 2) { dot(-8,-8); dot(8,8); }
+        if (n >= 4) { dot(8,-8); dot(-8,8); }
+        if (n == 6) { dot(-8,0); dot(8,0); }
+    };
+    pips = std::min<std::uint8_t>(pips,48);
+    end(pips/7,-15); end(pips%7,15);
+    canvas.restore();
+}
+
 void SpriteCache::drawDustGrain(Canvas& canvas, double diameter) {
     canvas.save();
     const float r = static_cast<float>(diameter * .18);

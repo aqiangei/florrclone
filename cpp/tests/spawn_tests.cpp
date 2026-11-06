@@ -832,6 +832,39 @@ TEST(paired_teleporters_lead_to_each_other_and_do_not_bounce) {
     flix::testsupport::removeDataDir(dir);
 }
 
+TEST(shipped_cross_map_portals_land_at_their_reciprocal_entrances) {
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    Rng rng{9567};
+    int verified = 0;
+    bool checkedAntHellToGarden = false;
+    for (const MapData& source : maps.maps()) {
+        for (const MapElement& pad : source.elements()) {
+            if (pad.kind != MapElementKind::Teleporter || !pad.toPad.empty() ||
+                !pad.targetSpawn.empty() || pad.targetMap == source.id()) continue;
+            bool found = false;
+            const Realm realm = maps.realmOfId(pad.targetMap, found);
+            if (!found) continue;
+            const auto& target = *maps.forRealm(realm);
+            const auto partner = std::find_if(target.elements().begin(), target.elements().end(),
+                [&](const MapElement& other) {
+                    return other.kind == MapElementKind::Teleporter && other.targetMap == source.id();
+                });
+            if (partner == target.elements().end()) continue;
+            WorldMaps::Destination arrival;
+            CHECK(maps.resolveTeleporter(pad, rng, terrain, arrival));
+            CHECK_EQ(arrival.realm, realm);
+            CHECK(distanceSq(arrival.position, partner->centre()) < 64.0 * 64.0);
+            ++verified;
+            if (source.id() == "ant_hell" && target.id() == "garden") checkedAntHellToGarden = true;
+        }
+    }
+    CHECK(checkedAntHellToGarden);
+    CHECK(verified >= 22);
+}
+
 TEST(a_flower_charging_a_pad_spins_and_its_jump_plays_the_iris) {
     using flix::testsupport::fixtureDoor;
     using flix::testsupport::fixtureLinkedPad;

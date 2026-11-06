@@ -31,6 +31,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cmath>
+#include "server/systems/movement.h"
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -44,6 +45,7 @@
 #include "server/bot_identity.h"
 #include "server/chat_moderation.h"
 #include "server/guilds.h"
+#include "server/hyper_forge.h"
 #include "server/systems/npcs.h"
 #include "server/systems/spawning.h"
 #include "server/text.h"
@@ -835,11 +837,58 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         return true;
     }
 
+    if (verb == "/mark-return") {
+        auto* pads = world_.tryGet<TeleporterState>(session.entity);
+        if (!session.playing() || !isStanding(world_, session.entity) ||
+            !pads || !pads->markReturnAvailable) {
+            out("当前没有可用的Mark返程；死亡后可正常复活或返回菜单。");
+            return true;
+        }
+        if (clockMillis_ < pads->markHoldUntilMillis) {
+            out("H Mark滞留还剩 " + std::to_string(static_cast<int>(std::ceil(
+                (pads->markHoldUntilMillis - clockMillis_) / 1000.0))) + " 秒。");
+            return true;
+        }
+        const RealmPoint origin = pads->markOrigin;
+        const auto* body = world_.tryGet<Body>(session.entity);
+        const Vec2 position = playerRespawnPosition(*terrain_, origin.realm, origin.position, body ? body->radius : 25.0);
+        pads->markReturnAvailable = false;
+        moveEntityToRealm(session.entity, origin.realm, position);
+        out("已返回Mark传送前的位置。");
+        return true;
+    }
+
+    if (verb == "/hyper-abandon") {
+        persistPlayer(session);
+        if(argument.empty()) {
+            out("主动放弃会销毁所选1份超凡，不返还材料；其他花瓣保留。用法：/hyper-abandon 编号；可放弃的持有记录：");
+            for(const auto& [key,row]:database_.storedTable("hyperForges").members())
+                if(row["owner"].asString()==session.userId)out(escapedMarkup(key));
+            return true;
+        }
+        const std::string suffix=" confirm";
+        const bool confirmed=argument.size()>suffix.size() && argument.compare(argument.size()-suffix.size(),suffix.size(),suffix)==0;
+        const auto key=confirmed?argument.substr(0,argument.size()-suffix.size()):argument;
+        if(database_.storedTable("hyperForges")[key]["owner"].asString()!=session.userId){out("你未持有这份超凡，请输入 /hyper-abandon 查看编号。");return true;}
+        if(!confirmed){out("确认永久销毁这1份超凡且不返还材料？再次输入：/hyper-abandon "+escapedMarkup(key)+" confirm");return true;}
+        const auto result=abandonHyper(database_,session.userId,key);
+        if(!result.ok){out(result.reason);return true;}
+        for(auto& [id,other]:sessions_) {
+            if(!other.authenticated() || other.userId!=session.userId)continue;
+            if(other.playing())applyAccountToSession(other);
+            if(auto* peer=listener_.find(id))sendProfile(other,*peer);
+        }
+        out("已放弃所选1份超凡，不返还材料；该份持有名额已释放。");
+        return true;
+    }
+
     if (verb == "/help") {
         // One message, laid out with the reference's own markup: the client
         // parses this subset, so the listing arrives looking the way it looks
         // in the browser rather than as a wall of tags.
         std::string help = "Available commands:\n";
+        help += "/mark-return - Mark传送后返回原处；H需等待30秒（死亡或返回菜单解除）<br/>";
+        help += "/hyper-abandon [编号] - 主动放弃1份超凡，不返还材料（需要确认）<br/>";
         help += "/biome - Show the most populated biome <br/>";
         help += "/boss-timers - Show each biome's unique/apex cooldown <br/>";
         help += "/level-from-string &lt;name&gt; - Show what level a bot named &lt;name&gt; would "

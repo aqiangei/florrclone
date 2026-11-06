@@ -1,5 +1,6 @@
 #pragma once
 #include "server/db.h"
+#include "server/hyper_history.h"
 #include "server/timed_hammers.h"
 #include "shared/game/npc.h"
 #include <map>
@@ -27,6 +28,38 @@ inline int hyperHoldingCount(const Database& db,const std::string& userId){
     for(const auto& [petal,count]:claims)physical[petal]=std::max(physical[petal],count);
     std::int64_t total=0;for(const auto& [petal,count]:physical)total+=count;
     return static_cast<int>(std::min<std::int64_t>(kMaxStackCount,total));
+}
+// Relinquish exactly one registered claim, with no material refund. Keep
+// claim history so abandoning cannot reset the protection progression.
+inline HyperForgeResult abandonHyper(Database& db,const std::string& userId,const std::string& forgeKey) {
+    HyperForgeResult out;
+    const auto oldTable=db.storedTable("hyperForges");
+    const auto* original=db.findProgress(userId);
+    if(!original || oldTable[forgeKey]["owner"].asString()!=userId){out.reason="你未持有这份超凡。";return out;}
+    const auto colon=forgeKey.find(':');
+    const auto petal=colon==std::string::npos?forgeKey:forgeKey.substr(colon+1);
+    const auto key="petal_"+petal;
+    const auto before=*original;
+    auto& record=db.progress(userId);
+    rememberHyperHoldings(record,static_cast<double>(db.nowMillis()));
+    if(record.itemCount(Rarity::Apex,key)>0)record.addItem(Rarity::Apex,key,-1);
+    else {
+        bool removed=false;
+        for(auto& slot:record.loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal){slot.reset();removed=true;break;}
+        if(!removed){out.reason="持有记录与库存不一致，请联系管理员。";return out;}
+    }
+    bool remaining=record.itemCount(Rarity::Apex,key)>0;
+    for(const auto& slot:record.loadout)remaining=remaining||(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal);
+    if(!remaining)for(auto& [name,slots]:record.loadoutPresets)
+        for(auto& slot:slots)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal)slot.reset();
+    auto& entry=db.rawTable("hyperForges")[forgeKey];
+    entry["owner"]="";entry["protectedUntil"]=0;
+    db.markDirty();
+    if(!db.save()){
+        db.progress(userId)=before;db.rawTable("hyperForges")=oldTable;db.markDirty();
+        out.reason="存档失败，未放弃超凡。";return out;
+    }
+    out.ok=true;out.affected.push_back(userId);return out;
 }
 inline HyperForgeResult grantTemporaryHyperHammer(Database& db,const std::string& userId,
                                                  std::int64_t now,const std::string& request) {
@@ -81,6 +114,7 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     for(const auto& [id,record]:before){
         if(id==userId)continue;
         auto& changed=db.progress(id);int lost=0;
+        rememberHyperHoldings(changed,static_cast<double>(now));
         if(changed.itemCount(Rarity::Apex,key)>0){changed.addItem(Rarity::Apex,key,-1);lost=1;}
         else for(auto& slot:changed.loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal){slot.reset();lost=1;break;}
         bool remaining=changed.itemCount(Rarity::Apex,key)>0;

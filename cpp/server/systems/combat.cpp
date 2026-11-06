@@ -1,4 +1,6 @@
+#include "shared/game/computer_set.h"
 #include "server/systems/combat.h"
+#include "shared/game/domino.h"
 #include "server/systems/flower_mobs.h"
 
 #include <algorithm>
@@ -78,7 +80,8 @@ bool isCorrupted(const World& world, Entity player) {
 bool equippedCorruptionAllowsPvp(const World& world, Entity a, Entity b) {
     const auto* av = world.tryGet<PlayerVisuals>(a);
     const auto* bv = world.tryGet<PlayerVisuals>(b);
-    if ((!av || !av->equippedCorruption) && (!bv || !bv->equippedCorruption)) return false;
+    if ((!av || !(av->equippedCorruption || av->nearbyCorruption)) &&
+        (!bv || !(bv->equippedCorruption || bv->nearbyCorruption))) return false;
     const auto* ap = world.tryGet<PlayerProgress>(a);
     const auto* bp = world.tryGet<PlayerProgress>(b);
     return ap && bp && ap->level >= 20 && bp->level >= 20;
@@ -810,6 +813,19 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         return result;
     }
 
+    // An H egg's escort can absorb a heavy body impact instead of disappearing
+    // on first contact. No protection from player attacks, spells or higher
+    // rarities; three full-strength impacts still kill it. No damage bonus.
+    if (kind == DamageKind::Direct && world.has<Pet>(victim) && world.has<MobTag>(source) && world.has<MobType>(source) &&
+        !world.has<Pet>(source)) {
+        const auto& pet = world.get<Pet>(victim);
+        if (const auto* loadout = world.tryGet<Loadout>(pet.owner); loadout && pet.slot < kLoadoutActiveSlots) {
+            const auto worn = equippedPetal(content(), *loadout, pet.slot);
+            if (!worn.empty() && worn.rarity == Rarity::Apex && petalIsEgg(content().petal(worn.configIndex)) &&
+                rarityIndex(world.get<MobType>(source).rarity) <= rarityIndex(worn.rarity))
+                amount = std::min(amount, world.get<Health>(victim).max * 0.35);
+        }
+    }
     // Evasion: a talisman's wearer or a fly side-steps the hit whole. Ahead of
     // armour, the shield and root's stacks, because a hit that never landed
     // has nothing for any of them to blunt -- root would otherwise spend a
@@ -1361,6 +1377,10 @@ bool CombatSystem::trySecondChance(World& world, Entity victim, double nowMillis
 }
 
 bool CombatSystem::tryUndead(World& world, Entity victim, Entity source, double nowMillis) {
+    if (world.has<PlayerTag>(victim)) {
+        const auto* visuals = world.tryGet<PlayerVisuals>(victim);
+        if (visuals && (visuals->corrupted || (visuals->equippedCorruption && !visuals->hyperCorruption))) return false;
+    }
     // Already Undead: death is put off until the bandage's time runs out, and
     // no blow brings it nearer. The clock is the first blow's.
     if (world.has<Undead>(victim)) {
@@ -1392,7 +1412,10 @@ void CombatSystem::tickUndead(World& world, double nowMillis) {
     walking.without<Dead>();
     std::vector<Entity> expired;
     walking.each([&](Entity e, Undead& undead) {
-        if (nowMillis >= undead.untilMillis) expired.push_back(e);
+        const auto* visuals = world.tryGet<PlayerVisuals>(e);
+        const bool corruptedPlayer = world.has<PlayerTag>(e) && visuals &&
+            (visuals->corrupted || (visuals->equippedCorruption && !visuals->hyperCorruption));
+        if (nowMillis >= undead.untilMillis || corruptedPlayer) expired.push_back(e);
     });
     for (const Entity e : expired) {
         const Undead undead = world.get<Undead>(e);
@@ -2106,7 +2129,8 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
     });
 
     for (const FieldSource& field : fields_) {
-        if (!world.isAlive(field.effect)) continue;
+        if (!world.isAlive(field.effect) || world.has<Dead>(field.effect)) continue;
+        const bool breakable = world.has<Health>(field.effect);
         if(const auto* target=world.tryGet<LightningTarget>(field.effect)){
             if(world.has<Dead>(field.effect))continue;
             const Entity victim=target->victim;
@@ -2128,6 +2152,7 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
             field.slowFactor >= 1.0) continue;
         queryBodies(grid, field.realm, field.position, field.radius + kBroadphasePad, candidates_);
         for (const Entity victim : candidates_) {
+            if (world.has<Dead>(field.effect)) break;
             const auto* lightningTarget = world.tryGet<LightningTarget>(field.effect);
             if (lightningTarget && lightningTarget->victim != victim) continue;
             const Transform* transform = world.tryGet<Transform>(victim);
@@ -2140,7 +2165,8 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
             // a web's or a puff's job.
             const Body* body = world.tryGet<Body>(victim);
             const double reach =
-                field.radius + fieldTargetRadius(world, content, victim, field.kind, body);
+                field.radius + (breakable && body ? body->radius
+                    : fieldTargetRadius(world, content, victim, field.kind, body));
             const double gapSq = distanceSq(transform->position, field.position);
             // The uranium pulse excludes on a strict `>` (playerState.ts:2686)
             // where pollen and web exclude on `>=` (groundEffects.ts:163, :231),
@@ -2166,12 +2192,28 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                     // which provokes a neutral mob. Direct is how a C++ chip
                     // buys both of those -- the flash it also lights is what
                     // steerAggressive reads as "something just hurt me".
+                    // A strong mob must not erase this low-health area petal in
+                    // one touch: cap each contact at a quarter of full durability.
+                    const Health* durability = world.tryGet<Health>(field.effect);
+                    const double recoil = durability
+                        ? std::min(contactDamageOf(world, victim), durability->max * 0.25)
+                        : 0.0;
                     const DamageResult hit = applyDamage(world, victim, field.effect,
                                                          field.damagePerHit, nowMillis,
                                                          field.hitKind);
                     if (!hit.refused) {
                         world.ensure<HitCooldowns>(field.effect)
                             .arm(victim, nowMillis + field.damageIntervalMillis);
+                        // Use the same overlap and cadence for both sides of
+                        // pollen contact. No extra tick-rate durability tax.
+                        if (breakable && !hit.dodged && recoil > 0.0 &&
+                            world.get<HitCooldowns>(field.effect).ready(field.effect, nowMillis)) {
+                            // One wear payment per cloud interval, regardless of crowd size.
+                            world.get<HitCooldowns>(field.effect).arm(
+                                field.effect, nowMillis + field.damageIntervalMillis);
+                            applyDamage(world, field.effect, victim, recoil,
+                                        nowMillis, DamageKind::Recoil);
+                        }
                     }
                 }
             } else if (field.damagePerSecond > 0.0 && field.poisonDurationMillis > 0.0) {
@@ -2381,7 +2423,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
     queries_->petals.each([&](Entity e, PetalInstance& petal, Transform& transform, Body& body) {
         const PetalConfig& config = content.petal(petal.configIndex);
         if (config.noPhysics) return;   // a pure modifier has no body to hit with
-        const PetalStats stats = content.petalStats(petal.configIndex, petal.rarity);
+        const PetalStats stats = computerSetStats(content,world,petal.owner,petal.configIndex,petal.rarity,content.petalStats(petal.configIndex, petal.rarity));
         // A loose petal swings at mobs only if it has DAMAGE to swing with --
         // the moon does, wax does not. Knockback alone is not enough: wax's
         // default 5 would make it a "zero swing" against every mob pressed
@@ -2412,6 +2454,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.armorReduction = stats.armorReduction;
         source.critDamage = stats.critDamage;
         if (config.id == "dice") { source.critChance = 0.05; source.critMultiplier = 35.0; }
+        if (config.id == "domino") source.damage *= dominoDamageMultiplier(petal.dominoPips, petal.rarity);
         source.lifesteal = stats.lifesteal;
         source.owner = petal.owner;
         source.rarity = petal.rarity;
@@ -2450,11 +2493,11 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
         // The grid files each entity under every cell its own radius touches,
         // so a query at the attacker's radius already returns everything whose
         // circle could overlap; the exact test below is the one that decides.
-        queryBodies(grid, source.realm, source.position, source.radius + kBroadphasePad,
-                    candidates_);
         // Resolved once per source, for the shots below: the answer canDamage()
         // would reach for every one of them.
         const Entity sourcePlayer = creditedPlayer(world, source.attacker);
+        queryBodies(grid, source.realm, source.position, source.radius + kBroadphasePad,
+                    candidates_, sourcePlayer);
         bool ricochetHit = false;
         for (const Entity victim : candidates_) {
             if (ricochetHit) break;
@@ -3052,10 +3095,10 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         const Vec2 flown = shot.position - shot.from;
         const double flownLength = flown.length();
         const Vec2 midpoint = shot.from + flown * 0.5;
+        const Entity shooter = filedShotPlayer(shot.entity);
         queryBodies(grid, shot.realm, midpoint,
                     shot.radius + flownLength * 0.5 + shot.travelled + kBroadphasePad,
-                    candidates_);
-        const Entity shooter = filedShotPlayer(shot.entity);
+                    candidates_, shooter);
 
         // Gathered whole before a single hit lands. The loop below marks
         // victims Dead and that relocates their rows, so nothing here may hold
@@ -3260,6 +3303,7 @@ void CombatSystem::fileShots(World& world) {
     }
     filedShots_.clear();
     shotCells_.clear();
+    shotRuns_.clear();
     maxShotRadius_ = 0.0;
     shotRowMin_ = kShotCellLimit - 1;
     shotRowMax_ = 0;
@@ -3293,10 +3337,21 @@ void CombatSystem::fileShots(World& world) {
     std::sort(shotCells_.begin(), shotCells_.end(), [](const ShotCell& a, const ShotCell& b) {
         return a.key != b.key ? a.key < b.key : a.slot < b.slot;
     });
+    for (std::size_t i = 0; i < shotCells_.size(); ++i) {
+        const auto& cell = shotCells_[i];
+        const Entity player = filedShots_[cell.slot].player;
+        if (shotRuns_.empty() || shotRuns_.back().key != cell.key)
+            shotRuns_.push_back({cell.key, i, i + 1, player});
+        else {
+            auto& run = shotRuns_.back();
+            run.end = i + 1;
+            if (run.commonPlayer != player) run.commonPlayer = NULL_ENTITY;
+        }
+    }
 }
 
 void CombatSystem::queryShots(Realm realm, Vec2 center, double radius,
-                              std::vector<Entity>& out) const {
+                              std::vector<Entity>& out, Entity excludePlayer) const {
     if (shotCells_.empty()) return;
     if (!std::isfinite(center.x) || !std::isfinite(center.y)) return;
     if (!(radius >= 0.0)) radius = 0.0;   // negative, and NaN
@@ -3310,12 +3365,17 @@ void CombatSystem::queryShots(Realm realm, Vec2 center, double radius,
     for (std::uint32_t row = y0; row <= y1; ++row) {
         const std::uint64_t first = shotCellKey(realm, row, x0);
         const std::uint64_t last = shotCellKey(realm, row, x1);
-        auto it = std::lower_bound(shotCells_.begin(), shotCells_.end(), first,
-                                   [](const ShotCell& cell, std::uint64_t key) {
+        auto it = std::lower_bound(shotRuns_.begin(), shotRuns_.end(), first,
+                                   [](const ShotCellRun& cell, std::uint64_t key) {
                                        return cell.key < key;
                                    });
-        for (; it != shotCells_.end() && it->key <= last; ++it) {
-            out.push_back(filedShots_[it->slot].entity);
+        for (; it != shotRuns_.end() && it->key <= last; ++it) {
+            if (excludePlayer != NULL_ENTITY && it->commonPlayer == excludePlayer) continue;
+            for (std::size_t i = it->begin; i < it->end; ++i) {
+                const auto& shot = filedShots_[shotCells_[i].slot];
+                if (excludePlayer == NULL_ENTITY || shot.player != excludePlayer)
+                    out.push_back(shot.entity);
+            }
         }
     }
 }
@@ -3334,7 +3394,7 @@ Entity CombatSystem::filedShotPlayer(Entity e) const {
 }
 
 void CombatSystem::queryBodies(const SpatialGrid& grid, Realm realm, Vec2 center, double radius,
-                               std::vector<Entity>& out) {
+                               std::vector<Entity>& out, Entity excludeShotPlayer) {
     grid.query(realm, center, radius, out);
     // The server's grid files no shots, but a focused simulation that builds
     // its grid from every body does -- and must not be handed a shot twice.
@@ -3343,7 +3403,7 @@ void CombatSystem::queryBodies(const SpatialGrid& grid, Realm realm, Vec2 center
                                  [&](Entity e) { return isFiledShot(e); }),
                   out.end());
     }
-    queryShots(realm, center, radius, out);
+    queryShots(realm, center, radius, out, excludeShotPlayer);
 }
 
 void CombatSystem::pushFromImpact(World& world, Entity victim, Vec2 offset, double shotMass,

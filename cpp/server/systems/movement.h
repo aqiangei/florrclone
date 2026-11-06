@@ -28,6 +28,10 @@
 
 namespace flix {
 
+/// Place the whole respawn hull without crossing a wall from an open corpse centre.
+Vec2 playerRespawnPosition(const Terrain& terrain, Realm realm, Vec2 around, double radius);
+
+
 class ContentRegistry;
 
 /// Water costs a mob less than it costs a player.

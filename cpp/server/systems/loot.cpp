@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include <tuple>
+#include <map>
 
 #include "server/loot_eligibility.h"
 #include "shared/core/json.h"
@@ -557,21 +559,42 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Re
 
 void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& rng) {
     fresh_.clear();
+    corpses_->collect(corpseList_);
+    if (corpseList_.empty()) return;
     // Merge nearby unclaimed stacks only. Once anybody has collected a
     // share, the remaining players keep that exact original entitlement.
-    std::vector<Entity> stackable;
+    // Search only nearby stacks of the same item and realm, instead of
+    // scanning every drop in the world for every individual loot roll.
+    using StackKey = std::tuple<unsigned, std::uint16_t, int, int, int>;
+    using StackEntry = std::pair<std::size_t, Entity>;
+    std::map<StackKey, std::vector<StackEntry>> stackable;
+    std::size_t stackOrder = 0;
+    const auto indexStack = [&](Entity e, const DropItem& item, const Transform& at) {
+        stackable[{static_cast<unsigned>(at.realm),item.configIndex,rarityIndex(item.rarity),
+            static_cast<int>(std::floor(at.position.x/150.0)),
+            static_cast<int>(std::floor(at.position.y/150.0))}].push_back({stackOrder++,e});
+    };
     Query<DropTag, DropItem, Transform> stackQuery{world};
-    stackQuery.each([&](Entity e, DropTag&, DropItem& item, Transform&) {
+    stackQuery.each([&](Entity e, DropTag&, DropItem& item, Transform& at) {
         const auto* life = world.tryGet<Lifetime>(e);
         if (!item.singleCopy && !item.humansOnly && item.pickedUpBy.empty() &&
-            life && life->remainingSeconds > 0) stackable.push_back(e);
+            life && life->remainingSeconds > 0) indexStack(e,item,at);
     });
     bool hyperKill=false,hyperEternalRoll=false;
     const auto stackDrop = [&](std::uint16_t petal, Rarity rarity, Vec2 at, Realm realm,
                                const std::vector<Entity>& eligible) {
         rarity=payoutDropRarity(rarity,hyperKill?Rarity::Apex:Rarity::Common);
         if(hyperKill&&rarity==Rarity::Unique&&!hyperEternalRoll)return;
-        for (Entity e : stackable) {
+        Entity merge = NULL_ENTITY;
+        std::size_t first = stackOrder;
+        const int cellX=static_cast<int>(std::floor(at.x/150.0));
+        const int cellY=static_cast<int>(std::floor(at.y/150.0));
+        for(int dx=-1;dx<=1;++dx)for(int dy=-1;dy<=1;++dy) {
+          const auto bucket=stackable.find({static_cast<unsigned>(realm),petal,rarityIndex(rarity),cellX+dx,cellY+dy});
+          if(bucket==stackable.end())continue;
+          for (const auto& entry : bucket->second) {
+            if(entry.first>=first)continue;
+            const Entity e=entry.second;
             auto& item = world.get<DropItem>(e);
             const auto& position = world.get<Transform>(e);
             if (item.configIndex != petal || item.rarity != rarity || position.realm != realm ||
@@ -583,6 +606,13 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 if (!claimed(item.eligible, player, account ? account->connection : 0)) same = false;
             }
             if (!same) continue;
+            merge=e;first=entry.first;
+          }
+        }
+        // Preserve the old first-match ordering even across cell boundaries.
+        if(merge!=NULL_ENTITY) {
+            const Entity e=merge;
+            auto& item=world.get<DropItem>(e);
             ++item.quantity;
             world.get<Lifetime>(e).remainingSeconds =
                 kDropLifetimeByRarity[static_cast<std::size_t>(rarityIndex(rarity))];
@@ -590,13 +620,12 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             return;
         }
         const Entity e = spawnDrop(world, petal, rarity, at, realm, eligible);
-        if (e != NULL_ENTITY) { fresh_.push_back(e); stackable.push_back(e); }
+        if (e != NULL_ENTITY) { fresh_.push_back(e); indexStack(e,world.get<DropItem>(e),world.get<Transform>(e)); }
     };
     // Once for the tick, not once per corpse: the conversion below asks for it
     // on every drop of every kill.
     const auto legacyOrb = content.petalIndex("magic_orb");
     const std::uint16_t magicOrb = legacyOrb!=kInvalidIndex?legacyOrb:content.petalIndex("mana_orb");
-    corpses_->collect(corpseList_);
     for (const Entity corpse : corpseList_) {
         const MobType* type = world.tryGet<MobType>(corpse);
         const Transform* transform = world.tryGet<Transform>(corpse);
