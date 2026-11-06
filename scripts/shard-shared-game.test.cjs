@@ -233,17 +233,42 @@ test('two real WASM games share one account and forbid simultaneous ownership',a
     hOne.end();hTwo.end();await offline(id);await offline(bid);
     let previous=inspector.call({op:'snapshot'}).state.accounts[id].record.councilActiveSeconds||0;
     assert(previous>=3,'active play must persist account-scoped seconds');
-    for(const node of ['two','one']) {
+    for(const node of Array.from({length:Number(process.env.SHARD_HANDOFF_ROUNDS||2)},(_,i)=>i%2?'one':'two')) {
       const s=await connect(node);assert.equal((await authenticate(s,wire.ClientMessage.Login,'sharedplayer','test-password-123')).auth?.status,wire.AuthStatus.Ok);
       wire.send(s,Buffer.concat([Buffer.from([wire.ClientMessage.JoinGame]),dimensions,wire.encStr('garden'),wire.encStr('ActivityRoundTrip'),Buffer.from([0])]));
-      await sleep(1500);await active(s);s.end();await offline(id);
+      await sleep(1500);await active(s,Number(process.env.SHARD_PLAY_SECONDS||5));s.end();await offline(id);
       const current=inspector.call({op:'snapshot'}).state;
       assert(current.accounts[id].record.councilActiveSeconds>=previous+3,'handoff retains and accumulates fresh activity');
-      previous=current.accounts[id].record.councilActiveSeconds;
+      previous=current.accounts[id].record.councilActiveSeconds;console.log('handoff progress',node,previous);
       assert.deepEqual(current.globals.councilActivity||{},historical,'historical table must not be rewritten');
       assert.equal(current.accounts[id].record.inventory.unique.petal_rose,15);
     }
     console.log('active-play round trip preserved time and inventory; both health endpoints responsive');
+    // Simultaneous arrivals and departures exercise release while other saves
+    // are still in flight; isolated synthetic accounts only.
+    const churn=await Promise.all(Array.from({length:8},async(_,i)=>{
+      const node=i%2?'two':'one',socket=await connect(node),name='churn'+i;
+      const result=await authenticate(socket,wire.ClientMessage.Register,name,'churn-test-123');
+      assert.equal(result.auth?.status,wire.AuthStatus.Ok,'concurrent register '+i);
+      return {socket,name,node};
+    }));
+    for(let round=0;round<3;round++) {
+      for(const entry of churn)wire.send(entry.socket,Buffer.concat([Buffer.from([wire.ClientMessage.JoinGame]),dimensions,wire.encStr('garden'),wire.encStr(entry.name),Buffer.from([0])]));
+      await Promise.all(churn.map(async entry=>{
+        await active(entry.socket,5);
+        const frames=await wire.readMessages(entry.socket,500);
+        assert(frames.some(m=>m[0]===wire.ServerMessage.Snapshot),'concurrent player receives world');
+        entry.socket.end();
+      }));
+      const state=inspector.call({op:'snapshot'}).state;
+      for(const entry of churn)await offline(state.globals.users[entry.name].id);
+      if(round<2)await Promise.all(churn.map(async entry=>{
+        entry.node=entry.node==='one'?'two':'one';entry.socket=await connect(entry.node);
+        assert.equal((await authenticate(entry.socket,wire.ClientMessage.Login,entry.name,'churn-test-123')).auth?.status,wire.AuthStatus.Ok);
+      }));
+      console.log('concurrent churn round',round+1,'players',churn.length);
+    }
+
     await trigger.close();
     const {checkPair}=require('./shards/ops/live-paired-check.cjs');
     await checkPair({protocolVersion:wire.ver,contentHash:wire.CONTENT_HASH},

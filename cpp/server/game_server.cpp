@@ -740,6 +740,12 @@ void GameServer::releaseUnusedAuthority() {
     std::sort(active.begin(),active.end());active.erase(std::unique(active.begin(),active.end()),active.end());
     if(active==authorityLiveAccounts_&&!authorityReleasePending_&&
         (!config_.authorityReleaseAsync||monotonicMillis()<authorityNextReleaseCheck_))return;
+    // Releasing ownership must cover mutations made while an older save was
+    // pending, including final progress captured by a disconnect.
+    if(config_.authorityReleaseAsync) {
+        captureLiveProgress();
+        authorityReleaseTicket_=database_.mutationGeneration();
+    }
     const bool committed=config_.authorityReleaseAsync?
         drainAuthoritative(true,authorityReleaseTicket_)==net::Connection::DrainDecision::Allow:commitBeforeReply();
     if(!committed) {

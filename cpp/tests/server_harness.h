@@ -765,6 +765,9 @@ inline Entity onlyPlayer(World& world) {
 /// Defined here and nowhere else, so every test file that includes this one
 /// shares the one definition.
 struct GameServerPeer {
+    static Database& authorityDb(GameServer& s) { return s.database_; }
+    static void releaseAuthority(GameServer& s) { s.releaseUnusedAuthority(); }
+
     // Drive the production death reporter without a transport poll.
     static void reportDeaths(GameServer& server) { server.reapDead(); }
     static void flushCommands(GameServer& server) { server.commands_.flush(); }
