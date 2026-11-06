@@ -176,6 +176,8 @@ bool WorldView::applySnapshot(ByteReader& reader) {
     const std::uint8_t selfMask = reader.u8();
     double health = self_.health, maxHealth = self_.maxHealth;
     double mana = self_.mana, maxMana = self_.maxMana;
+    std::uint32_t splitNetId = self_.splitNetId;
+    double splitMana = self_.splitMana, splitMaxMana = self_.splitMaxMana;
     double totalXp = self_.totalXp, stars = self_.stars;
     int level = self_.level;
     if (selfMask & net::SelfHealth) {
@@ -190,6 +192,11 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         totalXp = reader.f64();
         level = reader.u16();
         stars = reader.f64();
+    }
+    if (selfMask & net::SelfSplitMana) {
+        splitNetId = reader.u32();
+        splitMana = reader.f32();
+        splitMaxMana = reader.f32();
     }
 
     // The viewer's own reloading and damaged slots, in wire order with the rest
@@ -243,6 +250,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         double shieldFraction;
         std::string equippedSkinId;
         std::uint32_t ownerNetId;
+        std::uint8_t petalVariant = 0;
         std::uint8_t npcRecipe = 0;
         std::uint8_t npcNextRecipe = 0;
         double npcRecipeRefreshAtMillis = 0;
@@ -278,7 +286,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
             s.shieldFraction = reader.u8() / 255.0;
             s.equippedSkinId = reader.str();
         }
-        if (s.kind == net::EntityKind::Petal) s.ownerNetId = reader.u32();
+        if (s.kind == net::EntityKind::Petal) { s.ownerNetId = reader.u32(); s.petalVariant = reader.u8(); }
         if (s.kind == net::EntityKind::Npc) {
             s.npcRecipe = reader.u8();
             s.npcNextRecipe = reader.u8();
@@ -391,6 +399,9 @@ bool WorldView::applySnapshot(ByteReader& reader) {
     self_.maxHealth = maxHealth;
     self_.mana = mana;
     self_.maxMana = maxMana;
+    self_.splitNetId = splitNetId;
+    self_.splitMana = splitMana;
+    self_.splitMaxMana = splitMaxMana;
     self_.totalXp = totalXp;
     self_.level = level;
     self_.stars = stars;
@@ -429,6 +440,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
         e.healthBar.snap(e.healthFraction, e.shieldFraction);
         e.equippedSkinId = std::move(s.equippedSkinId);
         e.ownerNetId = s.ownerNetId;
+        e.petalVariant = s.petalVariant;
         e.npcRecipe = s.npcRecipe;
         e.npcNextRecipe = s.npcNextRecipe;
         e.npcRecipeRefreshAtMillis = s.npcRecipeRefreshAtMillis > 0

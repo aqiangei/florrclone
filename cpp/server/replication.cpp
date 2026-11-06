@@ -148,6 +148,9 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
     PlayerVisualState out;
     if (!world.has<PlayerTag>(e)) return out;
     if(const auto* burrow=world.tryGet<BurrowState>(e))if(burrow->active&&nowMillis<burrow->untilMillis)out.renderFlags|=PlayerRenderBurrowed;
+    if (const auto* swallowed = world.tryGet<WormSwallow>(e);
+        swallowed && swallowed->worm != NULL_ENTITY && nowMillis < swallowed->releaseAtMillis)
+        out.renderFlags |= PlayerRenderSwallowed;
 
     if (const PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(e)) {
         out.faceFlags = visuals->faceFlags;
@@ -159,7 +162,7 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
         // Corruption is a FACE, not a skin: the flower that cracked a Flower
         // petal open turns on everyone, and the face is the only warning the
         // players around it get before its ring starts biting them.
-        if (visuals->corrupted || visuals->equippedCorruption) out.faceFlags |= FaceHasCorruption;
+        if (visuals->corrupted || visuals->equippedCorruption || visuals->nearbyCorruption) out.faceFlags |= FaceHasCorruption;
     }
     if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
         if (afflictions->poisoned(nowMillis)) out.faceFlags |= FacePoisoned;
@@ -214,6 +217,7 @@ void Replicator::prepareParallelReads() {
     (void)componentId<ArenaScore>();
     (void)componentId<Body>();
     (void)componentId<BurrowState>();
+    (void)componentId<WormSwallow>();
     (void)componentId<Dead>();
     (void)componentId<DropItem>();
     (void)componentId<Faction>();
@@ -327,7 +331,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
             if (!visuals || !visuals->seesGhosts) return;
         }
-        if (const DropItem* drop = world.tryGet<DropItem>(e)) {
+        const DropItem* drop = world.tryGet<DropItem>(e);
+        if (drop) {
             if (!drop->eligible.empty() && !claimed(drop->eligible, viewer, viewerOwner)) return;
             if (claimed(drop->pickedUpBy, viewer, viewerOwner)) return;
         }
@@ -339,17 +344,22 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // no position that means anything on an overworld screen.
         if (e != viewer && transform.realm != realm) return;
         if (e != viewer && outsideView(transform.position) && !exempt(e)) return;
-        candidates_.push_back({e, id.value, flix::distanceSq(transform.position, centre)});
+        const double distanceSq = flix::distanceSq(transform.position, centre);
+        // The observer and nearby claimable loot must survive a full
+        // snapshot even if a barrage fills the remaining entity budget.
+        const double selectionKey = e == viewer ? -2.0 :
+            (drop && !outsideNearBox(transform.position, 0.0) ? -1.0 / (1.0 + distanceSq)
+                                                             : distanceSq);
+        candidates_.push_back({e, id.value, selectionKey});
     });
 
     if (candidates_.size() > maxEntities) {
-        // Nearest wins. That is both the cheapest useful rule and the one that
-        // matches what the player is actually looking at.
+        // After the observer and visible loot, nearest wins.
         std::nth_element(candidates_.begin(),
                          candidates_.begin() + static_cast<std::ptrdiff_t>(maxEntities),
                          candidates_.end(),
                          [](const Candidate& a, const Candidate& b) {
-                             return a.distanceSq < b.distanceSq;
+                             return a.selectionKey < b.selectionKey;
                          });
         candidates_.resize(maxEntities);
     }
@@ -385,6 +395,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         self.mana = static_cast<float>(mana->current);
         self.maxMana = static_cast<float>(mana->max);
     }
+    if (const ManaPool* mana = world.tryGet<ManaPool>(frame.splitOther); mana && mana->max > 0.0) {
+        if (const NetId* id = world.tryGet<NetId>(frame.splitOther)) {
+            self.splitNetId = id->value;
+            self.splitMana = static_cast<float>(mana->current);
+            self.splitMaxMana = static_cast<float>(mana->max);
+        }
+    }
     self.level = 1;
     if (const PlayerProgress* progress = world.tryGet<PlayerProgress>(viewer)) {
         self.totalXp = progress->totalXp;
@@ -403,6 +420,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         self.stars != last.stars) {
         selfMask |= net::SelfProgress;
     }
+    if (self.splitNetId != last.splitNetId || self.splitMana != last.splitMana ||
+        self.splitMaxMana != last.splitMaxMana) {
+        selfMask |= net::SelfSplitMana;
+    }
     out.u8(selfMask);
     if (selfMask & net::SelfHealth) {
         out.f32(self.health);
@@ -416,6 +437,11 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         out.f64(self.totalXp);
         out.u16(self.level);
         out.f64(self.stars);
+    }
+    if (selfMask & net::SelfSplitMana) {
+        out.u32(self.splitNetId);
+        out.f32(self.splitMana);
+        out.f32(self.splitMaxMana);
     }
     view.self = self;
     view.selfSent = true;
@@ -578,6 +604,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             std::uint32_t ownerNetId = 0;
             if (const NetId* ownerId = world.tryGet<NetId>(owner)) ownerNetId = ownerId->value;
             out.u32(ownerNetId);
+            const auto* instance = world.tryGet<PetalInstance>(candidate.entity);
+            out.u8(instance ? instance->dominoPips : 255); // v93 per-reload petal variant
         }
         if (info.kind == net::EntityKind::Npc) {
             // Which of its mob's recipes an assembler makes; 0 for any other.

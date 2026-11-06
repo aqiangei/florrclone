@@ -1,8 +1,19 @@
 #include "shared/net/web_channel.h"
 
+namespace flix::net::web {
+static CouncilHandler councilHandler;
+void setCouncilHandler(CouncilHandler handler) { councilHandler=std::move(handler); }
+}
+
 #ifdef __EMSCRIPTEN__
 
 #include <emscripten.h>
+extern "C" EMSCRIPTEN_KEEPALIVE char* flix_council_buffer() { static char buffer[8192]; return buffer; }
+extern "C" EMSCRIPTEN_KEEPALIVE const char* flix_council_request(const char* token,const char* body) {
+ static std::string result;
+ result=flix::net::web::councilHandler?flix::net::web::councilHandler(token,body):"{}";
+ return result.c_str();
+}
 
 // The JavaScript half lives here rather than in a .js library for the same
 // reason canvas.cpp's does: it is the implementation of the C++ declarations
@@ -425,7 +436,7 @@ EM_JS(int, flix_ch_listen,
   // missing file is.
   const servedFiles = new Set([
     // The page: bundle.html as the link names it, index.html as it is staged.
-    "index.html", "bundle.html",
+    "index.html", "bundle.html", "council.html",
     // The glue and the module, and the deflated copies the page prefers.
     "bundle.js", "bundle.js.bin", "bundle.wasm", "bundle.wasm.bin",
     // The icon the shell links to (client/web/shell.html).
@@ -505,8 +516,64 @@ EM_JS(int, flix_ch_listen,
     }
   };
 
+  const councilLimits = new Map();
   const onRequest = (request, response) => {
     const url = (request.url || "/").split("?")[0];
+    if (url === "/api/council") {
+      // Production Nginx connects from loopback and overwrites X-Real-IP.
+      // Rate-limit the visitor, not the shared proxy; never trust this header
+      // from a public peer that can choose it themselves.
+      const peer=request.socket.remoteAddress || "unknown";
+      const realIp=request.headers["x-real-ip"];
+      const trustedProxy=peer==="127.0.0.1" || peer==="::1" || peer==="::ffff:127.0.0.1";
+      const address=trustedProxy && typeof realIp==="string" && require("node:net").isIP(realIp)
+        ? realIp : peer;
+      const now=Date.now();
+      if(councilLimits.size>=4096) {for(const [key,value] of councilLimits) if(now-value.start>60000)councilLimits.delete(key);}
+      if(!councilLimits.has(address)&&councilLimits.size>=4096){response.writeHead(429);response.end();return;}
+      let limit=councilLimits.get(address);
+      if(!limit || now-limit.start>10000){limit={start:now,count:0};councilLimits.set(address,limit);}
+      if(++limit.count>10){response.writeHead(429);response.end();return;}
+      if(request.method !== "POST" || request.headers["content-type"] !== "application/json") {
+        response.writeHead(405); response.end(); return;
+      }
+      // JSON + bearer authentication: cross-origin forms cannot submit votes.
+      if(request.headers["sec-fetch-site"] === "cross-site") { response.writeHead(403); response.end(); return; }
+      const token = String(request.headers.authorization || "").replace("Bearer ", "");
+      if(token.length>512) {response.writeHead(400);response.end();return;}
+      let data="",size=0;
+      request.setEncoding("utf8");
+      request.setTimeout(5000,()=>request.destroy());
+      request.on("data",chunk=>{size+=Buffer.byteLength(chunk);if(size>4096){request.destroy();return;}data+=chunk;});
+      request.on("end",async()=>{
+        if(size>4096)return;
+        let a=0,b=0;
+        try {
+          const parsed=JSON.parse(data);
+          if(!parsed || Array.isArray(parsed) || typeof parsed!=="object" ||
+             Object.keys(parsed).some(key=>!["action","title","id","choice"].includes(key) || typeof parsed[key]!=="string")) {
+            response.writeHead(400);response.end();return;
+          }
+          if(Module.flixAuthority) {
+            if(typeof Module.flixAuthority.council!=="function") {
+              response.writeHead(503);response.end();return;
+            }
+            const shared=await Module.flixAuthority.council(token,parsed);
+            if(!response.destroyed) {
+              response.writeHead(200,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"});
+              response.end(JSON.stringify(shared));
+            }
+            return;
+          }
+          a=_flix_council_buffer();b=a+1024;
+          stringToUTF8(token,a,1024);stringToUTF8(data,b,4097);
+          const result=UTF8ToString(_flix_council_request(a,b));
+          response.writeHead(200,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"});response.end(result);
+        } catch(e) {response.writeHead(400);response.end();}
+
+      });
+      return;
+    }
     const head = request.method === "HEAD";
     if (request.method !== "GET" && !head) {
       response.writeHead(405, { "Content-Type": "text/plain", "Allow": "GET, HEAD" });
@@ -514,6 +581,13 @@ EM_JS(int, flix_ch_listen,
       return;
     }
 
+    if(url==="/api/shards") {
+      const directory=Module.flixAuthority && typeof Module.flixAuthority.directory==="function"
+        ? Module.flixAuthority.directory() : null;
+      const body=JSON.stringify(directory);
+      response.writeHead(200,{"Content-Type":"application/json","Cache-Control":"no-store"});
+      response.end(head?undefined:body);return;
+    }
     if (url === "/transport-info") {
       const body = JSON.stringify(advertisement);
       response.writeHead(200, {
@@ -784,6 +858,10 @@ EM_JS(int, flix_ch_listen,
       try { consume(chunk); } catch (e) { drop(e, 1011); }
     });
     socket.on("error", () => net.fail(channel, "websocket error"));
+    // Upgraded HTTP sockets may be half-open after a proxy forwards FIN.
+    // Waiting for close while continuing snapshots kept the old account lease
+    // forever. EOF ends this WebSocket: notify C++ and close the writable half.
+    socket.on("end", () => { open.delete(socket); net.fail(channel, "peer ended"); socket.destroy(); });
     socket.on("close", () => { open.delete(socket); net.fail(channel, "peer closed"); });
 
     listener.pending.push(net.alloc(channel));

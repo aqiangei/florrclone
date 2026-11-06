@@ -1193,6 +1193,12 @@ struct Window::Impl {
       return std::find(claimed.begin(), claimed.end(), key) != claimed.end() ? EM_TRUE : EM_FALSE;
     }
     if (imeToggleKey) return EM_FALSE;
+    // The canvas owns its caret and selection. Moving the hidden IME buffer's
+    // caret as well turns a middle deletion into a suffix replacement in its
+    // input diff, replaying text into chat. Delete is already handled above.
+    if (impl->softKeyboardUp && (key == Key::Left || key == Key::Right ||
+        key == Key::Up || key == Key::Down || key == Key::Home ||
+        key == Key::End || key == Key::Delete)) return EM_TRUE;
     // Soft keyboard up: leave letters/Space to the <input> + IME. Keep eating
     // Enter/Escape/F-keys policy below only when we need the game to own them.
     if (impl->softKeyboardUp && key != Key::Enter && key != Key::Escape && key != Key::Tab &&

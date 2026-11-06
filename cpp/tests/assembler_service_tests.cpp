@@ -10,6 +10,48 @@
 
 using namespace flix;
 
+TEST(assembler_all_player_tiers_have_safe_sites_and_no_hyper) {
+    const auto& registry = testsupport::shippedContent();
+    WorldMaps maps; Terrain terrain; std::string error;
+    CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    NpcSystem npcs; std::vector<std::string> warnings;
+    npcs.loadSites(maps,registry,warnings);
+    World w; npcs.placeMissing(w,terrain,registry,0);
+    bool found=false; const auto realm=maps.realmOfId("cyberspace",found); CHECK(found);
+    std::array<int,kRarityCount> counts{};
+    std::vector<std::pair<Vec2,double>> positions;
+    for(const auto& site:npcs.sites()) {
+        if(site.realm!=realm || registry.mob(site.mobIndex).npc.service!=NpcService::Assembler) continue;
+        CHECK(w.isAlive(site.entity)); if(!w.isAlive(site.entity)) continue;
+        const auto& at=w.get<Transform>(site.entity); const auto radius=w.get<Body>(site.entity).radius;
+        ++counts[rarityIndex(site.rarity)];
+        CHECK(!terrain.blocked(at.position,realm));
+        for(const auto& previous:positions) CHECK(distanceSq(at.position,previous.first)>(radius+previous.second)*(radius+previous.second));
+        positions.push_back({at.position,radius});
+    }
+    for(int tier=0;tier<kRarityCount;++tier) CHECK_EQ(counts[tier],tier<=rarityIndex(Rarity::Unique)?1:0);
+}
+
+TEST(assembler_conversion_cycles_cannot_mint_material_value) {
+    const auto& c=testsupport::shippedContent();
+    // Positive value witness: each same-tier recipe conserves or consumes
+    // value, so no composition or cycle can produce a net material gain.
+    const std::map<std::string,double> value={{"glass",1},{"sand",1},{"air",1},{"bubble",1},
+        {"moon_rock",100000},{"rock",1},{"honey",1},{"wax",3},{"rose",1},{"light",1},
+        {"dahlia",2},{"battery",2},{"lightning",4},{"pollen",2},{"triangle",1},
+        {"cutter",10},{"mimic",20},{"ram",1},{"sawblade",21},{"square",1},
+        {"pentagon",2},{"cogwheel",1},{"fragment",1}};
+    for(const char* id:{"assembler","cyber_assembler","super_assembler"}) {
+        for(const auto& recipe:c.mob(c.mobIndex(id)).npc.recipes) {
+            double input=0,output=0;
+            for(const auto& s:recipe.inputs) input+=value.at(c.petal(s.petal).id)*s.count;
+            for(const auto& s:recipe.outputs) output+=value.at(c.petal(s.petal).id)*s.count;
+            CHECK(!recipe.outputRarity.has_value());
+            CHECK(output<=input);
+        }
+    }
+}
+
 TEST(assembler_quantity_hold_accelerates_and_stops_on_release_or_drag_off) {
     ui::AcceleratingRepeat hold;
     CHECK_EQ(hold.update(1, true, true, 0), 1);
@@ -189,6 +231,19 @@ TEST(assembler_batches_charge_exact_recipe_inputs_and_refuse_invalid_requests) {
     request(255,1);CHECK_EQ(record.inventory.dump(),before);
     server.world().get<Transform>(flower).position=at.position+Vec2{100000,100000};
     request(0,1);CHECK_EQ(record.inventory.dump(),before);
+    server.world().get<Transform>(flower)=at;
+    // Full output stacks must not consume any inputs or partially grant output.
+    record.inventory=Json::object();
+    for(const auto& input:recipes[0].inputs)
+        record.setItemCount(Rarity::Unique,key(input.petal),static_cast<int>(input.count*2));
+    for(const auto& output:recipes[0].outputs)
+        record.setItemCount(Rarity::Unique,key(output.petal),kMaxStackCount);
+    const auto full=record.inventory.dump();
+    request(0,1); CHECK_EQ(record.inventory.dump(),full);
+    // A forged request cannot obtain a Hyper conversion from an Eternal NPC.
+    ByteWriter forged; forged.u8(static_cast<std::uint8_t>(net::ClientMessage::Assemble));
+    forged.u8(static_cast<std::uint8_t>(Rarity::Apex)); forged.u8(0); forged.u16(1);
+    deliver(forged); CHECK_EQ(record.inventory.dump(),full);
     std::printf("  %zu recipes: exact x3 costs/results; invalid batches and distance refused\n",recipes.size());
     server.onDisconnect(connection,"test complete");
 }

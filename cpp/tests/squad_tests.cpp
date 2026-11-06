@@ -225,7 +225,7 @@ bool paid(const std::vector<Entity>& recipients, Entity who) {
 
 TEST(unsquadded_contributors_rank_by_damage_and_are_capped) {
     const std::vector<Bounty::Share> tally = {
-        {body(1), 50}, {body(2), 40}, {body(3), 30}, {body(4), 20}, {body(5), 10},
+        {body(1), 0, 50}, {body(2), 0, 40}, {body(3), 0, 30}, {body(4), 0, 20}, {body(5), 0, 10},
     };
     std::vector<Entity> paidOut;
     selectLootRecipients(tally, lootSlotsForRarity(Rarity::Common), nullptr, paidOut);
@@ -244,7 +244,7 @@ TEST(a_squad_ranks_as_one_contender_and_cannot_fill_every_slot) {
     // of them. Ranked separately they take every slot on an ordinary mob and
     // the solo player -- who did the most work of anyone -- gets nothing.
     const std::vector<Bounty::Share> tally = {
-        {body(1), 20}, {body(2), 20}, {body(3), 20}, {body(4), 20}, {body(9), 60},
+        {body(1), 0, 20}, {body(2), 0, 20}, {body(3), 0, 20}, {body(4), 0, 20}, {body(9), 0, 60},
     };
     const SquadEntityIndex squads = indexOf({{body(1), body(2), body(3), body(4)}});
 
@@ -260,7 +260,7 @@ TEST(a_squad_ranks_as_one_contender_and_cannot_fill_every_slot) {
 TEST(a_squad_is_paid_as_one_and_a_passenger_dilutes_it) {
     // The whole point of a party: body(3) never touched the mob and is paid
     // anyway, because its squad earned the slot as one contender.
-    const std::vector<Bounty::Share> tally = {{body(1), 60}, {body(2), 30}, {body(9), 25}};
+    const std::vector<Bounty::Share> tally = {{body(1), 0, 60}, {body(2), 0, 30}, {body(9), 0, 25}};
     const SquadEntityIndex squads = indexOf({{body(1), body(2), body(3)}});
 
     std::vector<Entity> paidOut;
@@ -285,7 +285,7 @@ TEST(a_squad_is_paid_as_one_and_a_passenger_dilutes_it) {
     CHECK(pairPaid.front() == body(1));
     // The squad of three ranks BELOW the solo player it would have beaten as
     // a squad of two: same damage, one more passenger.
-    const std::vector<Bounty::Share> closer = {{body(1), 60}, {body(2), 30}, {body(9), 35}};
+    const std::vector<Bounty::Share> closer = {{body(1), 0, 60}, {body(2), 0, 30}, {body(9), 0, 35}};
     std::vector<Entity> trio;
     selectLootRecipients(closer, lootSlotsForRarity(Rarity::Common), &squads, trio);
     CHECK(trio.front() == body(9));   // 35 beats 90/3
@@ -298,7 +298,7 @@ TEST(the_cap_is_spent_in_players_not_in_squads) {
     // Two full squads on an ordinary mob. Capping CONTENDERS and expanding
     // afterwards -- the bug this rule exists to have fixed -- pays all eight.
     std::vector<Bounty::Share> tally;
-    for (std::uint32_t i = 1; i <= 8; ++i) tally.push_back({body(i), 10.0 + i});
+    for (std::uint32_t i = 1; i <= 8; ++i) tally.push_back({body(i), 0, 10.0 + i});
     const SquadEntityIndex squads =
         indexOf({{body(1), body(2), body(3), body(4)}, {body(5), body(6), body(7), body(8)}});
 
@@ -311,7 +311,7 @@ TEST(a_bot_squadmate_pools_its_damage_but_is_paid_no_free_share) {
     // The party a quiet server actually has: one player and the bots they
     // invited. The bots do the killing, and the PLAYER is paid for it --
     // that is the whole reason to squad with them.
-    const std::vector<Bounty::Share> tally = {{body(2), 50}, {body(3), 40}};
+    const std::vector<Bounty::Share> tally = {{body(2), 0, 50}, {body(3), 0, 40}};
     const SquadEntityIndex squads = indexWithBot({body(1), body(2), body(3)});
 
     std::vector<Entity> paidOut;
@@ -324,7 +324,7 @@ TEST(a_bot_squadmate_pools_its_damage_but_is_paid_no_free_share) {
 
     // A bot that did NOTHING is handed nothing: an item given to one is an
     // item nobody receives, and the slot would be taken from a player.
-    const std::vector<Bounty::Share> soloTally = {{body(1), 50}, {body(9), 10}};
+    const std::vector<Bounty::Share> soloTally = {{body(1), 0, 50}, {body(9), 0, 10}};
     std::vector<Entity> idle;
     selectLootRecipients(soloTally, lootSlotsForRarity(Rarity::Common), &squads, idle);
     CHECK(paid(idle, body(1)));
@@ -338,7 +338,7 @@ TEST(a_squads_passengers_are_cut_first_when_the_cap_falls_inside_it) {
     // Three solo players ahead of a squad of four leaves one slot for it, and
     // the member holding it is the one who did the work.
     const std::vector<Bounty::Share> tally = {
-        {body(7), 90}, {body(8), 80}, {body(9), 70}, {body(1), 40}, {body(2), 10},
+        {body(7), 0, 90}, {body(8), 0, 80}, {body(9), 0, 70}, {body(1), 0, 40}, {body(2), 0, 10},
     };
     const SquadEntityIndex squads =
         indexOf({{body(1), body(2), body(3), body(4)}});
@@ -365,7 +365,7 @@ TEST(a_contender_under_one_percent_of_the_mobs_health_is_paid_nothing) {
 
     // A stray hit on a mob somebody else killed earns nothing, even with
     // three of the common tier's four slots still empty.
-    const std::vector<Bounty::Share> tally = {{body(1), 900}, {body(2), 10}, {body(3), 9.5}};
+    const std::vector<Bounty::Share> tally = {{body(1), 0, 900}, {body(2), 0, 10}, {body(3), 0, 9.5}};
     std::vector<Entity> paidOut;
     selectLootRecipients(tally, lootSlotsForRarity(Rarity::Common), nullptr, paidOut, floor);
     CHECK(paidOut.size() == 2);
@@ -387,7 +387,7 @@ TEST(a_squad_clears_the_floor_on_its_average_over_the_whole_membership) {
     // 36 damage over a squad of three is 12 each: over the floor, so the
     // squad is paid as one -- body(2), on 4 alone, and body(3), who never
     // touched it, included.
-    const std::vector<Bounty::Share> carried = {{body(9), 900}, {body(1), 32}, {body(2), 4}};
+    const std::vector<Bounty::Share> carried = {{body(9), 0, 900}, {body(1), 0, 32}, {body(2), 0, 4}};
     const SquadEntityIndex squads = indexOf({{body(1), body(2), body(3)}});
     std::vector<Entity> paidOut;
     selectLootRecipients(carried, lootSlotsForRarity(Rarity::Common), &squads, paidOut, floor);
@@ -399,7 +399,7 @@ TEST(a_squad_clears_the_floor_on_its_average_over_the_whole_membership) {
     // 27 over three is 9: under it, so NOBODY in the squad is paid -- not
     // even body(1), whose 24 would have cleared the floor on its own. The
     // average is the squad's score, and the passengers dilute it here too.
-    const std::vector<Bounty::Share> diluted = {{body(9), 900}, {body(1), 24}, {body(2), 3}};
+    const std::vector<Bounty::Share> diluted = {{body(9), 0, 900}, {body(1), 0, 24}, {body(2), 0, 3}};
     selectLootRecipients(diluted, lootSlotsForRarity(Rarity::Common), &squads, paidOut, floor);
     CHECK(paidOut.size() == 1);
     CHECK(paid(paidOut, body(9)));

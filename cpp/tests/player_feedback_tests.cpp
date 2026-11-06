@@ -177,7 +177,8 @@ TEST(feedback_corruption_and_pharaoh_are_worn_and_clear_on_unequip) {
     Query<Pet,MobType> summoned{w};
     summoned.each([&](Entity e,Pet& pet,MobType& type){
         if(pet.owner==p && !w.has<Dead>(e) && type.configIndex==content().mobIndex("mummy_beetle")){
-            ++mummies;CHECK(type.rarity==Rarity::Mythic);CHECK(w.has<RisesUndead>(e));
+            ++mummies;CHECK(type.rarity==Rarity::Super);CHECK(w.has<RisesUndead>(e));
+            CHECK(w.get<ContactDamage>(e).amount>0);
         }
     });
     CHECK_EQ(mummies,6);
@@ -348,7 +349,9 @@ TEST(feedback_ant_hell_supers_cover_black_fire_and_termite_habitats) {
         for(const auto& e:map->elements())if(e.isSpawnBand()&&e.contains(at.position)){const int f=familyOf(e);if(f>=0){++habitats[f];break;}}
     });
     std::printf("Ant Hell Supers %d; black %d fire %d termite %d\n",supers,habitats[0],habitats[1],habitats[2]);
-    CHECK_EQ(supers-farms,5);CHECK_EQ(farms,8);for(const auto n:habitats)CHECK(n>0);
+    CHECK_EQ(supers - farms, SuperPopulation::target);
+    CHECK_EQ(farms, kSuperFarmPopulation);
+    for (const auto count : habitats) CHECK(count > 0);
 }
 
 TEST(feedback_mound_entry_selects_tier_map_and_exposes_exterior_marker) {

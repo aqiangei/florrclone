@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include "server/replication.h"
+#include "server/systems/combat.h"
 #include "server/systems/mob_ai.h"
 #include "server/systems/movement.h"
 
@@ -1549,7 +1550,7 @@ TEST(a_sandstorm_pet_pulls_ahead_of_a_running_owner_but_stays_on_its_leash) {
     CHECK(farthest < kViewportHeight * 0.5);
 }
 
-TEST(a_pet_fights_the_nearest_wild_mob_in_any_direction) {
+TEST(a_pet_prefers_mobs_nearer_its_owner_at_the_same_tier) {
     CHECK(contentReady());
     Sim sim;
     const Entity owner = sim.spawnPlayer(kOrigin);
@@ -1559,12 +1560,12 @@ TEST(a_pet_fights_the_nearest_wild_mob_in_any_direction) {
     // pet is the centre now, not the flower: what it can reach is what it sees.
     const Entity byPet = sim.spawnMob("rock", kOrigin + Vec2{450, 0});
     const Entity byOwner = sim.spawnMob("rock", kOrigin + Vec2{-200, 0});
-    (void)byOwner;
+    (void)byPet;
 
     sim.tick();
-    CHECK_EQ(sim.brainOf(pet).target, byPet);
+    CHECK_EQ(sim.brainOf(pet).target, byOwner);
     // And it chases it on the wild one's pursuit.
-    CHECK(sim.velocityOf(pet).x > 0.0);
+    CHECK(sim.velocityOf(pet).x < 0.0);
 }
 TEST(a_pet_prefers_the_highest_tier_mob_in_reach) {
     CHECK(contentReady());
@@ -1581,6 +1582,42 @@ TEST(a_pet_prefers_the_highest_tier_mob_in_reach) {
     sim.tick();
     CHECK_EQ(sim.brainOf(pet).target, epic);
 }
+
+TEST(egg_pet_attacks_same_tier_mob_at_its_edge) {
+    CHECK(contentReady());
+    for (Rarity tier : {Rarity::Super, Rarity::Unique, Rarity::Apex}) {
+        Sim sim;
+        MovementSystem movement;
+        CombatSystem combat;
+        EventQueue events;
+        const Entity owner = sim.spawnPlayer(kOrigin);
+        const Entity pet = sim.spawnMob("soldier_ant", kOrigin, tier);
+        const Entity mob = sim.spawnMob("baby_ant", kOrigin, tier);
+        sim.world.add<Pet>(pet, Pet{owner, 0});
+        sim.world.get<Faction>(pet).team = Team::Players;
+        const auto t = static_cast<std::size_t>(ladderIndex(tier));
+        sim.world.get<Body>(pet).radius *= kPetSizeScale[t] / kMobSizeScale[t] *
+            mobSizeRamp(tier, kPetSizeScaleAtUnique);
+        sim.world.get<Health>(pet) = Health{1e15, 1e15};
+        sim.world.get<Health>(mob) = Health{1e15, 1e15};
+        const double radii = sim.world.get<Body>(pet).radius * mobBodyContactScale("soldier_ant") +
+                             sim.world.get<Body>(mob).radius * mobBodyContactScale("baby_ant");
+        sim.world.get<Transform>(mob).position = kOrigin + Vec2{radii + 70, 0};
+        for (int tick = 0; tick < 160; ++tick) {
+            sim.tickIntent();
+            movement.runWorldPhase(sim.world, sim.terrain, sim.now, sim.dt);
+            sim.rebuildGrid();
+            combat.beginTick(sim.world, sim.now, sim.dt, events);
+            combat.runContactPhase(sim.world, sim.grid, content(), sim.now);
+            events.clear();
+        }
+        CHECK_EQ(sim.brainOf(pet).target, mob);
+        CHECK(sim.gap(pet, mob) >= radii - 1.0);
+        CHECK(sim.gap(pet, mob) <= radii + kMobCollisionBuffer + 1.0);
+        CHECK(sim.world.get<Health>(mob).current < 1e15);
+    }
+}
+
 TEST(a_pet_holds_a_map_dummy_as_its_training_target_until_it_leaves_view){
     CHECK(contentReady());Sim sim;const auto owner=sim.spawnPlayer(kOrigin);
     const auto pet=sim.spawnMob("soldier_ant",kOrigin+Vec2{100,0});sim.world.add<Pet>(pet,Pet{owner,0});
@@ -1595,7 +1632,7 @@ TEST(a_pet_holds_a_map_dummy_as_its_training_target_until_it_leaves_view){
     sim.world.get<Transform>(dummy).position=kOrigin+Vec2{10000,0};sim.tickIntent();CHECK(sim.brainOf(pet).target==other);
 }
 
-TEST(a_pet_switches_to_a_mob_that_comes_nearer_it) {
+TEST(a_pet_switches_to_a_mob_that_comes_nearer_its_owner_with_a_margin) {
     CHECK(contentReady());
     Sim sim;
     const Entity owner = sim.spawnPlayer(kOrigin);
@@ -1606,7 +1643,7 @@ TEST(a_pet_switches_to_a_mob_that_comes_nearer_it) {
     CHECK_EQ(sim.brainOf(pet).target, first);
 
     // Inside the margin it keeps its fight; well inside it, it switches.
-    const Entity close = sim.spawnMob("rock", kOrigin + Vec2{0, 250});
+    const Entity close = sim.spawnMob("rock", kOrigin + Vec2{0, 350});
     sim.tick();
     CHECK_EQ(sim.brainOf(pet).target, first);
     sim.world.get<Transform>(close).position = kOrigin + Vec2{0, 100};
@@ -1641,7 +1678,7 @@ TEST(a_pet_off_its_owners_screen_drops_its_fight_and_walks_back) {
     }
 }
 
-TEST(a_pet_behind_a_wall_is_stuck_rather_than_teleported_or_recalled) {
+TEST(a_pet_behind_a_wall_requests_safe_recovery_instead_of_waiting_forever) {
     CHECK(contentReady());
     Sim sim;
     const int wallTx = Terrain::toTileCoord(kOrigin.x) + 3;
@@ -1661,7 +1698,7 @@ TEST(a_pet_behind_a_wall_is_stuck_rather_than_teleported_or_recalled) {
         sim.world.get<Transform>(pet).position = start;
     }
     CHECK(sim.brainOf(pet).petReturning);
-    CHECK(!sim.brainOf(pet).petRecall);
+    CHECK(sim.brainOf(pet).petRecall);
     // Still pushing at its owner, into the wall.
     CHECK(sim.velocityOf(pet).x < 0.0);
 }
@@ -2372,6 +2409,24 @@ TEST(a_glitch_volley_carries_the_infection_and_a_hornets_does_not) {
         const Entity shot = fireAndCatch(sim);
         CHECK(shot != NULL_ENTITY);
         if (shot != NULL_ENTITY) CHECK(!sim.world.get<Projectile>(shot).glitchInfecting);
+    }
+}
+
+TEST(pet_damage_talent_scales_hornet_projectiles_without_changing_fire_rate) {
+    CHECK(contentReady());
+    double damage = 0;
+    for (double scale : {1.0, 2.0}) {
+        Sim sim;
+        const auto owner = sim.spawnPlayer(kOrigin - Vec2{100,0});
+        const auto pet = sim.spawnMob("hornet", kOrigin);
+        sim.world.add<Pet>(pet, Pet{owner,0,0,scale});
+        sim.world.get<Faction>(pet) = Faction{Team::Players,false};
+        sim.spawnMob("soldier_ant", kOrigin + Vec2{200,0});
+        const auto shot = fireAndCatch(sim);
+        CHECK(shot != NULL_ENTITY);
+        if(shot == NULL_ENTITY) continue;
+        if(scale == 1.0) damage = sim.world.get<Projectile>(shot).damage;
+        else CHECK_NEAR(sim.world.get<Projectile>(shot).damage, damage*2, 1e-9);
     }
 }
 
@@ -3275,14 +3330,16 @@ std::vector<Entity> websIn(World& world) {
 
 } // namespace
 
-TEST(a_spider_lays_a_web_where_it_stands_once_a_second) {
+TEST(a_spider_lays_a_web_where_it_stands_at_low_frequency) {
     CHECK(contentReady());
     const WebSpec& spec = content().mob(content().mobIndex("spider")).web;
     CHECK(spec.present);
 
     Sim sim;
     const Entity spider = sim.spawnMob("spider", kOrigin, Rarity::Legendary);
-    // gardn lays on `lifetime % TPS == 0`, which is true the tick it is born.
+    const auto player = sim.spawnPlayer(kOrigin + Vec2{100, 0});
+    sim.hurt(spider, player);
+    // Webs start only after acquiring a player.
     sim.tickIntent();
     std::vector<Entity> webs = websIn(sim.world);
     CHECK_EQ(webs.size(), std::size_t(1));
@@ -3304,9 +3361,10 @@ TEST(a_spider_lays_a_web_where_it_stands_once_a_second) {
     CHECK(sim.world.get<Faction>(web).team == Team::Hostiles);
     CHECK(sim.world.has<Replicated>(web));
 
-    // Two and a half seconds on: one at 1 s and one at 2 s, and no more.
-    sim.tickIntent(75);
-    CHECK_EQ(websIn(sim.world).size(), std::size_t(3));
+    // Sustained aggro must not create another field during the old fast cadence.
+    sim.tickIntent(static_cast<int>(2.5 / sim.dt));
+    CHECK_EQ(websIn(sim.world).size(), std::size_t(1));
+    CHECK(spec.intervalMillis >= 15000.0);
 }
 
 TEST(only_a_legendary_spider_or_above_lays_webs) {
@@ -3316,11 +3374,13 @@ TEST(only_a_legendary_spider_or_above_lays_webs) {
     for (int t = 0; t < kLadderRarityCount; ++t) {
         const Rarity rarity = clampRarity(t);
         Sim sim;
-        sim.spawnMob("spider", kOrigin, rarity);
-        sim.tickIntent(45);   // a second and a half: two webs if it lays at all
+        const auto spider = sim.spawnMob("spider", kOrigin, rarity);
+        const auto player = sim.spawnPlayer(kOrigin + Vec2{100, 0});
+        sim.hurt(spider, player);
+        sim.tickIntent(static_cast<int>(1.5 / sim.dt));
         const std::size_t laid = websIn(sim.world).size();
         if (rarityIndex(rarity) >= rarityIndex(Rarity::Legendary)) {
-            CHECK_EQ(laid, std::size_t(2));
+            CHECK_EQ(laid, std::size_t(1));
         } else {
             CHECK_EQ(laid, std::size_t(0));
         }
@@ -3376,7 +3436,7 @@ TEST(a_bumble_bee_drops_still_pollen_at_its_tail_once_a_second) {
     CHECK(going.lengthSq() > 0.0);
     CHECK(back.x * going.x + back.y * going.y < 0.0);
 
-    // Two and a half seconds on: one at 1 s and one at 2 s, and no more.
+    // Sustained aggro must not create another field during the old fast cadence.
     sim.tickIntent(75);
     CHECK_EQ(shotCount(sim), 3);
 }
@@ -3975,8 +4035,44 @@ TEST(large_egg_summons_push_large_wild_mobs_in_proportion_to_body_size) {
 TEST(a_pet_does_not_chase_a_high_tier_past_its_return_boundary) {
     CHECK(contentReady()); Sim sim;
     const auto owner=sim.spawnPlayer(kOrigin);
-    const auto pet=sim.spawnMob("soldier_ant",kOrigin+Vec2{900,0});sim.world.add<Pet>(pet,Pet{owner,0});
-    const auto near=sim.spawnMob("rock",kOrigin+Vec2{850,0});
+    const auto pet=sim.spawnMob("soldier_ant",kOrigin+Vec2{650,0});sim.world.add<Pet>(pet,Pet{owner,0});
+    const auto near=sim.spawnMob("rock",kOrigin+Vec2{550,0});
     sim.spawnMob("ladybug",kOrigin+Vec2{1100,0},Rarity::Epic);
     sim.tickIntent();CHECK_EQ(sim.brainOf(pet).target,near);
+}
+
+TEST(a_pet_guards_nearby_high_tier_mobs_before_a_distant_boss) {
+    CHECK(contentReady()); Sim sim;
+    const auto owner = sim.spawnPlayer(kOrigin);
+    const auto pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{100,0});
+    sim.world.add<Pet>(pet, Pet{owner,0});
+    sim.spawnMob("rock", kOrigin + Vec2{110,0});
+    const auto near = sim.spawnMob("ladybug", kOrigin + Vec2{550,0}, Rarity::Epic);
+    sim.spawnMob("ladybug", kOrigin + Vec2{850,0}, Rarity::Unique);
+    sim.tickIntent(); CHECK_EQ(sim.brainOf(pet).target, near);
+    sim.world.get<Transform>(owner).position.x -= 700;
+    sim.tickIntent(); CHECK(sim.brainOf(pet).petReturning);
+    CHECK_EQ(sim.brainOf(pet).target, NULL_ENTITY);
+    CHECK(sim.velocityOf(pet).x < 0);
+}
+
+TEST(a_pet_return_speed_can_catch_a_running_owner) {
+    CHECK(contentReady()); Sim sim;
+    const auto owner = sim.spawnPlayer(kOrigin);
+    sim.world.get<Motion>(owner).velocity = Vec2{-kPlayerMaxSpeed * 1.5,0};
+    const auto pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{1000,0});
+    sim.world.add<Pet>(pet, Pet{owner,0});
+    sim.tickIntent(120);
+    CHECK(sim.brainOf(pet).petReturning);
+    CHECK(sim.velocityOf(pet).x < -kPlayerMaxSpeed * 1.5);
+}
+
+TEST(feedback1105_spider_waits_for_player_and_stops_after_death) {
+    CHECK(contentReady());
+    Sim sim;const auto spider=sim.spawnMob("spider",kOrigin,Rarity::Legendary);
+    sim.tickIntent(180);CHECK(websIn(sim.world).empty());
+    const auto p=sim.spawnPlayer(kOrigin+Vec2{100,0});sim.hurt(spider,p);sim.tickIntent();
+    CHECK_EQ(websIn(sim.world).size(),std::size_t(1));
+    sim.world.add<Dead>(p);sim.world.get<Health>(p).current=0;
+    sim.tickIntent(180);CHECK_EQ(websIn(sim.world).size(),std::size_t(1));
 }

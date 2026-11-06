@@ -5,6 +5,7 @@
 #include "server/systems/combat.h"
 #include "server/systems/movement.h"
 #include "shared/game/config.h"
+#include "shared/game/body_contact.h"
 #include "shared/game/constants.h"
 #include "shared/game/rarity.h"
 
@@ -478,6 +479,11 @@ void MobAiSystem::layWeb(World& world, Entity self, double nowMillis,
                          CommandBuffer& commands) {
     WebClock* clock = world.tryGet<WebClock>(self);
     if (clock == nullptr || nowMillis < clock->nextMillis) return;
+    const MobAi* ai = world.tryGet<MobAi>(self);
+    if (!ai || !world.has<PlayerTag>(ai->target) || !isStanding(world, ai->target)) return;
+    const Transform* target = world.tryGet<Transform>(ai->target);
+    const Transform* origin = world.tryGet<Transform>(self);
+    if (!target || !origin || target->realm != origin->realm) return;
     const MobType* type = world.tryGet<MobType>(self);
     const Transform* transform = world.tryGet<Transform>(self);
     const Body* body = world.tryGet<Body>(self);
@@ -551,6 +557,7 @@ void MobAiSystem::dropProjectile(World& world, Entity self, double nowMillis,
     shot.distance = kWorldSize;
     shot.lifetimeSeconds = spec.lifetimeMillis / 1000.0;
     shot.damage = ammo.damage;
+    if (const auto* summoned = world.tryGet<Pet>(self)) shot.damage *= summoned->damageTalentScale;
     shot.health = ammo.breakable && ammo.health > 0.0 ? ammo.health : kProjectileDefaultHealth;
     shot.owner = self;
     // A pet's drop answers to its player, exactly as its volley does.
@@ -940,6 +947,7 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
     shot.speed = speed;
     shot.distance = reach;
     shot.damage = ammo.damage;
+    if (const auto* summoned = world.tryGet<Pet>(shooter)) shot.damage *= summoned->damageTalentScale;
     // Graded at the shooter's tier alongside the damage, so an apex hornet's
     // missiles punch through what a common hornet's are stopped by.
     shot.health = ammo.breakable && ammo.health > 0.0 ? ammo.health : kProjectileDefaultHealth;
@@ -1469,7 +1477,7 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
     // blind: the range grows on the same size ladder as the body, so a mob's
     // circle reaches the same multiple of its own radius at every tier -- a
     // super wasp's is 3,355 units against a 436-unit body.
-    const double range = ai.aggroRange > 0.0 ? ai.aggroRange : kEnemyChaseRange;
+    const double range = (ai.aggroRange > 0.0 ? ai.aggroRange : kEnemyChaseRange) * 1.12;
 
     // Provocation first, which is where gardn has it: over there it happens in
     // the damage phase (inflict_damage targets the attacker of any mob with no
@@ -1592,7 +1600,32 @@ bool MobAiSystem::pursueTarget(World& world, Entity self, const MobType& type,
         return true;
     }
 
-    desired = gap > 0.0 ? toTarget * (chaseSpeed / gap) : Vec2{0, 0};
+    double closingSpeed = chaseSpeed;
+    if (!drive.shoots && gap > 0.0 && dt > 0.0 && threatBody != nullptr &&
+        world.has<MobTag>(ai.target) && world.has<Pet>(self) != world.has<Pet>(ai.target)) {
+        const MobType* targetType = world.tryGet<MobType>(ai.target);
+        if (targetType != nullptr) {
+            const auto& attacker = content().mob(type.configIndex);
+            const auto& defender = content().mob(targetType->configIndex);
+            if (!attacker.noMobCollision && !defender.noMobCollision) {
+                // Walk into contact range, not into the other mob's centre.
+                // Combat allows the separation buffer for this pair.
+                const double contact = body.radius * mobBodyContactScale(attacker.id) +
+                    threatRadius * mobBodyContactScale(defender.id) + kMobCollisionBuffer * 0.5;
+                closingSpeed = std::min(chaseSpeed, std::max(0.0, gap - contact) / dt);
+                const double selfHalf=squareMobHalfExtent(world,self);
+                const double targetHalf=squareMobHalfExtent(world,ai.target);
+                if(selfHalf>0 || targetHalf>0) {
+                    const auto shaped=shapedBodyContact(transform.position,
+                        body.radius*mobBodyContactScale(attacker.id),selfHalf,transform.angle,
+                        threat->position,threatRadius*mobBodyContactScale(defender.id),
+                        targetHalf,threat->angle,kMobCollisionBuffer*.5);
+                    closingSpeed=std::min(chaseSpeed,std::max(0.0,-shaped.depth)/dt);
+                }
+            }
+        }
+    }
+    desired = gap > 0.0 ? toTarget * (closingSpeed / gap) : Vec2{0, 0};
     // A `bee_ai: "always"` mob weaves across its bearing rather than flying a
     // straight line at the flower, off the same per-mob phase so a swarm on
     // one flower weaves out of step with itself. The sideways part is sized
@@ -1605,11 +1638,11 @@ bool MobAiSystem::pursueTarget(World& world, Entity self, const MobType& type,
             const double t = nowMillis / 1000.0 + wobble->phase;
             const double sway = -kBeeChaseWeave * std::cos(2.0 * t);
             const Vec2 side{-toTarget.y / gap, toTarget.x / gap};
-            desired += side * (chaseSpeed * std::tan(sway));
+            desired += side * (closingSpeed * std::tan(sway));
         }
     }
     // Look where you are going, unless the weapon is at the other end.
-    facing = desired;
+    facing = closingSpeed < chaseSpeed ? toTarget : desired;
     if (drive.shoots) {
         const double bearing = toTarget.angle();
         // A mob with a gun closes to its standoff and then HOLDS -- it keeps
@@ -1802,7 +1835,7 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
     // The ten player-speed chasers never read `speed` while pursuing, so the
     // slow has to reach the override as well or a web slows every mob in the
     // game except the ones it is for.
-    const double factor = slowFactorOf(world, self, nowMillis);
+    const double factor = slowFactorOf(world, self, nowMillis) * 1.08;
     const double speed = drive.speed * factor;
     const double chaseSpeed = drive.chaseSpeed * factor;
 
@@ -1915,15 +1948,15 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
     // reaches, from where it actually stands. An ownerless one has only its own
     // range.
     const double searchReach =
-        hasOwner ? std::max(range, std::sqrt(kPetViewHalfWidth * kPetViewHalfWidth +
-                                             kPetViewHalfHeight * kPetViewHalfHeight))
+        hasOwner ? std::max({range, kPetOwnerTargetRadius,
+                             std::hypot(kPetViewHalfWidth, kPetViewHalfHeight)})
                  : range;
     const double reachSq = searchReach * searchReach;
     const auto* pet = world.tryGet<Pet>(self);
     const auto* ownerAt = hasOwner && pet ? world.tryGet<Transform>(pet->owner) : nullptr;
     const auto withinLeash = [&](Vec2 position) {
-        return !ownerAt || (std::abs(position.x - ownerAt->position.x) <= kPetViewHalfWidth &&
-                            std::abs(position.y - ownerAt->position.y) <= kPetViewHalfHeight);
+        return !ownerAt || distanceSq(position, ownerAt->position) <=
+            kPetOwnerTargetRadius * kPetOwnerTargetRadius;
     };
 
     // Map training posts are NPCs, not MobTag entities. Keep an established
@@ -1967,17 +2000,28 @@ Entity MobAiSystem::acquirePetPrey(World& world, const Terrain& terrain, const S
         } else if (const Replicated* replicated = world.tryGet<Replicated>(candidate)) {
             tier = rarityIndex(replicated->rarity);
         }
-        double score = std::sqrt(gapSq) - tier * kPetTargetTierStride;
+        // Guard the flower's nearby fight first, then prefer rarity inside
+        // that area. A remote boss cannot pull the pet away from its owner.
+        const double ownerGap = ownerAt ? distance(at->position, ownerAt->position) : std::sqrt(gapSq);
+        const double priorityRange = kPetOwnerPriorityRadius +
+            (candidate == ai.target ? kPetRetargetMargin : 0.0);
+        const bool nearOwner = ownerAt && ownerGap <= priorityRange;
+        double score = ownerGap - tier * kPetTargetTierStride;
+        if (nearOwner) score -= kPetTargetTierStride * kRarityCount;
         if (candidate == ai.target) score -= kPetRetargetMargin;
         candidates_.push_back(Candidate{candidate, at->position, score});
     }
 
-    std::sort(candidates_.begin(), candidates_.end(),
-              [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
     // Sight is the PET's: it goes for what it can reach, and a mob behind a
     // wall from it falls to the next in the order.
     const std::size_t rays = std::min<std::size_t>(candidates_.size(),
                                                    static_cast<std::size_t>(kTargetLosRayCap));
+    // Only this prefix is ever read. Crowded fights shouldn't pay to sort
+    // every mob around every pet on each tick.
+    std::partial_sort(candidates_.begin(), candidates_.begin() + rays, candidates_.end(),
+                      [](const Candidate& a, const Candidate& b) {
+                          return a.score != b.score ? a.score < b.score : a.entity < b.entity;
+                      });
     for (std::size_t i = 0; i < rays; ++i) {
         if (!terrain.segmentBlocked(from, candidates_[i].position, realm)) return candidates_[i].entity;
     }
@@ -2063,7 +2107,7 @@ bool MobAiSystem::walkToOwner(World& world, const Terrain& terrain, Entity self,
     const Vec2 toOwner = ownerPosition - transform.position;
     const double gap = toOwner.length();
     if (!ai.petReturning) {
-        if (std::abs(toOwner.x) <= kPetViewHalfWidth && std::abs(toOwner.y) <= kPetViewHalfHeight) {
+        if (gap <= kPetFollowDistance) {
             return false;
         }
         // Off the owner's screen. The fight is DROPPED, not paused: a pet that
@@ -2086,18 +2130,12 @@ bool MobAiSystem::walkToOwner(World& world, const Terrain& terrain, Entity self,
         return false;
     }
 
-    if (terrain.segmentBlocked(transform.position, ownerPosition, transform.realm)) {
-        // Behind a wall it keeps walking at its owner and the wall holds it
-        // there. That is stuck, not trapped: the clock starts over, and only
-        // getting way too far (kPetRecallDistance) retires it.
-        ai.petBestGap = gap;
-        ai.petProgressMillis = nowMillis;
-    } else if (gap < ai.petBestGap - kPetProgressStep) {
+    if (gap < ai.petBestGap - kPetProgressStep) {
         ai.petBestGap = gap;
         ai.petProgressMillis = nowMillis;
     } else if (nowMillis - ai.petProgressMillis >= kPetTrappedMillis) {
-        // In plain sight of its owner and getting no closer: trapped. The
-        // petal system retires it and charges its egg the reload.
+        // Walls must not reset this clock forever. The petal pass recovers
+        // the SAME pet on safe ground, preserving health and its lifetime.
         ai.petRecall = true;
     }
 
@@ -2206,8 +2244,11 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
 
     // Off the owner's screen, it walks back before anything else: at the pace
     // it would chase at, as a nest's escort marches home.
+    const auto* ownerMotion = world.tryGet<Motion>(owner);
+    const double followSpeed = std::max(kPlayerMaxSpeed,
+        ownerMotion ? ownerMotion->velocity.length() : 0.0) * kPetFollowSpeedFactor * slow;
     bool driven = walkToOwner(world, terrain, self, transform, ai, ownerPosition,
-                              std::max(chaseSpeed, speed), nowMillis, desired);
+                              std::max({chaseSpeed, speed, followSpeed}), nowMillis, desired);
     if (!driven) {
         if (attacks) {
             ai.target = acquirePetPrey(world, terrain, grid, self, transform.position,
@@ -2527,6 +2568,7 @@ void MobAiSystem::fireRingPetal(World& world, Entity self, const PetalRingSpec& 
     shot.from = from + Vec2::fromAngle(shot.angle, orbit);
     shot.realm = realm;
     shot.damage = ammo.damage;
+    if (const auto* summoned = world.tryGet<Pet>(self)) shot.damage *= summoned->damageTalentScale;
     shot.health = ammo.breakable && ammo.health > 0.0 ? ammo.health : kProjectileDefaultHealth;
     shot.owner = self;
     // A wild mob answers for its own shot. A dandelion summoned as somebody's
@@ -2694,6 +2736,16 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
     // components its type calls for on the first tick it thinks, and that --
     // like a volley -- is a structural change, which relocates the very
     // columns an in-place walk would be holding.
+    SpatialGrid baitGrid;
+    bool hasBaits = false;
+    Query<HoneyBait, Transform, Health> baitQuery{world};
+    baitQuery.each([&](Entity e, HoneyBait&, Transform& at, Health& health) {
+        if (health.current > 0 && !world.has<Dead>(e)) {
+            hasBaits = true;
+            baitGrid.insert(e, at.realm, at.position, 0);
+        }
+    });
+    std::vector<Entity> nearbyBaits;
     mobs_.collect(stepList_);
     for (const Entity self : stepList_) {
         if (!world.isAlive(self) || world.tryGet<Dead>(self) != nullptr) continue;
@@ -2726,6 +2778,30 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         MobAi* ai = world.tryGet<MobAi>(self);
         if (transform == nullptr || motion == nullptr || body == nullptr || kind == nullptr ||
             ai == nullptr) {
+            continue;
+        }
+        // Honey is a local, visible decoy; never scan every player's bait for every mob.
+        nearbyBaits.clear();
+        if (hasBaits && ai->kind != AiKind::Stationary && ai->kind != AiKind::Sandstorm &&
+            !world.has<Pet>(self) && drive.chaseSpeed > 0.0)
+            baitGrid.query(transform->realm, transform->position, 600.0, nearbyBaits);
+        Entity lure = NULL_ENTITY; double nearest = 600.0 * 600.0;
+        for (Entity candidate : nearbyBaits) {
+            const auto& baitAt = world.get<Transform>(candidate);
+            const double d = distanceSq(transform->position, baitAt.position);
+            if (d < nearest && !terrain.segmentBlocked(transform->position, baitAt.position, transform->realm)) {
+                lure = candidate; nearest = d;
+            }
+        }
+        const auto* previousTarget = world.tryGet<Transform>(ai->target);
+        if (lure != NULL_ENTITY && (!previousTarget || world.has<HoneyBait>(ai->target) ||
+            previousTarget->realm != transform->realm ||
+            nearest * (.28 * .28) < distanceSq(transform->position, previousTarget->position))) {
+            const Vec2 delta = world.get<Transform>(lure).position - transform->position;
+            ai->target = lure;
+            motion->velocity = delta.normalized() * drive.chaseSpeed *
+                slowFactorOf(world, self, nowMillis) * 1.08;
+            if (delta.lengthSq() > 1.0) transform->angle = delta.angle();
             continue;
         }
         steerMob(world, terrain, grid, self, *transform, *motion, *body, *kind, *ai, drive,

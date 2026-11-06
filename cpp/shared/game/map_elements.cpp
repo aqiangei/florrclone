@@ -1050,6 +1050,38 @@ void WorldMaps::retargetPrestigePads() {
     }
 }
 
+void WorldMaps::linkReciprocalPads() {
+    const auto countPadsTo = [](const MapData& map, const std::string& id) {
+        return std::count_if(map.elements().begin(), map.elements().end(), [&](const MapElement& pad) {
+            return pad.kind == MapElementKind::Teleporter && pad.targetMap == id;
+        });
+    };
+    for (MapData& source : maps_) {
+        for (MapElement& pad : source.elements_) {
+            if (pad.kind != MapElementKind::Teleporter || pad.targetMap.empty() ||
+                pad.targetMap == source.id() || !pad.toPad.empty() ||
+                !pad.targetSpawn.empty() || pad.hasTeleportTo) continue;
+            bool found = false;
+            const Realm realm = realmOfId(pad.targetMap, found);
+            if (!found) continue;
+            const MapData& destination = *forRealm(realm);
+            const auto returns = countPadsTo(destination, source.id());
+            if (returns == 0) continue; // An authored one-way portal can still use the default spawn.
+            if (returns != 1 || countPadsTo(source, destination.id()) != 1) {
+                warnings_.push_back("[" + source.id() + "] multiple portal links with " +
+                                    destination.id() + "; use an explicit pad link");
+                continue;
+            }
+            const auto target = std::find_if(destination.elements().begin(), destination.elements().end(),
+                [&](const MapElement& other) {
+                    return other.kind == MapElementKind::Teleporter && other.targetMap == source.id();
+                });
+            pad.teleportTo = target->centre();
+            pad.hasTeleportTo = true;
+        }
+    }
+}
+
 void WorldMaps::index() {
     spawnChoices_.clear();
     doors_.clear();
@@ -1125,6 +1157,7 @@ void WorldMaps::index() {
 
     const std::vector<const MapElement*> arrivals = linkPads();
     retargetPrestigePads();
+    linkReciprocalPads();
 
     // Teleporters are checked HERE, once, rather than when a player stands on
     // one: a pad aimed at a map nobody staged is a map bug, and the moment to

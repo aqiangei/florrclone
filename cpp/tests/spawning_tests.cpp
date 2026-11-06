@@ -2747,6 +2747,25 @@ TEST(a_fire_ant_hole_waits_for_a_flower_then_sends_its_whole_brood) {
     CHECK_EQ(sim.mobCount(), 1 + spec.count);
 }
 
+TEST(fire_ant_burrow_cannot_be_one_shot_before_releasing_ants) {
+    Sim sim;
+    const auto& content = shipped();
+    const auto type = content.mobIndex("fire_ant_burrow");
+    const auto nest = sim.spawner.spawnMob(sim.world, sim.terrain, content, type,
+        Rarity::Super, kCentre, Realm::Overworld, 0.0, sim.rng);
+    CHECK(nest != NULL_ENTITY);
+    if (nest == NULL_ENTITY) return;
+    const auto flower = makePlayer(sim.world, kCentre);
+    CombatSystem combat;
+    const auto hit = combat.applyDamage(sim.world, nest, flower, 1e12, sim.now);
+    CHECK(hit.refused);
+    CHECK(!sim.world.has<Dead>(nest));
+    sim.tick({kCentre});
+    const auto* brood = sim.world.tryGet<AmbushNest>(nest);
+    CHECK(brood && brood->released);
+    if (brood) CHECK_EQ(brood->brood.size(), std::size_t(30));
+}
+
 TEST(a_bigger_fire_ant_hole_springs_from_further_off) {
     // The gap is in the hole's own radii: a flower standing where a common
     // hole would never notice it is already inside a mythic's reach.
@@ -3900,7 +3919,7 @@ TEST(an_orb_converts_only_its_wearers_drops) {
     // wears nothing. Each must still get their OWN copy of every drop.
     const Entity wearer = makePlayer(world, kCentre + Vec2{5000, 0});
     const Entity plain = makePlayer(world, kCentre + Vec2{-5000, 0});
-    wear(world, wearer, "magic_orb", Rarity::Common);
+    wear(world, wearer, "mana_orb", Rarity::Common);
     for (int i = 0; i < 40; ++i) {
         const Entity corpse = makeCorpse(world, shipped().mobIndex("leafbug"), Rarity::Uncommon,
                                          kCentre, wearer, {wearer, plain});
@@ -3914,7 +3933,7 @@ TEST(an_orb_converts_only_its_wearers_drops) {
     const std::uint16_t root = shipped().petalIndex("root");
     int wearerMagic = 0;
     int plainLeaves = 0;
-    int sharedRoots = 0;
+    int wearerRoots = 0, plainRoots = 0;
     for (const Entity drop : liveDrops(world)) {
         const DropItem& item = world.get<DropItem>(drop);
         const bool forWearer = claimed(item.eligible, wearer, 0);
@@ -3922,21 +3941,23 @@ TEST(an_orb_converts_only_its_wearers_drops) {
         if (item.configIndex == magicLeaf) {
             CHECK(forWearer && !forPlain);
             CHECK_EQ(rarityIndex(item.rarity), rarityIndex(Rarity::Common));
-            ++wearerMagic;
+            wearerMagic+=static_cast<int>(item.quantity);
         }
         if (item.configIndex == leaf) {
             CHECK(forPlain && !forWearer);
-            ++plainLeaves;
+            plainLeaves+=static_cast<int>(item.quantity);
         }
-        // No magic form: one drop for both, exactly as before.
+        // No magic form: both retain the same quantity, even when orb groups
+        // are represented by separate physical stacks.
         if (item.configIndex == root) {
-            CHECK(forWearer && forPlain);
-            ++sharedRoots;
+            CHECK(forWearer || forPlain);
+            if(forWearer)wearerRoots+=static_cast<int>(item.quantity);
+            if(forPlain)plainRoots+=static_cast<int>(item.quantity);
         }
     }
-    CHECK_EQ(wearerMagic, 40);
-    CHECK_EQ(plainLeaves, 40);
-    CHECK(sharedRoots > 0);
+    CHECK(wearerMagic>0);
+    CHECK_EQ(wearerMagic, plainLeaves);
+    CHECK(wearerRoots > 0);CHECK_EQ(wearerRoots,plainRoots);
 }
 
 TEST(a_non_contributor_can_never_take_an_eligible_players_drop) {

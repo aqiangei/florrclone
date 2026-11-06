@@ -154,6 +154,7 @@ bool NetClient::connect(const std::string& host, std::uint16_t port) {
 void NetClient::disconnect() {
     dialer_.disconnect();
     status_ = Status::Offline;
+    clearViewOnSnapshot_ = false;
     view_.clear();
     chatBubbles_.clear();
     dead_ = false;
@@ -324,7 +325,7 @@ void NetClient::forgetAccount() {
     craftOutcome_ = CraftOutcome{};
     craftAttemptCount_ = 0;
     pyramidMapRevealed = false;
-    lockedShopRotation=-1;lockedShopOffers.clear();dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=0;
+    lockedShopRotation=-1;lockedShopOffers.clear();currentShopRotation=-1;currentShopOffers.clear();dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=0;
     oracleOutcome_ = OracleOutcome{};
     oracleReadyAtMillis_ = 0;
     tradeOutcome_ = TradeOutcome{};
@@ -346,6 +347,7 @@ void NetClient::forgetAccount() {
     // AdminAnnouncement::sequence.
     adminAnnouncement_.author.clear();
     adminAnnouncement_.text.clear();
+    clearViewOnSnapshot_ = false;
     view_.clear();
     chatBubbles_.clear();
     dead_ = false;
@@ -388,6 +390,7 @@ void NetClient::leaveGame() {
 void NetClient::forgetWorld() {
     pyramidMapRevealed = false;
     if (status_ == Status::Playing) status_ = Status::LoggedIn;
+    clearViewOnSnapshot_ = false;
     view_.clear();
     chatBubbles_.clear();
     dead_ = false;
@@ -1172,9 +1175,19 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::DailyDropBonusState: {
             const auto streak=reader.u32();const auto multiplier=reader.u8();
             const auto remaining=reader.u32();const auto next=reader.u32();const auto locked=reader.i64();
-            std::vector<ShopOffer> offers;const auto count=reader.u8();
-            for(unsigned i=0;i<count;++i){ShopOffer offer;offer.petalIndex=reader.u16();offer.rarity=clampRarity(reader.u8());offer.price=reader.f64();offer.discountPercent=reader.u8();offers.push_back(offer);}
+            const auto readOffers = [&]() {
+                std::vector<ShopOffer> result; const auto count = reader.u8();
+                for (unsigned i=0; i<count; ++i) {
+                    ShopOffer offer; offer.petalIndex=reader.u16(); offer.rarity=clampRarity(reader.u8());
+                    offer.price=reader.f64(); offer.discountPercent=reader.u8();
+                    const auto remainingStock=reader.u16(); offer.remaining=remainingStock==65535?-1:remainingStock;
+                    result.push_back(offer);
+                }
+                return result;
+            };
+            auto offers=readOffers(); const auto current=reader.i64(); auto currentOffers=readOffers();
             if(reader.ok()) {lockedShopOffers=std::move(offers);lockedShopRotation=locked;dropBonusStreak=streak;dropBonusMultiplier=multiplier;
+                currentShopRotation=current; currentShopOffers=std::move(currentOffers);
                 dropBonusUntil=wallClockMillis()+remaining;dropBonusNextClaim=wallClockMillis()+next;}
             break;
         }
@@ -1186,7 +1199,15 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::Profile:      handleProfile(reader); break;
         case net::ServerMessage::ProfileDelta: handleProfileDelta(reader); break;
         case net::ServerMessage::JoinAccepted: handleJoinAccepted(reader); break;
-        case net::ServerMessage::Snapshot:     view_.applySnapshot(reader); break;
+        case net::ServerMessage::Snapshot:
+            if (clearViewOnSnapshot_) {
+                const Realm currentRealm = view_.realm();
+                view_.clear();
+                view_.setRealm(currentRealm);
+                clearViewOnSnapshot_ = false;
+            }
+            view_.applySnapshot(reader);
+            break;
         case net::ServerMessage::Chat:         handleChat(reader); break;
         case net::ServerMessage::Notice:       handleNotice(reader); break;
         case net::ServerMessage::Died:         handleDied(reader); break;
@@ -1240,6 +1261,7 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
 void NetClient::onDisconnect(net::Connection&, const std::string& reason) {
     status_ = Status::Failed;
     lastError_ = reason;
+    clearViewOnSnapshot_ = false;
     view_.clear();
     chatBubbles_.clear();
     // Every connection id the dashboard holds belongs to the socket that just
@@ -1705,11 +1727,12 @@ void NetClient::handleNotifications(ByteReader& reader) {
 }
 
 void NetClient::handleOnlineRoster(ByteReader& reader) {
-    const std::uint8_t count = reader.u8();
+    const std::uint16_t count = reader.u16();
+    if(count>2048)return;
     if (!reader.ok()) return;
     std::vector<OnlineRosterEntry> next;
     next.reserve(count);
-    for (std::uint8_t i = 0; i < count; ++i) {
+    for (std::uint16_t i = 0; i < count; ++i) {
         OnlineRosterEntry row;
         row.name = reader.str();
         row.level = reader.u16();
@@ -1726,13 +1749,14 @@ void NetClient::handleOnlineRoster(ByteReader& reader) {
         }
         row.insideDungeon=reader.u8()!=0;
         if(row.insideDungeon){row.exteriorRealm=reader.u8();row.exteriorX=reader.f32();row.exteriorY=reader.f32();}
-        row.healthRatio=reader.f32();if(!reader.ok())return;
+        row.healthRatio=reader.f32();row.shard=reader.u8();row.sameShard=reader.boolean();if(!reader.ok())return;
         if (row.level < 1) row.level = 1;
         next.push_back(std::move(row));
     }
     onlineRoster_ = std::move(next);
     std::unordered_map<std::string,std::string> guildNames;
     for (const auto& row : onlineRoster_) {
+        if(!row.sameShard)continue;
         const auto old=guildNames.find(row.name);
         if(old==guildNames.end()) guildNames.emplace(row.name,row.guild);
         else if(old->second!=row.guild) old->second.clear();
@@ -1883,6 +1907,7 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
     status_ = Status::Playing;
     dead_ = false;
     revived = false;
+    clearViewOnSnapshot_ = false;
     view_.clear();
     chatBubbles_.clear();
     // After the clear, which resets it: the realm is the one thing about the
@@ -1916,7 +1941,10 @@ void NetClient::handleRealmChange(ByteReader& reader) {
     // The view holds entities in the realm it was streaming; every one of them
     // is in another coordinate space now and none of them will be restated.
     pyramidMapRevealed = false;
-    view_.clear();
+    // Switching split halves in the same map must not render an empty world
+    // between RealmChange and the server's following full snapshot.
+    clearViewOnSnapshot_ = realm == view_.realm();
+    if (!clearViewOnSnapshot_) view_.clear();
     chatBubbles_.clear();
     view_.setRealm(realm);
     // The camera must not ease across two worlds. The App snaps it to the
@@ -2217,6 +2245,7 @@ void NetClient::handleSessionReplaced(ByteReader& reader) {
     // The world this connection was streamed is gone with it. The account is
     // not forgotten: the token is what playing here again resumes with, and
     // the fresh profile that resume brings replaces the rest.
+    clearViewOnSnapshot_ = false;
     view_.clear();
     chatBubbles_.clear();
     dead_ = false;

@@ -31,6 +31,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cmath>
+#include "server/systems/movement.h"
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -44,6 +45,7 @@
 #include "server/bot_identity.h"
 #include "server/chat_moderation.h"
 #include "server/guilds.h"
+#include "server/hyper_forge.h"
 #include "server/systems/npcs.h"
 #include "server/systems/spawning.h"
 #include "server/text.h"
@@ -835,11 +837,77 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         return true;
     }
 
+    if (verb == "/mark-return") {
+        auto* pads = world_.tryGet<TeleporterState>(session.entity);
+        if (!session.playing() || !isStanding(world_, session.entity) ||
+            !pads || !pads->markReturnAvailable) {
+            out("当前没有可用的Mark返程；死亡后可正常复活或返回菜单。");
+            return true;
+        }
+        if (clockMillis_ < pads->markHoldUntilMillis) {
+            out("H Mark滞留还剩 " + std::to_string(static_cast<int>(std::ceil(
+                (pads->markHoldUntilMillis - clockMillis_) / 1000.0))) + " 秒。");
+            return true;
+        }
+        const RealmPoint origin = pads->markOrigin;
+        const auto* body = world_.tryGet<Body>(session.entity);
+        const Vec2 position = playerRespawnPosition(*terrain_, origin.realm, origin.position, body ? body->radius : 25.0);
+        pads->markReturnAvailable = false;
+        moveEntityToRealm(session.entity, origin.realm, position);
+        out("已返回Mark传送前的位置。");
+        return true;
+    }
+
+    if (verb == "/hyper-abandon") {
+        persistPlayer(session);
+        if(argument.empty()) {
+            out("主动放弃会销毁所选1份超凡，不返还材料；其他花瓣保留。用法：/hyper-abandon 编号；可放弃的持有记录：");
+            for(const auto& [key,row]:database_.storedTable("hyperForges").members())
+                if(row["owner"].asString()==session.userId)out(escapedMarkup(key));
+            return true;
+        }
+        const std::string suffix=" confirm";
+        const bool confirmed=argument.size()>suffix.size() && argument.compare(argument.size()-suffix.size(),suffix.size(),suffix)==0;
+        auto key=confirmed?argument.substr(0,argument.size()-suffix.size()):argument;
+        if (key.rfind("here ", 0) == 0) {
+            const auto* body = session.playing() && world_.isAlive(session.entity) &&
+                !world_.has<Dead>(session.entity) ? world_.tryGet<Transform>(session.entity) : nullptr;
+            if (!body || !npcs_ ||
+                npcs_->findService(world_, NpcService::Titan, body->position, body->realm,
+                                   kNpcServiceReach + kNpcServiceSlack) == NULL_ENTITY) {
+                out("请在泰坦附近解除超凡花瓣。"); return true;
+            }
+            const auto& id = key.substr(5);
+            if (content().petalIndex(id) == kInvalidIndex) {out("未找到这件花瓣。");return true;}
+            const auto* map = worldMaps_.forRealm(body->realm);
+            key = hyperForgeKey(id, map && map->templateId() == "garden" ? "garden" : "");
+            if (!confirmed) {out("请在泰坦界面确认销毁所选超凡花瓣。");return true;}
+        }
+        if(database_.storedTable("hyperForges")[key]["owner"].asString()!=session.userId){out("你未持有这份超凡，请输入 /hyper-abandon 查看编号。");return true;}
+        if(!confirmed){out("确认永久销毁这1份超凡且不返还材料？再次输入：/hyper-abandon "+escapedMarkup(key)+" confirm");return true;}
+        if(config_.authorityAuth) {
+            Json request=Json::object();request["action"]="abandon";request["forgeKey"]=key;
+            if(!beginSharedHyper(session,connection,request,0,false))out("超凡事务正在处理，请稍后重试。");
+            return true;
+        }
+        const auto result=abandonHyper(database_,session.userId,key);
+        if(!result.ok){out(result.reason);return true;}
+        for(auto& [id,other]:sessions_) {
+            if(!other.authenticated() || other.userId!=session.userId)continue;
+            if(other.playing())applyAccountToSession(other);
+            if(auto* peer=listener_.find(id))sendProfile(other,*peer);
+        }
+        out("已放弃所选1份超凡，不返还材料；该份持有名额已释放。");
+        return true;
+    }
+
     if (verb == "/help") {
         // One message, laid out with the reference's own markup: the client
         // parses this subset, so the listing arrives looking the way it looks
         // in the browser rather than as a wall of tags.
         std::string help = "Available commands:\n";
+        help += "/mark-return - Mark传送后返回原处；H需等待30秒（死亡或返回菜单解除）<br/>";
+        help += "/hyper-abandon [编号] - 主动放弃1份超凡，不返还材料（需要确认）<br/>";
         help += "/biome - Show the most populated biome <br/>";
         help += "/boss-timers - Show each biome's unique/apex cooldown <br/>";
         help += "/level-from-string &lt;name&gt; - Show what level a bot named &lt;name&gt; would "

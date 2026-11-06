@@ -26,6 +26,7 @@ struct Fixture {
     ClientView view;
     EventQueue events;
     Entity viewer = NULL_ENTITY;
+    Entity splitOther = NULL_ENTITY;
     /// The viewer's squadmates (Replicator::Frame::alwaysVisible), if any.
     std::vector<Entity> squad;
 
@@ -71,6 +72,7 @@ struct Fixture {
         frame.tick = tickNumber;
         frame.nowMillis = nowMillis;
         frame.events = &events;
+        frame.splitOther = splitOther;
         frame.alwaysVisible = squad.empty() ? nullptr : &squad;
         replicator.build(world, viewer, view, frame, out);
 
@@ -87,7 +89,67 @@ std::uint32_t netIdOf(World& w, Entity e) { return w.get<NetId>(e).value; }
 
 } // namespace
 
+TEST(split_mana_updates_privately_and_clears_on_merge) {
+    Fixture fixture;
+    const Entity main = fixture.viewer;
+    const Entity parked = fixture.addPlayer("bob", {1100, 1000});
+    fixture.world.add<ManaPool>(main, ManaPool{75, 100});
+    fixture.world.add<ManaPool>(parked, ManaPool{20, 100});
+    fixture.splitOther = parked;
+    WorldView owner;
+    fixture.tick(owner, 1, 1000);
+    CHECK_EQ(owner.self().splitNetId, netIdOf(fixture.world, parked));
+    CHECK_NEAR(owner.self().splitMana, 20, 1e-6);
+    CHECK_NEAR(owner.self().splitMaxMana, 100, 1e-6);
+    CHECK_NEAR(owner.self().mana, 75, 1e-6);
+
+    fixture.world.get<ManaPool>(parked).current = 49;
+    fixture.tick(owner, 2, 1050);
+    CHECK_NEAR(owner.self().splitMana, 49, 1e-6);
+
+    fixture.viewer = parked;
+    fixture.splitOther = main;
+    fixture.view.reset();
+    owner.clear();
+    fixture.tick(owner, 3, 1100);
+    CHECK_EQ(owner.self().splitNetId, netIdOf(fixture.world, main));
+    CHECK_NEAR(owner.self().mana, 49, 1e-6);
+    CHECK_NEAR(owner.self().splitMana, 75, 1e-6);
+
+    fixture.splitOther = NULL_ENTITY;
+    fixture.tick(owner, 4, 1150);
+    CHECK_EQ(owner.self().splitNetId, 0u);
+    CHECK_NEAR(owner.self().splitMaxMana, 0, 1e-6);
+
+    fixture.viewer = fixture.addPlayer("carol", {1200, 1000});
+    fixture.view.reset();
+    WorldView other;
+    fixture.tick(other, 5, 1200);
+    CHECK_EQ(other.self().splitNetId, 0u);
+    CHECK_NEAR(other.self().splitMaxMana, 0, 1e-6);
+}
+
 // ---------------------------------------------------------------------------
+
+TEST(removed_petal_and_projectile_cloud_leaves_no_live_client_sprites) {
+    Fixture f;
+    WorldView client;
+    std::vector<Entity> cloud;
+    std::vector<std::uint32_t> ids;
+    for(int i=0;i<200;++i) {
+        const auto e=f.addMob({1000.0+i%20,1000.0+i/20},Rarity::Rare,5);
+        f.world.remove<MobTag>(e);
+        f.world.get<Replicated>(e).kind=i%2?net::EntityKind::Petal:net::EntityKind::Projectile;
+        cloud.push_back(e);ids.push_back(netIdOf(f.world,e));
+    }
+    f.tick(client,1,1000);
+    for(auto id:ids)CHECK(client.entities().count(id)==1);
+    for(auto e:cloud)f.world.destroy(e);
+    f.tick(client,2,1050);
+    for(auto id:ids)CHECK(client.entities().count(id)==0);
+    f.tick(client,3,1100);
+    CHECK_EQ(client.entities().size(),std::size_t(1));
+}
 
 TEST(snapshot_round_trips_a_spawn) {
     Fixture f;
@@ -635,6 +697,22 @@ TEST(snapshot_is_capped_and_keeps_the_nearest) {
         if (entry.second.targetPosition.x < 1020) sawNear = true;
     }
     CHECK(sawNear);
+}
+
+TEST(claimable_loot_stays_visible_when_snapshot_entity_budget_is_full) {
+    Fixture f;
+    f.replicator.maxEntities = 10;
+    for (int i = 0; i < 30; ++i) f.addMob({1005.0 + i, 1000.0});
+    const Entity drop = f.world.create();
+    f.world.add<Transform>(drop, Transform{{1100,1000},0});
+    f.world.add<NetId>(drop, NetId{f.ids.next()});
+    f.world.add<DropItem>(drop);
+    f.world.add<Replicated>(drop, Replicated{net::EntityKind::Drop,0,2,Rarity::Super,0});
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK_EQ(client.entities().size(), std::size_t(10));
+    CHECK(client.entities().count(netIdOf(f.world, f.viewer)) == 1);
+    CHECK(client.entities().count(netIdOf(f.world, drop)) == 1);
 }
 
 TEST(events_are_scoped_to_what_the_client_can_see) {

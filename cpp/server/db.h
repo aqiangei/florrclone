@@ -20,8 +20,10 @@
 // against the one it was loaded from instead of reshuffling every account.
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -274,6 +276,7 @@ public:
             auto it = byKey_.find(key);
             if (it == byKey_.end()) return nullptr;
             it->second.cached = false;
+            if(tracking_)touched_.insert(key);
             return &it->second.value;
         }
         const T* find(const std::string& key) const {
@@ -281,6 +284,7 @@ public:
             return it == byKey_.end() ? nullptr : &it->second.value;
         }
         T& insert(const std::string& key) {
+            if(tracking_)touched_.insert(key);
             auto it = byKey_.find(key);
             if (it == byKey_.end()) {
                 order_.push_back(key);
@@ -306,8 +310,10 @@ public:
             if (from == to) return byKey_.count(from) != 0;
             auto it = byKey_.find(from);
             if (it == byKey_.end() || byKey_.count(to) != 0) return false;
+            if(tracking_){touched_.insert(from);touched_.insert(to);}
             Row row = std::move(it->second);
             row.cached = false;
+            row.committed.clear();
             byKey_.erase(it);
             byKey_.emplace(to, std::move(row));
             for (std::string& key : order_) {
@@ -317,6 +323,7 @@ public:
         }
         bool erase(const std::string& key) {
             if (byKey_.erase(key) == 0) return false;
+            if(tracking_)touched_.insert(key);
             for (std::size_t i = 0; i < order_.size(); ++i) {
                 if (order_[i] == key) { order_.erase(order_.begin() + static_cast<long>(i)); break; }
             }
@@ -324,16 +331,44 @@ public:
         }
         const std::vector<std::string>& keys() const { return order_; }
         std::size_t size() const { return byKey_.size(); }
-        void clear() { order_.clear(); byKey_.clear(); }
+        void clear() { order_.clear(); byKey_.clear(); touched_.clear();tracking_=false; }
+        void acceptLoadedState() {
+            tracking_=true;
+            for(auto& entry:byKey_)entry.second.committed=entry.second.text;
+            touched_.clear();
+        }
+        template<class ToJson> Json delta(const ToJson& toJson) const {
+            Json result=Json::object();
+            for(auto it=touched_.begin();it!=touched_.end();) {
+                const auto row=byKey_.find(*it);
+                if(row==byKey_.end()){result[*it]=Json();++it;continue;}
+                const auto& current=text(*it,toJson);
+                if(current==row->second.committed){it=touched_.erase(it);continue;}
+                result[*it]=Json::parseOrNull(current);++it;
+            }
+            return result;
+        }
+        template<class ToJson> void acknowledge(const Json& values,const ToJson& toJson) {
+            for(const auto& entry:values.members()) {
+                const auto row=byKey_.find(entry.first);
+                if(row==byKey_.end()){if(entry.second.isNull())touched_.erase(entry.first);continue;}
+                row->second.committed=entry.second.isNull()?std::string():entry.second.dump();
+                if(text(entry.first,toJson)==row->second.committed)touched_.erase(entry.first);
+                else touched_.insert(entry.first);
+            }
+        }
 
     private:
         struct Row {
             T value{};
             mutable std::string text;
             mutable bool cached = false;
+            std::string committed;
         };
         std::vector<std::string> order_;
         std::unordered_map<std::string, Row> byKey_;
+        mutable std::set<std::string> touched_;
+        bool tracking_=false;
     };
 
     /// Wall-clock source, in Unix milliseconds. Overridable so a test can age
@@ -362,6 +397,28 @@ public:
     /// error, and latches loadFailed() so no save can ever overwrite it.
     bool load(const std::string& path, std::string& errorOut);
 
+    // Authoritative mode never falls back to writing a local inventory file.
+    // A transport timeout after sending a commit is Unknown, not Rejected.
+    enum class CommitOutcome { Rejected, Committed, Unknown, Pending };
+    using CommitSink = std::function<CommitOutcome(const std::string&)>;
+    using DeltaSink = std::function<CommitOutcome(const Json&)>;
+    bool loadAuthoritative(const std::string& snapshot, CommitSink sink,
+                           std::string& errorOut);
+    bool refreshAuthoritative(const std::string& snapshot, std::string& errorOut);
+    bool replaceAuthoritativeProgress(const std::string& id, const Json& record);
+    /// Update a clean read model from already committed rows, without saving.
+    bool applyAuthoritativeDelta(const Json& delta,bool allowUnrelatedChanges=false);
+    bool setDeltaSink(DeltaSink sink);
+    bool commitPending() const { return pendingDelta_.isObject(); }
+    std::uint64_t mutationGeneration() const { return mutationGeneration_; }
+    std::uint64_t committedGeneration() const { return committedGeneration_; }
+    bool authoritative() const { return static_cast<bool>(commitSink_); }
+    // Delta sinks may acknowledge later. Legacy mutate/save/rollback helpers
+    // must never submit through them: Pending is not a rejected transaction.
+    bool deferredCommits() const { return static_cast<bool>(deltaSink_); }
+    bool commitUncertain() const { return commitUncertain_; }
+    bool dirty() const { return dirty_; }
+
     /// Writes now, atomically: staged to `path + ".tmp"`, size-verified, then
     /// renamed over the original. A crash at any point leaves the previous
     /// good file intact. Returns false without touching the live file if
@@ -375,7 +432,7 @@ public:
     /// `nowMillis` must come from one monotonic clock across all calls.
     bool maybeSave(std::int64_t nowMillis);
 
-    void markDirty() { dirty_ = true; }
+    void markDirty() { dirty_ = true; ++mutationGeneration_; }
 
     /// True when the file on disk could not be understood. Every save is
     /// refused while this holds.
@@ -476,6 +533,7 @@ public:
     /// still holding a plaintext password from the old import is upgraded to
     /// bcrypt here, on the one occasion the password is available.
     bool verifyPassword(const std::string& username, const std::string& password);
+    bool passwordMatches(const std::string& username, const std::string& password) const;
 
     /// Replaces an account's password with a fresh bcrypt hash at the current
     /// cost. Checks the new password against validPassword first and reports
@@ -526,7 +584,7 @@ public:
     /// resumed into. A token of an account with no chosen password is pushed
     /// out another kSessionTtlMillis each time it resolves: it is the only key
     /// to that account, and a guest who plays once a month must not lose it.
-    const Session* resolveSession(const std::string& token);
+    const Session* resolveSession(const std::string& token, bool touch = true);
 
     void revokeSession(const std::string& token);
     /// Revokes every session of one account (password change, ban, logout
@@ -705,6 +763,16 @@ private:
     std::int64_t lastWriteMillis_ = 0;
     int passwordCost_ = crypto::kBcryptDefaultCost;
     ClockFn clock_ = nullptr;
+    CommitSink commitSink_;
+    DeltaSink deltaSink_;
+    Json pendingDelta_;
+    std::uint64_t mutationGeneration_=0,committedGeneration_=0,pendingGeneration_=0;
+    std::map<std::string,std::string> committedTop_;
+    std::set<std::string> touchedTop_;
+    Json collectDelta();
+    void acknowledgeDelta(const Json& delta);
+    bool flushDelta();
+    bool commitUncertain_ = false;
 };
 
 // -- one row as JSON ---------------------------------------------------------

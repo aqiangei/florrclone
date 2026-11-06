@@ -673,6 +673,7 @@ private:
     /// twin of its own at that twin instead, so a flower in the prestige world
     /// stays in it from one biome to the next.
     void retargetPrestigePads();
+    void linkReciprocalPads();
 
     std::vector<MapData> maps_;
     /// Per map slot: the slot of its prestige twin, or -1.

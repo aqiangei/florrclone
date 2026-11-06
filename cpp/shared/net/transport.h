@@ -55,6 +55,18 @@ public:
 
     /// Queues a frame. Never blocks; the bytes leave in later drains.
     void send(const ByteWriter& message);
+    // Called at every socket drain, including the drain inside poll(). A
+    // failed commit must not let queued economic success packets escape.
+    void setWriteGate(std::function<bool(bool)> gate,
+                      std::function<bool(const std::byte*, std::size_t)> durable) {
+        writeGate_ = std::move(gate);
+        durableMessage_ = std::move(durable);
+    }
+    enum class DrainDecision { Allow, Defer, Fail };
+    void setDurableGate(std::function<DrainDecision(bool,std::uint64_t&)> gate,
+                        std::function<bool(const std::byte*,std::size_t)> durable) {
+        durableGate_=std::move(gate);durableMessage_=std::move(durable);
+    }
     void send(const std::byte* data, std::size_t size);
 
     /// Bytes queued but not yet handed to the kernel. The server drops a
@@ -101,6 +113,17 @@ private:
     bool failed() const { return !failure_.empty(); }
 
     int fd_;
+    std::function<bool(bool)> writeGate_;
+    std::function<bool(const std::byte*, std::size_t)> durableMessage_;
+    bool commitRequired_ = false;
+    std::function<DrainDecision(bool,std::uint64_t&)> durableGate_;
+    struct OutboundBoundary {
+        std::size_t end=0;
+        bool durable=false,approved=false;
+        std::uint64_t ticket=UINT64_MAX;
+    };
+    std::deque<OutboundBoundary> outboundBoundaries_;
+    std::size_t allowedPrefix(std::string& error);
     ConnectionId id_;
     std::string peer_;
     ForwardedHeaders forwarded_;

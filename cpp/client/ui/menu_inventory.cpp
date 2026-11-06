@@ -1,3 +1,4 @@
+#include "shared/game/computer_set.h"
 // The petal inventory.
 //
 // The screen players spend the most time in, so the muscle memory is real and
@@ -21,6 +22,8 @@
 #include "client/ui/text_input.h"
 #include "shared/core/text.h"
 #include "shared/game/config.h"
+#include "shared/game/dark_mark.h"
+#include "shared/game/domino.h"
 #include "shared/game/rarity.h"
 
 namespace flix {
@@ -486,19 +489,46 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const auto& summon=content().mob(config.petMobIndex);
         const bool apex=ladderRarity(rarity)==Rarity::Apex;
         const auto summonRarity=apex?Rarity::Unique:rarity;
-        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config);
+        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config)*hyperSummonScale(config,rarity);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
             " x" + std::to_string((config.id=="egg"||config.id=="beetle_egg"
                 ? petalCopies(config.petCount,&skills,slot,rarityIndex(rarity),config.stackable)
                 : config.petCount)*(apex?3:1)),12.0};lines.push_back(pet);
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
-        special("召唤物伤害：", "Summon damage: ",summon.damage*summonScale*summon.petDamageScale);
+        special("召唤物伤害：", "Summon damage: ",summon.damage*summonScale*summon.petDamageScale*skills.effectScale(SkillId::PetDamage));
+        if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
         if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
+        if (config.petMobId != "sandstorm") lines.push_back({chinese ? "自动索敌优先主人600范围内的高阶怪，不超900；离主人700回跟，卡住会安全接回原召唤物。光标指挥优先。" : "Auto-targets high-tier mobs within 600 of the owner, capped at 900. Follows beyond 700; stuck summons recover. Cursor commands take priority.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"孵化准备的1秒内蛋壳受保护，不会被战斗打断。":"The shell is protected during its one-second incubation.",12.0});
     }
+    if(computerWeapon(config.id)) {
+        lines.push_back({chinese?"电脑联动（只计算主槽、同阶或更高阶配件）：程序/内存/芯片/电容/光标/几何体为6种部件，重复不计。":"Computer synergy: active parts at this tier or higher; software/memory/chip/capacitor/cursor/geometry are six distinct roles.",12.0});
+        lines.push_back({chinese?"3种：电脑花瓣伤害+12%；4种：耐久+15%；5种：装填时间−10%。低阶配件不会增幅高阶花瓣，拟态不补部件。":"3 roles: computer damage +12%; 4: health +15%; 5: reload time −10%. Lower-tier parts cannot boost higher tiers; Mimic does not count as hardware.",12.0});
+    }
+    if (config.id == "domino") {
+        lines.push_back({chinese ? "伤害栏为平均值；每次重装独立掷两端0至6点，伤害随点数乘积变化，与幸运无关。" : "Damage shows the mean. Each reload rolls two independent ends from 0 to 6; their product determines damage, unaffected by Luck.",12.0});
+        if (dominoHasReroll(rarity)) lines.push_back({chinese ? "H稳牌：每个零点端补掷一次，降低空牌概率；期望伤害仍为同种E的1.5倍。" : "H steady hand: reroll each zero end once, reducing blanks. Expected damage remains 1.5x the same Eternal petal.",12.0});
+    }
+    if (config.id == "dark_mark") {
+        special("印记蓄力：", "Mark delay: ", darkMarkDelayMillis(rarity) / 1000.0, "s");
+        lines.push_back({chinese ? "按攻击将印记放在倒下的玩家身上，蓄力后送往地狱；被救起或印记被打破则取消。" : "Attack over a fallen flower to place a mark. After charging, sends them to Hel; revival or breaking the mark cancels it.",12.0});
+        lines.push_back({chinese ? "双方需20级；不作用于更高阶装备、分身、副本或已在地狱的玩家。成功后目标5分钟免疫Mark。" : "Both flowers must be level 20+. Cannot target higher-tier equipment, split flowers, dungeon runs or flowers in Hel. Target gains 5 minutes of Mark immunity.",12.0});
+        if (ladderRarity(rarity) == Rarity::Apex) {
+            special("地狱滞留：", "Hel hold: ", kHyperMarkHoldMillis / 1000.0, "s");
+            lines.push_back({chinese ? "期间可正常移动战斗；死亡或返回菜单解除。到时可用 /mark-return 返回原处，不能叠加滞留。" : "Movement and combat remain available. Death or leaving ends the hold. Use /mark-return when it expires; holds cannot stack.",12.0});
+        } else lines.push_back({chinese ? "无强制滞留，可立即用 /mark-return 返回原处。" : "No forced hold; /mark-return is immediately available.",12.0});
+    }
+    if (config.id == "corruption") {
+        if (ladderRarity(rarity)==Rarity::Apex) {
+            special("腐化光环半径：", "Corruption aura radius: ", kHyperCorruptionRadius);
+            lines.push_back({chinese ? "装备时影响同地图范围内20级及以上玩家；离开即解除，不连锁传播。" : "While worn, affects nearby level 20+ flowers in the same realm; ends on leaving, never chains.",12.0});
+            lines.push_back({chinese ? "使用者和光环影响者均可使用绷带。" : "Wearer and aura recipients can still use Bandage.",12.0});
+        } else lines.push_back({chinese ? "腐化期间无法触发或维持绷带续命。" : "Corruption prevents and ends Bandage's Undead effect.",12.0});
+    }
+    if (config.id == "bandage") lines.push_back({chinese ? "普通或随机腐化会阻止并终止续命；H腐化及其光环不受此限制。" : "Ordinary or random corruption prevents and ends Undead; H Corruption and its aura are exempt.",12.0});
     if (stats.count > 1) special("每组花瓣数量：", "Petals per cluster: ", stats.count);
     if (stats.armorPerStack > 0) {
         special("每层护甲：", "Armor per stack: ", stats.armorPerStack);
@@ -533,6 +563,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (config.projectile.seekRange > 0) special("索敌范围：", "Seeking range: ", config.projectile.seekRange);
     }
     if (config.radiation.present) {
+        if(config.id=="uranium")
+            special("辐射自伤上限（每秒最大生命）：", "Self-radiation cap (% max HP/s): ", 4.0, "%");
         special("辐射半径：", "Radiation radius: ", config.radiation.radius);
         special("辐射间隔：", "Radiation interval: ", config.radiation.intervalMillis / 1000.0, "s");
         if (config.radiation.selfPoisonScale > 0)
@@ -745,11 +777,19 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(pool);
     }
     if (stats.mana > 0.0) {
-        TooltipLine burst{std::string(chinese ? "恢复魔法值：" : "Mana Restored: ") + abbreviate(stats.mana), 12.0};
+        TooltipLine burst{std::string(chinese ? "单次恢复魔法值：" : "Mana per Burst: ") + abbreviate(stats.mana), 12.0};
         burst.alpha = 0.56;
         burst.labelColor = kStatMana;
-        burst.altText = std::string(chinese ? "恢复魔法值：" : "Mana Restored: ") + exactNumber(stats.mana);
+        burst.altText = std::string(chinese ? "单次恢复魔法值：" : "Mana per Burst: ") + exactNumber(stats.mana);
         lines.push_back(burst);
+        const double cycle = stats.reloadMillis + stats.manaChargeMillis;
+        if (cycle > 0.0) {
+            TooltipLine average{std::string(chinese ? "完整周期平均回蓝/秒：" : "Full-cycle Mana/s: ") +
+                                exactNumber(stats.mana * 1000.0 / cycle), 12.0};
+            average.alpha = 0.56;
+            average.labelColor = kStatMana;
+            lines.push_back(average);
+        }
     }
     if (stats.passiveManaPerSecond > 0.0) {
         TooltipLine regen{std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + abbreviate(stats.passiveManaPerSecond), 12.0};

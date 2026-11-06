@@ -1,4 +1,5 @@
 #include "shared/game/config.h"
+#include "shared/game/dark_mark.h"
 
 #include <algorithm>
 #include <cmath>
@@ -956,6 +957,15 @@ NpcSpec parseNpcSpec(Ctx& ctx, const Json& owner,
                     return out;
                 };
                 AssemblyRecipe recipe;
+                if (entry.contains("outputRarity")) {
+                    Rarity output{};
+                    if (!tryParseRarity(entry["outputRarity"].asString(), output) ||
+                        rarityIndex(output) > rarityIndex(Rarity::Unique)) {
+                        ctx.warn(where + " has invalid outputRarity; dropped");
+                        continue;
+                    }
+                    recipe.outputRarity = output;
+                }
                 const Json& from = entry["from"];
                 for (std::size_t k = 0; k < from.size(); ++k) {
                     recipe.inputs.push_back(stack(from[k], "input"));
@@ -1901,7 +1911,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     PetalStats s;
     s.damage = c.damage * strength;
     if(c.id=="magic_peas"){
-        s.lightningDamagePerHit=30.0*strength;
+        // Five times fewer volleys, four times the hit: 80% sustained output.
+        s.lightningDamagePerHit=120.0*strength;
         s.lightningBounces=0;
     }
     if (c.id == "battery" || c.id == "lightning") {
@@ -2087,7 +2098,11 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         };
         s.modifiers.rotationSpeed = values[ti];
     } else if (c.id == "mysterious_powder") {
-        s.modifiers.speed = 1.25; // original powder bonus; stacks additively per equipped slot
+        // Additive per equipped slot; higher tiers retain a meaningful upgrade.
+        static constexpr std::array<double, kLadderRarityCount> values = {
+            1.10, 1.15, 1.20, 1.25, 1.30, 1.35, 1.45, 1.55, 1.70, 1.90,
+        };
+        s.modifiers.speed = values[ti];
     } else if (c.id == "powder") {
         static constexpr std::array<double, kLadderRarityCount> values = {
             1.1, 1.1, 1.4, 1.6, 1.8, 2.0, 2.2, 2.4, 2.6, 2.8,
@@ -2118,6 +2133,9 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     }
     if (c.id == "antennae" && rarityIndex(tier) >= rarityIndex(Rarity::Rare)) {
         s.cameraZoom = 1.0 / antennaeVisionRangeScale(tier);
+    }
+    if (c.id == "observer") {
+        s.cameraZoom = std::min(s.cameraZoom, 0.9 / antennaeVisionRangeScale(tier));
     }
     // Apply explicit exceptions only on the authored ladder. Devine/Admin retain
     // their separate server-specific rules, not guessed extra wiki tiers.
@@ -2157,6 +2175,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         if (row.magnetism) s.modifiers.magnetism = *row.magnetism;
     }
     // Hyper's combat growth is capped at 1.5x the SAME petal at Eternal.
+    if (c.id == "domino") s.damage *= 9.0; // mean of two independent 0..6 ends
     // Apply after authored overrides so special damage/healing rows cannot
     // bypass it. Counts, reloads, proc conditions and probabilities stay put.
     if (graded == Rarity::Apex) {
@@ -2184,6 +2203,13 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
                 s.modifiers.*field = std::min(s.modifiers.*field,
                     1.0 + (eternal.modifiers.*field - 1.0) * 1.5);
         }
+    }
+    if (c.id == "dark_mark") s.reloadMillis = kDarkMarkReloadMillis;
+    if (graded == Rarity::Apex && c.id == "clover") {
+        // Give the luck petal a meaningful upgrade even when repeated boss
+        // contact shatters either tier in one hit. Keep the normal damage cap.
+        s.modifiers.luck = 1.15;
+        s.reloadMillis = 2100.0;
     }
     // The contested H hammer is a sustained-output reward, independent of the
     // temporary E hammer. Restore bite and recovery without restoring old chains.
@@ -2283,7 +2309,8 @@ double petalCameraZoom(const ContentRegistry& registry, std::uint16_t petalIndex
     const double asked = registry.petalStats(petalIndex, rarity).cameraZoom;
     // No positive-only guard: a tier that takes the figure through zero lands
     // on the floor, not back on 1.
-    return registry.petal(petalIndex).id == "antennae" ? asked : std::max(kFloor, asked);
+    const auto& id = registry.petal(petalIndex).id;
+    return id == "antennae" || id == "observer" ? asked : std::max(kFloor, asked);
 }
 
 const ContentRegistry& content() { return registry(); }

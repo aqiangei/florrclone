@@ -2019,16 +2019,16 @@ TEST(magnetism_talent_adds_reach_on_top_of_worn_magnetism) {
     rig.equip(0, "lucky");
     // Looked up each time, not held: equipping moves the player's components.
     const auto skills = [&]() -> SkillSet& { return rig.world.get<PlayerSkillTree>(rig.player).skills; };
-    skills().set(kMagnetismParent, rarityIndex(kMagnetismRequirement));
+    skills().set(SkillId::Loadout, 4);
     for (int tier = 0; tier < skillTierCount(SkillId::Magnetism); ++tier) {
         skills().set(SkillId::Magnetism, tier);
         rig.tick();
         CHECK_NEAR(rig.modifiers().magnetism,
-                   50.0 + kMagnetismBonus[static_cast<std::size_t>(tier)], 1e-9);
+                   1050.0, 1e-9);
     }
 
-    // Held without legendary Absorption under it, the branch grants nothing.
-    skills().set(kMagnetismParent, rarityIndex(kMagnetismRequirement) - 1);
+    // Held without the fifth Loadout upgrade, the branch grants nothing.
+    skills().set(SkillId::Loadout, 3);
     rig.tick();
     CHECK_NEAR(rig.modifiers().magnetism, 50.0, 1e-9);
 }
@@ -3033,7 +3033,7 @@ TEST(a_ring_of_bubbles_stacks_into_one_pop_instead_of_cancelling) {
     CHECK(four <= one * 4.0 + 1.0);
 }
 
-TEST(a_stacked_bubble_pop_never_outruns_what_a_tick_can_carry) {
+TEST(a_stacked_bubble_pop_retains_momentum_above_the_old_cap) {
     if (!contentLoaded()) return;
     // A whole ring of the best bubbles asks for more ground in a tick than
     // stepCollide will carry -- it truncates the rest, and the client snaps
@@ -3048,7 +3048,7 @@ TEST(a_stacked_bubble_pop_never_outruns_what_a_tick_can_carry) {
     // The petal's cap, written from the same movement constants it is written
     // from: the floor of the per-tick substep budget.
     const double budget = kMinSubstepLength * kMaxSubstepCount;
-    CHECK(rig.velocity(rig.player).length() <= budget / net::kTickSeconds + 1e-6);
+    CHECK(rig.velocity(rig.player).length() > budget / net::kTickSeconds);
 
     rig.setFlags(0);
     Vec2 at = rig.position(rig.player);
@@ -3057,7 +3057,7 @@ TEST(a_stacked_bubble_pop_never_outruns_what_a_tick_can_carry) {
         rig.tick();
         const Vec2 now = rig.position(rig.player);
         const double step = distance(at, now);
-        CHECK(step <= budget + 1e-6);
+        CHECK(std::isfinite(step));
         moved += step;
         at = now;
     }
@@ -3222,18 +3222,27 @@ TEST(defending_drops_pollen_with_discrete_damage_and_consumes_it) {
     Rig rig;
     rig.equip(0, "pollen", Rarity::Rare);
     rig.settleEquips();
+    const Entity worn = rig.petals(0).front();
+    rig.world.get<Health>(worn).current *= 0.5;
+    const double wornHealth = rig.world.get<Health>(worn).current;
     rig.setFlags(net::InputDefend);
     rig.tick();
 
     Query<GroundEffect, Lifetime> fields{rig.world};
     // Rare pollen has two independently-consumed instances.
     CHECK_EQ(fields.count(), std::size_t(2));
-    fields.each([&](Entity, GroundEffect& field, Lifetime& lifetime) {
+    bool foundWorn = false;
+    fields.each([&](Entity entity, GroundEffect& field, Lifetime& lifetime) {
+        CHECK(rig.world.has<Health>(entity));
+        const Health& health = rig.world.get<Health>(entity);
+        CHECK(health.current <= health.max);
+        if (std::abs(health.current - wornHealth) < 1e-9) foundWorn = true;
         CHECK_EQ(field.kind, GroundEffectKind::Poison);
         CHECK_NEAR(field.damagePerHit, 10.0 * petalStatScale(Rarity::Rare), 1e-9);
         CHECK_NEAR(field.damageIntervalMillis, 600.0, 1e-9);
-        CHECK_NEAR(lifetime.remainingSeconds, 4.0, 1e-12);
+        CHECK_NEAR(lifetime.remainingSeconds, 8.0, 1e-12);
     });
+    CHECK(foundWorn);
     CHECK(rig.world.has<Dead>(rig.petals(0).front()));
 }
 
@@ -3546,7 +3555,7 @@ TEST(a_sandstorm_pet_is_never_retired_for_distance) {
     CHECK(!rig.slot(0).broken);
 }
 
-TEST(a_pet_way_too_far_from_its_owner_is_retired_and_its_egg_reloads) {
+TEST(pet_recovery_preserves_the_same_far_summon_and_egg_cooldown) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "summoner");
@@ -3557,13 +3566,13 @@ TEST(a_pet_way_too_far_from_its_owner_is_retired_and_its_egg_reloads) {
     rig.world.get<Transform>(lost).position =
         rig.position(rig.player) + Vec2{kPetRecallDistance + 10.0, 0.0};
     rig.tick();
-    CHECK_EQ(rig.petCount(), std::size_t(1));
-    CHECK(rig.slot(0).broken);
+    CHECK_EQ(rig.petCount(), std::size_t(2));
+    CHECK(rig.world.isAlive(lost));
+    CHECK(!rig.slot(0).broken);
+    CHECK(distance(rig.position(lost), rig.position(rig.player)) < kPetHomeDistance);
     // Destroyed, not killed: nothing for the reaper to award.
     Query<Dead> dead{rig.world};
     CHECK_EQ(dead.count(), std::size_t(0));
-    // The reload hatches a whole fresh squad.
-    CHECK(rig.tickUntil([&] { return rig.petCount() == 2 && !rig.slot(0).broken; }));
 }
 
 TEST(a_pet_just_inside_the_recall_distance_is_kept) {
@@ -3582,18 +3591,46 @@ TEST(a_pet_just_inside_the_recall_distance_is_kept) {
     CHECK(!rig.slot(0).broken);
 }
 
-TEST(a_trapped_pet_is_retired_and_its_egg_reloads) {
+TEST(pet_recovery_preserves_health_and_lifetime_of_trapped_summons) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "summoner");
     CHECK(rig.tickUntil([&] { return rig.petCount() == 2; }));
 
     Query<Pet> pets{rig.world};
-    rig.world.get<MobAi>(pets.collect().front()).petRecall = true;
+    const Entity trapped = pets.collect().front();
+    rig.world.get<MobAi>(trapped).petRecall = true;
+    rig.world.get<Health>(trapped).current = 1;
+    rig.world.get<Pet>(trapped).expiresAtMillis = rig.now + 10000;
+    const double expires = rig.world.get<Pet>(trapped).expiresAtMillis;
     rig.tick();
-    CHECK_EQ(rig.petCount(), std::size_t(1));
-    CHECK(rig.slot(0).broken);
-    CHECK(rig.tickUntil([&] { return rig.petCount() == 2 && !rig.slot(0).broken; }));
+    CHECK_EQ(rig.petCount(), std::size_t(2));
+    CHECK(!rig.slot(0).broken);
+    CHECK(!rig.world.get<MobAi>(trapped).petRecall);
+    CHECK_NEAR(rig.world.get<Health>(trapped).current, 1, 0);
+    CHECK_NEAR(rig.world.get<Pet>(trapped).expiresAtMillis, expires, 0);
+}
+
+TEST(pet_recovery_waits_for_safe_ground_instead_of_clipping_through_walls) {
+    if (!contentLoaded()) return;
+    Rig rig; rig.equip(0, "summoner");
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 2; }));
+    Query<Pet> pets{rig.world}; const Entity pet = pets.collect().front();
+    const Vec2 far = rig.position(rig.player) + Vec2{kPetRecallDistance + 100,0};
+    rig.world.get<Transform>(pet).position = far;
+    rig.world.get<Health>(pet).current = 1;
+    rig.useHatchTerrain = true;
+    const int x = Terrain::toTileCoord(rig.position(rig.player).x);
+    const int y = Terrain::toTileCoord(rig.position(rig.player).y);
+    for (int dx=-3; dx<=3; ++dx) for (int dy=-3; dy<=3; ++dy) rig.terrain.setTile(x+dx,y+dy,Tile::Solid);
+    rig.tick();
+    CHECK(rig.world.isAlive(pet)); CHECK_NEAR(rig.world.get<Health>(pet).current,1,0);
+    CHECK(distanceSq(rig.position(pet),far)<1e-8);
+    for (int dx=-3; dx<=3; ++dx) for (int dy=-3; dy<=3; ++dy) rig.terrain.setTile(x+dx,y+dy,Tile::Open);
+    rig.tick();
+    CHECK(distance(rig.position(pet),rig.position(rig.player))<kPetHomeDistance);
+    CHECK(!rig.terrain.resolveWall(rig.position(pet),rig.world.get<Body>(pet).radius,Realm::Overworld).collided);
+    CHECK_NEAR(rig.world.get<Health>(pet).current,1,0);
 }
 
 TEST(a_summoned_ring_mob_wears_its_seeds_on_its_owners_side) {
@@ -4000,11 +4037,11 @@ TEST(the_pet_health_talent_multiplies_pets_and_nothing_else) {
     if (!contentLoaded()) return;
     const MobConfig& critter = fixture().registry.mob(fixture().registry.mobIndex("critter"));
     const Rarity tier = Rarity::Legendary;
-    const double talent = kHealthSkillScale[static_cast<std::size_t>(rarityIndex(tier))];
+    const double talent = 2.0114;
 
     Rig rig;
     rig.world.add<PlayerSkillTree>(rig.player);
-    rig.world.get<PlayerSkillTree>(rig.player).skills.set(SkillId::PetHealth, rarityIndex(tier));
+    rig.world.get<PlayerSkillTree>(rig.player).skills.set(SkillId::Summoner, rarityIndex(tier));
     rig.equip(0, "summoner");
     rig.equip(1, "basic");
     rig.settleEquips();
@@ -4028,13 +4065,13 @@ TEST(the_pet_health_talent_multiplies_pets_and_nothing_else) {
 TEST(both_health_talents_grant_what_their_tooltip_quotes) {
     if (!contentLoaded()) return;
     const MobConfig& critter = fixture().registry.mob(fixture().registry.mobIndex("critter"));
-    // Apex on both branches is 450%, on the ring and on the squad alike: the
+    // Both maximum branches multiply health by 4.0456 (petal HP is floored): the
     // server reads the very table the talent tooltip prints.
     Rig rig;
     rig.world.add<PlayerSkillTree>(rig.player);
     SkillSet& skills = rig.world.get<PlayerSkillTree>(rig.player).skills;
-    skills.set(SkillId::PetalHealth, rarityIndex(Rarity::Apex));
-    skills.set(SkillId::PetHealth, rarityIndex(Rarity::Apex));
+    skills.set(SkillId::PetalHealth, skillTierCount(SkillId::PetalHealth)-1);
+    skills.set(SkillId::Summoner, skillTierCount(SkillId::Summoner)-1);
     rig.equip(0, "summoner");
     rig.equip(1, "basic");
     rig.settleEquips();
@@ -4042,10 +4079,10 @@ TEST(both_health_talents_grant_what_their_tooltip_quotes) {
 
     const std::vector<Entity> basic = rig.petals(1);
     CHECK_EQ(basic.size(), std::size_t(1));
-    if (!basic.empty()) CHECK_NEAR(rig.world.get<Health>(basic.front()).max, 45.0, 1e-9);
+    if (!basic.empty()) CHECK_NEAR(rig.world.get<Health>(basic.front()).max, 40.0, 1e-9);
     Query<Pet> pets{rig.world};
     for (const Entity pet : pets.collect()) {
-        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * 4.5, 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * 4.0456, 1e-9);
     }
 }
 
@@ -4069,7 +4106,7 @@ TEST(the_petal_health_talent_leaves_pets_alone) {
     Rig rig;
     rig.world.add<PlayerSkillTree>(rig.player);
     rig.world.get<PlayerSkillTree>(rig.player)
-        .skills.set(SkillId::PetalHealth, rarityIndex(Rarity::Apex));
+        .skills.set(SkillId::PetalHealth, skillTierCount(SkillId::PetalHealth)-1);
     rig.equip(0, "summoner");
     CHECK(rig.tickUntil([&] { return rig.petCount() == 2; }));
     Query<Pet> pets{rig.world};
@@ -4082,11 +4119,11 @@ TEST(the_petal_health_talent_leaves_pets_alone) {
 // Duplicator
 // ---------------------------------------------------------------------------
 
-/// Gives the rig's flower the tree a Duplicator node needs -- mythic
-/// Absorption -- and the node itself: tier 0 Duplicator, 1 Triplicator.
+/// Gives the rig's flower the tree a Duplicator node needs -- four
+/// Loadout upgrades -- and the node itself: tier 0 Duplicator, 1 Triplicator.
 void buyDuplicator(Rig& rig, int tier) {
     SkillSet& skills = rig.world.ensure<PlayerSkillTree>(rig.player).skills;
-    skills.set(kDuplicatorParent, rarityIndex(kDuplicatorRequirement));
+    skills.set(SkillId::Loadout, 3);
     skills.set(SkillId::Duplicator, tier);
 }
 
@@ -4132,7 +4169,7 @@ TEST(duplicator_adds_one_copy_to_a_clump_and_triplicator_two) {
         rig.equip(1, "basic");
         rig.settleEquips();
 
-        const int expected = 4 + kDuplicatorExtraCopies[static_cast<std::size_t>(tier)];
+        const int expected = 4 + (tier == 0 ? 1 : 2);
         const std::vector<Entity> grains = rig.petals(0);
         CHECK_EQ(grains.size(), static_cast<std::size_t>(expected));
         // Every grain knows the clump it belongs to is the bigger one, which is
@@ -4145,12 +4182,12 @@ TEST(duplicator_adds_one_copy_to_a_clump_and_triplicator_two) {
     }
 }
 
-TEST(duplicator_without_mythic_absorption_adds_nothing) {
+TEST(duplicator_without_four_loadout_upgrades_adds_nothing) {
     if (!contentLoaded()) return;
     Rig rig;
     buyDuplicator(rig, 1);
     rig.world.get<PlayerSkillTree>(rig.player)
-        .skills.set(kDuplicatorParent, rarityIndex(kDuplicatorRequirement) - 1);
+        .skills.set(SkillId::Loadout, 2);
     rig.equip(0, "sandy");
     rig.settleEquips();
     CHECK_EQ(rig.petals(0).size(), std::size_t(4));
@@ -6031,7 +6068,7 @@ TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead_with_double_summon
                     CHECK(combat.applyDamage(rig.world,shell,enemy,1e9,rig.now).refused);}
             }
             count=0;Query<Pet,Health,ContactDamage> pets{rig.world};pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
-            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,30,1e-8);CHECK_NEAR(hit.amount,1.5,1e-8);
+            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,50,1e-8);CHECK_NEAR(hit.amount,2.0,1e-8);
         });return count==4;},150));
     }
 }
@@ -6134,10 +6171,11 @@ TEST(ant_and_beetle_egg_summons_gain_health_and_damage_at_every_rarity){
         const auto petRarity=ladderRarity(rarity)==Rarity::Apex?Rarity::Unique:rarity;
         const double scale=petalStatScale(petRarity)*strengthBoost(rarity);
         int count=0;Query<Pet,Health,ContactDamage> pets{rig.world};
-        pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
+        pets.each([&](Entity entity,Pet& tag,Health& hp,ContactDamage& hit){
             if(tag.owner!=rig.player)return;++count;
-            CHECK_NEAR(hp.max,config.health*scale*3.0,std::max(1e-7,hp.max*1e-10));
-            CHECK_NEAR(hit.amount,config.damage*scale*1.5,std::max(1e-7,hit.amount*1e-10));
+            CHECK_NEAR(hp.max,config.health*scale*5.0,std::max(1e-7,hp.max*1e-10));
+            CHECK_NEAR(hit.amount,config.damage*scale*2.0,std::max(1e-7,hit.amount*1e-10));
+            CHECK_NEAR(rig.world.get<MobAi>(entity).aggroRange,std::max(kEnemyChaseRange,fixture().registry.mobStats(fixture().registry.mobIndex("critter"),petRarity).aggroRange)+rarityIndex(petRarity)*kPetAggroRangePerRarity,1e-9);
         });CHECK(count>0);
     }
 }
@@ -6159,8 +6197,8 @@ TEST(every_egg_id_takes_the_same_summon_buff){
     // other `<mob>_egg` is a name the rule has to recognise all the same.
     PetalConfig generated;
     generated.id = "matriarch_egg";
-    CHECK_NEAR(eggSummonCombatScale(generated),1.5,1e-9);
-    CHECK_NEAR(eggSummonHealthScale(generated),2.0,1e-9);
+    CHECK_NEAR(eggSummonCombatScale(generated),2.0,1e-9);
+    CHECK_NEAR(eggSummonHealthScale(generated),2.5,1e-9);
     PetalConfig ordinary;
     ordinary.id = "basic";
     CHECK_NEAR(eggSummonCombatScale(ordinary),1.0,1e-9);

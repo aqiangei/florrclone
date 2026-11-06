@@ -801,6 +801,8 @@ public:
     bool pyramidMapRevealed = false;
     std::int64_t lockedShopRotation=-1;
     std::vector<ShopOffer> lockedShopOffers;
+    std::int64_t currentShopRotation = -1;
+    std::vector<ShopOffer> currentShopOffers;
     void toggleShopLock();
     std::uint32_t dropBonusStreak=0;
     int dropBonusMultiplier=1;
@@ -963,6 +965,8 @@ public:
     /// (ServerMessage::OnlineRoster). Same session universe as the admin crown
     /// Players tab, pushed to everyone.
     struct OnlineRosterEntry {
+        std::uint8_t shard=0;
+        bool sameShard=true;
         std::string name;
         std::uint16_t level = 1;
         std::string guild;
@@ -976,7 +980,7 @@ public:
         std::uint8_t exteriorRealm = 0;
         float exteriorX = 0, exteriorY = 0, healthRatio = 0;
         bool mapPosition(std::uint8_t viewingRealm, Vec2& position, bool& projected) const {
-            if(!placed)return false;
+            if(!placed||!sameShard)return false;
             if(realm==viewingRealm){position={x,y};projected=false;return true;}
             if(insideDungeon && exteriorRealm==viewingRealm){position={exteriorX,exteriorY};projected=true;return true;}
             return false;
@@ -1174,6 +1178,7 @@ private:
     const WorldMaps* worldMaps_ = nullptr;
     Vec2 realmArrival_;
     bool realmChanged_ = false;
+    bool clearViewOnSnapshot_ = false;
     bool teleported_ = false;
     Profile profile_;
     std::string sessionToken_;

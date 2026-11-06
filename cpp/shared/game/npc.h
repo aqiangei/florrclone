@@ -127,7 +127,7 @@ inline std::string traderCooldownText(double remainingMillis) {
 inline constexpr int kTitanForgeCost = 5;
 
 /// 30 independent loot rolls: each petal has its own permanent progression.
-inline constexpr int titanForgeCost(unsigned completed, const std::string& inputId = {}) {
+inline int titanForgeCost(unsigned completed, const std::string& inputId = {}) {
     if (inputId == "fragment") return 15;
     return completed == 0 ? 10 : 15;
 }
@@ -149,7 +149,7 @@ inline constexpr std::int64_t hyperProtectionMillis(int claims) {
 inline constexpr Rarity kTitanInputRarity = Rarity::Super;
 inline constexpr Rarity kTitanOutputRarity = Rarity::Unique; // next rung, displayed Eternal
 inline bool titanForgeEligible(const std::string& id) {
-    return id != "blood_sacrifice" && id != "sacrifice" && id != "timed_mjolnir";
+    return id != "timed_mjolnir";
 }
 
 /// What a universal's holder gets back when another player forges the same

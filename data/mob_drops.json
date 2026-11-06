@@ -2480,6 +2480,55 @@
             ]
           ]
         ]
+      },
+      {
+        "type": "petal",
+        "itemType": "meteor",
+        "rarity": "common",
+        "probability": 1,
+        "minQuantity": 1,
+        "maxQuantity": 1,
+        "rollGroup": 0,
+        "rarityChances": [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [
+            [
+              6,
+              0.002
+            ]
+          ],
+          [
+            [
+              6,
+              0.4975
+            ],
+            [
+              7,
+              0.0025
+            ]
+          ],
+          [
+            [
+              6,
+              0.4925
+            ],
+            [
+              7,
+              0.0075
+            ]
+          ],
+          [
+            [
+              6,
+              0.5
+            ]
+          ]
+        ]
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct"

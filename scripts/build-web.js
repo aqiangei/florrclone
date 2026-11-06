@@ -106,6 +106,7 @@ const TARGETS = {
         // Referenced by the shell, not part of the link.
         sidecars: [
             [path.join(CPP_DIR, 'client', 'web', 'favicon.ico'), 'favicon.ico'],
+            [path.join(CPP_DIR, 'client', 'web', 'council.html'), 'council.html'],
         ],
         // Staged deflated beside themselves, as <name>.bin. These are the
         // two files the page pulls over the network; index.html is served
@@ -118,7 +119,24 @@ const TARGETS = {
             ['server.js', 'server.js'],
             ['server.wasm', 'server.wasm'],
         ],
-        sidecars: [],
+        sidecars: [
+            [path.join(ROOT, 'scripts', 'deploy-runtime.cjs'), 'deploy-runtime.cjs'],
+            [path.join(ROOT, 'scripts', 'shard-game-authority.cjs'), 'shard-game-authority.cjs'],
+            [path.join(ROOT, 'scripts', 'shard-hyper-client.cjs'), 'shard-hyper-client.cjs'],
+            [path.join(ROOT, 'scripts', 'shard-global-merge.cjs'), 'shard-global-merge.cjs'],
+            [path.join(ROOT, 'scripts', 'shard-rpc.cjs'), 'shard-rpc.cjs'],
+            [path.join(ROOT, 'scripts', 'shard-rpc-worker.cjs'), 'shard-rpc-worker.cjs'],
+            [path.join(ROOT, 'scripts', 'shard-request-sequence.cjs'), 'shard-request-sequence.cjs'],
+            [path.join(ROOT, 'scripts', 'shard-directory.cjs'), 'shard-directory.cjs'],
+            [path.join(ROOT, 'scripts', 'shard-coordinator-host.cjs'), 'shard-coordinator-host.cjs'],
+            [path.join(ROOT, 'scripts', 'shards', 'ops', 'shard-supervisor.cjs'), 'shard-supervisor.cjs'],
+            [path.join(ROOT, 'scripts', 'shards', 'ops', 'online-snapshot.cjs'), 'online-snapshot.cjs'],
+            [path.join(ROOT, 'scripts', 'shards', 'ops', 'release-check.cjs'), 'release-check.cjs'],
+            [path.join(ROOT, 'scripts', 'shards', 'ops', 'florrclone-sharded.service'), 'florrclone-sharded.service'],
+            [path.join(ROOT, 'scripts', 'shards', 'ops', 'florr-shard-coordinator.service'), 'florr-shard-coordinator.service'],
+            [path.join(ROOT, 'scripts', 'shards', 'ops', 'florr-shard-tunnel.service'), 'florr-shard-tunnel.service'],
+            [path.join(ROOT, 'scripts', 'shards', 'ops', 'nginx-game.conf'), 'nginx-game.conf'],
+        ],
     },
     // Not part of `all`: see the header. One file, nothing referenced.
     offline: {

@@ -99,6 +99,17 @@ struct ServerConfig {
     std::uint16_t port = 3000;
     std::string dataDir = "data";
     std::string databasePath = "inventory.json";
+    // Trusted embedding adapter only; no public CLI switch enables an
+    // unauthenticated authority. The adapter must enforce ownership/revisions.
+    std::string authoritySnapshot;
+    Database::CommitSink authorityCommit;
+    Database::DeltaSink authorityDeltaCommit;
+    std::function<std::string()> authorityRefresh;
+    std::function<Json(const std::string&,const std::string&)> authorityAcquire;
+    std::function<Json(const Json&)> authorityAuth;
+    bool authorityHyper=false;
+    std::function<bool(const std::vector<std::string>&)> authorityReleaseUnused;
+    std::function<Json(const std::vector<std::string>&)> authorityReleaseAsync;
     std::uint64_t worldSeed = 0x5EED10;
     /// TLS material, used only by the emscripten build. With it the listener
     /// serves https and offers WebTransport alongside WebSocket; without it,
@@ -1114,6 +1125,8 @@ private:
     /// client that was told the body died has to be told it stood back up or
     /// it keeps the death card over a flower it will not steer.
     void onPlayerRevived(Entity revived, Entity reviver);
+    bool canMarkPlayer(Entity target, Entity marker, Rarity rarity);
+    bool sendMarkedPlayerToHel(Entity target, Entity marker, Rarity rarity);
 
     /// Every mob body in `realm`, as the discs a spawn point has to clear. One
     /// realm's, because a spawn is judged crowded by what stands on ITS map,
@@ -1453,6 +1466,39 @@ private:
 
     ServerConfig config_;
     std::atomic<bool> running_{false};
+    struct SharedView {Json query;std::string attempt,user;double deadline=0;};
+    std::unordered_map<net::ConnectionId,SharedView> sharedViews_;
+    void queueSharedView(const Session&,net::Connection&,Json);
+    void serviceSharedViews();
+    bool hyperBarrierFrozen_=false;
+    std::string hyperBarrierCaptured_,hyperBarrierApplied_,hyperBarrierReady_;
+    struct PendingHyper { Json request; std::string attempt,transaction,user; net::ConnectionId connection=0; std::uint16_t petal=0; bool forge=false; };
+    PendingHyper pendingHyper_;
+    bool serviceHyperBarrier();
+    bool beginSharedHyper(Session&,net::Connection&,Json,std::uint16_t,bool);
+    void finishSharedHyper(const Json&);
+    bool persistenceFrozen_ = false;
+    bool authorityStopPrepared_ = false;
+    bool authorityStopReleased_ = false,authorityReleasePending_=false;
+    std::uint64_t authorityReleaseTicket_=UINT64_MAX;
+    double authorityNextReleaseCheck_=0;
+    bool shutdownDone_ = false;
+    bool commitBeforeReply();
+    void captureLiveProgress();
+    net::Connection::DrainDecision drainAuthoritative(bool durable,std::uint64_t& ticket);
+    bool refreshAuthority();
+    bool acquireAuthority(const std::string& id,const std::string& sessionTokenHash = {});
+    void releaseUnusedAuthority();
+    std::vector<std::string> authorityLiveAccounts_;
+    std::unordered_map<net::ConnectionId,std::vector<std::byte>> authorityAuthQueue_;
+    struct AuthorityAuthWork {
+        std::vector<std::byte> packet;
+        Json lookup,grant;
+        bool charged=false,lookedUp=false,proven=false,acquired=false,done=false;
+    };
+    std::unordered_map<net::ConnectionId,AuthorityAuthWork> authorityAuthWork_;
+    net::ConnectionId processingAuthorityAuth_=0;
+    bool prepareAuthorityAuth(Session&,net::Connection&,net::ClientMessage,ByteReader);
     /// Written once, on the way out, by whatever asked the server to stop.
     /// See exitCode().
     int exitCode_ = 0;
@@ -1528,6 +1574,8 @@ private:
     int botCountOverride_ = -1;
 
     std::unordered_map<net::ConnectionId, Session> sessions_;
+    // Account-keyed protection survives bodies/reconnects; never persisted.
+    std::unordered_map<std::string, double> markProtectedUntil_;
     std::unordered_map<net::ConnectionId, ClientView> views_;
 
     /// catalogSkinLook's memo, by skin id. Memory only: a look is cheap to

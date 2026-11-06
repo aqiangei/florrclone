@@ -38,6 +38,18 @@ inline constexpr int baseLootTrialsForRarity(Rarity rarity) {
         (rarityIndex(rarity) >= rarityIndex(Rarity::Super) ? kLootFeelSuperMultiplier : 1);
 }
 
+/// Daily bonus tier: 1 inactive, 2 ordinary day, 3 fourth consecutive day.
+/// Extra independent rolls belong only to the claimant with that bonus.
+inline constexpr int bonusLootTrialsForRarity(Rarity rarity, int bonus) {
+    const int base = baseLootTrialsForRarity(rarity);
+    if (bonus <= 1) return base;
+    const bool fourthDay = bonus >= 3;
+    if (rarityIndex(rarity) >= rarityIndex(Rarity::Apex)) return base * (fourthDay ? 18 : 14) / 10;
+    if (rarity == Rarity::Unique) return base * (fourthDay ? 22 : 16) / 10;
+    if (rarity == Rarity::Super) return base * (fourthDay ? 20 : 15) / 10;
+    return base * (fourthDay ? 3 : 2);
+}
+
 /// What mobIndex()/petalIndex() answer for an id the content does not define.
 /// Deliberately the same sentinel as an empty loadout slot: "no petal" and
 /// "a petal nobody has heard of" mean the same thing to everything downstream.
@@ -70,6 +82,7 @@ struct AssemblyRecipe {
     };
     std::vector<Stack> inputs;
     std::vector<Stack> outputs;
+    std::optional<Rarity> outputRarity;
 
     /// How many of `petalIndex` one run of the recipe takes.
     std::int64_t takes(std::uint16_t petalIndex) const {
@@ -1392,12 +1405,18 @@ inline bool petalIsEgg(const PetalConfig& config) {
 /// The shell itself is a one-hit body with no contact damage; the summons are
 /// the egg's worth, so every egg's hatchlings get the bigger pool below.
 inline double eggSummonHealthScale(const PetalConfig& config) {
-    return petalIsEgg(config) ? 2.0 : 1.0;
+    return petalIsEgg(config) ? 2.5 : 1.0;
 }
 /// And both halves of the summons' combat worth, pool and bite, climb together:
 /// the shell's own stat block carries neither of them.
 inline double eggSummonCombatScale(const PetalConfig& config) {
-    return petalIsEgg(config) ? 1.5 : 1.0;
+    return petalIsEgg(config) ? 2.0 : 1.0;
+}
+
+/// Hyper boosts individual summons without adding entities or attack events.
+inline double hyperSummonScale(const PetalConfig& config, Rarity rarity) {
+    if (ladderRarity(rarity) != Rarity::Apex) return 1.0;
+    return config.id == "magic_stick" || config.id == "mysterious_stick" ? 1.5 : 1.25;
 }
 
 /// The sacrifice: florr's "On death, summons a mob to fight again". Worn on

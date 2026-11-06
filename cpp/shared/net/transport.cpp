@@ -103,17 +103,34 @@ void Connection::markFailed(const std::string& reason) {
     // should be held for one: closing_ makes send() discard, the same as it
     // does for a connection that is on its way out for any other reason.
     outbound_.clear();
+    outboundBoundaries_.clear();
     outboundSent_ = 0;
     closing_ = true;
 }
 
 void Connection::send(const std::byte* data, std::size_t size) {
     if (fd_ < 0 || closing_) return;
+    if (durableMessage_ && durableMessage_(data, size)) commitRequired_ = true;
     const std::uint32_t length = static_cast<std::uint32_t>(size);
     const std::size_t at = outbound_.size();
     outbound_.resize(at + kFrameHeaderBytes + size);
     std::memcpy(outbound_.data() + at, &length, sizeof length);
     if (size) std::memcpy(outbound_.data() + at + kFrameHeaderBytes, data, size);
+    if(durableGate_)outboundBoundaries_.push_back({outbound_.size(),durableMessage_&&durableMessage_(data,size),false,UINT64_MAX});
+}
+
+std::size_t Connection::allowedPrefix(std::string& error) {
+    if(!durableGate_)return outbound_.size()-outboundSent_;
+    while(!outboundBoundaries_.empty()&&outboundBoundaries_.front().end<=outboundSent_)outboundBoundaries_.pop_front();
+    if(outboundBoundaries_.empty())return 0;
+    auto& boundary=outboundBoundaries_.front();
+    if(!boundary.approved) {
+        const auto decision=durableGate_(boundary.durable,boundary.ticket);
+        if(decision==DrainDecision::Fail){error="authoritative commit unavailable";return 0;}
+        if(decision==DrainDecision::Defer)return 0;
+        boundary.approved=true;
+    }
+    return boundary.end-outboundSent_;
 }
 
 void Connection::send(const ByteWriter& message) { send(message.data(), message.size()); }
@@ -146,6 +163,11 @@ bool Connection::readAvailable(std::string& errorOut) {
 }
 
 bool Connection::writeAvailable(std::string& errorOut) {
+    if (wantsWrite() && writeGate_ && !writeGate_(commitRequired_)) {
+        errorOut = "authoritative commit unavailable";
+        return false;
+    }
+    commitRequired_ = false;
     while (outboundSent_ < outbound_.size()) {
         // The transport's own queue is the EAGAIN here: past the high water
         // mark this side stops feeding it and the rest waits for the next
@@ -153,7 +175,8 @@ bool Connection::writeAvailable(std::string& errorOut) {
         // where maxPendingBytes can see and cap it -- rather than inside a
         // JavaScript object that grows without anybody counting.
         if (web::buffered(fd_) >= kWebSendHighWater) break;
-        const std::size_t remaining = outbound_.size() - outboundSent_;
+        const std::size_t remaining = allowedPrefix(errorOut);
+        if(!remaining){if(!errorOut.empty())return false;break;}
         const std::size_t chunk = std::min(remaining, kReadChunk);
         if (!web::send(fd_, outbound_.data() + outboundSent_, static_cast<int>(chunk))) {
             const std::string reason = web::error(fd_);
@@ -194,8 +217,14 @@ bool Connection::readAvailable(std::string& errorOut) {
 }
 
 bool Connection::writeAvailable(std::string& errorOut) {
+    if (wantsWrite() && writeGate_ && !writeGate_(commitRequired_)) {
+        errorOut = "authoritative commit unavailable";
+        return false;
+    }
+    commitRequired_ = false;
     while (outboundSent_ < outbound_.size()) {
-        const std::size_t remaining = outbound_.size() - outboundSent_;
+        const std::size_t remaining = allowedPrefix(errorOut);
+        if(!remaining){if(!errorOut.empty())return false;break;}
         const ssize_t n = ::send(fd_, outbound_.data() + outboundSent_, remaining,
 #ifdef MSG_NOSIGNAL
                                  MSG_NOSIGNAL
@@ -230,10 +259,12 @@ double Connection::frameAgeMillis() const {
 }
 
 void Connection::compactOutbound() {
+    while(!outboundBoundaries_.empty()&&outboundBoundaries_.front().end<=outboundSent_)outboundBoundaries_.pop_front();
     if (outboundSent_ == outbound_.size()) {
         outbound_.clear();
         outboundSent_ = 0;
     } else if (outboundSent_ > kCompactThreshold) {
+        for(auto& boundary:outboundBoundaries_)boundary.end-=outboundSent_;
         outbound_.erase(outbound_.begin(),
                         outbound_.begin() + static_cast<std::ptrdiff_t>(outboundSent_));
         outboundSent_ = 0;

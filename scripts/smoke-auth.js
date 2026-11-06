@@ -122,12 +122,12 @@ function mask(payload) {
 function send(sock, body) {
   sock.write(mask(appFrame(body)));
 }
-function parseFrames(buffer) {
+function parseFrames(buffer, state) {
   // Reassemble WebSocket messages (continuation frames), then peel the
   // transport [u32 length][app] layer the same way the C++ client does.
   const messages = [];
   let at = 0;
-  let pending = null;
+  let pending = state.pending || null;
   while (at + 2 <= buffer.length) {
     const first = buffer[at];
     const second = buffer[at + 1];
@@ -165,7 +165,7 @@ function parseFrames(buffer) {
       continue;
     }
     if (!fin) continue;
-    const msg = pending;
+    const msg = Buffer.concat([state.application || Buffer.alloc(0), pending]);
     pending = null;
     // One WebSocket binary may carry several [u32 length][app] records.
     let off = 0;
@@ -175,21 +175,37 @@ function parseFrames(buffer) {
       messages.push(msg.subarray(off + 4, off + 4 + appLen));
       off += 4 + appLen;
     }
+    state.application = Buffer.from(msg.subarray(off));
   }
+  state.pending = pending;
   return { frames: messages, rest: buffer.subarray(at) };
 }
-function wsConnect() {
+function wsConnect(port = PORT) {
   return new Promise((resolve, reject) => {
     const key = crypto.randomBytes(16).toString('base64');
     const req = http.request({
-      host: '127.0.0.1', port: PORT, path: '/ws',
+      host: '127.0.0.1', port, path: '/ws',
       headers: {
         Connection: 'Upgrade', Upgrade: 'websocket',
         'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': key,
         'Sec-WebSocket-Protocol': 'binary',
       },
     });
-    req.on('upgrade', (_r, socket) => resolve(socket));
+    req.on('upgrade', (_r, socket, head) => {
+      const state = { buffer: Buffer.alloc(0), queue: [], listeners: new Set() };
+      socket.smokeReader = state;
+      const data = chunk => {
+        const parsed = parseFrames(Buffer.concat([state.buffer, chunk]), state);
+        state.buffer = parsed.rest;
+        for (const frame of parsed.frames) {
+          if (state.listeners.size) for (const listener of state.listeners) listener(frame);
+          else state.queue.push(frame);
+        }
+      };
+      socket.on('data', data);
+      if (head.length) data(head);
+      resolve(socket);
+    });
     req.on('response', (r) => reject(new Error('no upgrade ' + r.statusCode)));
     req.on('error', reject);
     req.end();
@@ -198,16 +214,11 @@ function wsConnect() {
 // (send helper above)
 function readMessages(socket, ms) {
   return new Promise((resolve) => {
-    let buf = Buffer.alloc(0);
-    const out = [];
-    const onData = (chunk) => {
-      buf = Buffer.concat([buf, chunk]);
-      const parsed = parseFrames(buf);
-      buf = parsed.rest;
-      out.push(...parsed.frames);
-    };
-    socket.on('data', onData);
-    setTimeout(() => { socket.off('data', onData); resolve(out); }, ms);
+    const state = socket.smokeReader;
+    const out = state.queue.splice(0);
+    const onFrame = frame => out.push(frame);
+    state.listeners.add(onFrame);
+    setTimeout(() => { state.listeners.delete(onFrame); resolve(out); }, ms);
   });
 }
 function parseAuth(msgs) {
@@ -232,6 +243,7 @@ function parseAuth(msgs) {
         reason: reason.value,
         tokenLen: token.value.length,
       };
+      Object.defineProperty(auth,'token',{value:token.value,enumerable:false});
     } else if (m[0] === ServerMessage.Profile) {
       let at = 1;
       at += 4;
@@ -276,7 +288,7 @@ function fail(msg) {
   process.exit(1);
 }
 
-(async () => {
+if (require.main === module) (async () => {
   console.log({
     ver,
     contentHash: CONTENT_HASH >>> 0,
@@ -318,7 +330,7 @@ function fail(msg) {
   });
   if (!bad.auth || bad.auth.status !== AuthStatus.BadCredentials) fail('expected BadCredentials');
 
-  const html = fs.readFileSync(path.join(__dirname, '../dist/index.html'), 'utf8');
+  const html = process.env.SMOKE_SERVER_ONLY === '1' ? '' : fs.readFileSync(path.join(__dirname, '../dist/index.html'), 'utf8');
   if (html.includes('admin1234') || /r\?"aqa":null/.test(html) || /r\?"admin":null/.test(html)) {
     fail('dist/index.html still has local credential defaults');
   }
@@ -328,3 +340,4 @@ function fail(msg) {
   console.error(e);
   process.exit(1);
 });
+module.exports={wsConnect,readMessages,parseAuth,send,encStr,ClientMessage,ServerMessage,AuthStatus,CONTENT_HASH,ver};

@@ -425,6 +425,7 @@ struct SpongeDamageEffect {
     double remainingDamage = 0;
     double damagePerSecond = 0;
     Entity source = NULL_ENTITY;
+    double readyAtMillis = 0;
 };
 
 /// Direct hits accepted while a live sponge is equipped are paid back over
@@ -579,6 +580,8 @@ struct PlayerVisuals {
     /// marking it, which is why it rides faceFlags and not renderFlags.
     bool corrupted = false;
     bool equippedCorruption = false;
+    bool hyperCorruption = false;
+    bool nearbyCorruption = false;
     bool seesGhosts = false;
 };
 
@@ -588,6 +591,7 @@ struct PlayerVisuals {
 /// incremental version has to unwind exactly what it applied, and a single
 /// missed unwind is a permanent stat the player keeps forever.
 struct PlayerModifiers {
+    std::array<std::uint8_t, kRarityCount> computerParts{};
     double maxHealthScale = 1.0;
     double speedScale = 1.0;
     /// The flower's BODY damage: equipped petal damage modifiers times the
@@ -690,6 +694,10 @@ struct PlayerLocation {
 /// every pad -- suction included -- for five, so it does not bounce straight
 /// back through the one it arrived on.
 struct TeleporterState {
+    // Server-only; never persisted or renewed by another mark. Death clears it.
+    double markHoldUntilMillis = 0;
+    bool markReturnAvailable = false;
+    RealmPoint markOrigin;
     /// Index into MapData's element list, or -1 when standing on no pad.
     int pad = -1;
     double enteredAtMillis = 0;
@@ -820,8 +828,8 @@ struct MobAi {
     /// owner that has not closed for kPetTrappedMillis is trapped.
     double petBestGap = 0;
     double petProgressMillis = 0;
-    /// Set by the AI on a trapped pet. The petal system retires it and charges
-    /// the reload to the egg that hatched it (PetalSystem::retireDistantPets).
+    /// Set by the AI on a trapped pet. Recover it on safe ground beside its
+    /// owner, preserving health and lifetime (PetalSystem::recoverDistantPets).
     bool petRecall = false;
 };
 
@@ -967,6 +975,7 @@ struct Pet {
     /// timed pet is no part of its type's squad: it is not counted toward a
     /// squad's size and a squad being replaced does not recall it.
     double expiresAtMillis = 0;
+    double damageTalentScale = 1.0; ///< Refreshed from owner talents; shared with ranged attacks.
 };
 
 /// A summoned mob whose config spawns minions on a clock (`periodic_spawn` --
@@ -1120,6 +1129,11 @@ struct Spawner {
 // ---------------------------------------------------------------------------
 
 struct PetalInstance {
+    std::uint8_t dominoPips = 0;
+    // A placed Dark Mark stays over its corpse while it charges. Ordinary
+    // petal replication carries its position; no message layout changes.
+    Entity markTarget = NULL_ENTITY;
+    double markReadyAtMillis = 0;
     /// Server-only Icosahedron flight state; positions use ordinary petal replication.
     struct Ricochet {
         bool enabled = false;
@@ -1514,6 +1528,15 @@ struct BurrowState {
     std::uint16_t wormIndex=UINT16_MAX,desertCentipedeIndex=UINT16_MAX;
 };
 
+struct PlantedMeteor { Entity owner = NULL_ENTITY; };
+
+struct HoneyBait { Entity owner = NULL_ENTITY; Vec2 velocity{}; double travel = 0; };
+struct WormSwallow {
+    Entity worm = NULL_ENTITY;
+    double releaseAtMillis = 0;
+    double safeUntilMillis = 0;
+};
+
 struct WebFlight {
     Vec2 from; Vec2 to;
     double elapsed = 0;
@@ -1663,6 +1686,9 @@ FLIX_COMPONENT(flix::NetId);
 FLIX_COMPONENT(flix::Replicated);
 FLIX_COMPONENT(flix::TotemRegeneration);
 FLIX_COMPONENT(flix::WebFlight);
+FLIX_COMPONENT(flix::HoneyBait);
+FLIX_COMPONENT(flix::PlantedMeteor);
+FLIX_COMPONENT(flix::WormSwallow);
 FLIX_COMPONENT(flix::PoisonImmune);
 FLIX_COMPONENT(flix::BurrowState);
 

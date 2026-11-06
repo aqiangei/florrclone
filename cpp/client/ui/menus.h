@@ -309,6 +309,7 @@ struct ClientSettings {
     /// top row. Off by default -- the bar's own shape now follows the
     /// reference game's, which is bigger, tighter and captioned underneath.
     bool classicLoadoutBar = false;
+    int rotationStep = 4;
     /// Whether the on-screen touch controls are up: the stick, and the two
     /// buttons that stand in for the extend/retract keys. The TypeScript
     /// client kept the same flag in `localStorage.requestMobile` and resolved
@@ -408,6 +409,17 @@ struct ProfilingStats {
 };
 
 /// One frame of everything a panel is allowed to touch.
+/// Authority-fed, transient state. Not a persisted setting or an editable URL.
+/// Remains hidden until the account handoff adapter supplies a verified directory.
+struct ShardSelection {
+    struct Choice { std::string id, label; bool available = false; };
+    bool visible = false;
+    bool ready = false;
+    bool switching = false;
+    std::string currentId, currentLabel, message, requested;
+    std::vector<Choice> choices;
+};
+
 struct MenuContext {
     Canvas& canvas;
     Window& window;
@@ -451,6 +463,7 @@ struct MenuContext {
     MenuId openMenu = MenuId::None;
     /// App ALT latch: tooltips show exact figures while on.
     bool altMode = false;
+    ShardSelection* shardSelection = nullptr;
 
     Vec2 mouse() const { return {window.mouseX(), window.mouseY()}; }
     bool over(Rect r) const { return r.contains(mouse()); }
@@ -1109,6 +1122,7 @@ private:
     enum class Phase : std::uint8_t { Idle, Forging, Result };
 
     bool hyper_ = false;
+    bool abandon_ = false;
     bool eternalFragment_ = true;
     bool confirmForge_ = false;
     SlotTierGrid grid_;
@@ -1297,7 +1311,7 @@ public:
     void reset();
     static double preferredWidth();
     /// Fixed: the title row, the tab strip, the header and two rows of offer
-    /// cards come to this, and the other two tabs are laid out inside it.
+    /// cards come to this, and the remaining tabs are laid out inside it.
     static double preferredHeight();
     static Rect bounds(int viewWidth, int viewHeight);
     /// How far the window has slid in (0..1), and whether it is on its way
@@ -1309,7 +1323,7 @@ public:
     }
 
 private:
-    enum class Tab : std::uint8_t { Offers, Challenges, Bonus };
+    enum class Tab : std::uint8_t { Offers, Current, Challenges, Bonus };
     Tab tab_ = Tab::Offers;
     double open_ = 1.0;
     bool closing_ = false;
@@ -1564,6 +1578,7 @@ public:
     /// The screen owns the loadout bar's slide: the browser builds a fresh
     /// `CanvasLoadoutBar` per screen, so crossing between them replays the
     /// rise rather than leaving the bar already seated from last time.
+    void setTouchLayout(bool touch) { touchLayout_ = touch; }
     void setInGame(bool inGame) {
         if (inGame == inGame_) return;
         inGame_ = inGame;
@@ -1595,6 +1610,10 @@ public:
     /// Whether Settings offers its Grant Admin row. Off unless the app says
     /// otherwise, so a client with no way to grant one draws no button.
     void setAdminGrantOffered(bool offered) { adminGrantOffered_ = offered; }
+    ShardSelection& shardSelection() { return shardSelection_; }
+    std::string takeShardSwitchRequest() {
+        std::string request; request.swap(shardSelection_.requested); return request;
+    }
 
     /// Set when that row was clicked, read and cleared like the two above.
     bool takeAdminGrantRequest() {
@@ -1638,6 +1657,7 @@ public:
     double reservedLeft() const;
     /// The first y below the top icon row, strip inset included.
     double stripBottom() const;
+    double stripRight() const;
 
     /// True while the strip's changelog button should shake: while the
     /// changelog holds more releases than the player had seen the last time
@@ -1800,11 +1820,13 @@ private:
     /// the account's petals, which craftPanelBounds() is not handed.
     Vec2 craftSize_{610.0, 700.0};
     ClientSettings settings_;
+    ShardSelection shardSelection_;
     DragState drag_;
     bool wantsText_ = false;
     bool altMode_ = false;
 
     bool inGame_ = false;
+    bool touchLayout_ = false;
     bool exitRequested_ = false;
     bool logoutRequested_ = false;
     bool adminGrantOffered_ = false;
@@ -1896,6 +1918,7 @@ private:
     /// A K/L + number chord: the preset it names, or -1, and whether Shift
     /// was down, which makes it a save rather than a load.
     int pendingPreset_ = -1;
+    Rect rotationDial_{};
     bool pendingPresetSave_ = false;
     /// In game, K and L are held down to name a preset, so whatever ELSE they
     /// are bound to -- mouse controls, the leaderboard -- cannot fire on the

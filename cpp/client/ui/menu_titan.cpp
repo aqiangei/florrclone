@@ -70,8 +70,10 @@ std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex, 
 } // namespace
 
 Vec2 TitanPanel::size(const Profile& profile) {
-    const std::size_t rows =
-        std::max<std::size_t>(1, std::max(SlotTierGrid::rows(profile, kTitanInputRarity, kColumns),SlotTierGrid::rows(profile,Rarity::Unique,kColumns)));
+    const std::size_t rows = std::max({std::size_t{1},
+        SlotTierGrid::rows(profile, kTitanInputRarity, kColumns),
+        SlotTierGrid::rows(profile, Rarity::Unique, kColumns),
+        SlotTierGrid::rows(profile, Rarity::Apex, kColumns)});
     return {slotCardColumnsWidth(kColumns),
             std::min(kMaxHeight,
                      kGridTop + kGridPadding * 2.0 + static_cast<double>(rows) * kGridPitch)};
@@ -145,7 +147,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     // holds at universal -- but never while a forge is out: those five are the
     // server's, and a profile landing a frame ahead of the result would empty
     // the ring under its own animation.
-    if (phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
+    if (!abandon_ && phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
         (forgeInputOwned(profile, stagedPetal_, hyper_) < static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_, hyper_, ctx.net)) ||
          !(hyper_?hyperForgeEligible(content().petal(stagedPetal_).id):titanForgeEligible(content().petal(stagedPetal_).id)) ||
          (!hyper_ && !eternalFragment_ && content().petal(stagedPetal_).id!="fragment"))) {
@@ -153,14 +155,65 @@ bool TitanPanel::render(MenuContext& ctx) {
     }
 
     const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin,
-                                            hyper_?"超凡争夺锻造":eternalFragment_?"永久永恒锻造":"限时永恒锤（1小时）", "Forge", mouse);
+                                            abandon_?"解除超凡花瓣":hyper_?"超凡争夺锻造":eternalFragment_?"永久永恒锻造":"限时永恒锤（1小时）", "Forge", mouse);
     const Rect panel = card.panel;
-    const char* modes[]={"永久永恒","限时锤（1h）","超凡争夺"};
-    for(int i=0;i<3;++i){
-        const Rect tab{panel.x+18+i*120,panel.y+62,114,32};
-        const bool selected=i==2?hyper_:!hyper_&&(eternalFragment_==(i==0));
+    const char* modes[]={"永久永恒","限时锤（1h）","超凡争夺","解除超凡"};
+    const double tabW = (panel.w - 36.0) / 4.0;
+    for(int i=0;i<4;++i){
+        const Rect tab{panel.x+18+i*tabW,panel.y+62,tabW-6,32};
+        const bool selected=i==3?abandon_:!abandon_&&(i==2?hyper_:!hyper_&&(eternalFragment_==(i==0)));
         drawSlotButton(canvas,tab,modes[i],selected?std::optional<std::uint32_t>(rarityColor(outputTier)):std::nullopt,tab.contains(mouse),tab.contains(mouse)&&ctx.window.mouseDown(MouseButton::Left));
-        if(ctx.pressed()&&tab.contains(mouse)&&phase_!=Phase::Forging){hyper_=i==2;eternalFragment_=i!=1;reset();return true;}
+        if(ctx.pressed()&&tab.contains(mouse)&&phase_!=Phase::Forging){abandon_=i==3;hyper_=i==2;eternalFragment_=i!=1;reset();return true;}
+    }
+
+    if (abandon_) {
+        if (knownPetal(stagedPetal_) && profile.stackCount(stagedPetal_, Rarity::Apex) == 0) reset();
+        if (knownPetal(stagedPetal_) && now - askedAt_ > 1) {
+            ctx.net.requestTitanHolder(stagedPetal_);
+            askedAt_ = now;
+        }
+        const auto* holder = knownPetal(stagedPetal_) ? ctx.net.titanHolder(stagedPetal_) : nullptr;
+        const bool ownedHere = holder && !holder->empty() && *holder == profile.username;
+        SlotCardLayout line = card;
+        line.lineY = panel.y + 139;
+        drawSlotLine(canvas, line, "选择在这位泰坦处持有的超凡花瓣。");
+        line.lineY += kLinePitch;
+        drawSlotLine(canvas, line, "解除会永久销毁一份，并释放名额；不返还材料。");
+        if (knownPetal(stagedPetal_)) {
+            ItemTile tile;
+            tile.petalIndex = stagedPetal_;
+            tile.rarity = Rarity::Apex;
+            tile.timeSeconds = now;
+            drawItemTile(canvas, ctx.sprites, card.slotRect, tile);
+        }
+        drawSlotButton(canvas, card.button, confirmForge_ && ownedHere ? "确认销毁一份" : "解除所选超凡",
+                       ownedHere ? std::optional<std::uint32_t>(0xA34137u) : std::nullopt,
+                       card.button.contains(mouse), false);
+        line.lineY = panel.y + kFirstLineY;
+        drawSlotLine(canvas, line, !knownPetal(stagedPetal_) ? "请从下方选择" :
+                     !holder ? "正在查询持有记录…" : ownedHere ? "此处持有，可解除" : "此处没有你的持有记录");
+        const auto hovered = grid_.render(ctx, card, kTitanSkin, Rarity::Apex, kColumns, kGridTop,
+            [](std::uint16_t, std::uint32_t count) {
+                SlotCell cell; cell.count = count;
+                if (count > 1) cell.badge = "x" + stackCountText(count);
+                return cell;
+            });
+        if (!ctx.pressed()) return true;
+        if (card.close.contains(mouse)) return false;
+        if (hovered) {
+            stagedPetal_ = askedPetal_ = hovered->petalIndex;
+            ctx.net.forgetTitanHolder(stagedPetal_);
+            askedAt_ = -10;
+            confirmForge_ = false;
+        } else if (ownedHere && card.button.contains(mouse)) {
+            if (!confirmForge_) confirmForge_ = true;
+            else {
+                ctx.net.sendChat("/hyper-abandon here " + content().petal(stagedPetal_).id + " confirm");
+                ctx.net.forgetTitanHolder(stagedPetal_);
+                reset();
+            }
+        } else confirmForge_ = false;
+        return true;
     }
 
     // --- the slot ----------------------------------------------------------

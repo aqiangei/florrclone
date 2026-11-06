@@ -4,6 +4,7 @@
 #include "shared/game/absorb.h"
 #include "shared/game/components.h"
 #include "shared/game/constants.h"
+#include "shared/game/shop.h"
 
 using namespace flix;
 using flix::testsupport::awaitProfile;
@@ -46,34 +47,46 @@ bool absorb(Harness& h, NetClient& client, const std::vector<NetClient::AbsorbSt
 
 } // namespace
 
-TEST(every_tier_is_worth_seven_of_the_one_below_and_a_rare_is_one_xp) {
-    CHECK_NEAR(absorbXpPerPetal(Rarity::Rare), 1.0, 1e-12);
-    CHECK_NEAR(absorbXpPerPetal(Rarity::Epic), 7.0, 1e-12);
-    CHECK_NEAR(absorbXpPerPetal(Rarity::Legendary), 49.0, 1e-12);
-    CHECK_NEAR(absorbXpPerPetal(Rarity::Apex), 823543.0, 1e-6);
-    CHECK_NEAR(absorbXpPerPetal(Rarity::Common), 1.0 / 49.0, 1e-12);
-    // Well under a kill of the same tier: absorbing is a side income.
-    CHECK(absorbXpPerPetal(Rarity::Mythic) < 32000.0 * 0.05);
+TEST(absorb_curve_rewards_new_and_veteran_stock_without_replacing_hunting) {
+    CHECK_EQ(absorbXpPerPetal(Rarity::Common),1.0);
+    CHECK_EQ(absorbXpPerPetal(Rarity::Super),112000.0);
+    CHECK_EQ(absorbXpPerPetal(Rarity::Unique),800000.0);
+    CHECK_EQ(absorbXpPerPetal(Rarity::Apex),0.0);
+    // Veteran stock remains much more valuable than low-tier duplicates.
+    for(int tier=1;tier<=8;++tier)
+        CHECK(absorbXpPerPetal(clampRarity(tier))>=4*absorbXpPerPetal(clampRarity(tier-1)));
+    // Even with the highest existing talent, one high-tier petal pays less
+    // than a same-tier standard kill, so drops supplement hunting.
+    SkillSet max;max.set(SkillId::Absorbing,9);
+    const double killXp[]={32000,150000,1200000,6800000};
+    for(int tier=5;tier<=8;++tier)
+        CHECK(absorbXpTotal(absorbUnits(clampRarity(tier)),max)<killXp[tier-5]);
+    // Buying and burning cannot turn one star into anything close to the XP
+    // earned alongside that star (even a Mythic Rock grants 3,100 XP).
+    std::string error;CHECK(loadContent(dataDir(),error));
+    for(std::uint16_t i=0;i<content().petalCount();++i)if(shopSellsPetal(i))
+        for(int tier=0;tier<=7;++tier) {
+            const auto rarity=clampRarity(tier);
+            CHECK(absorbXpTotal(absorbUnits(rarity),max)/shopOfferPrice(i,rarity,30)<1000);
+        }
 }
 
-TEST(a_request_is_floored_once_so_fractions_add_up) {
+TEST(absorb_request_rounds_talent_once_and_single_common_never_pays_zero) {
     const SkillSet none;
-    // Forty-nine commons are one XP however they are counted -- not 49 times
-    // a fraction that floors to nothing.
-    CHECK_EQ(absorbXpTotal(49.0 * absorbUnits(Rarity::Common), none), 1.0);
-    CHECK_EQ(absorbXpTotal(48.0 * absorbUnits(Rarity::Common), none), 0.0);
-    CHECK_EQ(absorbXpTotal(7.0 * absorbUnits(Rarity::Uncommon), none), 1.0);
+    CHECK_EQ(absorbXpTotal(absorbUnits(Rarity::Common), none), 1.0);
+    CHECK_EQ(absorbXpTotal(49.0 * absorbUnits(Rarity::Common), none), 49.0);
+    CHECK_EQ(absorbXpTotal(7.0 * absorbUnits(Rarity::Uncommon), none), 28.0);
     CHECK_EQ(absorbXpTotal(3.0 * absorbUnits(Rarity::Epic) + absorbUnits(Rarity::Rare), none),
-             22.0);
+             256.0);
 
     // The talent multiplies before the floor, and a total that is whole on
-    // paper stays whole: 50 rares at 2.52x is 126, not 125.
+    // paper stays whole: 50 rares at 2.52x is 2016, not 2015.
     SkillSet legendary;
     legendary.set(SkillId::Absorbing, rarityIndex(Rarity::Legendary));
-    CHECK_EQ(absorbXpTotal(50.0 * absorbUnits(Rarity::Rare), legendary), 126.0);
+    CHECK_EQ(absorbXpTotal(50.0 * absorbUnits(Rarity::Rare), legendary), 2016.0);
     SkillSet apex;
     apex.set(SkillId::Absorbing, rarityIndex(Rarity::Apex));
-    CHECK_EQ(absorbXpTotal(absorbUnits(Rarity::Rare), apex), 8.0);
+    CHECK_EQ(absorbXpTotal(absorbUnits(Rarity::Rare), apex), 128.0);
 }
 
 TEST(the_basic_hyper_and_universals_cannot_be_absorbed) {
@@ -109,17 +122,20 @@ TEST(absorbing_on_the_title_screen_pays_the_account) {
     }));
     const double before = client.profile().totalXp;
 
-    // Every stack in one request, priced once: 10 + 2 x 7 + floor(60/49).
+    // Every stack in one request, priced once: 10 x 16 + 2 x 80 + 60.
     AbsorbOutcome outcome;
+    CHECK(absorb(h, client, {{light,Rarity::Common,1}},outcome));
+    CHECK(outcome.success);CHECK_EQ(outcome.xpGained,1.0);
+    CHECK(awaitProfile(h,client,[&](const Profile& p){return p.totalXp==before+1.0;}));
     CHECK(absorb(h, client,
                  {{rose, Rarity::Rare, 10}, {light, Rarity::Epic, 2}, {light, Rarity::Common, 60}},
                  outcome));
     CHECK(outcome.success);
-    CHECK_EQ(outcome.xpGained, 25.0);
+    CHECK_EQ(outcome.xpGained, 380.0);
     CHECK_EQ(outcome.absorbed, 72u);
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(rose, Rarity::Rare) == 0u && p.stackCount(light, Rarity::Epic) == 1u &&
-               p.stackCount(light, Rarity::Common) == 40u && p.totalXp == before + 25.0;
+               p.stackCount(light, Rarity::Common) == 39u && p.totalXp == before + 381.0;
     }));
 }
 
@@ -189,7 +205,7 @@ TEST(the_absorption_talent_multiplies_what_absorbing_pays) {
     AbsorbOutcome outcome;
     CHECK(absorb(h, client, {{rose, Rarity::Rare, 50}}, outcome));
     CHECK(outcome.success);
-    CHECK_EQ(outcome.xpGained, 126.0);
+    CHECK_EQ(outcome.xpGained, 2016.0);
 }
 
 TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
@@ -216,16 +232,16 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     const double before = world.get<PlayerProgress>(body).totalXp;
     const int levelBefore = world.get<PlayerProgress>(body).level;
 
-    // Two legendaries are 98 XP: a fresh flower's first few levels at once,
+    // Two legendaries are 800 XP: a fresh flower's first few levels at once,
     // and the body -- the XP authority while it lives -- takes them now.
     AbsorbOutcome outcome;
     CHECK(absorb(h, client, {{rose, Rarity::Legendary, 2}}, outcome));
     CHECK(outcome.success);
-    CHECK_EQ(outcome.xpGained, 98.0);
+    CHECK_EQ(outcome.xpGained, 800.0);
     const PlayerProgress& progress = world.get<PlayerProgress>(body);
-    CHECK_EQ(progress.totalXp, before + 98.0);
+    CHECK_EQ(progress.totalXp, before + 800.0);
     CHECK(progress.level > levelBefore);
-    CHECK_EQ(progress.level, levelFromTotalXp(before + 98.0).level);
+    CHECK_EQ(progress.level, levelFromTotalXp(before + 800.0).level);
     // The level-up landed with the XP: the new level's health, full.
     const Health& health = world.get<Health>(body);
     CHECK(health.max > maxHealthForLevel(levelBefore));
@@ -233,6 +249,6 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     // And the record was brought level with the body straight away, so the
     // Profile that followed already counts it.
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.totalXp == before + 98.0 && p.stackCount(rose, Rarity::Legendary) == 0u;
+        return p.totalXp == before + 800.0 && p.stackCount(rose, Rarity::Legendary) == 0u;
     }));
 }

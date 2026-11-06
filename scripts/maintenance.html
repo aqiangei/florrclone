@@ -1,17 +1,75 @@
 <!doctype html>
 <html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>游戏更新中</title>
-<style>body{margin:0;background:#179c60;color:white;font:18px system-ui;min-height:100vh;display:grid;place-items:center}main{width:min(520px,calc(100% - 48px));margin:20px 0;padding:18px;background:#163b32;border-radius:18px;text-align:center;box-shadow:0 10px 35px #0004;box-sizing:border-box}h1{font-size:26px;margin:10px}p{line-height:1.6;color:#d5eee3;font-size:15px}small{color:#afe0c9}canvas{display:block;width:100%;background:#21865c;border-radius:12px;touch-action:none}button{font:inherit;background:#ffe36e;border:0;padding:10px 24px;border-radius:8px;cursor:pointer;margin:8px}#enter{background:#72f2a2}#score{margin:10px}</style>
-<main><h1>游戏正在更新</h1><!-- RELEASE_NOTES --><p>维护期间，来玩一局花朵躲石头吧！<br>方向键移动，或在下方拖动花朵。碰到石头后可重新开始。</p><div id="score" aria-live="polite">得分：0</div><canvas id="game" width="440" height="320" aria-label="花朵躲石头小游戏"></canvas><button id="restart">重新开始</button><div><small id="status" role="status">正在等待服务器恢复…</small></div><button id="enter" hidden>更新完成，进入游戏</button><p>小游戏成绩仅保存在当前页面。</p></main>
+<style>body{margin:0;background:#179c60;color:white;font:18px system-ui;min-height:100vh;display:grid;place-items:center}main{width:min(620px,calc(100% - 32px));margin:20px 0;padding:18px;background:#163b32;border-radius:18px;text-align:center;box-shadow:0 10px 35px #0004;box-sizing:border-box}h1{font-size:26px;margin:10px}p{line-height:1.6;color:#d5eee3;font-size:15px}small{color:#afe0c9}canvas{display:block;width:100%;background:#21865c;border-radius:12px;touch-action:none;aspect-ratio:11/8;outline-offset:4px}button:focus-visible,canvas:focus-visible{outline:3px solid #fff}button[hidden]{display:none}button{font:inherit;background:#ffe36e;border:0;padding:10px 24px;border-radius:8px;cursor:pointer;margin:8px}#enter{background:#72f2a2}#score{margin:10px}</style>
+<main><h1 id="heading">游戏正在更新</h1><div id="ready-banner" role="status" hidden><strong>更新完毕，服务器已恢复</strong><br><button id="enter" hidden>进入新版游戏</button></div><!-- RELEASE_NOTES --><p>维护期间，来玩一局花朵躲石头吧！<br>WASD或方向键移动，空格暂停，或在下方拖动花朵。碰到石头后可重新开始。</p><div id="score">得分：0</div><canvas id="game" width="440" height="320" tabindex="0" aria-label="花朵躲石头小游戏，WASD或方向键移动，空格暂停"></canvas><button id="restart">重新开始</button><button id="pause">暂停</button><div><small id="status" role="status">正在等待服务器恢复…</small></div><p>小游戏成绩仅保存在当前页面。</p></main>
 <script>
 const canvas=document.getElementById('game'),ctx=canvas.getContext('2d'),scoreEl=document.getElementById('score');
-let player,rocks,score,over,last=0,spawn=0;const keys=new Set();
-function reset(){player={x:220,y:275};rocks=[];score=0;over=false;spawn=0;scoreEl.textContent='得分：0';}reset();
-document.getElementById('restart').onclick=reset;
-addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();keys.add(e.key);}});addEventListener('keyup',e=>keys.delete(e.key));addEventListener('blur',()=>keys.clear());
-function point(e){const r=canvas.getBoundingClientRect();player.x=Math.max(15,Math.min(425,(e.clientX-r.left)*440/r.width));player.y=Math.max(15,Math.min(305,(e.clientY-r.top)*320/r.height));}
-canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);point(e);};canvas.onpointermove=e=>{if(canvas.hasPointerCapture(e.pointerId))point(e);};
-function circle(x,y,r,color){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}
-function frame(t){const dt=Math.min(.04,(t-last)/1000||0);last=t;if(!over){score+=dt*10;spawn+=dt;if(spawn>.55){spawn=0;rocks.push({x:16+Math.random()*408,y:-18,r:9+Math.random()*10,v:70+Math.min(100,score/5)});}player.x=Math.max(15,Math.min(425,player.x+((keys.has('ArrowRight')?1:0)-(keys.has('ArrowLeft')?1:0))*240*dt));player.y=Math.max(15,Math.min(305,player.y+((keys.has('ArrowDown')?1:0)-(keys.has('ArrowUp')?1:0))*240*dt));for(const r of rocks){r.y+=r.v*dt;if(Math.hypot(r.x-player.x,r.y-player.y)<r.r+11)over=true;}rocks=rocks.filter(r=>r.y<345);scoreEl.textContent='得分：'+Math.floor(score);}
-ctx.clearRect(0,0,440,320);for(const r of rocks)circle(r.x,r.y,r.r,'#7f9391');for(let i=0;i<6;i++)circle(player.x+Math.cos(i*Math.PI/3)*10,player.y+Math.sin(i*Math.PI/3)*10,7,'#fff5bc');circle(player.x,player.y,11,'#ffe14e');circle(player.x-4,player.y-2,1.5,'#263d32');circle(player.x+4,player.y-2,1.5,'#263d32');if(over){ctx.fillStyle='#123b32cc';ctx.fillRect(0,125,440,65);ctx.fillStyle='white';ctx.font='bold 22px system-ui';ctx.textAlign='center';ctx.fillText('碰到石头啦，再来一局！',220,165);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
-let checking=false;setInterval(async()=>{if(checking)return;checking=true;try{const r=await fetch('/__release_ready?t='+Date.now(),{cache:'no-store'});if(r.ok){const h=await r.json();if(h.ok){document.getElementById('status').textContent='更新完成，可以返回游戏了！';document.getElementById('enter').hidden=false;}}}catch{}finally{checking=false;}},5000);document.getElementById('enter').onclick=()=>location.reload();
+// Keep gameplay coordinates independent of CSS size and physical pixels.
+const W=440,H=320;
+let player,rocks,score,over,last=0,spawn=0,paused=false,elapsed=0,displayedScore=-1;
+const keys=new Set(),pauseButton=document.getElementById('pause');
+const reducedMotion=matchMedia('(prefers-reduced-motion: reduce)');
+let lastDpr=0;
+function resizeCanvas(){
+  lastDpr=devicePixelRatio||1;
+  const rect=canvas.getBoundingClientRect(),dpr=Math.min(3,Math.max(1,devicePixelRatio||1));
+  const width=Math.max(1,Math.round(rect.width*dpr)),height=Math.max(1,Math.round(rect.height*dpr));
+  if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
+  ctx.setTransform(width/W,0,0,height/H,0,0);
+}
+new ResizeObserver(resizeCanvas).observe(canvas);addEventListener('resize',resizeCanvas);resizeCanvas();
+function reset(){player={x:220,y:275};rocks=[];score=0;over=false;spawn=0;elapsed=0;last=0;paused=false;keys.clear();displayedScore=-1;pauseButton.textContent='暂停';scoreEl.textContent='得分：0';}reset();
+document.getElementById('restart').onclick=()=>{reset();canvas.focus({preventScroll:true});};
+function pause(value){paused=value;last=0;keys.clear();pauseButton.textContent=paused?'继续':'暂停';}
+pauseButton.onclick=()=>{pause(!paused);canvas.focus({preventScroll:true});};
+const movementKey=e=>({KeyW:'ArrowUp',KeyA:'ArrowLeft',KeyS:'ArrowDown',KeyD:'ArrowRight'}[e.code]||e.key);
+addEventListener('keydown',e=>{if(document.activeElement!==canvas)return;if(e.code==='Space'){e.preventDefault();if(!e.repeat)pause(!paused);return;}if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(movementKey(e))){e.preventDefault();keys.add(movementKey(e));}});
+addEventListener('keyup',e=>keys.delete(movementKey(e)));addEventListener('blur',()=>pause(true));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)pause(true);});
+function point(e){const r=canvas.getBoundingClientRect();player.x=Math.max(18,Math.min(W-18,(e.clientX-r.left)*W/r.width));player.y=Math.max(18,Math.min(H-18,(e.clientY-r.top)*H/r.height));}
+canvas.onpointerdown=e=>{canvas.focus({preventScroll:true});canvas.setPointerCapture(e.pointerId);if(over){reset();return;}if(paused){pause(false);return;}point(e);};
+canvas.onpointermove=e=>{if(canvas.hasPointerCapture(e.pointerId)&&!over&&!paused)point(e);};
+canvas.onpointerup=canvas.onpointercancel=e=>{if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);};
+function circle(x,y,r,color,outline){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();if(outline){ctx.strokeStyle=outline;ctx.lineWidth=1.5;ctx.stroke();}}
+function frame(t){
+  if(lastDpr!==(devicePixelRatio||1))resizeCanvas();
+  const dt=last?Math.min(.04,(t-last)/1000):0;last=t;
+  if(!over&&!paused){
+    elapsed+=dt;score+=dt*10;spawn+=dt;
+    if(spawn>.55){spawn-=.55;rocks.push({x:20+Math.random()*400,y:-20,r:9+Math.random()*10,v:70+Math.min(100,score/5)});}
+    const dx=Number(keys.has('ArrowRight'))-Number(keys.has('ArrowLeft')),dy=Number(keys.has('ArrowDown'))-Number(keys.has('ArrowUp'));
+    const speed=240*dt/Math.max(1,Math.hypot(dx,dy));
+    player.x=Math.max(18,Math.min(W-18,player.x+dx*speed));player.y=Math.max(18,Math.min(H-18,player.y+dy*speed));
+    for(const r of rocks){r.y+=r.v*dt;if(Math.hypot(r.x-player.x,r.y-player.y)<r.r+11)over=true;}
+    rocks=rocks.filter(r=>r.y<H+25);
+    if(Math.floor(score)!==displayedScore){displayedScore=Math.floor(score);scoreEl.textContent='得分：'+displayedScore;}
+  }
+  ctx.clearRect(0,0,W,H);
+  for(const r of rocks){circle(r.x+1,r.y+3,r.r,'#143b3238');circle(r.x,r.y,r.r,'#7f9391','#4e625f');}
+  const angle=reducedMotion.matches?0:elapsed*.45;
+  for(let i=0;i<6;i++)circle(player.x+Math.cos(i*Math.PI/3+angle)*10,player.y+Math.sin(i*Math.PI/3+angle)*10,7,'#fff5bc','#c5ab60');
+  circle(player.x,player.y,11,'#ffe14e','#bd962f');circle(player.x-4,player.y-2,1.5,'#263d32');circle(player.x+4,player.y-2,1.5,'#263d32');
+  if(over||paused){ctx.fillStyle='#123b32e8';ctx.fillRect(0,125,W,65);ctx.fillStyle='white';ctx.font='bold 20px system-ui';ctx.textAlign='center';ctx.fillText(over?'碰到石头啦，再来一局！':'已暂停，点击游戏画面继续',W/2,165);}
+  requestAnimationFrame(frame);
+}requestAnimationFrame(frame);
+let checking=false,ready=false;
+async function checkReady(){
+ if(checking||ready)return;checking=true;
+ const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),4000);
+ try{
+  // The public health route is gated by maintenance too; it also works on
+  // installations that do not have the optional nginx readiness alias.
+  const r=await fetch('/api/health',{cache:'no-store',signal:controller.signal});
+  if(r.ok){const h=await r.json();if(h.ok===true&&h.implementation==='cpp-wasm'){
+   ready=true;document.title='更新完毕 · 返回游戏';
+   document.getElementById('heading').textContent='更新完毕，欢迎回来！';
+   document.getElementById('ready-banner').hidden=false;
+   document.getElementById('status').textContent='服务器已恢复，可以进入新版游戏。';
+   document.getElementById('enter').hidden=false;
+  }}
+ }catch{}finally{clearTimeout(timeout);checking=false;}
+}
+setInterval(checkReady,5000);addEventListener('focus',checkReady);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkReady();});checkReady();
+document.getElementById('enter').onclick=()=>location.reload();
 </script></html>

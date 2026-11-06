@@ -511,7 +511,8 @@ function buildTmj(biomeName, geom, portals, spawnZones) {
       visible: true,
       width: (o.w || 0) * pxW,
       x: (o.x || 0) * pxW,
-      y: (o.y || 0) * pxH,
+      // Source scenery is top-left anchored; Tiled tile objects are bottom-left.
+      y: ((o.y || 0) + (o.h || 0)) * pxH,
     });
   }
 

@@ -1,0 +1,25 @@
+[Unit]
+Description=Florr shared account coordinator
+After=network.target
+
+[Service]
+Type=simple
+User=florr-coordinator
+Group=florr-coordinator
+Environment=FLIX_SHARD_HOST_CONFIG=/etc/florrclone/shard-host.json
+ExecStartPre=/usr/bin/test -s /etc/florrclone/shard-host.json
+ExecStart=/opt/florrclone/runtime/bin/node /opt/florrclone/current/shard-coordinator-host.cjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=60
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/florrclone-shards
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

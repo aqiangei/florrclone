@@ -451,12 +451,10 @@ std::uint64_t numberKey(std::uint32_t netId, NumberChannel channel) {
 
 /// The channel a Damage event's flag byte names.
 NumberChannel channelOf(std::uint8_t flags) {
-    // Poison first: a poisoned strike is not a thing any content can author,
-    // and reading the byte in a fixed order beats leaving the answer to
-    // whichever bit a future flag happens to occupy.
+    // Lightning keeps its own colour even when the hit is also critical.
+    if ((flags & net::DamageLightning) != 0) return NumberChannel::Lightning;
     if ((flags & net::DamageCritical) != 0) return NumberChannel::Critical;
     if ((flags & net::DamagePoison) != 0) return NumberChannel::Poison;
-    if ((flags & net::DamageLightning) != 0) return NumberChannel::Lightning;
     return NumberChannel::Hit;
 }
 
@@ -2364,6 +2362,7 @@ void WorldRenderer::drawGlitched(Canvas& canvas, Vec2 screen, double radius, std
 
 void WorldRenderer::drawFlower(Canvas& canvas, const RemoteEntity& entity, const Camera& camera,
                                Vec2 at, double timeSeconds) const {
+    if (entity.renderFlags & PlayerRenderSwallowed) return;
     const double zoom = camera.zoom();
     const Vec2 screen = camera.worldToScreen(at);
     if(entity.renderFlags&PlayerRenderBurrowed){
@@ -2836,7 +2835,9 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         canvas.translate(static_cast<float>(config->visualOffsetX * zoom),
                          static_cast<float>(config->visualOffsetY * zoom));
     }
-    if (config && config->id == "dust") {
+    if (config && config->id == "domino" && entity.petalVariant < 49) {
+        SpriteCache::drawDomino(canvas, diameter, entity.petalVariant);
+    } else if (config && config->id == "dust") {
         SpriteCache::drawDustGrain(canvas, diameter);
     } else if (sprites_) {
         // The sprite cache falls back to a disc in the petal's own colour when
@@ -3366,7 +3367,7 @@ void WorldRenderer::drawGarbagePile(Canvas& canvas, Vec2 at, double baseSize,
     const std::vector<std::uint16_t>& eligible = droppablePetals(rarity);
     if (eligible.empty() || !sprites_ || !content_) return;
 
-    const auto contents=garbageContents(eligible,stableId,at);
+    const auto contents=garbageContents(eligible,stableId,at,content_->petalIndex("c++"));
     const int count=static_cast<int>(contents.size());
     for (int i = 0; i < count; ++i) {
         const auto petalSeed=contents[static_cast<std::size_t>(i)].poseSeed;
@@ -3652,6 +3653,17 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
         // and it does not lose them when the camera pulls back.
         sprites_->drawMob(canvas, mob.typeIndex, mob.rarity, art.x, art.y, diameter, rotation,
                           timeSeconds, mirrored, mob.radius * visualScale, {1.0, 0.0}, &motion);
+        if (id == "mecha_flower" || id == "gambler") {
+            // These upright SVGs have fixed eye sockets. Track travel in the
+            // same eased way as the other upright flower mobs.
+            const Vec2 eye = mobEye(mob);
+            const double scale = diameter / 58.0;
+            ui::setFill(canvas, 0x151515u);
+            for (const double x : {-8.5, 8.5})
+                canvas.fillCircle(static_cast<float>(art.x + (x + eye.x * .65) * scale),
+                                  static_cast<float>(art.y + (2.0 + eye.y * .3) * scale),
+                                  static_cast<float>(1.45 * scale));
+        }
     } else {
         // No artwork: the tier colour, which is at least the one fact about a
         // mob worth reading from across the screen.
@@ -4013,6 +4025,13 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // from and stays where it is.
             const double diameter = artUnits * petalArtScale(config) * zoom;
             const ScopedColorTint flash(canvas, hitTint(entity.netId));
+            if (config && config->id == "meteor" && diameter > 12.0) {
+                const double phase = std::fmod(timeSeconds * .7 + (entity.netId % 29) / 29.0, 1.0);
+                ui::setStroke(canvas, 0xE8974Au, .24 * (1.0 - phase));
+                canvas.setLineWidth(static_cast<float>(std::max(1.0, zoom * 2.0)));
+                canvas.strokeCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
+                                    static_cast<float>(diameter * (.36 + phase * .16)));
+            }
             if (config && config->id == "gas" && entity.rarity == Rarity::Common) {
                 // Gas is a cloud rather than a petal, and there can be hundreds
                 // of it at once.

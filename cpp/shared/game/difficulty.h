@@ -29,10 +29,10 @@
 namespace flix {
 inline bool supportsSuperFarm(const std::string& id) {
     return id=="garden"||id=="desert"||id=="computer"||id=="ocean"||id=="jungle"||
-           id=="hel"||id=="ant_hell"||id=="sewers"||id=="pyramid"||id=="cyberspace";
+           id=="hel"||id=="ant_hell"||id=="sewers"||id=="pyramid"||id=="cyberspace"||id=="super";
 }
-inline constexpr int kSuperFarmPopulation = 12;
-inline constexpr double kSuperFarmDifficultyWindow = 15.0;
+inline constexpr int kSuperFarmPopulation = 54;
+inline constexpr double kSuperFarmDifficultyWindow = 25.0;
 
 
 /// One point on the difficulty curve: at this difficulty, the ground spawns at

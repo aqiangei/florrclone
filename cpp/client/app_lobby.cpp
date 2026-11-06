@@ -21,6 +21,9 @@
 #include <cmath>
 #include <cstdio>
 #include <utility>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "client/app_internal.h"
 #include "client/ease.h"
@@ -60,12 +63,12 @@ std::uint32_t biomePickerColor(const std::string& biome) {
 }
 
 /// Biomes offered on the title-screen picker. Dungeon / test maps
-/// (termite, worm, swarm, super, dps_test) are reached through
+/// (termite, worm, swarm, dps_test) are reached through
 /// pads, not as top-level buttons -- matching florrclone's lobby row.
 bool biomeOnPicker(const std::string& biome) {
     return biome == "garden" || biome == "desert" || biome == "computer" ||
            biome == "factory" || biome == "ocean" || biome == "jungle" ||
-           biome == "hel" || biome == "ant_hell" || biome == "sewers" ||
+           biome == "hel" || biome == "ant_hell" || biome == "sewers" || biome == "super" ||
            biome == "pyramid" || biome == "cyberspace";
 }
 
@@ -202,6 +205,7 @@ std::string titleCaseId(const std::string& id) {
 } // namespace
 
 void App::updateLobby() {
+    if(menus_.shardSelection().switching)return;
     // The XP gauge eases toward the profile rather than jumping to it: in from
     // empty the first time the screen shows, and on from where it stood when
     // a game comes back with more. Nothing moves until the profile is here --
@@ -420,6 +424,46 @@ void App::startGame() {
     // field: a caret left in the name box would keep a phone's keyboard up
     // over it (publishKeyboardRegions).
     nameField_.blur();
+}
+
+void App::drawShardSwitch(Canvas& canvas) {
+    drawTitleBackground(canvas, timeSeconds_);
+    const double w=window_.width(), h=window_.height();
+    setFill(canvas, 0x10271Fu, 0.78);
+    canvas.fillRect(0,0,static_cast<float>(w),static_cast<float>(h));
+    const double scale=std::min(1.0,std::min(w/620.0,h/390.0));
+    canvas.save();canvas.translate(static_cast<float>(w/2),static_cast<float>(h/2));
+    canvas.scale(static_cast<float>(scale),static_cast<float>(scale));
+    plate(canvas,Rect{-280,-165,560,330},0x214C39u,22,0x9ACF9Bu,3);
+    // An orbiting flower remains visibly alive throughout connection/retry.
+    for(int i=0;i<8;++i) {
+        const double angle=timeSeconds_*2.4+i*6.28318530718/8;
+        setFill(canvas,0xD8EDB5u,0.35+0.65*i/7.0);
+        canvas.beginPath();canvas.arc(static_cast<float>(std::cos(angle)*26),
+            static_cast<float>(-93+std::sin(angle)*26),8,0,6.28318530718);canvas.fill();
+    }
+    setFill(canvas,0xFFE485u);canvas.beginPath();canvas.arc(0,-93,10,0,6.28318530718);canvas.fill();
+    const bool zh=language()==Language::Zh;
+    TextStyle style;style.align=Align::Centre;style.size=27;
+    text(canvas,shardSwitchReturning_?(zh?"正在返回原服":"Returning to original server"):
+        (zh?"正在切换服务器":"Switching server"),0,-32,style);
+    const auto* target=shardDirectory_.find(shardSwitchTarget_);
+    const auto* source=shardDirectory_.find(shardSwitchSource_);
+    style.size=19;
+    text(canvas,(source?source->label:shardSwitchSource_)+" → "+
+        (target?target->label:shardSwitchTarget_),0,8,style);
+    style.size=16;style.fill=0xD8EDB5u;
+    text(canvas,shardSwitchReturning_?(zh?"目标服暂未就绪，正在安全重连":"Destination unavailable; reconnecting safely"):
+        net_.status()==NetClient::Status::Ready?(zh?"正在等待存档交接和登录确认":"Waiting for saved progress and sign-in confirmation"):
+        (zh?"正在连接目标服，原服进度保存后继续":"Connecting; waiting for original server to save"),0,48,style);
+    style.size=15;
+    text(canvas,zh?"请稍候，确认完成后将自动进入大厅":"Please wait. The lobby opens after confirmation.",0,85,style);
+    text(canvas,(zh?"已等待 ":"Waiting ")+std::to_string(static_cast<int>(std::max(0.0,20.0-shardSwitchDeadline_+timeSeconds_)))+(zh?" 秒":" s"),0,118,style);
+    canvas.restore();
+    nameField_.blur();focusedField_=-1;
+#ifdef __EMSCRIPTEN__
+    EM_ASM({const link=document.getElementById('council-link');if(link)link.hidden=true;});
+#endif
 }
 
 void App::drawLoading(Canvas& canvas, double time) {

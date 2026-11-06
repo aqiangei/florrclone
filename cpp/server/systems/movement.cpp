@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "shared/game/config.h"
+#include "shared/game/body_contact.h"
 #include "shared/game/constants.h"
 #include "shared/game/map_elements.h"
 
@@ -49,17 +50,13 @@ Vec2 sanitizePosition(const Terrain& terrain, Vec2 p, Realm realm) {
     return p;
 }
 
-/// Ceiling on a speed modifier, so one bad petal stat cannot make a player
-/// uncatchable -- or outrun the substep budget.
-constexpr double kMaxSpeedScale = 8.0;
-
 /// A speed modifier that is missing, zero or corrupt means UNMODIFIED, not
 /// rooted. Nothing in the game roots a player, and a PlayerModifiers that no
 /// phase has recomputed yet reads as all zeroes -- which must not come out as
 /// a flower frozen on its first tick.
 double sanitizeSpeedScale(double scale) {
-    if (!(scale > 0.0)) return 1.0;
-    return scale < kMaxSpeedScale ? scale : kMaxSpeedScale;
+    if (!(scale > 0.0) || !std::isfinite(scale)) return 1.0;
+    return scale;
 }
 
 double substepLength(double sanitizedRadius) {
@@ -179,7 +176,29 @@ double sanitizeCollisionRadius(double radius) {
 
 Vec2 sanitizeMovementVelocity(Vec2 velocity) {
     if (!std::isfinite(velocity.x) || !std::isfinite(velocity.y)) return {0, 0};
-    return velocity.clampedLength(kMaxMovementSpeed);
+    return velocity;
+}
+
+Vec2 playerRespawnPosition(const Terrain& terrain, Realm realm, Vec2 around, double radius) {
+    radius = sanitizeCollisionRadius(radius);
+    const bool inside = terrain.blocked(around, realm);
+    const auto safe = [&](Vec2 p) {
+        const auto wall = terrain.resolveWall(p, radius, realm);
+        return !wall.unresolved && distanceSq(wall.position, p) < 1e-8 &&
+            (inside || !terrain.segmentTouchesBlockingTile(around, p, 0.0, realm));
+    };
+    if (safe(around)) return around;
+    const Vec2 resolved = terrain.resolveWall(around, radius, realm).position;
+    if (safe(resolved)) return resolved;
+    // Search locally on the same side before the generic resolver can choose
+    // an open tile across a thin sewer rail.
+    for (double reach = 8; reach <= std::max(512.0, radius * 4); reach += 8) {
+        for (int angle = 0; angle < 64; ++angle) {
+            const Vec2 candidate = around + Vec2::fromAngle(kTau * angle / 64, reach);
+            if (safe(candidate)) return candidate;
+        }
+    }
+    return terrain.resolveCircle(around, radius, realm);
 }
 
 StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec2 velocity,
@@ -197,13 +216,15 @@ StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec
     // The reach is measured in substeps of the body's own size; a small body
     // then takes shorter ones than that, so it cannot step through a thin wall,
     // and more of them to cover the same ground.
-    const double reach = substepLength(hull) * kMaxSubstepCount;
+    // Only the finite map bounds limit travel. Keep short collision steps,
+    // adding steps rather than discarding legitimate bubble/powder momentum.
+    const Vec2 extent = terrain.realmExtent(realm);
+    const double reach = extent.length() + (start - extent * 0.5).length() + hull;
     const double stepLength = std::min(substepLength(hull), hull + kMaxSubstepPenetration);
     const int maxSteps = static_cast<int>(std::ceil(reach / stepLength));
     if (distance > reach) {
-        // Truncate the tick's travel instead of lengthening the substeps. A
-        // body that only crawls this tick is a visible glitch; a body that
-        // teleported through a wall is a lost server.
+        // Travel beyond the entire realm can only hit its boundary. Bound
+        // arithmetic work for corrupt magnitudes without imposing a speed cap.
         delta *= reach / distance;
         distance = reach;
     }
@@ -279,6 +300,7 @@ StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec
         got = terrain.clampInside(got, hull, realm);
         if (distanceSq(got, want) > kContactEpsilon * kContactEpsilon) out.blocked = true;
         position = got;
+        if (distanceSq(position, from) < 1e-18 && out.blocked) break;
     }
 
     out.displacement = position - start;
@@ -425,12 +447,28 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
 
     queries_->players.each([&](Entity e, PlayerTag&, Transform& transform, Motion& motion,
                                Body& body, PlayerInput& input) {
+        if (auto* swallowed = world.tryGet<WormSwallow>(e);
+            swallowed && swallowed->worm != NULL_ENTITY) {
+            const auto* worm = world.tryGet<Transform>(swallowed->worm);
+            const bool attached = worm && worm->realm == transform.realm &&
+                !world.has<Dead>(swallowed->worm) && distanceSq(worm->position, transform.position) < 600.0 * 600.0;
+            if (attached && nowMillis < swallowed->releaseAtMillis) {
+                const auto wall = terrain.resolveWall(worm->position, body.radius, transform.realm);
+                if (!wall.unresolved && !terrain.segmentBlocked(transform.position, wall.position, transform.realm)) {
+                    transform.position = wall.position;
+                    motion.velocity = {};
+                    if (auto* shove = world.tryGet<Knockback>(e)) shove->impulse = {};
+                    return;
+                }
+            }
+            swallowed->worm = NULL_ENTITY;
+        }
         // Equipment can enlarge a flower while its centre is in a narrow gap.
         // That is placement, not a movement attempt: repair an already-invalid
         // hull before the containment guard refuses every possible escape.
         if (isWorldRealm(transform.realm) &&
-            terrain.resolveWall(transform.position, body.radius, transform.realm).unresolved) {
-            transform.position = terrain.resolveCircle(transform.position, body.radius, transform.realm);
+            terrain.resolveWall(transform.position, body.radius, transform.realm).collided) {
+            transform.position = playerRespawnPosition(terrain, transform.realm, transform.position, body.radius);
             motion.velocity = {};
             if (auto* shove = world.tryGet<Knockback>(e)) shove->impulse = {};
         }
@@ -493,18 +531,15 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // projectile take the resolver's word for it. A player arrives here
         // from a contact knockback that already overlapped wall geometry
         // often enough that without it, diagonal seams are passable.
-        stepCollide(terrain, transform.realm, transform.position, velocity, body.radius, dt, true,
+        const StepOutcome movement = stepCollide(terrain, transform.realm, transform.position, velocity, body.radius, dt, true,
                     true);
         // Loose petals before NPCs: a wax gives way and an NPC does not, so an
         // NPC is the last word on where the flower may stand, as a wall is.
         if (!looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
         if (!npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
-        // TypeScript's stepPlayerMovement returns the friction-integrated
-        // velocity unchanged when wall resolution alters the position. Keeping
-        // the attempted velocity is observable on the following tick (the
-        // flower continues pressing/sliding); rebuilding it from achieved
-        // displacement changes both acceleration and the wall trajectory.
-        motion.velocity = velocity;
+        // Discard velocity into a wall while retaining the achieved slide.
+        // Otherwise turning away first has to cancel a full inward velocity.
+        motion.velocity = velocityAfterStep(velocity, movement, dt, 1.0);
     });
     storeLooseDiscs(world);
 }
@@ -515,7 +550,8 @@ void MovementSystem::shoveLooseBodies(const Terrain& terrain, Transform& transfo
     const double mass = bodyMass(&body);
     for (LooseDisc& disc : looseDiscs_) {
         // Moon is a ring centre, not an obstacle to any flower.
-        if (boundWorld_->has<RingAnchor>(disc.entity)) continue;
+        if (boundWorld_->has<RingAnchor>(disc.entity) ||
+            boundWorld_->has<PlantedMeteor>(disc.entity)) continue;
         if (disc.realm != transform.realm) continue;
         const double reach = disc.radius + radius;
         const Vec2 offset = transform.position - disc.position;
@@ -655,6 +691,9 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
         // pulled by one: the suction is the pad's first act, and a bot half
         // dragged onto a pad it can never take would stand there forever.
         if (takesTeleporters && !takesTeleporters(e)) continue;
+        if (const auto* pads = world.tryGet<TeleporterState>(e)) {
+            if (nowMillis < pads->markHoldUntilMillis && isStanding(world, e)) continue;
+        }
         Transform* transform = world.tryGet<Transform>(e);
         if (!transform) continue;
         // Every world map has its own pads. The arena and the maze have none:
@@ -766,6 +805,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
 
 void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, double dt) {
     spentProjectiles_.clear();
+    const auto javascript = content().petalIndex("javascript");
     queries_->projectiles.each([&](Entity e, ProjectileTag&, Transform& transform,
                                    Motion& motion, Projectile& projectile) {
         if (!(projectile.remainingDistance > 0.0)) {
@@ -862,6 +902,12 @@ void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, doubl
         // into the surface is turned round, the part along it kept. The
         // surface's normal is the way the resolver pushed it back out.
         const bool bounces = projectile.bouncesOffWalls;
+        if (javascript != kInvalidIndex && projectile.petalConfigIndex == javascript &&
+            terrain.segmentBlocked(transform.position, transform.position + attempted * dt,
+                                   transform.realm)) {
+            spentProjectiles_.push_back(e);
+            return;
+        }
         const StepOutcome out = stepCollide(terrain, transform.realm, transform.position,
                                             attempted, radius, dt, /*collideTerrain=*/bounces);
         projectile.remainingDistance -= out.displacement.length();
@@ -1048,6 +1094,8 @@ void MovementSystem::buildSeparationSet(World& world) {
         entry.position = position;
         entry.realm = transform.realm;
         entry.radius = sanitizeCollisionRadius(body.radius);
+        entry.squareHalf = squareMobHalfExtent(world,e);
+        entry.angle = transform.angle;
         if (const BodySegment* segment = world.tryGet<BodySegment>(e)) {
             entry.chainHead = segment->chainHead;
             entry.ahead = segment->ahead;
@@ -1059,6 +1107,7 @@ void MovementSystem::buildSeparationSet(World& world) {
             entry.noCollision = config.noMobCollision;
             entry.gardnChain = config.gardnChain;
         }
+        if(entry.squareHalf>0) entry.radius=entry.squareHalf*1.4142135623730951;
         if (const HoleTether* tether = world.tryGet<HoleTether>(e)) {
             if (tether->emerging) entry.emergingFrom = tether->hole;
         }
@@ -1115,6 +1164,13 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
             const double distance = toOther.length();
             const double minDistance = self.radius + other.radius + kMobCollisionBuffer;
             if (!(distance < minDistance)) continue;
+            const bool shaped = self.squareHalf>0 || other.squareHalf>0;
+            BodyContactResult shape;
+            if(shaped) {
+                shape=shapedBodyContact(self.position,self.radius,self.squareHalf,self.angle,
+                    other.position,other.radius,other.squareHalf,other.angle,kMobCollisionBuffer);
+                if(shape.depth<=0) continue;
+            }
             // A child still climbing out of the parent it was spawned inside
             // passes through it, both ways round, until the two are apart.
             if (self.emergingFrom == other.entity) {
@@ -1122,14 +1178,16 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
                 continue;
             }
             if (other.emergingFrom == self.entity) continue;
-            if (!(distance > 0.0)) continue;
+            if (!(distance > 0.0) && self.pet == other.pet) continue;
 
             const double pairCap = self.pet != other.pet
                 ? std::max(kMobSeparationMaxPushPerPair, std::min(self.radius, other.radius)*.12)
                 : kMobSeparationMaxPushPerPair;
             if (self.pet != other.pet) self.petPushCap = std::max(self.petPushCap,pairCap);
-            const double push = std::min((minDistance - distance) * 0.5, pairCap);
-            self.push -= toOther * (push / distance);
+            const double push = std::min((shaped?shape.depth:minDistance-distance) * 0.5, pairCap);
+            const Vec2 direction = distance > 0.0 ? toOther * (1.0 / distance) :
+                Vec2{self.entity < other.entity ? 1.0 : -1.0, 0.0};
+            self.push -= (shaped?shape.normal:direction) * push;
         }
     }
 

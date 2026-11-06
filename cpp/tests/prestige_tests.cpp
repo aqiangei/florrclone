@@ -75,7 +75,7 @@ TEST(an_prestige_band_rolls_one_tier_up_and_stops_at_super) {
 TEST(prestige_is_one_root_node_costing_225) {
     CHECK_EQ(skillTierCount(SkillId::Prestige), 1);
     CHECK_EQ(skillTierCost(SkillId::Prestige, 0), 225);
-    CHECK(skillFork(SkillId::Prestige) == nullptr);
+    CHECK(skillGate(SkillId::Prestige) == nullptr);
     CHECK(skillFromKey("prestige") == SkillId::Prestige);
 
     SkillSet skills;
@@ -84,7 +84,7 @@ TEST(prestige_is_one_root_node_costing_225) {
     skills.set(SkillId::Prestige, 0);
     CHECK(skills.prestigeUnlocked());
     CHECK_EQ(skills.spent(), 225);
-    CHECK_EQ(availableTalentPoints(225, skills), 0);
+    CHECK_EQ(availableTalentPoints(113, skills), 1);
     // It multiplies nothing.
     CHECK_NEAR(skills.statScale(SkillId::Damage), 1.0, 1e-12);
     CHECK_NEAR(skills.reloadScale(), 1.0, 1e-12);
@@ -367,7 +367,11 @@ TEST(only_a_tree_with_prestige_joins_the_prestige_biome) {
     // A named door goes to that door's twin.
     climber.leaveGame();
     h.step(5, {&climber, &walker});
-    const SpawnChoice* desert = maps.choice("desert");
+    const SpawnChoice* desert = nullptr;
+    for (const auto& door : maps.doors()) {
+        const auto* map = maps.forRealm(door.realm);
+        if (map && map->id() == "desert") { desert = &door; break; }
+    }
     CHECK(desert != nullptr);
     if (desert != nullptr) {
         CHECK(join(h, climber, "climber", true, desert->id));
@@ -388,25 +392,25 @@ TEST(prestige_is_bought_with_225_points_and_not_on_the_maze_tree) {
               [](const std::string& path) {
                   seedUser(path, "rich", "password7");
                   seedUser(path, "poor", "password7");
-                  seedProgress(path, "rich", false, 225);
-                  seedProgress(path, "poor", false, 224);
+                  seedProgress(path, "rich", false, 113);
+                  seedProgress(path, "poor", false, 112);
               },
               dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient poor;
     CHECK(logIn(h, poor, "poor"));
-    CHECK(awaitProfile(h, poor, [](const Profile& p) { return p.level == 224; }));
+    CHECK(awaitProfile(h, poor, [](const Profile& p) { return p.level == 112; }));
     poor.requestUpgradeSkill(SkillId::Prestige, 0);
     CHECK(h.stepUntil({&poor}, [&] { return sawText(poor, "need 225"); }, 60));
     CHECK(!poor.profile().skills.prestigeUnlocked());
 
     NetClient rich;
     CHECK(logIn(h, rich, "rich"));
-    CHECK(awaitProfile(h, rich, [](const Profile& p) { return p.level == 225; }));
+    CHECK(awaitProfile(h, rich, [](const Profile& p) { return p.level == 113; }));
     rich.requestUpgradeSkill(SkillId::Prestige, 0);
     CHECK(awaitProfile(h, rich, [](const Profile& p) {
-        return p.skills.prestigeUnlocked() && p.talentPoints() == 0;
+        return p.skills.prestigeUnlocked() && p.talentPoints() == 1;
     }));
 
     // A reset hands the points back and the next join is an ordinary one.

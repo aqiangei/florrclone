@@ -166,6 +166,7 @@ std::string authControlAt(const AuthLayout& layout, bool registering, Vec2 mouse
 } // namespace
 
 void App::updateConnecting() {
+    if(menus_.shardSelection().switching)return;
     if (net_.status() != NetClient::Status::Ready) return;
 
     // --login is the only way to photograph the auth form on a machine that

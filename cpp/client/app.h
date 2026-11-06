@@ -24,6 +24,7 @@
 
 #include "client/camera.h"
 #include "client/net_client.h"
+#include "client/shard_directory.h"
 #include "client/ui/context_menu.h"
 #include "client/ui/text_select.h"
 #include "client/render/darkness.h"
@@ -94,6 +95,7 @@ struct AppConfig {
     /// Paint the frame/ping/position counters whatever the Settings panel's
     /// "Show Performance Stats" switch says -- see statsVisible().
     bool showStats = false;
+    bool lowMemoryGraphics = false;
     /// Put the touch controls up whatever the settings file and the device
     /// say. A desktop window reports a mouse and gets no stick, so this is the
     /// only way a screenshot run can photograph them.
@@ -186,6 +188,13 @@ public:
 private:
     void frame(double dt);
     void pollNetwork();
+    void pollShardDirectory();
+    void switchShard(const std::string& target);
+    void serviceShardSwitch();
+    ShardDirectory shardDirectory_;
+    bool shardDirectoryLoaded_=false,shardSwitchWaiting_=false,shardSwitchReturning_=false;
+    std::string shardSwitchSource_,shardSwitchTarget_;
+    double shardSwitchDeadline_=0,shardSwitchRetry_=0;
 
     void updateConnecting();
     void updateLogin(double dt);
@@ -199,6 +208,7 @@ private:
     /// What the lobby becomes between Ready and the server's answer: the
     /// connecting screen's layout with "Loading..." under the title.
     void drawLoading(Canvas&, double time);
+    void drawShardSwitch(Canvas&);
     /// The title with one status line under it -- the connecting screen and
     /// the loading screen, which differ only in the line.
     void drawTitleStatus(Canvas&, const std::string& status);

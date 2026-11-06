@@ -225,6 +225,73 @@ EM_JS(void, flix_wake_on_arrival, (int on), {
 
 } // namespace
 
+#ifdef __EMSCRIPTEN__
+// Trusted host adapter, selected by the operator, never by a game packet.
+// The synchronous C++ handler contract requires the adapter to return a final
+// durability outcome; Promise/timeout/exception is not a successful commit.
+EM_JS(int, flix_authority_init, (), {
+    const filename = process.env.FLIX_AUTHORITY_MODULE;
+    if (!filename) return 0;
+    try {
+        if (!require('path').isAbsolute(filename)) return -1;
+        const authority = require(filename);
+        if (!authority || typeof authority.snapshot !== 'function' || typeof authority.commit !== 'function') return -1;
+        const snapshot = authority.snapshot();
+        if (typeof snapshot !== 'string') return -1;
+        Module.flixAuthority = authority;
+        Module.flixAuthoritySnapshot = snapshot;
+        return 1;
+    } catch (e) { return -1; }
+});
+EM_JS(int, flix_authority_snapshot_size, (), {
+    return Buffer.byteLength(Module.flixAuthoritySnapshot, 'utf8') + 1;
+});
+EM_JS(void, flix_authority_snapshot, (char* out, int capacity), {
+    stringToUTF8(Module.flixAuthoritySnapshot, out, capacity);
+    delete Module.flixAuthoritySnapshot;
+});
+EM_JS(int, flix_authority_commit, (const char* text), {
+    try {
+        const outcome = Module.flixAuthority.commit(UTF8ToString(text));
+        if (outcome === 'committed') return 1;
+        if (outcome === 'rejected') return 0;
+        return 2;
+    } catch (e) { return 2; }
+});
+EM_JS(int, flix_authority_has_delta, (), {
+    return Module.flixAuthority && typeof Module.flixAuthority.commitDelta === 'function' ? 1 : 0;
+});
+EM_JS(int, flix_authority_has_invoke, (), {
+    return Module.flixAuthority && typeof Module.flixAuthority.invoke === 'function' ? 1 : 0;
+});
+EM_JS(int, flix_authority_invoke_size, (const char* text), {
+    try {
+        const value=Module.flixAuthority.invoke(JSON.parse(UTF8ToString(text)));
+        if(!value || typeof value.then==='function')return -1;
+        Module.flixAuthorityReply=JSON.stringify(value);
+        return Buffer.byteLength(Module.flixAuthorityReply,'utf8')+1;
+    } catch(e) {return -1;}
+});
+EM_JS(void, flix_authority_invoke_copy, (char* out,int size), {
+    stringToUTF8(Module.flixAuthorityReply,out,size);delete Module.flixAuthorityReply;
+});
+flix::Json invokeAuthority(const flix::Json& request) {
+    const auto text=request.dump();const int size=flix_authority_invoke_size(text.c_str());
+    if(size<=0||size>64*1024*1024)return flix::Json();
+    std::string result(static_cast<std::size_t>(size),'\0');flix_authority_invoke_copy(result.data(),size);
+    result.resize(static_cast<std::size_t>(size-1));return flix::Json::parseOrNull(result);
+}
+EM_JS(int, flix_authority_commit_delta, (const char* text), {
+    try {
+        const result=Module.flixAuthority.commitDelta(JSON.parse(UTF8ToString(text)));
+        if(result==='committed')return 1;
+        if(result==='rejected')return 0;
+        if(result==='pending')return 3;
+        return 2;
+    } catch(e) {return 2;}
+});
+#endif
+
 int main(int argc, char** argv) {
     // Line-buffer stdout. It is fully buffered by default whenever it is not a
     // terminal, which is every way the server is actually run -- under pm2, in
@@ -267,6 +334,43 @@ int main(int argc, char** argv) {
     // already names -- and so is the one its backups go in, which is not
     // under it. Everything else stays in MEMFS.
     std::string error;
+    const int authorityMode = flix_authority_init();
+    if (authorityMode < 0) {
+        std::fprintf(stderr, "could not initialize authoritative account adapter\n");
+        return 1;
+    }
+    if (authorityMode > 0) {
+        const int size = flix_authority_snapshot_size();
+        if (size <= 0 || size > 256 * 1024 * 1024) return 1;
+        config.authoritySnapshot.resize(static_cast<std::size_t>(size));
+        flix_authority_snapshot(config.authoritySnapshot.data(), size);
+        config.authoritySnapshot.resize(static_cast<std::size_t>(size - 1));
+        config.authorityCommit = [](const std::string& text) {
+            switch (flix_authority_commit(text.c_str())) {
+                case 1: return flix::Database::CommitOutcome::Committed;
+                case 0: return flix::Database::CommitOutcome::Rejected;
+                default: return flix::Database::CommitOutcome::Unknown;
+            }
+        };
+        if(flix_authority_has_delta())config.authorityDeltaCommit=[](const flix::Json& delta) {
+            const auto text=delta.dump();
+            switch(flix_authority_commit_delta(text.c_str())) {
+                case 1:return flix::Database::CommitOutcome::Committed;
+                case 0:return flix::Database::CommitOutcome::Rejected;
+                case 3:return flix::Database::CommitOutcome::Pending;
+                default:return flix::Database::CommitOutcome::Unknown;
+            }
+        };
+        if(flix_authority_has_invoke()) {
+            config.authorityHyper=true;
+            config.authorityAuth=[](const flix::Json& request){return invokeAuthority(request);};
+            config.authorityReleaseAsync=[](const std::vector<std::string>& active) {
+                flix::Json request=flix::Json::object();request["action"]="releaseUnusedAsync";request["active"]=flix::Json::array();
+                for(const auto& account:active)request["active"].push(account);
+                return invokeAuthority(request);
+            };
+        }
+    }
     // Fatal, where it used to be a warning. Every account on this server is in
     // that one file; starting without it would serve an empty world and then
     // persist nothing, and both halves of that are silent.
@@ -281,6 +385,7 @@ int main(int argc, char** argv) {
     auto* server = new flix::GameServer();
     if (!server->start(config, error)) {
         std::fprintf(stderr, "could not start: %s\n", error.c_str());
+        EM_ASM({ process.exit(1); });
         return 1;
     }
     std::printf("listening on port %u\n", static_cast<unsigned>(config.port));

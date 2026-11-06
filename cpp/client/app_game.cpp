@@ -200,6 +200,7 @@ void App::sendInputFrame(double dt) {
     // whether the cursor half is there at all. The arrows are not a binding:
     // the reference reads them beside whatever the four keys are bound to.
     const ClientSettings& settings = menus_.settings();
+    input.rotationStep = static_cast<std::uint8_t>(std::clamp(settings.rotationStep, 1, 4));
     Vec2 keyboard{0, 0};
     // A typed key is a character, not a direction. The reference's key handler
     // returns before it records anything once an <input> has focus, so while
@@ -301,9 +302,7 @@ void App::sendInputFrame(double dt) {
                            selectable.overTextLastFrame(pointer));
     bool attackHeld = false;
     bool defendHeld = false;
-    // Desktop combat is quiet while chat or a panel owns the pointer -- and
-    // invert must not turn that quiet into "always attack". Touch buttons sit
-    // outside the guard: they answer for themselves.
+    // Panels consume presses, but persistent inverted combat remains active.
     const bool desktopCombat = !chatOpen_ && !menuOpen && !textDrag &&
                                !menus_.capturesMouse(pointer) &&
                                !tutorial_.capturesMouse(pointer);
@@ -321,7 +320,7 @@ void App::sendInputFrame(double dt) {
         if (mobile_.attackPressed()) attackHeld = true;
         if (mobile_.retractPressed()) defendHeld = true;
     }
-    if (!chatOpen_ && (desktopCombat || touchControls)) {
+    {
         // AshFlor invert: hold = idle/cancel, release = always attack/defend.
         if (settings.invertAttack ? !attackHeld : attackHeld) {
             input.flags |= net::InputAttack;

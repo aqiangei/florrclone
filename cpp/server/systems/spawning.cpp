@@ -743,7 +743,7 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     // the reference excludes it from the contact-damage branch by name, so its
     // `damage: 50` never lands on anyone who walks into it.
     if (!harmlessOnContact(config)) {
-        world.add<ContactDamage>(e, ContactDamage{stats.damage, kMobHitIntervalMillis});
+        world.add<ContactDamage>(e, ContactDamage{stats.damage * mobContactScale(rarity), kMobHitIntervalMillis});
     }
     world.add<HitCooldowns>(e);
     world.add<Afflictions>(e);
@@ -1924,9 +1924,14 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
                               Rng& rng, double nowMillis) {
     for (const SpawnZone& zone : zones_) {
         if (zone.prestige) continue;
+        const auto* map = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
+        if (map && map->templateId() == "super") continue;
         const auto found = std::find_if(superPopulations_.begin(), superPopulations_.end(),
             [&](const SuperMapState& state) { return state.realm == zone.realm; });
-        if (found == superPopulations_.end()) superPopulations_.push_back({zone.realm, {}});
+        if (found == superPopulations_.end()) {
+            const double cooldown = map && map->templateId() == "hel" ? 120000.0 : SuperPopulation::respawnMillis;
+            superPopulations_.push_back({zone.realm, SuperPopulation{SuperPopulation::target, cooldown}});
+        }
     }
     auto antHabitat = [&](std::uint16_t index) {
         if(index>=zones_.size())return -1;
@@ -1965,7 +1970,7 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
             // a dozen tiny termite plots must not outweigh the jungle floor.
             int requiredHabitat=-1;
             if(antHell) {
-                constexpr int quotas[3]={2,2,1};int largest=0;
+                constexpr int quotas[3]={4,4,2};int largest=0;
                 for(int n=0;n<3;++n)if(quotas[n]-habitats[n]>largest &&
                     std::any_of(candidates.begin(),candidates.end(),[&](auto i){return antHabitat(i)==n;})) {
                     requiredHabitat=n;largest=quotas[n]-habitats[n];
@@ -2028,7 +2033,8 @@ void SpawnSystem::stockSuperFarms(World& world, const Terrain& terrain,
                                   const std::vector<Viewer>& viewers,Rng& rng,double nowMillis) {
     if (!worldMaps) return;
     for (const auto& map : worldMaps->maps()) {
-        if (worldMaps->isPrestige(map.realm()) || !map.usesReferenceSpawnCurve() ||
+        const bool dedicatedFarm = map.templateId() == "super";
+        if (worldMaps->isPrestige(map.realm()) || (!dedicatedFarm && !map.usesReferenceSpawnCurve()) ||
             !supportsSuperFarm(map.id())) continue;
         double highest = -1;
         for (const auto& zone : zones_)
@@ -2039,26 +2045,53 @@ void SpawnSystem::stockSuperFarms(World& world, const Terrain& terrain,
         for (std::size_t i=0;i<zones_.size();++i) {
             const auto& zone=zones_[i];
             if (zone.realm==map.realm() && !zone.prestige && !zone.singular && zone.forceRarity<0 &&
-                zone.difficulty>=highest-kSuperFarmDifficultyWindow)
+                (dedicatedFarm || zone.difficulty>=highest-kSuperFarmDifficultyWindow))
                 candidates.push_back(static_cast<std::uint16_t>(i));
         }
         if (candidates.empty()) continue;
+        const int farmPopulation = map.templateId() == "hel" ? 36 : kSuperFarmPopulation;
         auto state=std::find_if(superFarmPopulations_.begin(),superFarmPopulations_.end(),
             [&](const SuperMapState& entry){return entry.realm==map.realm();});
         if (state==superFarmPopulations_.end()) {
-            superFarmPopulations_.push_back({map.realm(),SuperPopulation{kSuperFarmPopulation}});
+            superFarmPopulations_.push_back({map.realm(),SuperPopulation{farmPopulation, map.templateId() == "hel" ? 120000.0 : SuperPopulation::respawnMillis}});
             state=std::prev(superFarmPopulations_.end());
         }
         int living=0;
+        std::vector<int> zoneLiving(zones_.size(), 0);
         ambient_->each([&](Entity e,MobTag&,Transform& at,Body&,MobType& type,AmbientMob&){
             if (at.realm==map.realm() && type.rarity==Rarity::Super && world.has<SuperFarmMob>(e) &&
-                !world.has<Dead>(e) && isWholeAnimal(world,e)) ++living;
+                !world.has<Dead>(e) && isWholeAnimal(world,e)) {
+                ++living;const auto zone=world.get<AmbientMob>(e).zone;
+                if(zone<zoneLiving.size())++zoneLiving[zone];
+            }
         });
         state->population.observe(living,nowMillis);
+        // Keep one third of the stock in the deepest band(s), the rest spread
+        // across the surrounding bands. Refill the largest deficit after the
+        // existing 30s vacancy timer, so farming one room cannot permanently
+        // move all its S replacements elsewhere. Ordinary U stock remains.
+        const int deepest=static_cast<int>(std::count_if(candidates.begin(),candidates.end(),
+            [&](auto i){return zones_[i].difficulty==highest;}));
+        const double deepTarget=static_cast<double>(farmPopulation)/3/std::max(1,deepest);
+        const double otherTarget=(farmPopulation-deepTarget*deepest)/
+            std::max(1,static_cast<int>(candidates.size())-deepest);
+        std::vector<unsigned> attemptsByZone(zones_.size(), 0);
         for (int attempt=0;attempt<160 && state->population.ready(nowMillis);++attempt) {
-            const auto index=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
+            auto index=candidates[rng.below(static_cast<std::uint32_t>(candidates.size()))];
+            double largest=-1e9;
+            for(const auto candidate:candidates){
+                const double wanted=deepest==static_cast<int>(candidates.size())?
+                    static_cast<double>(farmPopulation)/deepest:
+                    zones_[candidate].difficulty==highest?deepTarget:otherTarget;
+                // A blocked/visible room must not consume every retry and
+                // prevent safe rooms from receiving their replacements.
+                const double deficit=wanted-zoneLiving[candidate]-attemptsByZone[candidate]+rng.unit()*.01;
+                if(deficit>largest){largest=deficit;index=candidate;}
+            }
             if (stockZone(world,terrain,content,zones_[index],index,viewers,rng,nowMillis,
-                          Slot::TopUp,{},true,Rarity::Super,true)) state->population.spawned();
+                          Slot::TopUp,{},true,Rarity::Super,true)) {
+                state->population.spawned();++zoneLiving[index];
+            } else ++attemptsByZone[index];
         }
     }
 }
@@ -2196,6 +2229,10 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
                             SpawnZone& zone, std::uint16_t zoneIndex,
                             const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
                             Slot slot, Vec2 lostAt, bool fixedSuper, Rarity managedTier, bool superFarm) {
+    const auto* authoredMap = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
+    // The dedicated farm uses the capped Super population and its vacancy
+    // timer. Ordinary fill and casualty paths cannot create lower tiers here.
+    if (authoredMap && authoredMap->templateId() == "super" && !superFarm) return false;
     // Everything about this happens in the band's OWN realm: the map it is
     // drawn on has its own size, its own walls and its own population, and the
     // same numbers on the overworld describe somewhere else entirely.

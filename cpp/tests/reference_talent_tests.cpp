@@ -7,6 +7,34 @@
 using namespace flix;
 using namespace flix::testsupport;
 
+TEST(reference_new_talents_purchase_persist_and_refund) {
+    Harness h("new-talents-1106", [](const std::string& path) {
+        seedUser(path, "newtalentqa", "password7");
+        Database db; std::string error; CHECK(db.load(path,error));
+        db.progress(db.findUser("newtalentqa")->id).totalXp = 1e15;
+        db.markDirty(); CHECK(db.save());
+    }, dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+    NetClient client;
+    CHECK(loginAs(h,client,"newtalentqa","password7"));
+    const int points=client.profile().talentPoints();
+    for(auto id : {SkillId::Prestige,SkillId::PetDamage}) {
+        client.requestUpgradeSkill(id,0);
+        CHECK(awaitProfile(h,client,[=](const Profile& p){return p.skills.level(id)==0;}));
+    }
+    CHECK_EQ(client.profile().talentPoints(),points-227);
+    client.disconnect(); h.step(10,{});
+    NetClient again;
+    CHECK(loginAs(h,again,"newtalentqa","password7"));
+    CHECK(again.profile().skills.prestigeUnlocked());
+    CHECK_EQ(again.profile().skills.level(SkillId::PetDamage),0);
+    for(auto id : {SkillId::Prestige,SkillId::PetDamage}) {
+        again.requestDowngradeSkill(id,0);
+        CHECK(awaitProfile(h,again,[=](const Profile& p){return p.skills.level(id)==-1;}));
+    }
+    CHECK_EQ(again.profile().talentPoints(),points);
+}
+
 TEST(reference_talents_preserve_old_indices_and_price_every_tier) {
     CHECK_EQ(static_cast<int>(SkillId::Summoner), 16);
     CHECK_EQ(static_cast<int>(SkillId::Damage), 17);

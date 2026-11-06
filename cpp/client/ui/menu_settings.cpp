@@ -383,6 +383,32 @@ struct Painter {
         return click(r);
     }
 
+    void shardRow() {
+        auto* state=ctx.shardSelection;
+        if(!state||!state->visible)return;
+        const bool zh=language()==Language::Zh;
+        label((zh?"服务器：":"Server: ")+state->currentLabel,cy+10.0,14.0,kPaper,kInk);
+        cy+=28.0;
+        const auto count=std::min<std::size_t>(2,state->choices.size());
+        const double width=(w-8.0)*0.5;
+        for(std::size_t i=0;i<count;++i) {
+            const auto& choice=state->choices[i];const bool current=choice.id==state->currentId;
+            const bool enabled=state->ready&&!state->switching&&state->requested.empty()&&choice.available&&!current;
+            const Rect box{x+i*(width+8.0),cy,width,30.0};
+            std::string caption=choice.label;
+            if(current)caption+=zh?" · 当前":" · Current";
+            else if(!choice.available)caption+=zh?" · 未开放":" · Offline";
+            if(enabled) {
+                if(button(box,caption,kActionFill,12.0,9910+static_cast<int>(i)))state->requested=choice.id;
+            } else ui::button(canvas(),box,caption,false,false,gardnStyle(kNeutralFill,12.0));
+        }
+        cy+=40.0;
+        if(state->switching||!state->message.empty()) {
+            label(state->switching?(zh?"正在保存并切换服务器…":"Saving and switching server…"):state->message,cy+8.0,11.0,kPaper,kInk);
+            cy+=24.0;
+        }
+    }
+
     void fullscreenRow() {
 #ifdef __EMSCRIPTEN__
         const bool zh = language() == Language::Zh;
@@ -660,6 +686,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
 
     switch (st.tab) {
         case Tab::Controls: {
+            p.shardRow();
             p.fullscreenRow();
             p.label(tr(Msg::ControlsHeading), p.cy + 10.0, 15.0, kPaper, kInk);
             p.cy += 28.0;

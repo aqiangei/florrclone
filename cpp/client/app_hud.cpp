@@ -461,7 +461,7 @@ void App::drawSquadHud(Canvas& canvas, double time) {
         if (found == net_.view().entities().end()) {
             if(member.netId==net_.view().self().netId)continue;
             const NetClient::OnlineRosterEntry* presence=nullptr;
-            for(const auto& row:net_.onlineRoster())if(row.name==member.name || row.name==member.account){presence=&row;break;}
+            for(const auto& row:net_.onlineRoster())if(row.sameShard && (row.name==member.name || row.name==member.account)){presence=&row;break;}
             HealthBarEase presenceBar;presenceBar.snap(presence?presence->healthRatio:0,0);
             flowerBar(canvas,barX,centreY-barHeight*.5,barWidth,barHeight,presenceBar,kHealth,kScale);
             text(canvas,member.name.empty()?member.account:member.name,barX+barWidth*.5,centreY,label);
@@ -479,6 +479,14 @@ void App::drawSquadHud(Canvas& canvas, double time) {
                   invulnerable ? kInvulnerableHealth : kHealth, kScale);
         text(canvas, member.name.empty() ? std::string("Squadmate") : member.name,
              barX + barWidth * 0.5, centreY, label);
+
+        const auto& self = net_.view().self();
+        if (member.netId == self.splitNetId && self.splitMaxMana > 0.0) {
+            HealthBarEase mana;
+            mana.snap(clamp(self.splitMana / self.splitMaxMana, 0.0, 1.0), 0.0);
+            flowerBar(canvas, barX, barY + barHeight + 3.0 * kScale, barWidth, barHeight * 0.5,
+                      mana, kMana, kScale);
+        }
 
         if (!body.guildName.empty()) {
             text(canvas, "[" + body.guildName + "]", barX - 7.5 * kScale,

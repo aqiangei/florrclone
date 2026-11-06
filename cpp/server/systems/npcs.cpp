@@ -16,7 +16,7 @@ std::vector<std::uint8_t> availableRecipes(const MobConfig& config,
         for(const auto& input:recipe.inputs)
             valid=valid&&petalComesAt(content.petal(input.petal),rarity);
         for(const auto& output:recipe.outputs)
-            valid=valid&&petalComesAt(content.petal(output.petal),rarity);
+            valid=valid&&petalComesAt(content.petal(output.petal),recipe.outputRarity.value_or(rarity));
         if(valid)result.push_back(static_cast<std::uint8_t>(i));
     }
     return result;
@@ -52,10 +52,6 @@ void NpcSystem::loadSites(const WorldMaps& maps, const ContentRegistry& content,
                                    "nothing stands there");
                 continue;
             }
-            if (content.mob(mobIndex).npc.service==NpcService::Assembler &&
-                std::any_of(sites_.begin(),sites_.end(),[&](const Site& old){
-                    return old.realm==map.realm() && content.mob(old.mobIndex).npc.service==NpcService::Assembler;
-                })) continue;
             Site site;
             site.realm = map.realm();
             // A point object's box is the point itself; an area's NPC is put
@@ -67,8 +63,17 @@ void NpcSystem::loadSites(const WorldMaps& maps, const ContentRegistry& content,
             site.outline = element.polygon;
             site.mobIndex = mobIndex;
             if (content.mob(mobIndex).npc.service==NpcService::Assembler) {
-                site.rarity=Rarity::Unique;
-                sites_.push_back(site);
+                const int first = element.npcEveryRarity ? 0 : rarityIndex(element.npcRarity);
+                const int last = element.npcEveryRarity ? rarityIndex(Rarity::Unique) : first;
+                for (int tier=first; tier<=last && tier<=rarityIndex(Rarity::Unique); ++tier) {
+                    site.rarity=static_cast<Rarity>(tier);
+                    if (element.npcEveryRarity)
+                        site.position = Vec2{element.bounds.x + (tier%3)*420.0,
+                                             element.bounds.y + (tier/3)*420.0};
+                    if (std::none_of(sites_.begin(),sites_.end(),[&](const Site& old){
+                        return old.realm==site.realm && old.mobIndex==mobIndex && old.rarity==site.rarity;
+                    })) sites_.push_back(site);
+                }
                 continue;
             }
             if (!element.npcEveryRarity) {

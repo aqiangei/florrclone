@@ -5,15 +5,11 @@
 // "+N XP" it is about to grant, the server to grant it -- and the two must
 // arrive at the same number.
 //
-// The curve is ours, not florr's. florr's own table (1, 5, 50, 500, 10k, 500k,
-// 50M, 5B a petal) was sized for florr's level curve and would hand out a
-// hundred of ours for one mythic. Here every tier is worth seven of the one
-// below and a RARE petal is worth exactly 1 XP, which keeps absorbing a side
-// income: a petal of any tier comes to roughly 1-3.5% of what killing a mob of
-// that tier pays. The two tiers under rare are fractions of an XP, so a
-// request is priced in whole UNITS -- a common is one, a rare 49 -- and turned
-// into XP once, after the Absorption talent: forty-nine commons are 1 XP
-// whether they go in one click or seven.
+// The curve is sized for this game's levels. Low-tier duplicates always grant
+// at least one XP, including a new player's first Common. Upper tiers remain
+// useful to veterans, but are a supplement to hunting: M/U/S/E pay roughly
+// 7.5/10.7/9.3/11.8% of a same-tier Ladybug kill before Absorption talents.
+// Every account uses the same table; account age and level never devalue stock.
 
 #include <cmath>
 #include <cstdint>
@@ -28,26 +24,20 @@ namespace flix {
 /// have): everyone starts with it, so it is worth nothing.
 inline constexpr const char* kUnabsorbablePetalId = "basic";
 
-/// Every tier is worth this many of the tier below it.
-inline constexpr double kAbsorbXpGrowth = 7.0;
-/// Units in one XP: a rare petal's worth, two tiers above the one-unit common.
-inline constexpr double kAbsorbUnitsPerXp = kAbsorbXpGrowth * kAbsorbXpGrowth;
+/// Common through Eternal. Tracked Hyper/admin holdings have no burn quote.
+inline constexpr double kAbsorbXpByTier[] = {1, 4, 16, 80, 400, 2400, 16000, 112000, 800000};
 
 /// How many petal stacks one Absorb request may name. More than a grid holds:
 /// a type at every ladder tier for every petal there is.
 inline constexpr int kMaxAbsorbStacks = 4096;
 
-/// What one petal of `rarity` is worth, in units: 7^tier, so 1 for a common
-/// and 40,353,607 for an apex. Exact in a double, as is any stack of them up
-/// to 2^53 units -- past that the request is worth more XP than the curve can
-/// tell apart anyway.
+/// Whole base XP, summed before applying the talent and rounding once.
 inline double absorbUnits(Rarity rarity) {
-    return std::pow(kAbsorbXpGrowth, static_cast<double>(rarityIndex(rarity)));
+    const int tier = rarityIndex(rarity);
+    return tier >= 0 && tier < 9 ? kAbsorbXpByTier[tier] : 0.0;
 }
 
-/// What one petal of `rarity` is worth in XP before the talent: 1/49, 1/7, 1,
-/// 7, 49 ... 823,543 at apex.
-inline double absorbXpPerPetal(Rarity rarity) { return absorbUnits(rarity) / kAbsorbUnitsPerXp; }
+inline double absorbXpPerPetal(Rarity rarity) { return absorbUnits(rarity); }
 
 /// Whether a petal may be absorbed at `rarity`: anything on the ladder except
 /// the basic. Contested Hyper petals and universals are tracked holdings;
@@ -63,10 +53,10 @@ inline double absorbXpScale(const SkillSet& skills) {
 
 /// What absorbing a whole request grants: `units` (the sum of
 /// count x absorbUnits over it) through the talent, floored once. The nudge
-/// keeps a total that is whole on paper -- 2,450 units at 2.52x is 126 -- from
+/// keeps a total that is whole on paper -- 50 XP at 2.52x is 126 -- from
 /// flooring to the integer under it when the scale is a hair short in binary.
 inline double absorbXpTotal(double units, const SkillSet& skills) {
-    return std::floor(units * absorbXpScale(skills) / kAbsorbUnitsPerXp + 1e-7);
+    return std::floor(units * absorbXpScale(skills) + 1e-7);
 }
 
 } // namespace flix

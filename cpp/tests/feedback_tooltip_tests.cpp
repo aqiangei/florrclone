@@ -30,7 +30,7 @@ TEST(ant_and_beetle_tooltips_match_the_buffed_summon_stats){
         const auto rarity=clampRarity(tier);const auto index=content().petalIndex(id);const auto& config=content().petal(index);
         const auto lines=ui::petalTooltipLines(index,rarity,{},1.0);bool health=false,damage=false;
         for(const auto& line:lines){health|=line.text.find("Summon health: ")==0;damage|=line.text.find("Summon damage: ")==0;}
-        CHECK(health);CHECK(damage);CHECK_NEAR(eggSummonCombatScale(config),1.5,1e-9);
+        CHECK(health);CHECK(damage);CHECK_NEAR(eggSummonCombatScale(config),2.0,1e-9);
     }
 }
 
@@ -44,14 +44,14 @@ TEST(temporary_hammer_stays_twelve_and_contested_hammer_recovers_output){
     }
 }
 
-TEST(cpp_uses_45_damage_32_health_and_2500ms_reload_on_every_ladder_tier){
+TEST(cpp_uses_42_damage_28_health_and_2500ms_reload_on_every_ladder_tier){
     std::string error;CHECK(loadContent(testsupport::dataDir(),error));ui::setLanguage(ui::Language::En);
     const auto cpp=content().petalIndex("c++"),saw=content().petalIndex("sawblade");
     for(int tier=0;tier<kLadderRarityCount;++tier){const auto rarity=static_cast<Rarity>(tier);
         const auto stats=content().petalStats(cpp,rarity),blade=content().petalStats(saw,rarity);
-        CHECK_NEAR(stats.damage,45*petalStrengthScale(rarity),1e-6);
-        CHECK_NEAR(stats.health,32*petalStrengthScale(rarity),1e-6);CHECK_NEAR(stats.reloadMillis,2500,1e-8);
-        CHECK_NEAR(stats.damage/blade.damage,45.0/40,1e-9);CHECK_NEAR(stats.health/blade.health,32.0/25,1e-9);
+        CHECK_NEAR(stats.damage,42*petalStrengthScale(rarity),1e-6);
+        CHECK_NEAR(stats.health,28*petalStrengthScale(rarity),1e-6);CHECK_NEAR(stats.reloadMillis,2500,1e-8);
+        CHECK_NEAR(stats.damage/blade.damage,42.0/40,1e-9);CHECK_NEAR(stats.health/blade.health,28.0/25,1e-9);
         const auto lines=ui::petalTooltipLines(cpp,rarity,{},1);bool reload=false;
         for(const auto& badge:lines.front().badges)reload|=badge.text.find("2.5s")!=std::string::npos;CHECK(reload);
         const auto mimic=content().petalIndex("mimic");

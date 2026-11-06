@@ -434,7 +434,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     const bool overButton = usable && buttonHit.contains(mouse);
     drawFlorrButton(canvas, button, usable ? kButtonFace : kButtonIdleFace, kButtonBorder,
                     kButtonRadius, overButton, overButton && mouseDown);
-    outlinedText(canvas, "Absorb", button.x + button.w * 0.5, button.y + button.h * 0.5,
+    outlinedText(canvas, trEnZh("Absorb", "吸收"), button.x + button.w * 0.5, button.y + button.h * 0.5,
                  panelLabel(kButtonLabelSize, Align::Centre, Baseline::Middle), 1.0);
 
     // --- the bar -------------------------------------------------------------------
@@ -502,14 +502,14 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     sparks_.drawGrains(canvas, dtMs);
 
     // --- the lines ---------------------------------------------------------------
-    outlinedText(canvas, "Absorb petals to gain XP", centreX, panel.y + kLine1Y,
+    outlinedText(canvas, trEnZh("Absorb spare petals for XP; check the preview first", "吸收多余花瓣获得经验，请先查看经验预览"), centreX, panel.y + kLine1Y,
                  panelLabel(kLineSize, Align::Centre, Baseline::Middle), 1.0);
     // A refusal says why where the warning stands, for as long as it is news.
     const bool refused = !refusal_.empty() && nowMs < refusalUntil_;
     TextStyle second = panelLabel(kLineSize, Align::Centre, Baseline::Middle);
     if (refused) second.fill = kSlotCardRefusalInk;
     outlinedText(canvas,
-                 refused ? refusal_ : "WARNING: The petals will be destroyed in the process",
+                 refused ? refusal_ : trEnZh("WARNING: Selected petals will be permanently destroyed", "注意：所选花瓣会永久销毁，请保留需要使用的装备"),
                  centreX, panel.y + kLine2Y, second, 1.0);
 
     // --- the grid ----------------------------------------------------------------

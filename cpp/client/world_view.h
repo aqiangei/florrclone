@@ -185,6 +185,7 @@ struct RemoteEntity {
     std::uint8_t npcNextRecipe = 0;
     double npcRecipeRefreshAtMillis = 0;
     std::uint32_t ownerNetId = 0;
+    std::uint8_t petalVariant = 0;
     Vec2 ownerOffset;
     /// The entity `ownerOffset` is measured from: the owner, or the moon its
     /// ring orbits. When it changes the offset is rebased onto the new frame
@@ -259,6 +260,9 @@ struct SelfState {
     /// decide whether there is a mana bar to draw at all.
     double mana = 0;
     double maxMana = 0;
+    std::uint32_t splitNetId = 0;
+    double splitMana = 0;
+    double splitMaxMana = 0;
     double totalXp = 0;
     int level = 1;
     /// See PlayerProgress::stars: a balance the server keeps to 2^53, so the

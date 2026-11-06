@@ -52,6 +52,7 @@ enum PlayerRenderFlag : std::uint32_t {
     PlayerRenderRobot   = 1 << 1,
     PlayerRenderGlitch  = 1 << 2,
     PlayerRenderBurrowed = 1 << 3,
+    PlayerRenderSwallowed = 1 << 4,
 };
 
 } // namespace flix

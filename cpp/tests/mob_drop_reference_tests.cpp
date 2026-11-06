@@ -44,11 +44,11 @@ TEST(hyper_drop_budget_is_capped_at_035_eternal_per_corpse_not_per_drop_row){
         CHECK_NEAR(eternal/2000.0,expectedHyperEternals(id),0.08);
     }
 }
-TEST(hyper_drop_budget_bonus_preserves_existing_one_point_five_and_double_rates){
+TEST(hyper_drop_budget_bonus_uses_one_point_four_and_one_point_eight_rates){
     for(int bonus=2;bonus<=3;++bonus){
         const auto result=kills("ladybug",Rarity::Apex,2000,false,bonus);int eternal=0;
         for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
-        CHECK_NEAR(eternal/2000.0,expectedHyperEternals("ladybug")*(bonus==2?1.5:2.0),0.1);
+        CHECK_NEAR(eternal/2000.0,expectedHyperEternals("ladybug")*(bonus==2?1.4:1.8),0.1);
     }
 }
 TEST(reference_pharaoh_crown_really_drops_at_unique_from_super_and_eternal_beetles){
@@ -109,6 +109,29 @@ TEST(daily_bonus_adds_independent_trials_and_reduced_super_bonus){
     const auto base=kills("sandstorm",Rarity::Super,20);
     CHECK_EQ(total(kills("sandstorm",Rarity::Super,20,false,2),"sand"),total(base,"sand")*3/2);
     CHECK_EQ(total(kills("sandstorm",Rarity::Super,20,false,3),"sand"),total(base,"sand")*2);
+    const auto eternal=kills("sandstorm",Rarity::Unique,20);
+    CHECK_EQ(total(kills("sandstorm",Rarity::Unique,20,false,2),"sand")*10,total(eternal,"sand")*16);
+    CHECK_EQ(total(kills("sandstorm",Rarity::Unique,20,false,3),"sand")*10,total(eternal,"sand")*22);
+}
+TEST(daily_bonus_mixed_claimants_keep_only_their_own_super_eternal_and_hyper_trials){
+    const auto& c=registry();
+    for(const auto rarity:{Rarity::Super,Rarity::Unique,Rarity::Apex}) {
+        World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;Rng rng{81927};LootSystem loot;
+        std::vector<Entity> players;
+        for(int i=0;i<3;++i){const auto p=w.create();players.push_back(p);w.add<PlayerTag>(p);
+            w.add<Transform>(p,Transform{{10000,10000},0});w.add<Body>(p,Body{25,1});w.add<Health>(p,Health{100,100});
+            w.add<PlayerAccount>(p,PlayerAccount{"bonus-"+std::to_string(i),"bonus",static_cast<std::uint32_t>(70+i),false});}
+        loot.bonusMultiplier=[&](Entity p){for(int i=0;i<3;++i)if(players[i]==p)return i+1;return 1;};
+        const auto corpse=w.create();w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex("sandstorm"),rarity,1});
+        w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,100});Bounty bounty;
+        for(int i=0;i<3;++i)bounty.credit(players[i],100,70+i);
+        w.add<Bounty>(corpse,bounty);w.add<Dead>(corpse,Dead{players[0]});
+        loot.run(w,grid,c,rng,1000,0,commands,events);commands.flush();
+        int counts[3]={};Query<DropTag,DropItem> drops{w};
+        drops.each([&](Entity,DropTag&,DropItem& item){if(c.petal(item.configIndex).id!="sand")return;
+            for(int i=0;i<3;++i)if(LootSystem::mayPickUp(item,players[i],70+i))counts[i]+=static_cast<int>(item.quantity);});
+        for(int i=0;i<3;++i)CHECK_EQ(counts[i],bonusLootTrialsForRarity(rarity,i+1));
+    }
 }
 TEST(centipede_segments_drop_leaf_and_convert_it_with_mana_orb){
     const auto normal=kills("centipede_body",Rarity::Super,30);

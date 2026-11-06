@@ -155,6 +155,7 @@ enum class DamageKind : std::uint8_t {
     /// soaks it, and above all nothing reflects it -- two salted duellists
     /// would otherwise bounce one blow between them until it rounded to zero.
     Reflect = 5,
+    Sponge = 6,     ///< repayment of an already accepted hit
 };
 
 /// Whether this kind is a landed hit rather than a drip. Everything in
@@ -373,7 +374,8 @@ public:
     /// canDamage() plus the victim's own state: alive, not already Dead, and
     /// past its respawn invulnerability. Shared with the contact path so that
     /// a refused hit consumes no cooldown and lands no poison either.
-    static bool canHit(const World& world, Entity victim, Entity source, double nowMillis);
+    static bool canHit(const World& world, Entity victim, Entity source, double nowMillis,
+                       bool ignorePostHitWindow = false);
 
     /// Keep a valid held target, or select the closest unvisited enemy within
     /// bounce range. Shared by flight steering and the first-hit survival gate.
@@ -452,6 +454,7 @@ private:
         /// pays no recoil: mobs already bite it on their own contact clock.
         bool isLoose = false;
         bool isMobBody = false;
+        bool swallows = false;
         /// A seat on a mob's own ring (MobRingPetal). Neither a mob nor a
         /// petal: a piece of the animal's body that happens to be breakable,
         /// so it bumps and is paced exactly as the hull is.
@@ -670,10 +673,12 @@ private:
     /// ever want flowers or mobs query the main grid directly and never pay
     /// for the shots at all.
     void queryBodies(const SpatialGrid& grid, Realm realm, Vec2 center, double radius,
-                     std::vector<Entity>& out);
+                     std::vector<Entity>& out, Entity excludeShotPlayer = NULL_ENTITY,
+                     bool excludePeacefulShots = false);
     /// Appends every filed shot that could overlap the circle -- candidates,
     /// as a grid query returns, for the caller's exact test.
-    void queryShots(Realm realm, Vec2 center, double radius, std::vector<Entity>& out) const;
+    void queryShots(Realm realm, Vec2 center, double radius, std::vector<Entity>& out,
+                    Entity excludePlayer, bool excludePeacefulShots) const;
     /// Spread a shared chain's pool across the bodies that draw on it: every
     /// segment behind `owner` is given the owner's health FRACTION and its
     /// flash, and -- when the hit was fatal -- the same death.
@@ -786,6 +791,15 @@ private:
         std::uint32_t slot = 0;
     };
     std::vector<ShotCell> shotCells_;
+    // A homogeneous cell can be skipped before enumerating a flower's own
+    // shots. Keep each mixed cell's original slot order for impact tie ordering.
+    struct ShotCellRun {
+        std::uint64_t key = 0;
+        std::size_t begin = 0, end = 0;
+        Entity commonPlayer = NULL_ENTITY;
+        bool allPeaceful = false;
+    };
+    std::vector<ShotCellRun> shotRuns_;
     double maxShotRadius_ = 0;
     /// The rows any shot was filed in, whatever its realm, so that a query
     /// with an absurd radius walks the rows that exist rather than millions.
@@ -801,6 +815,7 @@ private:
         /// Body for the rest of the phase, read without a lookup.
         Vec2 position;
         double radius = 0;
+        bool peaceful = false;
     };
     std::vector<FiledShot> filedShots_;
     /// filedShots_ slot by entity INDEX, or kNoShotSlot. The handle stored in

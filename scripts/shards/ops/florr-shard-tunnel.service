@@ -1,0 +1,23 @@
+[Unit]
+Description=Florr shard two private coordinator tunnel
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=florrclone
+Group=florrclone
+ExecStart=/usr/bin/ssh -F /etc/florrclone/shard-ssh.conf -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -L 127.0.0.1:19090:127.0.0.1:19090 florr-coordinator
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

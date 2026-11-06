@@ -1,3 +1,4 @@
+#include "client/ui/touch_scroll.h"
 // The top-right corner: the world map, the maze map, and the arena's
 // scoreboard where neither of those applies.
 //
@@ -594,7 +595,9 @@ void App::drawOnlineRoster(Canvas& canvas) {
     const double listH = std::max(0.0, boxH - kRosterHeader - 4.0);
     const double contentH = static_cast<double>(roster.size()) * kRosterRow;
     const double maxScroll = std::max(0.0, contentH - listH);
-    if (onlineRosterScroll_ > maxScroll) onlineRosterScroll_ = maxScroll;
+    const Rect listBox{x + 1.0, listTop, kRosterWidth - 2.0, listH};
+    onlineRosterScroll_ = clamp(onlineRosterScroll_ -
+        ui::touchScroll(window_, listBox, maxScroll > 0.0), 0.0, maxScroll);
 
     canvas.beginPath();
     canvas.rect(static_cast<float>(x + 1.0), static_cast<float>(listTop),
@@ -623,7 +626,14 @@ void App::drawOnlineRoster(Canvas& canvas) {
             line += "  ";
             line += tr(Msg::LobbyParen);
         }
-        text(canvas, ellipsize(line, rowStyle.size, kRosterWidth - 16.0), x + 8.0, cy, rowStyle);
+        const double badgeWidth=entry.shard?42.0:0.0;
+        text(canvas, ellipsize(line, rowStyle.size, kRosterWidth - 16.0-badgeWidth), x + 8.0, cy, rowStyle);
+        if(entry.shard) {
+            TextStyle badge=rowStyle;badge.align=Align::Right;
+            badge.fill=entry.shard==1?0xA8DBFFu:0xE4BEFFu;
+            const bool zh=ui::language()==ui::Language::Zh;
+            text(canvas,entry.shard==1?(zh?"一服":"S1"):(zh?"二服":"S2"),x+kRosterWidth-8,cy,badge);
+        }
     }
     canvas.restore();
 

@@ -344,7 +344,7 @@ const char* rarityTrEn(const std::string& en) {
         {"Common", "普通"},     {"Uncommon", "罕见"}, {"Unusual", "罕见"},
         {"Rare", "稀有"},       {"Epic", "史诗"},     {"Legendary", "传奇"},
         {"Mythic", "神话"},     {"Ultra", "究极"},    {"Super", "超级"},
-        {"Eternal", "永恒"},    {"Unique", "唯一"},   {"Apex", "顶点"},
+        {"Eternal", "永恒"},    {"Unique", "唯一"},   {"Hyper", "超凡"}, {"Apex", "超凡"},
         {"Universal", "宇宙"},  {"Admin", "管理"},
     };
     for (const Pair& p : kR) {
@@ -375,7 +375,7 @@ std::string dropArticle(std::string s) {
 bool splitRarityName(const std::string& body, std::string& rarity, std::string& name) {
     static const char* kLabels[] = {
         "Universal", "Uncommon", "Unusual", "Legendary", "Eternal", "Unique",
-        "Common", "Rare", "Epic", "Mythic", "Ultra", "Super", "Apex", "Admin",
+        "Common", "Rare", "Epic", "Mythic", "Ultra", "Super", "Hyper", "Apex", "Admin",
     };
     for (const char* lab : kLabels) {
         const std::size_t n = std::char_traits<char>::length(lab);

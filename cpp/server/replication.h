@@ -89,6 +89,8 @@ public:
     struct SelfSent {
         float health = 0, maxHealth = 0;
         float mana = 0, maxMana = 0;
+        std::uint32_t splitNetId = 0;
+        float splitMana = 0, splitMaxMana = 0;
         double totalXp = 0;
         std::uint16_t level = 0;
         double stars = 0;
@@ -306,6 +308,7 @@ public:
         /// box the admin's own client reported -- the steered player's claim is
         /// their own screen's, and it keeps culling their own stream.
         std::optional<Vec2> viewport;
+        Entity splitOther = NULL_ENTITY;
     };
 
     /// Appends a complete Snapshot payload (message id included) to `out`.
@@ -375,7 +378,7 @@ private:
     struct Candidate {
         Entity entity;
         std::uint32_t netId;
-        double distanceSq;
+        double selectionKey;
     };
 
     std::vector<Candidate> candidates_;

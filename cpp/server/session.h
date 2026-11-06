@@ -111,6 +111,8 @@ struct Session {
 
     /// When this session's next TitanHolder query will be answered, on the
     /// server's tick clock. See kTitanHolderQueryMillis.
+    double councilActiveUntil = 0;
+    double councilSampleAt = 0;
     double nextTitanQueryMillis = 0;
     double nextBulkCraftMillis = 0;
 

@@ -2,6 +2,7 @@
 
 #include "server/systems/movement.h"
 #include "server_harness.h"
+#include "test_data.h"
 
 #include <algorithm>
 #include <cmath>
@@ -187,11 +188,11 @@ TEST(speed_modifier_scales_the_target_not_the_momentum) {
     fx.step(200);
     CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed * 1.5, 0.5);
 
-    // A ludicrous modifier is capped rather than obeyed: past the cap a
-    // flower would outrun the substep budget and start clipping walls.
-    fx.world.get<PlayerModifiers>(player).speedScale = 1e6;
-    fx.step(400);
-    CHECK(fx.velocityOf(player).length() <= kPlayerMaxSpeed * 8.0 + 1.0);
+    // Legitimate stacked modifiers must not stop at the old eightfold cap.
+    fx.world.get<PlayerModifiers>(player).speedScale = 12.0;
+    fx.world.get<Motion>(player).velocity = {kPlayerMaxSpeed * 12.0, 0};
+    fx.step(1);
+    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed * 12.0, 0.5);
 }
 
 TEST(an_unset_or_corrupt_speed_modifier_means_unmodified) {
@@ -390,7 +391,7 @@ TEST(a_player_driven_at_a_wall_stops_against_it) {
     // lies inside the tile, so the rectangle is where the body stops.
     CHECK(at.x <= kWallWest - kPlayerBaseRadius + 1e-6);
     CHECK(at.x >= kWallWest - kPlayerBaseRadius - 0.1);
-    CHECK_NEAR(fx.velocityOf(player).x, kPlayerMaxSpeed, 1.0);
+    CHECK_NEAR(fx.velocityOf(player).x, 0.0, 1e-6);
 }
 
 TEST(a_wall_removes_only_the_velocity_that_points_into_it) {
@@ -438,18 +439,17 @@ TEST(an_absurd_velocity_cannot_tunnel_through_a_wall) {
     CHECK(fx.positionOf(mob).x > 2000.0 + (kWallWest - 2000.0) * 0.5);
 }
 
-TEST(one_tick_of_travel_is_bounded_by_the_substep_budget) {
+TEST(high_speed_travel_is_not_truncated_by_the_old_substep_budget) {
     Fixture fx;
     const Entity mob = fx.spawnMob({30000, 30000}, 20.0);
-    fx.world.get<Motion>(mob).velocity = {1e9, 0};
+    fx.world.get<Motion>(mob).velocity = {30000, 0};
     fx.step(1);
     // A mob meets walls as a point, below the substep floor, so the budget is
     // the floor times the substep cap -- covered in shorter substeps, never
     // extended by them. Exceeding it would mean the loop took longer steps --
     // which is how a body ends up on the far side of a wall.
     const double budget = kMinSubstepLength * kMaxSubstepCount;
-    CHECK(fx.positionOf(mob).x - 30000.0 <= budget + 1e-6);
-    CHECK(fx.positionOf(mob).x > 30000.0);
+    CHECK(fx.positionOf(mob).x - 30000.0 > budget);
 }
 
 TEST(a_zero_or_nan_radius_terminates_and_stays_out_of_walls) {
@@ -591,6 +591,22 @@ TEST(separation_cannot_shove_a_mob_into_a_wall) {
     CHECK(fx.positionOf(a).x > kWallWest - 1.0);
     // And the separation did act: the one with room to go was pushed away.
     CHECK(fx.positionOf(a).x - fx.positionOf(b).x > 20.0);
+}
+
+TEST(egg_pet_can_separate_from_a_mob_spawned_at_the_exact_same_position) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    Fixture fx;
+    const auto owner = fx.spawnPlayer({4750, 5000});
+    const auto pet = fx.spawnMob({5000, 5000}, 60);
+    const auto mob = fx.spawnMob({5000, 5000}, 60);
+    const auto type = content().mobIndex("soldier_ant");
+    fx.world.add<MobType>(pet, MobType{type, Rarity::Apex, 1});
+    fx.world.add<MobType>(mob, MobType{type, Rarity::Apex, 1});
+    fx.world.add<Pet>(pet, Pet{owner, 0});
+    fx.step(16);
+    const double contact = 120 * mobBodyContactScale("soldier_ant");
+    CHECK_NEAR(distance(fx.positionOf(pet), fx.positionOf(mob)), contact + kMobCollisionBuffer, 1e-6);
 }
 
 TEST(a_centipede_collides_with_its_own_beads_everywhere_but_its_joints) {
@@ -816,6 +832,22 @@ TEST(a_projectile_flies_through_walls) {
     CHECK_NEAR(fx.positionOf(shot).x, startX + range, 1e-6);
     CHECK(fx.positionOf(shot).x > kWallEast);
     CHECK_NEAR(fx.positionOf(shot).y, 5000.0, 1e-9);
+}
+
+TEST(feedback_javascript_shot_expires_when_it_crosses_a_wall) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    Fixture fx;
+    fx.wallColumn(10);
+    const auto shot = fx.spawnProjectile({kWallWest - 100.0, 5000}, {800, 0}, 1000);
+    auto& projectile = fx.world.get<Projectile>(shot);
+    projectile.petalConfigIndex = content().petalIndex("javascript");
+    CHECK(projectile.petalConfigIndex != kInvalidIndex);
+    fx.step(2);
+    CHECK(!fx.world.has<Dead>(shot));
+    fx.step(5);
+    CHECK(fx.world.has<Dead>(shot));
+    CHECK(fx.positionOf(shot).x <= kWallWest);
 }
 
 TEST(a_projectile_that_reaches_the_edge_of_the_world_is_spent_there) {
@@ -1081,7 +1113,7 @@ TEST(step_collide_is_usable_without_a_world) {
     CHECK_NEAR(sanitizeCollisionRadius(-5.0), 0.0, 1e-12);
     CHECK_NEAR(sanitizeCollisionRadius(1e9), kMaxCollisionRadius, 1e-12);
     CHECK_NEAR(sanitizeMovementVelocity({kNan, 1.0}).length(), 0.0, 1e-12);
-    CHECK_NEAR(sanitizeMovementVelocity({1e9, 0}).length(), kMaxMovementSpeed, 1e-9);
+    CHECK_NEAR(sanitizeMovementVelocity({1e9, 0}).length(), 1e9, 1e-9);
     CHECK_NEAR(sanitizeMovementVelocity({3, 4}).length(), 5.0, 1e-12);
 }
 
@@ -1383,5 +1415,28 @@ TEST(wax_barrier_displaces_surrounding_mobile_mobs_without_changing_moon_mass_co
         CHECK(mobMove>0);CHECK(slabMove>=0);
         if(std::string(id)=="wax")CHECK(mobMove>slabMove*2);
         else CHECK(slabMove>mobMove*2);
+    }
+}
+
+TEST(feedback1105_turn_away_from_wall_moves_on_first_tick) {
+    for (double dt : {1.0/30, 1.0/60}) {
+        Fixture fx; fx.wallColumn(10);
+        const Entity p=fx.spawnPlayer({kWallWest-kPlayerBaseRadius,5000});
+        fx.world.get<Motion>(p).velocity={kPlayerMaxSpeed,0};
+        fx.drive(p,0,1);fx.movement.run(fx.world,fx.terrain,1000,dt);
+        const double before=fx.positionOf(p).x;
+        fx.drive(p,kPi,1);fx.movement.run(fx.world,fx.terrain,1000+dt*1000,dt);
+        CHECK(fx.positionOf(p).x<before);
+    }
+}
+TEST(feedback1105_respawn_full_hull_stays_on_corpse_side) {
+    Fixture fx;fx.wallColumn(10);
+    for(double radius:{25.0,45.0,75.0}) {
+        const Vec2 corpse{kWallWest-26,5000};
+        const Vec2 p=playerRespawnPosition(fx.terrain,Realm::Overworld,corpse,radius);
+        CHECK(p.x<=kWallWest-radius+1e-6);
+        const auto wall=fx.terrain.resolveWall(p,radius,Realm::Overworld);
+        CHECK(!wall.unresolved);CHECK(distanceSq(wall.position,p)<1e-8);
+        CHECK(!fx.terrain.segmentTouchesBlockingTile(corpse,p,0,Realm::Overworld));
     }
 }

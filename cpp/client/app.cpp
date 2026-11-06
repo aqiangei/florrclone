@@ -26,6 +26,24 @@
 #include <cstdio>
 #include <fstream>
 #include <utility>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+EM_JS(int, flix_shard_directory_size, (), {
+    if(Module.shardDirectoryText!==undefined)return Module.shardDirectoryText===null?-1:new TextEncoder().encode(Module.shardDirectoryText).length+1;
+    if(!Module.shardDirectoryRequested) {
+        Module.shardDirectoryRequested=true;
+        fetch('/api/shards',{cache:'no-store',signal:AbortSignal.timeout(5000)}).then(async response=>{
+            if(!response.ok)throw Error('directory unavailable');
+            const text=await response.text();if(text.length>8192)throw Error('directory too large');
+            Module.shardDirectoryText=text;
+        }).catch(()=>{Module.shardDirectoryText=null;});
+    }
+    return 0;
+});
+EM_JS(void, flix_shard_directory_copy, (char* out,int size), {
+    stringToUTF8(Module.shardDirectoryText,out,size);
+});
+#endif
 
 #include "client/app_internal.h"
 #include "client/ease.h"
@@ -250,7 +268,8 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     // Before the first frame rather than only from frame(): a --frames run
     // short enough to be one screenshot would otherwise photograph the
     // default resolution whatever the file says.
-    window_.setRenderScale(menus_.settings().renderScale);
+    window_.setRenderScale(config_.lowMemoryGraphics
+        ? std::min(0.5, menus_.settings().renderScale) : menus_.settings().renderScale);
     window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
     if (!net_.connect(config.host, config.port)) {
         errorOut = net_.lastError();
@@ -356,10 +375,59 @@ bool App::step() {
     return running_;
 }
 
+void App::pollShardDirectory() {
+#ifdef __EMSCRIPTEN__
+    if(shardDirectoryLoaded_)return;
+    const int size=flix_shard_directory_size();if(size==0)return;
+    shardDirectoryLoaded_=true;if(size<1||size>32769)return;
+    std::vector<char> bytes(static_cast<std::size_t>(size));flix_shard_directory_copy(bytes.data(),size);
+    if(!shardDirectory_.parse(Json::parseOrNull(bytes.data()),config_.host,config_.port))return;
+    auto& menu=menus_.shardSelection();menu.visible=true;menu.currentId=shardDirectory_.current;
+    menu.currentLabel=shardDirectory_.find(menu.currentId)->label;
+    for(const auto& endpoint:shardDirectory_.choices)menu.choices.push_back({endpoint.id,endpoint.label,endpoint.available});
+#endif
+}
+
+void App::switchShard(const std::string& target) {
+    auto& menu=menus_.shardSelection();const auto* endpoint=shardDirectory_.find(target);
+    if(!menu.visible||menu.switching||!net_.haveSession()||!endpoint||!endpoint->available||target==menu.currentId)return;
+    storedToken_=net_.sessionToken();if(storedToken_.empty())return;
+    saveSession();returnToTitle();
+    shardSwitchSource_=menu.currentId;shardSwitchTarget_=target;
+    shardSwitchReturning_=false;shardSwitchWaiting_=false;
+    shardSwitchDeadline_=timeSeconds_+20;shardSwitchRetry_=timeSeconds_;
+    menu.switching=true;menu.ready=false;menu.message.clear();
+    // Disconnect is not Logout: the original shard saves and releases its
+    // exclusive lease, while the shared session token remains valid.
+    config_.host=endpoint->host;config_.port=endpoint->port;
+    net_.connect(config_.host,config_.port);
+}
+
+void App::serviceShardSwitch() {
+    auto& menu=menus_.shardSelection();menu.ready=net_.haveSession()&&!menu.switching;
+    if(!menu.switching)return;
+    if(timeSeconds_>=shardSwitchDeadline_) {
+        if(!shardSwitchReturning_) {
+            const auto* source=shardDirectory_.find(shardSwitchSource_);
+            if(!source){menu.switching=false;return;}
+            shardSwitchReturning_=true;shardSwitchTarget_=source->id;
+            shardSwitchDeadline_=timeSeconds_+20;shardSwitchWaiting_=false;shardSwitchRetry_=timeSeconds_;
+            config_.host=source->host;config_.port=source->port;net_.connect(config_.host,config_.port);
+        } else {
+            menu.switching=false;menu.message="暂时无法切服，请稍后重连";
+            loginMessage_=menu.message;screen_=Screen::Login;return;
+        }
+    }
+    if(net_.status()==NetClient::Status::Ready&&!shardSwitchWaiting_&&timeSeconds_>=shardSwitchRetry_) {
+        shardSwitchWaiting_=true;net_.resumeSession(storedToken_);
+    }
+}
+
 void App::pollNetwork() {
     // Zero timeout: the frame loop sets the cadence, and blocking here would
     // couple frame rate to packet arrival.
     net_.poll(0);
+    pollShardDirectory();
 
     // The server is serving a build this one is not. Nothing here can talk to
     // it, and the bytes that could are on the server: on the web that is a
@@ -420,6 +488,18 @@ void App::pollNetwork() {
     }
     if (net_.authAnswered) {
         net_.authAnswered = false;
+        auto& shards=menus_.shardSelection();
+        if(shards.switching) {
+            shardSwitchWaiting_=false;shardSwitchRetry_=timeSeconds_+1;
+            if(net_.authStatus==net::AuthStatus::Ok) {
+                shards.switching=false;shards.currentId=shardSwitchTarget_;
+                const auto* endpoint=shardDirectory_.find(shardSwitchTarget_);
+                if(endpoint)shards.currentLabel=endpoint->label;
+                shards.message=shardSwitchReturning_?"切换未完成，已返回原服":"已切换服务器";
+            } else if(net_.authStatus!=net::AuthStatus::SessionExpired&&net_.authStatus!=net::AuthStatus::BadCredentials) {
+                screen_=Screen::Lobby;autoAuthSentAt_=-1;serviceShardSwitch();return;
+            } else {shards.switching=false;shards.message="登录已失效，请重新登录";}
+        }
         autoAuthSentAt_ = -1;
         loginMessage_ = net_.authMessage;
         if (net_.authStatus == net::AuthStatus::Ok) {
@@ -453,6 +533,7 @@ void App::pollNetwork() {
         }
         if(net_.authStatus==net::AuthStatus::SessionExpired){storedToken_.clear();saveSession();}
     }
+    serviceShardSwitch();
     if (net_.sessionTokenRenewed) {
         // A password change reissued this session's token. Written out now
         // rather than at shutdown: the old one is already dead server-side, so
@@ -597,7 +678,8 @@ void App::frame(double dt) {
     // costs nothing on the frames where nothing moved. setDesynchronized
     // likewise, and it may rebuild the canvas too, so it also goes before the
     // frame takes hold of it.
-    window_.setRenderScale(menus_.settings().renderScale);
+    window_.setRenderScale(config_.lowMemoryGraphics
+        ? std::min(0.5, menus_.settings().renderScale) : menus_.settings().renderScale);
     window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
 
 #ifdef __EMSCRIPTEN__
@@ -615,6 +697,16 @@ void App::frame(double dt) {
     const float uiScale = static_cast<float>(window_.uiScale());
     canvas.scale(uiScale, uiScale);
     camera_.setViewport(window_.width(), window_.height());
+    // Polling continues above, but no menu, keyboard or gameplay actions run
+    // until the destination confirms account ownership (or rollback finishes).
+    if (menus_.shardSelection().switching) {
+        net_.flush();
+        drawShardSwitch(canvas);
+        publishKeyboardRegions();
+        window_.present(); // Submit the waiting animation before the input-blocking return.
+        return;
+    }
+
     // Laid out every frame and before any screen runs: a phone that turns on
     // its side changes the viewport between one frame and the next, and the
     // claim handler is asked about a contact using whatever the last frame
@@ -751,6 +843,8 @@ void App::frame(double dt) {
     camera_.loadoutZoom = loadoutCameraZoom(net_.profile(), content());
     const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
     menus_.setInGame(inWorld);
+    menus_.setTouchLayout(config_.forceTouchControls || menus_.settings().touchControlsWanted(
+        coarsePointer_ || window_.touchSeen()));
     // Re-measured every frame, so the craft panel turns into the oracle's (or
     // the trader's) as the flower walks up and back into the forge as it walks
     // off. Only a living, placed flower is standing anywhere: the corpse on the
@@ -772,6 +866,8 @@ void App::frame(double dt) {
     // No inWorld guard: Settings' Log Out is offered on the title screen too,
     // and it is the one action that has to work from either of them.
     if (menus_.takeLogoutRequest()) logout();
+    const auto shardRequest=menus_.takeShardSwitchRequest();
+    if(!shardRequest.empty())switchShard(shardRequest);
     // Nor here: the offline page's Grant Admin row is drawn wherever the panel
     // is, and a signed-in session is all the grant needs. Nothing is sent --
     // the hook hands this client's session token to the server object in this
@@ -786,6 +882,12 @@ void App::frame(double dt) {
     // wait was a whole frame on every round trip (34 ms loopback ping at
     // 60 fps, 17 with this).
     net_.flush();
+    if (menus_.shardSelection().switching) {
+        drawShardSwitch(canvas);
+        publishKeyboardRegions();
+        window_.present(); // Submit the waiting animation before the input-blocking return.
+        return;
+    }
 
     // --- draw -------------------------------------------------------------
     // Forgotten before the draw, and set again by whoever paints it. Both the
@@ -932,6 +1034,32 @@ void App::frame(double dt) {
     publishKeyboardRegions();
     // Keyboard movement still needs a pointer for HUD tooltips and menus.
     window_.setCursorVisible(true);
+#ifdef __EMSCRIPTEN__
+    // Use this frame's actual menu bounds, in the same design coordinates as
+    // the daily card. The link occupies the free top gap, never the icon strip.
+    EM_ASM({
+        const link=document.getElementById("council-link");const canvas=Module.canvas;
+        if(!link||!canvas)return;
+        link.hidden=!$0;if(!$0)return;
+        const box=canvas.getBoundingClientRect();const scale=box.width/$1;
+        const left=$2+12;const right=$1-($4?252:16);const space=right-left;
+        const compact=space*scale<220;
+        const belowStrip=space*scale<84;
+        const width=belowStrip?Math.min(128/scale,right-16):Math.min(Math.max(384,220/scale),space);
+        const x=belowStrip?Math.max(16,right-width):(left+right-width)/2;
+        const y=belowStrip?$3+12:12;
+        const key=([x,y,width,scale,box.left,box.top,compact]).join(',');
+        if(Module.councilPlacement!==key){Module.councilPlacement=key;
+            link.style.left=(box.left+x*scale)+'px';link.style.top=(box.top+y*scale)+'px';
+            link.style.width=(width*scale)+'px';
+            link.style.minHeight=Math.max(44,58*scale)+'px';
+            link.style.fontSize=Math.max(compact?14:17,(compact?16:23)*scale)+'px';
+            link.toggleAttribute('data-compact',compact);
+            link.querySelector('span').textContent=compact?'议会投票 ↗':'玩家议会 · 更新投票 ↗';
+        }
+    }, (screen_==Screen::Login||screen_==Screen::Lobby)&&!menus_.anyOpen()&&!net_.joinPending(),
+       window_.width(),menus_.stripRight(),menus_.stripBottom(),screen_==Screen::Lobby&&net_.dailyStreak().known);
+#endif
     if (menus_.settings().craftBlacklistDirty) {
         if (menus_.settings().save(settingsPath())) menus_.settings().craftBlacklistDirty = false;
     }
@@ -1185,6 +1313,7 @@ void App::onReconnected() {
     // about a body that is not coming back.
     deathCardVisible_ = false;
     loginMessage_.clear();
+    if(menus_.shardSelection().switching) {shardSwitchWaiting_=false;screen_=Screen::Lobby;return;}
 
     // The account outlives the socket, so it is presented again rather than
     // asked for -- and the lobby goes up on the strength of it, rather than
@@ -1519,6 +1648,9 @@ void App::loadSession() {
     // at most one revocable, expiring handle. A file written by an older build
     // has only the first line, which reads back as an empty name.
     std::getline(in, storedToken_);
+#ifdef __EMSCRIPTEN__
+    EM_ASM({try{localStorage.setItem("florrCouncilToken",UTF8ToString($0));}catch(e){}},storedToken_.c_str());
+#endif
     std::getline(in, playerName_);
     std::string chosen;std::getline(in,chosen);
     playerNameChosen_=chosen=="chosen" || (chosen.empty()&&!playerName_.empty());
@@ -1526,9 +1658,12 @@ void App::loadSession() {
 }
 
 void App::saveSession() const {
+    const auto& token=net_.sessionToken().empty()?storedToken_:net_.sessionToken();
+#ifdef __EMSCRIPTEN__
+    EM_ASM({try{localStorage.setItem("florrCouncilToken",UTF8ToString($0));}catch(e){}},token.c_str());
+#endif
     if (net_.sessionToken().empty() && playerName_.empty()) return;
     std::ofstream out(config_.sessionFile, std::ios::trunc);
-    const auto& token=net_.sessionToken().empty()?storedToken_:net_.sessionToken();
     if (out) out << token << "\n" << playerName_ << "\n" << (playerNameChosen_?"chosen":"default") << "\n" << playerNameAccount_ << "\n";
 }
 

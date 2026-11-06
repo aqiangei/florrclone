@@ -1,0 +1,31 @@
+[Unit]
+Description=Florr game shard with shared account authority
+After=network-online.target florr-shard-coordinator.service florr-shard-tunnel.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=florrclone
+Group=florrclone
+WorkingDirectory=/opt/florrclone/current
+Environment=FLIX_AUTHORITY_MODULE=/opt/florrclone/current/shard-game-authority.cjs
+Environment=FLIX_SHARD_GAME_CONFIG=/etc/florrclone/shard-game.json
+ExecStartPre=/usr/bin/test -s /etc/florrclone/shard-game.json
+ExecStartPre=+/opt/florrclone/runtime/bin/node /opt/florrclone/current/shard-supervisor.cjs
+ExecStart=/opt/florrclone/runtime/bin/node --require /opt/florrclone/current/deploy-runtime.cjs /opt/florrclone/current/server.js --port 8788 --db /var/lib/florrclone/cpp-state/inventory.json --data data --web-root /opt/florrclone/current
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=90
+KillSignal=SIGTERM
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/florrclone
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

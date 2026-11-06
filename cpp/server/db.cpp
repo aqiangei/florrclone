@@ -1,4 +1,5 @@
 #include "server/db.h"
+#include "server/hyper_history.h"
 
 #include <algorithm>
 #include <chrono>
@@ -548,7 +549,9 @@ Database::~Database() {
     // The rate limit means the last change of a session is usually still in
     // memory when the process is asked to stop. Flushing here is what turns
     // an orderly shutdown into a lossless one.
-    if (dirty_ && !loadFailed_ && !path_.empty()) save();
+    // The owner must explicitly flush authoritative state while its transport
+    // and ownership token still exist; never perform RPC from destruction.
+    if (!authoritative() && dirty_ && !loadFailed_ && !path_.empty()) save();
 }
 
 void Database::reset() {
@@ -570,6 +573,10 @@ void Database::reset() {
 }
 
 bool Database::load(const std::string& path, std::string& errorOut) {
+    if (authoritative()) {
+        errorOut = "authoritative database cannot fall back to a local file";
+        return false;
+    }
     reset();
     path_ = path;
 
@@ -626,6 +633,96 @@ bool Database::load(const std::string& path, std::string& errorOut) {
     return true;
 }
 
+bool Database::loadAuthoritative(const std::string& snapshot, CommitSink sink,
+                                 std::string& errorOut) {
+    // Only initialization is supported. Replacing a running database would
+    // invalidate handler references and could discard dirty live progress.
+    if (!path_.empty() || authoritative() || !sink) {
+        errorOut = "authoritative database requires an unopened database and a commit sink";
+        return false;
+    }
+    commitSink_ = std::move(sink);
+    Json root;
+    if (!Json::parse(snapshot, root, errorOut) || !parseRoot(root, errorOut)) {
+        loadFailed_ = true;
+        return false;
+    }
+    for (auto& entry : usersByCreator_) {
+        std::stable_sort(entry.second.begin(), entry.second.end(),
+                        [&](const std::string& a, const std::string& b) {
+            const auto* left = std::as_const(*this).findUserById(a);
+            const auto* right = std::as_const(*this).findUserById(b);
+            return (left ? left->createdAtMillis : 0) <
+                   (right ? right->createdAtMillis : 0);
+        });
+    }
+    lastSaveBytes_ = serialise().size();
+    players_.acceptLoadedState();users_.acceptLoadedState();sessions_.acceptLoadedState();
+    committedTop_.clear();for(const auto& entry:otherTopText_)committedTop_[entry.first]=entry.second;
+    touchedTop_.clear();
+    return true;
+}
+
+bool Database::refreshAuthoritative(const std::string& snapshot,std::string& errorOut) {
+    if(!authoritative()||dirty_||commitPending()||commitUncertain_||loadFailed_){errorOut="database is not at a committed boundary";return false;}
+    Database staged;
+    if(!staged.loadAuthoritative(snapshot,[](const std::string&){return CommitOutcome::Rejected;},errorOut))return false;
+    using std::swap;
+    swap(users_,staged.users_);swap(players_,staged.players_);swap(sessions_,staged.sessions_);
+    swap(usersByLowerName_,staged.usersByLowerName_);swap(usersById_,staged.usersById_);swap(usersByCreator_,staged.usersByCreator_);
+    swap(otherTop_,staged.otherTop_);swap(otherTopText_,staged.otherTopText_);swap(topKeyOrder_,staged.topKeyOrder_);
+    swap(lastSaveBytes_,staged.lastSaveBytes_);
+    swap(committedTop_,staged.committedTop_);swap(touchedTop_,staged.touchedTop_);
+    return true;
+}
+
+bool Database::replaceAuthoritativeProgress(const std::string& id,const Json& record) {
+    if(!authoritative()||commitUncertain_||loadFailed_||!record.isObject())return false;
+    players_.insert(id)=playerFromJson(record);
+    Json accepted=Json::object();accepted[id]=playerToJson(*std::as_const(players_).find(id));
+    players_.acknowledge(accepted,playerToJson);
+    return true;
+}
+
+bool Database::applyAuthoritativeDelta(const Json& delta,bool allowUnrelatedChanges) {
+    if(!authoritative()||commitUncertain_||loadFailed_||!delta.isObject())return false;
+    if(!allowUnrelatedChanges&&(dirty_||commitPending()))return false;
+    for(const auto* table:{"users","players","sessions","globals"})
+        if(!delta[table].isNull()&&!delta[table].isObject())return false;
+    for(const auto* table:{"users","players","sessions"})
+        for(const auto& row:delta[table].members())if(!row.second.isNull()&&!row.second.isObject())return false;
+    if(allowUnrelatedChanges) {
+        const auto local=collectDelta();
+        for(const auto* table:{"users","players","sessions","globals"})for(const auto& row:delta[table].members())
+            if(local[table].contains(row.first)||pendingDelta_[table].contains(row.first))return false;
+    }
+    Json normalized=delta;
+    for(const auto& row:delta["users"].members()) {
+        if(row.second.isNull())users_.erase(row.first);
+        else {auto& value=users_.insert(row.first);value=accountFromJson(row.second,row.first);normalized["users"][row.first]=accountToJson(value);}
+    }
+    if(delta["users"].size()) {
+        usersByLowerName_.clear();usersById_.clear();usersByCreator_.clear();
+        for(const auto& name:users_.keys())indexUser(name,*std::as_const(users_).find(name));
+        for(auto& entry:usersByCreator_)std::stable_sort(entry.second.begin(),entry.second.end(),[&](const auto& a,const auto& b){
+            return std::as_const(*this).findUserById(a)->createdAtMillis<std::as_const(*this).findUserById(b)->createdAtMillis;
+        });
+    }
+    for(const auto& row:delta["players"].members()) {
+        if(row.second.isNull())players_.erase(row.first);
+        else {auto& value=players_.insert(row.first);value=playerFromJson(row.second);normalized["players"][row.first]=playerToJson(value);}
+    }
+    for(const auto& row:delta["sessions"].members()) {
+        if(row.second.isNull())sessions_.erase(row.first);
+        else {auto& value=sessions_.insert(row.first);value=sessionFromJson(row.second,row.first);normalized["sessions"][row.first]=sessionToJson(value);}
+    }
+    for(const auto& row:delta["globals"].members()) {
+        if(std::find(topKeyOrder_.begin(),topKeyOrder_.end(),row.first)==topKeyOrder_.end())topKeyOrder_.push_back(row.first);
+        otherTop_[row.first]=row.second;otherTopText_.erase(row.first);
+    }
+    acknowledgeDelta(normalized);return true;
+}
+
 bool Database::parseRoot(Json& root, std::string& errorOut) {
     if (!root.isObject()) {
         errorOut = path_ + ": top level is not a JSON object";
@@ -677,6 +774,7 @@ bool Database::parseRoot(Json& root, std::string& errorOut) {
 }
 
 Json& Database::rawArrayTable(const std::string& key) {
+    if(authoritative())touchedTop_.insert(key);
     otherTopText_.erase(key);
     Json& table = otherTop_[key];
     if (!table.isArray()) table = Json::array();
@@ -687,6 +785,7 @@ Json& Database::rawArrayTable(const std::string& key) {
 }
 
 Json& Database::rawTable(const std::string& key) {
+    if(authoritative())touchedTop_.insert(key);
     otherTopText_.erase(key);
     Json& table = otherTop_[key];
     if (!table.isObject()) table = Json::object();
@@ -795,14 +894,91 @@ std::string Database::serialise() const {
     return out;
 }
 
+Json Database::collectDelta() {
+    Json delta=Json::object();
+    delta["users"]=users_.delta(accountToJson);delta["players"]=players_.delta(playerToJson);
+    delta["sessions"]=sessions_.delta(sessionToJson);delta["globals"]=Json::object();
+    for(auto it=touchedTop_.begin();it!=touchedTop_.end();) {
+        const auto text=otherTop_[*it].dump();
+        if(committedTop_.count(*it)&&committedTop_[*it]==text){it=touchedTop_.erase(it);continue;}
+        delta["globals"][*it]=otherTop_[*it];++it;
+    }
+    return delta;
+}
+
+bool Database::setDeltaSink(DeltaSink sink) {
+    if(!authoritative()||dirty_||commitPending()||commitUncertain_||!sink)return false;
+    serialise();players_.acceptLoadedState();users_.acceptLoadedState();sessions_.acceptLoadedState();
+    committedTop_.clear();for(const auto& entry:otherTopText_)committedTop_[entry.first]=entry.second;
+    touchedTop_.clear();deltaSink_=std::move(sink);return true;
+}
+
+void Database::acknowledgeDelta(const Json& delta) {
+    users_.acknowledge(delta["users"],accountToJson);players_.acknowledge(delta["players"],playerToJson);
+    sessions_.acknowledge(delta["sessions"],sessionToJson);
+    for(const auto& entry:delta["globals"].members()) {
+        committedTop_[entry.first]=entry.second.dump();
+        if(otherTop_[entry.first].dump()==committedTop_[entry.first])touchedTop_.erase(entry.first);
+        else touchedTop_.insert(entry.first);
+    }
+}
+
+bool Database::flushDelta() {
+    if(!commitPending()) {
+        auto delta=collectDelta();
+        if(delta["users"].size()+delta["players"].size()+delta["sessions"].size()+delta["globals"].size()==0) {
+            dirty_=false;committedGeneration_=mutationGeneration_;return true;
+        }
+        if(mutationGeneration_<=committedGeneration_)++mutationGeneration_;
+        pendingDelta_=std::move(delta);pendingGeneration_=mutationGeneration_;dirty_=true;
+    }
+    CommitOutcome outcome=CommitOutcome::Unknown;
+    try{outcome=deltaSink_(pendingDelta_);}catch(...){outcome=CommitOutcome::Unknown;}
+    if(outcome==CommitOutcome::Pending)return false;
+    if(outcome==CommitOutcome::Unknown){commitUncertain_=true;return false;}
+    if(outcome==CommitOutcome::Rejected){pendingDelta_=Json();return false;}
+    acknowledgeDelta(pendingDelta_);pendingDelta_=Json();
+    committedGeneration_=pendingGeneration_;
+    const auto remaining=collectDelta();
+    dirty_=mutationGeneration_>committedGeneration_||remaining["users"].size()+remaining["players"].size()+
+        remaining["sessions"].size()+remaining["globals"].size()>0;
+    return true;
+}
+
 bool Database::save() {
     // The whole point of the flag. The in-memory database is the empty
     // default when a load fails, and writing that out turns a file an operator
     // can still repair into total, permanent account loss.
-    if (loadFailed_ || path_.empty()) return false;
+    if (loadFailed_ || commitUncertain_ || (!authoritative() && path_.empty())) return false;
+    if(deltaSink_&&commitPending())return flushDelta();
 
+    // A mutable Table::find invalidates that player's cached JSON. Inspect
+    // through the const table first: most accounts own no H, so rebuilding
+    // every offline inventory here turned each autosave into a server stall.
+    const auto& observedPlayers = static_cast<const decltype(players_)&>(players_);
+    const double observedAt = static_cast<double>(nowMillis());
+    // Shared readers contain foreign accounts too. Only records actually
+    // changed by this process may acquire a new observation timestamp.
+    const auto historyIds=authoritative()?players_.delta(playerToJson).keys():players_.keys();
+    for (const auto& id : historyIds) {
+        const auto* observed=observedPlayers.find(id);if(!observed)continue;
+        const auto holdings = currentHyperHoldings(*observed, observedAt);
+        if (std::any_of(holdings.begin(), holdings.end(), [](const auto& entry) { return entry.second > 0; }))
+            rememberHyperHoldings(*players_.find(id), observedAt);
+    }
+    if(deltaSink_)return flushDelta();
     const std::string text = serialise();
     lastSaveBytes_ = text.size();
+    if (authoritative()) {
+        CommitOutcome outcome = CommitOutcome::Unknown;
+        try { outcome = commitSink_(text); }
+        catch (...) { outcome = CommitOutcome::Unknown; }
+        if (outcome == CommitOutcome::Unknown) commitUncertain_ = true;
+        if (outcome != CommitOutcome::Committed) return false;
+        dirty_ = false;
+        committedGeneration_=mutationGeneration_;
+        return true;
+    }
     const std::string tmp = path_ + ".tmp";
 
     std::FILE* file = std::fopen(tmp.c_str(), "wb");
@@ -1016,7 +1192,7 @@ std::vector<Database::BackupInfo> Database::listBackups() const {
 }
 
 bool Database::maybeSave(std::int64_t nowMillis) {
-    if (!dirty_ || loadFailed_ || path_.empty()) return false;
+    if (!dirty_ || loadFailed_ || commitUncertain_ || (!authoritative() && path_.empty())) return false;
     if (everWrote_ && nowMillis - lastWriteMillis_ < kMinWriteIntervalMillis) return false;
     const bool ok = save();
     // The stamp moves even on failure: a disk that is refusing writes must not
@@ -1153,6 +1329,7 @@ std::string Database::serverSecret() {
     if (salt.empty()) {
         salt = crypto::secureRandom().hex(16);
         otherTop_["ipSalt"] = Json(salt);
+        if(authoritative())touchedTop_.insert("ipSalt");
         otherTopText_.erase("ipSalt");
         if (std::find(topKeyOrder_.begin(), topKeyOrder_.end(), "ipSalt") == topKeyOrder_.end()) {
             topKeyOrder_.push_back("ipSalt");
@@ -1450,6 +1627,14 @@ bool Database::verifyPassword(const std::string& username, const std::string& pa
     return true;
 }
 
+bool Database::passwordMatches(const std::string& username,const std::string& password) const {
+    const auto* account=findUser(username);
+    if(!account)return false;
+    if(crypto::isBcryptHash(account->passwordHash))return crypto::bcryptVerify(password,account->passwordHash);
+    if(!account->passwordSalt.empty())return crypto::scryptVerifyHex(password,account->passwordSalt,account->passwordHash);
+    return crypto::constantTimeEquals(account->passwordHash,password);
+}
+
 bool Database::setPassword(const std::string& username, const std::string& password,
                            std::string& reasonOut) {
     // AshFlor BJ: admins may change passwords in-game like any other account.
@@ -1499,7 +1684,7 @@ std::string Database::createSession(const std::string& userId, const std::string
     return token;
 }
 
-const Database::Session* Database::resolveSession(const std::string& token) {
+const Database::Session* Database::resolveSession(const std::string& token,bool touch) {
     if (token.empty()) return nullptr;
     const std::string tokenHash = crypto::sha256Hex(token);
     Session* session = sessions_.find(tokenHash);
@@ -1507,8 +1692,7 @@ const Database::Session* Database::resolveSession(const std::string& token) {
 
     const std::int64_t now = nowMillis();
     if (session->expiresAtMillis <= now) {
-        sessions_.erase(tokenHash);
-        markDirty();
+        if(touch){sessions_.erase(tokenHash);markDirty();}
         return nullptr;
     }
     // The account may have been renamed or deleted since the token was issued.
@@ -1516,8 +1700,7 @@ const Database::Session* Database::resolveSession(const std::string& token) {
     // that has since taken the name.
     Account* account = findUser(session->username);
     if (!account || account->id != session->userId) {
-        sessions_.erase(tokenHash);
-        markDirty();
+        if(touch){sessions_.erase(tokenHash);markDirty();}
         return nullptr;
     }
 
@@ -1525,6 +1708,7 @@ const Database::Session* Database::resolveSession(const std::string& token) {
     // lapses after thirty days of NOT being used rather than thirty days from
     // the day it was issued. An account with a password keeps the fixed term:
     // its owner can always sign in again.
+    if(!touch)return session;
     if (!account->passwordChosen) session->expiresAtMillis = now + kSessionTtlMillis;
 
     account->lastActiveAtMillis = now;

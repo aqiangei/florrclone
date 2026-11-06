@@ -252,6 +252,16 @@ const MobRows& mobRows() {
                 out.order.push_back(static_cast<std::uint16_t>(i));
             }
         }
+        // The jungle body is authored near the end of the data file. Keep
+        // it next to its head so players can actually find the chain's body.
+        const auto head = content().mobIndex("jungle_centipede");
+        const auto body = content().mobIndex("jungle_centipede_body");
+        if (head != kInvalidIndex && body != kInvalidIndex) {
+            const auto bodyRow = std::find(out.order.begin(), out.order.end(), body);
+            if (bodyRow != out.order.end()) out.order.erase(bodyRow);
+            const auto headRow = std::find(out.order.begin(), out.order.end(), head);
+            if (headRow != out.order.end()) out.order.insert(std::next(headRow), body);
+        }
         return out;
     }();
     return rows;
@@ -848,7 +858,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
             lines.push_back(std::move(line));
         };
         stat(std::string(tipHp()) + abbreviateNumber(stats.health), statGap, kStatHealth);
-        stat(std::string(tipDamage()) + abbreviateNumber(stats.damage), 0.0, kStatDamage);
+        stat(std::string(tipDamage()) + abbreviateNumber(stats.damage * mobContactScale(cell.rarity)), 0.0, kStatDamage);
         // Skipped when it is nothing, because a zero here reads as a mob with
         // a weakness rather than one whose author simply wrote no armour.
         if (stats.armor != 0.0)

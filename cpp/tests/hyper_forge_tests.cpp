@@ -36,6 +36,29 @@ TEST(hyper_temporary_hammer_preserves_protected_owner_and_materials_expires_and_
     CHECK(grantTemporaryHyperHammer(f.db,f.b,2000+16LL*3600000,"compensation").ok);
     CHECK_EQ(record.itemCount(Rarity::Apex,"petal_mjolnir"),0);
 }
+TEST(hyper_abandon_destroys_one_claim_without_refund_and_preserves_other_titans){
+    Fixture f;f.give(f.a,"rose",20);f.give(f.b,"rose",10);
+    CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);
+    CHECK(forgeHyper(f.db,f.a,"rose",1000,{},"garden").ok);
+    const auto untouched=f.db.storedTable("hyperForges")["garden:rose"].dump();
+    CHECK(!abandonHyper(f.db,f.b,"rose").ok);
+    CHECK(abandonHyper(f.db,f.a,"rose").ok);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_rose"),1);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Unique,"petal_rose"),10);
+    CHECK_EQ(hyperHoldingCount(f.db,f.a),1);
+    CHECK_EQ(f.db.storedTable("hyperForges")["garden:rose"].dump(),untouched);
+    CHECK_EQ(hyperForgeState(f.db,"rose").claims,1);
+    CHECK(!abandonHyper(f.db,f.a,"rose").ok);
+    CHECK(forgeHyper(f.db,f.b,"rose",1001).ok);
+    CHECK_EQ(hyperForgeState(f.db,"rose").claims,2);
+    auto& record=f.db.progress(f.a);
+    record.addItem(Rarity::Apex,"petal_rose",-1);
+    StoredItem rose;rose.petalType="rose";rose.rarity=Rarity::Apex;
+    record.loadout.resize(20);record.loadout[0]=rose;record.loadoutPresets["test"]={rose};
+    CHECK(abandonHyper(f.db,f.a,"garden:rose").ok);
+    CHECK(!record.loadout[0]);CHECK(!record.loadoutPresets["test"][0]);
+    CHECK_EQ(hyperHoldingCount(f.db,f.a),0);
+}
 TEST(hyper_forge_price_and_protection_curve_match_the_requested_progression){
     for(int n=0;n<20;++n){CHECK_EQ(hyperForgeCost(n),5);CHECK_EQ(hyperForgeCost(n,"fragment"),10);}
     CHECK_EQ(hyperForgeRefund(5),4);CHECK_EQ(hyperForgeRefund(6),5);CHECK_EQ(hyperForgeRefund(10),9);
@@ -208,7 +231,7 @@ TEST(hyper_forge_race_has_one_winner_and_steals_reach_the_one_hour_floor){
     }
 }
 TEST(hyper_cannot_be_obtained_through_regular_crafting_or_oracle){
-    CHECK(craftsOutOf(Rarity::Super));CHECK(!craftsOutOf(Rarity::Unique));
+    CHECK(!craftsOutOf(Rarity::Super));CHECK(!craftsOutOf(Rarity::Unique));
     CHECK(!craftsOutOf(Rarity::Apex));CHECK_EQ(oracleCraftCost(Rarity::Unique),0);
 }
 TEST(hyper_forge_failed_save_rolls_back_inputs_output_and_protection){
@@ -219,6 +242,17 @@ TEST(hyper_forge_failed_save_rolls_back_inputs_output_and_protection){
     CHECK_EQ(db.progress(id).itemCount(Rarity::Unique,"petal_rose"),5);
     CHECK_EQ(db.progress(id).itemCount(Rarity::Apex,"petal_rose"),0);
     CHECK_EQ(hyperForgeState(db,"rose").claims,0);
+}
+
+TEST(hyper_abandon_failed_save_restores_inventory_and_claim){
+    Database db;std::string error;db.load("/proc/florr-hyper-test-cannot-write.json",error);db.setPasswordCost(4);
+    const auto id=db.createUser("unsaved","password8").account->id;
+    db.progress(id).addItem(Rarity::Apex,"petal_rose",1);
+    Json row=Json::object();row["owner"]=id;row["claims"]=3;row["protectedUntil"]=12345;
+    db.rawTable("hyperForges")["rose"]=row;
+    CHECK(!abandonHyper(db,id,"rose").ok);
+    CHECK_EQ(db.progress(id).itemCount(Rarity::Apex,"petal_rose"),1);
+    CHECK_EQ(db.storedTable("hyperForges")["rose"].dump(),row.dump());
 }
 
 TEST(hyper_hammer_old_five_fragment_claim_refunds_only_its_actual_paid_minus_one){

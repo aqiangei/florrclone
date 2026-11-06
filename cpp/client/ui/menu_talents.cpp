@@ -74,7 +74,7 @@ constexpr double kBadgeTipSize = 16.0;
 /// florrclone talent-wheel stage is an 880×880 viewBox. Nodes are projected
 /// with Nv(tier, phase, camera); only |phase−camera|<3 are shown.
 constexpr double kWheelSize = 880.0;
-constexpr double kCameraMax = 21.0;
+constexpr double kCameraMax = 27.0;
 constexpr double kPhaseVisible = 3.0;
 constexpr double kFlowerX = 440.0;
 constexpr double kFlowerY = 777.0;
@@ -219,6 +219,11 @@ const std::vector<Branch>& branches() {
         {SkillId::Absorbing,
          {{4, 19.5}, {5, 19}, {6, 19.5}, {7, 19}, {8, 19.5}, {9, 19},
           {9.5, 19.5}, {9, 20}, {8, 20.5}, {7, 20.5}}},
+        {SkillId::MovementSpeed, {{4, 21.5}, {5.5, 22}, {7, 21.5}}},
+        {SkillId::Prestige, {{4, 23.5}}},
+        {SkillId::PetDamage,
+         {{4, 25}, {5, 24.5}, {6, 25}, {7, 24.5}, {8, 25}, {9, 24.5},
+          {9.5, 25}, {9, 25.5}, {8, 26}, {7, 26}}},
     };
     return kBranches;
 }
@@ -355,6 +360,15 @@ std::vector<TipRow> description(SkillId skill, int tier) {
     const bool cn = language() == Language::Zh;
     char buffer[128];
     switch (skill) {
+        case SkillId::PetDamage:
+            row({{cn ? "宠物伤害：" : "Pet damage: "},
+                 {fromTo(kPetDamageTalentScale, tier), kStatDamage}});
+            row({{cn ? "提升宠物体伤及发射物伤害，不增加数量或攻速。" : "Boosts pet contact and projectile damage, without more pets or faster attacks."}});
+            break;
+        case SkillId::Prestige:
+            row({{cn ? "解锁声望地图：普通怪物提高一个稀有度，最高为超级。" : "Unlock Prestige worlds: ordinary enemies rise one rarity, up to Super."}});
+            row({{cn ? "不提高经验档位；重置天赋会退出声望地图。" : "XP tiers stay unchanged; resetting talents returns you to ordinary worlds."}});
+            break;
         case SkillId::Damage:
             row({{cn ? "身体伤害：" : "Body damage: "},
                  {fromTo(kDamageTalentBodyScale, tier), kStatDamage}});
@@ -364,6 +378,10 @@ std::vector<TipRow> description(SkillId skill, int tier) {
         case SkillId::Absorbing:
             row({{cn ? "吸收经验：" : "Absorbed XP: "},
                  {fromTo(kAbsorbTalentScale, tier), kStatHealth}});
+            break;
+        case SkillId::MovementSpeed:
+            row({{cn ? "移动速度：" : "Movement speed: "},
+                 {fromTo(kMovementSpeedTalentScale, tier), kStatHealth}});
             break;
         case SkillId::Health:
             if (cn) row({{"提升基础"}, {"花朵生命", kStatHealth}, {" " + fromTo(kHealthTalentScale, tier)}});
@@ -491,7 +509,9 @@ std::vector<TipRow> tooltipRows(SkillId skill, int tier) {
 constexpr double kIconExtent = 35.0 * 0.89;
 
 void drawIcon(Canvas& canvas, SkillId id, int /*tier*/, Vec2 at, double size) {
-    const char* svg = talentSvg(id);
+    const char* svg = talentSvg(id == SkillId::MovementSpeed ? SkillId::Rotation : id);
+    if (id == SkillId::PetDamage) svg = talentSvg(SkillId::Summoner);
+    if (id == SkillId::Prestige) svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><path d='M40 5L50 27L75 30L57 47L61 73L40 61L19 73L23 47L5 30L30 27Z' fill='#ffd43b' stroke='#8e7019' stroke-width='4'/><circle cx='34' cy='40' r='3' fill='#735c18'/><circle cx='46' cy='40' r='3' fill='#735c18'/><path d='M33 48Q40 55 47 48' fill='none' stroke='#735c18' stroke-width='3'/></svg>";
     if (svg == nullptr || *svg == '\0') return;
     static std::array<std::shared_ptr<SvgDocument>, kSkillCount> cache{};
     const std::size_t idx = static_cast<std::size_t>(id);

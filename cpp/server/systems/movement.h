@@ -28,6 +28,10 @@
 
 namespace flix {
 
+/// Place the whole respawn hull without crossing a wall from an open corpse centre.
+Vec2 playerRespawnPosition(const Terrain& terrain, Realm realm, Vec2 around, double radius);
+
+
 class ContentRegistry;
 
 /// Water costs a mob less than it costs a player.
@@ -108,12 +112,7 @@ inline constexpr double kMinSubstepLength = 24.0;
 /// a mob, which meets walls as a point (kMobWallRadius), and not a flower.
 inline constexpr double kMaxSubstepPenetration = 6.5;
 
-/// Cap on a tick's travel, counted in substeps of kMinSubstepLength or the
-/// body's radius, whichever is longer. Reached only by a velocity that should
-/// not exist; the body is moved that far and the rest of the tick's
-/// displacement is dropped. Taking LONGER substeps instead is precisely how a
-/// body ends up on the far side of a wall. A body whose substeps
-/// kMaxSubstepPenetration shortens takes more of them over the same reach.
+/// Historical travel budget, retained only for regression comparisons.
 inline constexpr int kMaxSubstepCount = 16;
 
 /// How far a bubble pop carries the flower: gardn's bubble, the same at every
@@ -126,22 +125,7 @@ inline constexpr int kMaxSubstepCount = 16;
 /// a percent, so the same reach spent through shoveSpeed glides the same way.
 inline constexpr double kBubblePopDistance = 175.0;
 
-/// The most ground one tick of a pop may cover, however many bubbles went off
-/// at once.
-///
-/// Two ceilings, and this is the lower: stepCollide carries a body at most
-/// `substepLength * kMaxSubstepCount` in a tick and TRUNCATES the rest, so a
-/// stacked pop past that is reach the flower is charged for and never travels;
-/// and the client stops easing a flower that moved more than 600 units between
-/// snapshots and snaps it instead, which is the teleport the bubble was
-/// rewritten to stop being. Written from the substep FLOOR rather than the
-/// flower's own radius so a grown flower -- whose budget is larger -- is held
-/// to the same smoothness the client can still draw.
-inline constexpr double kMaxPopTickTravel = kMinSubstepLength * kMaxSubstepCount;
 
-/// Speed ceiling applied to every entity before it is integrated, so one
-/// arithmetic accident upstream cannot put a body 1e30 units away.
-inline constexpr double kMaxMovementSpeed = 20000.0;
 
 /// Radii above this are clamped: collision resolution is a per-tile scan, and
 /// nothing in the game is four tiles wide.
@@ -312,6 +296,7 @@ private:
         Vec2 position;
         Realm realm = Realm::Overworld;
         double radius = 0;
+        double squareHalf = 0, angle = 0;
         /// The centipede this mob belongs to, NULL_ENTITY for anything else.
         Entity chainHead = NULL_ENTITY;
         /// The two segments this one is joined to, which the chain pass holds

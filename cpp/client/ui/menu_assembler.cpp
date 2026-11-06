@@ -256,7 +256,8 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
         return true;
     }
     const AssemblyRecipe& recipe = recipes[recipeIndex];
-    const int most = rarityIndex(tier) >= kLadderRarityCount ? 0 : affordable(profile, recipe, tier);
+    const Rarity outputTier = recipe.outputRarity.value_or(tier);
+    const int most = rarityIndex(tier) >= rarityIndex(Rarity::Apex) ? 0 : affordable(profile, recipe, tier);
 
     // --- the count -----------------------------------------------------------
     // Typed while the field has the caret; held to what the bag can make, and
@@ -333,19 +334,19 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
         const AssemblyRecipe::Stack& output = recipe.outputs[i];
         const Vec2 at = card.slot + seatOffset(i, outputs);
         const bool shows = landed && knownPetal(output.petal);
-        const std::uint32_t key = shows ? tileKey(output.petal, tier) : kNothing;
+        const std::uint32_t key = shows ? tileKey(output.petal, outputTier) : kNothing;
         if (key != resultKey_[i]) {
             if (resultKey_[i] != kNothing) motion_.vanish(at, resultSide, resultTile_[i]);
             if (shows) {
                 pops_[i].startPop();
-                motion_.burst(at, tier, kBurstMultiplier * slotBurstGrains(tier), kBurst);
+                motion_.burst(at, outputTier, kBurstMultiplier * slotBurstGrains(outputTier), kBurst);
             }
             resultKey_[i] = key;
         }
         if (!shows) continue;
         ItemTile product;
         product.petalIndex = output.petal;
-        product.rarity = tier;
+        product.rarity = outputTier;
         product.timeSeconds = now;
         const std::int64_t got = output.count * std::max(1, made_);
         if (got > 1) product.badge = "x" + stackCountText(static_cast<std::uint64_t>(got));

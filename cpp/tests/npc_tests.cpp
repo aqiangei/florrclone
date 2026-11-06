@@ -2141,7 +2141,7 @@ TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_acco
     removeDataDir(dir);
 }
 
-TEST(permanent_titan_forge_refuses_far_dead_invalid_short_and_blood_sacrifice) {
+TEST(permanent_titan_forge_accepts_blood_sacrifice_but_refuses_invalid_requests) {
     const std::string dir = titanWorld("titan-permanent-refuse");
     Harness h("titan-permanent-refuse", [](const std::string& path) {
         seedAccount(path, "smith");
@@ -2158,7 +2158,11 @@ TEST(permanent_titan_forge_refuses_far_dead_invalid_short_and_blood_sacrifice) {
     client.requestTitanForge(rose); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
     client.requestTitanForge(0xFFFE); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
     client.requestTitanForge(content().petalIndex("blood_sacrifice"));
-    CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
+    CHECK(awaitForge(h, {&client}, client, out)); CHECK(out.success);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        const auto blood = content().petalIndex("blood_sacrifice");
+        return p.stackCount(blood,Rarity::Super)==590 && p.stackCount(blood,Rarity::Unique)==1;
+    }));
     const auto wing = content().petalIndex("wing");
     client.requestTitanForge(wing); CHECK(awaitForge(h, {&client}, client, out)); CHECK(!out.success);
     CHECK_EQ(client.profile().stackCount(wing, Rarity::Super), 10u);
@@ -2351,7 +2355,7 @@ std::string fixtureNpcArea(double x, double y, double w, double h, const std::st
     return out;
 }
 
-std::string assemblerWorld(const std::string& name, const char* rarity = "epic") {
+std::string assemblerWorld(const std::string& name, const char* rarity = "unique") {
     return npcWorld(name, fixtureNpc(kOracleX, kOracleY, "assembler", rarity));
 }
 
@@ -2576,18 +2580,18 @@ TEST(an_npc_area_with_every_rarity_is_one_roaming_site_per_tier) {
     npcs.loadSites(maps, content(), warnings);
     CHECK(warnings.empty());
     // A site for every ladder tier, and the oracle's point beside them.
-    CHECK_EQ(npcs.sites().size(), std::size_t{1} + 1);
+    CHECK_EQ(npcs.sites().size(), std::size_t{9} + 1);
     std::vector<int> perTier(kRarityCount, 0);
     for (const NpcSystem::Site& site : npcs.sites()) {
         if (site.mobIndex != content().mobIndex("assembler")) {
-            CHECK(!site.roams);
+            CHECK(site.roams);
             continue;
         }
         CHECK(site.roams);
         ++perTier[static_cast<std::size_t>(rarityIndex(site.rarity))];
     }
     for (int tier = 0; tier < kLadderRarityCount; ++tier) {
-        CHECK_EQ(perTier[static_cast<std::size_t>(tier)], tier==rarityIndex(Rarity::Unique)?1:0);
+        CHECK_EQ(perTier[static_cast<std::size_t>(tier)], tier<=rarityIndex(Rarity::Unique)?1:0);
     }
     CHECK_EQ(perTier[static_cast<std::size_t>(rarityIndex(Rarity::Universal))], 0);
 
@@ -2596,7 +2600,7 @@ TEST(an_npc_area_with_every_rarity_is_one_roaming_site_per_tier) {
     World world;
     npcs.placeMissing(world, terrain, content(), 0.0);
     std::vector<Entity> standing = assemblersIn(world);
-    CHECK_EQ(standing.size(), std::size_t{1});
+    CHECK_EQ(standing.size(), std::size_t{9});
     Entity epic = NULL_ENTITY;
     for (const Entity e : standing) {
         const Vec2 at = world.get<Transform>(e).position;
@@ -2609,7 +2613,7 @@ TEST(an_npc_area_with_every_rarity_is_one_roaming_site_per_tier) {
     world.destroy(epic);
     npcs.placeMissing(world, terrain, content(), 0.0);
     standing = assemblersIn(world);
-    CHECK_EQ(standing.size(), std::size_t{1});
+    CHECK_EQ(standing.size(), std::size_t{9});
     int epics = 0;
     for (const Entity e : standing) epics += world.get<Npc>(e).rarity == Rarity::Unique ? 1 : 0;
     CHECK_EQ(epics, 1);
@@ -2651,8 +2655,8 @@ TEST(the_computer_holds_one_assembler_of_every_tier_somewhere_inside_it) {
         ++perTier[static_cast<std::size_t>(rarityIndex(site.rarity))];
     }
     for (int tier = 0; tier < kLadderRarityCount; ++tier) {
-        CHECK_EQ(perTier[static_cast<std::size_t>(tier)], tier==rarityIndex(Rarity::Unique)?1:0);
-        CHECK_EQ(prestigePerTier[static_cast<std::size_t>(tier)], tier==rarityIndex(Rarity::Unique)?1:0);
+        CHECK_EQ(perTier[static_cast<std::size_t>(tier)], tier<=rarityIndex(Rarity::Unique)?1:0);
+        CHECK_EQ(prestigePerTier[static_cast<std::size_t>(tier)], tier<=rarityIndex(Rarity::Unique)?1:0);
     }
 
     // Each put down on open, dry ground in the computer, its body clear of
@@ -2663,7 +2667,7 @@ TEST(the_computer_holds_one_assembler_of_every_tier_somewhere_inside_it) {
     for (const Entity e : assemblersIn(world)) {
         if (world.get<Transform>(e).realm == computer) standing.push_back(e);
     }
-    CHECK_EQ(standing.size(), std::size_t{1});
+    CHECK_EQ(standing.size(), std::size_t{9});
     for (const Entity e : standing) {
         const Transform& transform = world.get<Transform>(e);
         CHECK(transform.realm == computer);
@@ -2817,7 +2821,7 @@ TEST(the_assembler_refuses_a_short_bag_and_a_flower_not_standing_at_it) {
             const Vec2 at = world.get<Transform>(npc).position;
             world.get<Transform>(player).position =
                 at + Vec2{0.0, world.get<Body>(npc).radius + kNpcServiceReach +
-                                   kNpcServiceSlack + 400.0};
+                                   kNpcServiceSlack + 2000.0};
         }
         h.step(1, {&client});
     }
@@ -2848,7 +2852,7 @@ TEST(florrs_counted_recipes_take_and_make_their_counts) {
     const std::string dir = assemblerWorld("assembler-counts", "rare");
     Harness h("assembler-counts", [](const std::string& path) {
         seedAccount(path, "builder");
-        seedStack(path, "builder", "petal_battery", Rarity::Unique, 7);
+        seedStack(path, "builder", "petal_battery", Rarity::Rare, 7);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
     const std::uint16_t battery = content().petalIndex("battery");
@@ -2858,23 +2862,23 @@ TEST(florrs_counted_recipes_take_and_make_their_counts) {
     CHECK(joinAs(h, client, "builder"));
     h.step(3, {&client});
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(battery, Rarity::Unique) == 7u;
+        return p.stackCount(battery, Rarity::Rare) == 7u;
     }));
     AssembleOutcome outcome;
     const std::uint8_t recipe = offerRecipe(h, "lightning");
     // Three runs take nine: refused, nothing taken.
     standBeside(h, client, "assembler");
-    client.requestAssemble(Rarity::Unique, recipe, 3);
+    client.requestAssemble(Rarity::Rare, recipe, 3);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(!outcome.success);
     // Two take six and give two of each back.
     standBeside(h, client, "assembler");
-    client.requestAssemble(Rarity::Unique, recipe, 2);
+    client.requestAssemble(Rarity::Rare, recipe, 2);
     CHECK(awaitAssemble(h, client, outcome));
     CHECK(outcome.success);
     CHECK_EQ(outcome.made, 2);
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(battery, Rarity::Unique) == 3u && p.stackCount(bolt, Rarity::Unique) == 2u;
+        return p.stackCount(battery, Rarity::Rare) == 3u && p.stackCount(bolt, Rarity::Rare) == 2u;
     }));
     removeDataDir(dir);
 }
