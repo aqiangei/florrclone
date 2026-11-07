@@ -2443,6 +2443,7 @@ void CombatSystem::resolveAuras(World& world, const SpatialGrid& grid, double no
 }
 
 void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
+    std::fill(hostileContactBodies_.begin(), hostileContactBodies_.end(), NULL_ENTITY);
     queries_->contact.each([&](Entity e, ContactDamage& contact, Transform& transform, Body& body) {
         MeleeSource source;
         source.attacker = e;
@@ -2458,6 +2459,15 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
         source.isNpcBody = world.has<NpcTag>(e);
         source.isPet = world.has<Pet>(e);
         source.isPlayerBody = world.has<PlayerTag>(e);
+        if (source.isMobBody && !source.isPet && !source.isPlayerBody && !world.has<ProjectileTag>(e)) {
+            const auto* side = world.tryGet<Faction>(e);
+            source.isHostileBody = !side || side->team == Team::Hostiles;
+            if (source.isHostileBody) {
+                const std::size_t slot = entityIndex(e);
+                if (slot >= hostileContactBodies_.size()) hostileContactBodies_.resize(slot + 1, NULL_ENTITY);
+                hostileContactBodies_[slot] = e;
+            }
+        }
         source.givesWay = source.isMobBody && !anchoredAgainstKnockback(world, content, e);
         // A seed of a mob's ring is a piece of that mob's body, so it hits
         // like one: the same bounce off the flower (bounceOffMob), and the
@@ -2631,6 +2641,12 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
         for (const Entity victim : candidates_) {
             if (ricochetHit) break;
             if (victim == source.attacker) continue;
+            // Wild hostile bodies cannot hurt, bump or discharge into each
+            // other. Their side stays fixed for the contact phase.
+            if (source.isHostileBody) {
+                const auto slot = entityIndex(victim);
+                if (slot < hostileContactBodies_.size() && hostileContactBodies_[slot] == victim) continue;
+            }
             // A shot is judged off the filing table before anything is looked
             // up, because a cloud of them is most of what a body standing in
             // one finds. Both tests are the ones below, reached sooner: nothing

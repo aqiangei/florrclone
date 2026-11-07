@@ -1,12 +1,17 @@
 #include "world.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <new>
 #include <stdexcept>
 #include <string>
 #include <utility>
+
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+#include <mutex>
+#endif
 
 namespace flix {
 
@@ -54,7 +59,10 @@ namespace {
 // those pointers stable.
 struct Registry {
     ComponentInfo entries[kMaxComponents];
-    std::size_t count = 0;
+    std::atomic<std::size_t> count{0};
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    std::mutex registration;
+#endif
 };
 
 Registry& registry() {
@@ -67,20 +75,25 @@ Registry& registry() {
 namespace detail {
 ComponentId registerComponent(ComponentInfo info) {
     Registry& r = registry();
-    if (r.count >= kMaxComponents) {
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    std::lock_guard<std::mutex> lock(r.registration);
+#endif
+    const auto index = r.count.load(std::memory_order_relaxed);
+    if (index >= kMaxComponents) {
         fail<std::runtime_error>("component registry full; raise flix::kMaxComponents");
     }
-    info.id = static_cast<ComponentId>(r.count);
-    r.entries[r.count++] = info;
+    info.id = static_cast<ComponentId>(index);
+    r.entries[index] = info;
+    r.count.store(index + 1, std::memory_order_release);
     return info.id;
 }
 } // namespace detail
 
-std::size_t componentCount() { return registry().count; }
+std::size_t componentCount() { return registry().count.load(std::memory_order_acquire); }
 
 const ComponentInfo* componentById(ComponentId id) {
     Registry& r = registry();
-    return id < r.count ? &r.entries[id] : nullptr;
+    return id < r.count.load(std::memory_order_acquire) ? &r.entries[id] : nullptr;
 }
 
 // ---------------------------------------------------------------------------

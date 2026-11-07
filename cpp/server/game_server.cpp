@@ -1466,8 +1466,9 @@ void GameServer::runSystems(double nowMillis, double dt) {
         const unsigned simulation = ServerWorkers::configuredLimit("FLIX_SIMULATION_WORKERS");
         const unsigned snapshots = ServerWorkers::configuredLimit("FLIX_SNAPSHOT_WORKERS");
         workers_ = std::make_unique<ServerWorkers>(std::max(simulation, snapshots));
-        movement_->workers = loot_->workers = simulation ? workers_.get() : nullptr;
-        movement_->workerLimit = loot_->workerLimit = simulation;
+        mobAi_->workers = movement_->workers = loot_->workers =
+            simulation ? workers_.get() : nullptr;
+        mobAi_->workerLimit = movement_->workerLimit = loot_->workerLimit = simulation;
         parallelSnapshots_ = std::make_unique<ParallelSnapshots>(*workers_, snapshots);
         std::printf("[workers] pool=%u simulation=%u snapshots=%u\n", workers_->count(),
                     std::min(simulation, workers_->count()), std::min(snapshots, workers_->count()));

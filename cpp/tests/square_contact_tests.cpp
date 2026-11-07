@@ -67,3 +67,40 @@ TEST(square_mob_separation_uses_its_face_instead_of_the_corner_circle) {
         else CHECK(w.get<Transform>(other).position.x>start.x);
     }
 }
+
+TEST(hostile_contact_culling_preserves_the_first_hit_on_a_player) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto& c = content();
+    World world;
+    SpatialGrid grid;
+    CombatSystem combat;
+    EventQueue events;
+    const auto player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Transform>(player, Transform{{5000, 5000}, 0});
+    world.add<Body>(player, Body{10, 1});
+    world.add<Motion>(player);
+    world.add<Health>(player, Health{1000, 1000});
+    world.add<Faction>(player, Faction{Team::Players, false});
+    const auto addMob = [&](double damage) {
+        const Entity mob = world.create();
+        world.add<MobTag>(mob);
+        world.add<MobType>(mob, MobType{c.mobIndex("square"), Rarity::Common, 1});
+        world.add<Transform>(mob, Transform{{4995, 5000}, 0});
+        world.add<Body>(mob, Body{10, 1});
+        world.add<Health>(mob, Health{1000, 1000});
+        world.add<Faction>(mob, Faction{Team::Hostiles, false});
+        world.add<ContactDamage>(mob, ContactDamage{damage});
+        return mob;
+    };
+    const Entity first = addMob(10), second = addMob(100);
+    Query<Transform, Body>{world}.each([&](Entity entity, Transform& at, Body& body) {
+        grid.insert(entity, at.realm, at.position, body.radius);
+    });
+    combat.beginTick(world, 1000, .05, events);
+    combat.runContactPhase(world, grid, c, 1000);
+    CHECK_EQ(world.get<Health>(first).current, 1000.0);
+    CHECK_EQ(world.get<Health>(second).current, 1000.0);
+    CHECK_EQ(world.get<Health>(player).current, 990.0);
+}

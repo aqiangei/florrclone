@@ -79,6 +79,7 @@
 #include "shared/game/terrain.h"
 
 namespace flix {
+class ServerWorkers;
 
 /// A mob's petal ring, as mobs.json declares it (shared/game/config.h). Named
 /// rather than included: this header is included by half the server and
@@ -664,6 +665,8 @@ public:
     /// flies and still hurts, but no client ever sees it -- replication carries
     /// only entities that own a NetId.
     std::function<std::uint32_t()> allocateNetId;
+    ServerWorkers* workers = nullptr;
+    unsigned workerLimit = 0;
 
     /// One tick of mob intent.
     ///
@@ -794,6 +797,34 @@ private:
         double score = 0;   ///< distance past the player's notice circle; <= 0 is seen
         Realm realm = Realm::Overworld;
     };
+    struct TargetScratch {
+        SpatialGrid::QueryScratch query;
+        PlayerProximityIndex::Scratch proximity;
+        std::vector<Entity> entities;
+        std::vector<Candidate> candidates;
+    };
+    struct TargetPlan {
+        Entity checked = NULL_ENTITY;
+        Entity unseen = NULL_ENTITY;
+        double unseenSince = 0;
+        Entity acquired = NULL_ENTITY;
+        bool retained = false;
+        bool scanned = false;
+    };
+    struct PetPrey {
+        Entity target = NULL_ENTITY;
+        bool searched = false;
+    };
+    struct PetTargetPlan {
+        Entity previous = NULL_ENTITY;
+        Vec2 from;
+        Realm realm = Realm::Overworld;
+        PetPrey prey;
+        bool prepared = false;
+    };
+    void prepareTargets(const World& world, const Terrain& terrain, const SpatialGrid& grid,
+                        double nowMillis);
+    void preparePetTargets(const World& world, const Terrain& terrain, const SpatialGrid& grid);
 
     Drive driveFor(std::uint16_t configIndex, Rarity rarity);
 
@@ -849,7 +880,7 @@ private:
     void steerMob(World& world, const Terrain& terrain, const SpatialGrid& grid,
                   Entity self, Transform& transform, Motion& motion, const Body& body,
                   const MobType& type, MobAi& ai, const Drive& drive,
-                  double nowMillis, double dt, CommandBuffer& commands);
+                  double nowMillis, double dt, CommandBuffer& commands, const TargetPlan* plan);
 
     /// The idle branch. Writes the velocity itself -- the drift machine owns
     /// its own store and its own friction -- and returns the heading facing
@@ -899,7 +930,7 @@ private:
                          Entity self, const MobType& type, const Transform& transform,
                          const Body& body, MobAi& ai, const Drive& drive, double chaseSpeed,
                          double nowMillis, double dt, Vec2& desired, Vec2& facing,
-                         CommandBuffer& commands);
+                         CommandBuffer& commands, const TargetPlan* plan);
     /// A mending mob's answer to `ai.target`: straight away from it at
     /// `chaseSpeed`, with no attack. Reports `desired` as steerAggressive does;
     /// false when the target has no position, with the target cleared.
@@ -925,9 +956,9 @@ private:
     /// `range` is measured from the mob's centre -- the point it meets the
     /// world with -- and a flower's poo shrinks all of it. `raisedOnly` is a
     /// neutral mob's scan: it sees only flowers whose aggro is raised (a bulb).
-    Entity acquireTarget(World& world, const Terrain& terrain, const SpatialGrid& grid,
+    Entity acquireTarget(const World& world, const Terrain& terrain, const SpatialGrid& grid,
                          Entity self, Vec2 from, Realm realm, double range,
-                         bool raisedOnly = false);
+                         bool raisedOnly, TargetScratch& scratch) const;
     /// The PET a wild mob settles for when no flower is to be had. Distinct
     /// from acquirePetPrey() below, which is the wild mob a pet goes after.
     ///
@@ -948,7 +979,7 @@ private:
     /// off); a HOSTILE one lets go past kMobTargetLeashScale times the circle
     /// it noticed the target in, or after kMobSightGraceMillis behind a wall.
     /// Writes the wall clock into `ai`, hence not const on it.
-    bool holdTarget(World& world, const Terrain& terrain, Vec2 from, Realm realm, MobAi& ai,
+    bool holdTarget(const World& world, const Terrain& terrain, Vec2 from, Realm realm, MobAi& ai,
                     double range, double nowMillis) const;
 
     /// The player a mob turns on this tick, or NULL_ENTITY. Neutral and
@@ -1000,14 +1031,14 @@ private:
     void steerPet(World& world, const Terrain& terrain, const SpatialGrid& grid, Entity self,
                   Transform& transform, Motion& motion, const Body& body, const MobType& type,
                   MobAi& ai, Entity owner, bool ownerAlive, const Drive& drive,
-                  double nowMillis, double dt, CommandBuffer& commands);
+                  double nowMillis, double dt, CommandBuffer& commands, const PetTargetPlan* plan);
     /// The wild mob a pet is fighting: every direction around the PET, out to
     /// its own range -- or, with an owner, as far as the flower's screen
     /// reaches -- with the highest tier in reach preferred and ties inside
     /// kPetRetargetMargin kept by its current target.
-    Entity acquirePetPrey(World& world, const Terrain& terrain, const SpatialGrid& grid,
-                          Entity self, Vec2 from, Realm realm, MobAi& ai, bool hasOwner,
-                          double range);
+    PetPrey acquirePetPrey(const World& world, const Terrain& terrain, const SpatialGrid& grid,
+                           Entity self, Vec2 from, Realm realm, Entity previous, bool hasOwner,
+                           double range, TargetScratch& scratch) const;
     /// Pops a sandstorm pet onto a clear, visible ring position around its
     /// owner. False when nothing was clear and the pet stayed where it was.
     bool teleportPetToOwner(const Terrain& terrain, Transform& transform, Vec2 ownerPosition);
@@ -1080,6 +1111,10 @@ private:
 
     // Scratch, reused so that a steady-state tick allocates nothing.
     std::vector<Entity> stepList_;
+    std::vector<TargetPlan> targetPlans_;
+    std::vector<PetTargetPlan> petTargetPlans_;
+    TargetScratch targetScratch_;
+    std::vector<TargetScratch> workerTargetScratch_;
     std::vector<Entity> seedList_;
     std::vector<Entity> gridScratch_;
     std::vector<Candidate> candidates_;

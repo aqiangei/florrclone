@@ -3,6 +3,17 @@
 #include <algorithm>
 #include <cstdlib>
 
+#if defined(__EMSCRIPTEN_PTHREADS__)
+#include <emscripten.h>
+EM_JS(int, flix_worker_env, (const char* name, char* out, int capacity), {
+    if (typeof process === 'undefined') return 0;
+    const value = process.env[UTF8ToString(name)];
+    if (typeof value !== 'string' || lengthBytesUTF8(value) >= capacity) return 0;
+    stringToUTF8(value, out, capacity);
+    return 1;
+});
+#endif
+
 #if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
 #define FLIX_SERVER_THREADS 1
 #include <atomic>
@@ -119,7 +130,13 @@ unsigned ServerWorkers::available() {
 
 unsigned ServerWorkers::configuredLimit(const char* name) {
     const unsigned ceiling = available();
-    if (const char* value = std::getenv(name)) {
+#if defined(__EMSCRIPTEN_PTHREADS__)
+    char setting[64];
+    const char* value = flix_worker_env(name, setting, sizeof setting) ? setting : nullptr;
+#else
+    const char* value = std::getenv(name);
+#endif
+    if (value) {
         char* end = nullptr;
         const long requested = std::strtol(value, &end, 10);
         if (end != value && *end == '\0' && requested >= 0 &&

@@ -4,6 +4,7 @@
 #include "server/systems/combat.h"
 #include "server/systems/mob_ai.h"
 #include "server/systems/movement.h"
+#include "server/workers.h"
 
 // The hold below is sized against the CLIENT's facing ease, so the test that
 // guards it reads that rate from the client rather than restating it.
@@ -674,6 +675,63 @@ TEST(a_wall_drops_a_hostile_target_only_after_a_second_and_a_half) {
         sim.world.get<Transform>(player).position = Terrain::tileCenter(wallTx + 1, row);
         sim.tickIntent(30);
         CHECK_EQ(sim.brainOf(mob).target, player);
+    }
+}
+
+TEST(parallel_mob_targeting_preserves_wall_grace_and_live_storm_pulls) {
+    CHECK(contentReady());
+    ServerWorkers workers(4);
+    CHECK(workers.count() > 0);
+    const int wall = Terrain::toTileCoord(kOrigin.x) + 1;
+    const int row = Terrain::toTileCoord(kOrigin.y);
+    for (bool withStorm : {false, true}) {
+        Sim serial, parallel;
+        parallel.ai.workers = &workers;
+        parallel.ai.workerLimit = workers.count();
+        std::vector<Entity> mobs;
+        const auto populate = [&](Sim& sim) {
+            for (int y = 0; y < kTilesPerAxis; ++y) sim.terrain.setTile(wall, y, Tile::Solid);
+            if (withStorm) sim.spawnMob("sandstorm", kOrigin + Vec2{-240, 0}, Rarity::Unique);
+            const Entity player = sim.spawnPlayer(kOrigin + Vec2{-300, 0}, 50);
+            for (int i = 0; i < 19; ++i)
+                sim.spawnPlayer(kOrigin + Vec2{20000, 250.0 * i});
+            for (int i = 0; i < 192; ++i) {
+                const Entity mob = sim.spawnMob(i % 2 ? "spider" : "hornet",
+                                                kOrigin + Vec2{-1.0 * (i % 10), 1.0 * (i % 23)});
+                if (&sim == &serial) mobs.push_back(mob);
+            }
+            for (int i = 0; i < 80; ++i) {
+                const Vec2 position = kOrigin + Vec2{-220.0, 1.0 * i};
+                const Entity pet = sim.spawnMob("spider", position);
+                sim.world.add<Pet>(pet, Pet{player});
+                sim.world.get<Faction>(pet).team = Team::Players;
+                if (&sim == &serial) mobs.push_back(pet);
+            }
+            return player;
+        };
+        const Entity player = populate(serial);
+        CHECK_EQ(populate(parallel), player);
+        for (int tick = 0; tick < 45; ++tick) {
+            if (tick == 4) {
+                const Vec2 hidden = Terrain::tileCenter(wall + 1, row);
+                serial.world.get<Transform>(player).position = hidden;
+                parallel.world.get<Transform>(player).position = hidden;
+            }
+            serial.tickIntent();
+            parallel.tickIntent();
+            CHECK(serial.positionOf(player) == parallel.positionOf(player));
+            CHECK_EQ(serial.shots(), parallel.shots());
+            for (const Entity mob : mobs) {
+                const auto& expected = serial.brainOf(mob);
+                const auto& actual = parallel.brainOf(mob);
+                CHECK_EQ(expected.target, actual.target);
+                CHECK_EQ(expected.unseenTarget, actual.unseenTarget);
+                CHECK_EQ(expected.unseenSinceMillis, actual.unseenSinceMillis);
+                CHECK(serial.velocityOf(mob) == parallel.velocityOf(mob));
+                CHECK_EQ(serial.angleOf(mob), parallel.angleOf(mob));
+            }
+        }
+        CHECK(serial.totalScans > 0);
     }
 }
 

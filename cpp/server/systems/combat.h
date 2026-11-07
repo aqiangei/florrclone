@@ -455,6 +455,7 @@ private:
         /// pays no recoil: mobs already bite it on their own contact clock.
         bool isLoose = false;
         bool isMobBody = false;
+        bool isHostileBody = false;
         bool swallows = false;
         /// A seat on a mob's own ring (MobRingPetal). Neither a mob nor a
         /// petal: a piece of the animal's body that happens to be breakable,
@@ -823,6 +824,8 @@ private:
     /// the slot is compared on every read, because the world recycles indices.
     static constexpr std::uint32_t kNoShotSlot = 0xFFFFFFFFu;
     std::vector<std::uint32_t> shotSlot_;
+
+    std::vector<Entity> hostileContactBodies_;
 
     /// A strike's own broadphase answer and the two lists it builds from it.
     /// Separate from candidates_ because a contact strike is thrown from INSIDE
