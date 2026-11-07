@@ -2,7 +2,7 @@
 const {parentPort,workerData}=require('node:worker_threads');
 const {once}=require('node:events');
 const net=require('node:net'),cp=require('node:child_process'),assert=require('node:assert/strict');
-const {quote}=require('./cluster-targets.cjs');
+const {quote,sshProxyOptions}=require('./cluster-targets.cjs');
 
 // Use SSH command channels so acceptance works with TCP forwarding disabled.
 // Both ends are bound to loopback, and the remote destination is fixed here.
@@ -15,7 +15,7 @@ async function run({target,remotePort,localPort}){
   const command='/opt/florrclone/runtime/bin/node -e '+quote(bridge)+' '+remotePort;
   const args=['-T','-i',target.key,'-p',String(target.sshPort),'-o','BatchMode=yes',
     '-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=10','-o','ServerAliveInterval=15',
-    '-o','ServerAliveCountMax=3','root@'+target.host,command];
+    '-o','ServerAliveCountMax=3',...sshProxyOptions(target),'root@'+target.host,command];
   const sockets=new Set();
   const server=net.createServer(socket=>{
     sockets.add(socket);

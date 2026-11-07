@@ -905,7 +905,7 @@ TEST(the_forge_refuses_a_universal_stack_and_keeps_every_petal) {
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Universal), 50u);
 }
 
-TEST(a_super_craft_is_announced_in_chat_and_written_to_the_feed) {
+TEST(a_super_craft_keeps_results_private) {
     Harness h("craft-notice", [](const std::string& path) {
         seedAccount(path, "smith", "password7", 0, 0);
         // Ultra -> super is a 1% roll, so the pool has to be deep enough that
@@ -926,33 +926,16 @@ TEST(a_super_craft_is_announced_in_chat_and_written_to_the_feed) {
         return p.stackCount(rose, Rarity::Ultra) == 20000u;
     }));
 
-    const std::size_t chatBefore = client.chat().size();
     client.requestCraft(rose, Rarity::Ultra, 20000);
     CHECK(h.stepUntil({&client}, [&] { return client.craftOutcome().pending; }, 400));
     CHECK(client.craftOutcome().crafted > 0);
     client.craftOutcome().pending = false;
 
-    // ONE line however many the pool produced: the craft is announced, not
-    // each petal it yielded.
-    CHECK(h.stepUntil({&client}, [&] { return client.chat().size() > chatBefore; }, 200));
-    CHECK_EQ(client.chat().size(), chatBefore + 1);
-    // Marked up, as the TypeScript build's line was: the tier's own palette
-    // colour paints the sentence, and the account and the flower's name are
-    // separately coloured inside it -- which is why the handle is not
-    // contiguous with the words before it.
-    const std::string line = client.chat().back().text;
-    CHECK(line.find("<b style=\"color: #2bffa3;\">A Super Rose has been crafted by ") == 0);
-    CHECK(line.find("<b style=\"color: #00ff00;\">@smith</b>") != std::string::npos);
-    CHECK(line.find("<b style=\"color: yellow;\">smith</b>") != std::string::npos);
+    h.step(10,{&client});
+    CHECK(sawText(client, "超级 玫瑰 已被"));
+    CHECK(awaitFeed(h,client));
+    CHECK(client.notifications().empty());
 
-    // And the same sentence, flat, in the feed the panel draws.
-    CHECK(awaitFeed(h, client));
-    CHECK_EQ(client.notifications().size(), static_cast<std::size_t>(1));
-    const NotificationEntry& notice = client.notifications().front();
-    CHECK_EQ(static_cast<int>(notice.kind), static_cast<int>(net::NotificationKind::SuperCraft));
-    CHECK(notice.message.find("A Super Rose has been crafted by @smith [smith] (crafted x" + std::to_string(client.craftOutcome().crafted)) == 0);
-    CHECK(notice.message.find(", consumed x" + std::to_string(20000 - client.craftOutcome().petalsReturned)) != std::string::npos);
-    CHECK(notice.message.find('<') == std::string::npos);
 }
 
 TEST(a_craft_below_super_is_announced_to_nobody) {

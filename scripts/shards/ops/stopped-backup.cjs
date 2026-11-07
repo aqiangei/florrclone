@@ -14,14 +14,17 @@ function stopped(transport,unit,allowAbsent=false){
   assert.equal(fields.Result,'success',unit+' did not stop cleanly');
   assert.equal(fields.ExecMainStatus,'0',unit+' exited with an error');
 }
-function collect({mode,stamp,directory,one,two}){
+function collect({mode,initialSource="one",stamp,directory,one,two}){
   assert(['initial','upgrade'].includes(mode),'Explicit migration mode required');
   assert.match(stamp,/^\d{8}T\d{6}Z$/);
   const destination=path.resolve(directory);
   assert(!fs.existsSync(path.join(destination,'verified-backup.json')),'Backup manifest already exists');
   // Verify both simulation processes, including the not-yet-created second
   // service on first migration, before taking any purported stopped snapshot.
-  stopped(one,'florrclone');stopped(two,'florrclone',mode==='initial');
+  assert(['one','two'].includes(initialSource),'Invalid standalone source');
+  stopped(one,'florrclone',mode==='initial'&&initialSource==='two');
+  stopped(two,'florrclone',mode==='initial'&&initialSource==='one');
+  const backupHost=mode==='initial'&&initialSource==='two'?two:one;
   stopped(one,'florr-shard-coordinator',mode==='initial');
   const authority='/var/lib/florrclone-shards/authority';
   if(mode==='initial')one.ssh('test ! -e '+quote(authority+'.snapshot')+' && test ! -e '+quote(authority+'.journal'));
@@ -30,20 +33,20 @@ function collect({mode,stamp,directory,one,two}){
     : [['authority.snapshot',authority+'.snapshot'],['authority.journal',authority+'.journal'],
        ['authority.snapshot.lock',authority+'.snapshot.lock'],['bootstrap.json','/var/lib/florrclone-shards/bootstrap.json']];
   const remote='/var/lib/florrclone/cutover-backups/'+stamp+'/shared';
-  one.ssh('install -d -m 700 '+quote(remote));
+  backupHost.ssh('install -d -m 700 '+quote(remote));
   fs.mkdirSync(destination,{recursive:true,mode:0o700});
   const files=[];
   for(const [name,source]of sources){
     const target=path.join(destination,name);
     assert(!fs.existsSync(target),'Refusing to overwrite a local backup');
     const copy=remote+'/'+name;
-    one.ssh('test -f '+quote(source)+' && cp -- '+quote(source)+' '+quote(copy)+' && chmod 600 '+quote(copy));
-    const expected=one.ssh('sha256sum -- '+quote(copy)).trim().split(/\s+/)[0];
+    backupHost.ssh('test -f '+quote(source)+' && cp -- '+quote(source)+' '+quote(copy)+' && chmod 600 '+quote(copy));
+    const expected=backupHost.ssh('sha256sum -- '+quote(copy)).trim().split(/\s+/)[0];
     assert.match(expected,/^[a-f0-9]{64}$/,'Invalid remote hash');
-    one.download(copy,target);
+    backupHost.download(copy,target);
     const actual=crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex');
     assert.equal(actual,expected,'Downloaded backup SHA256 mismatch: '+name);
-    const current=one.ssh('sha256sum -- '+quote(source)).trim().split(/\s+/)[0];
+    const current=backupHost.ssh('sha256sum -- '+quote(source)).trim().split(/\s+/)[0];
     assert.equal(current,expected,'Stopped source changed during backup: '+name);
     files.push({name,source,remote:copy,sha256:actual,bytes:fs.statSync(target).size});
   }

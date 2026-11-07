@@ -32,3 +32,11 @@ test('stopped latest inventory is downloaded unchanged and verified before compl
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.directory,'verified-backup.json'))),report);
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.directory,'inventory.json'))).players.existing.level,200);
 });
+test('initial migration downloads the latest inventory from the active standalone host',t=>{
+  const f=fixture(t);
+  f.options.initialSource='two';
+  f.options.one={...f.options.one,download(){assert.fail('Downloaded the retired standalone save');}};
+  const report=collect(f.options);
+  assert.equal(report.bootstrapAccounts,1);
+  assert.equal(f.downloads,1);
+});

@@ -1419,6 +1419,13 @@ inline double hyperSummonScale(const PetalConfig& config, Rarity rarity) {
     return config.id == "magic_stick" || config.id == "mysterious_stick" ? 1.5 : 1.25;
 }
 
+// Promoting previously Eternal-capped escorts to actual Hyper bodies should
+// not also apply the full rarity stat jump. Existing Hyper eggs keep theirs.
+inline double hyperSummonPromotionScale(const PetalConfig& config, Rarity rarity) {
+    if (ladderRarity(rarity) != Rarity::Apex || config.id == "egg" || config.id == "beetle_egg") return 1.0;
+    return 1.1 / 1.5;
+}
+
 /// The sacrifice: florr's "On death, summons a mob to fight again". Worn on
 /// the active bar, it is spent when its flower dies on ground rough enough to
 /// answer it, and a mob of that ground is summoned where the flower fell, at

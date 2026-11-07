@@ -71,15 +71,6 @@ bool petPointer(World& world, Entity owner, Rarity petRarity, Vec2 ownerPosition
 /// nobody connected there is nothing to save the work for, and a caller that
 /// forgot to pass its players gets unmodified behaviour rather than a world
 /// silently running at a fifth speed.
-bool mobActive(Vec2 position, Realm realm, const std::vector<RealmPoint>& activePlayers) {
-    if (activePlayers.empty()) return true;
-    const double reachSq = kMobActiveRadius * kMobActiveRadius;
-    for (const RealmPoint& player : activePlayers) {
-        if (player.realm != realm) continue;
-        if (distanceSq(position, player.position) <= reachSq) return true;
-    }
-    return false;
-}
 
 /// What a web, a honey pool or a pincer leaves of a mob's speed this tick.
 ///
@@ -383,6 +374,7 @@ MobAiSystem::Drive MobAiSystem::driveFor(std::uint16_t configIndex, Rarity rarit
     if (!drive.valid) {
         const MobConfig& config = registry.mob(configIndex);
         const MobStats stats = registry.mobStats(configIndex, rarity);
+        drive.healthScaledSpeed = config.id == "roach";
         drive.speed = stats.speed;
         drive.chaseSpeed = stats.chaseSpeed > 0.0 ? stats.chaseSpeed : stats.speed;
         drive.attackCooldownMillis = stats.attackCooldownMillis;
@@ -1779,7 +1771,7 @@ bool MobAiSystem::stepsThisTick(Entity self, Vec2 position, Realm realm, Rarity 
     // AI in exchange for the one class of mob whose behaviour anybody watches
     // from a distance.
     if (isBossRarity(rarity)) return true;
-    if (mobActive(position, realm, activePlayers)) return true;
+    if (activePlayersIndex_.near(position, realm)) return true;
     return (tick_ + entityIndex(self)) % static_cast<std::uint64_t>(kMobFarStride) == 0;
 }
 
@@ -1835,7 +1827,12 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
     // The ten player-speed chasers never read `speed` while pursuing, so the
     // slow has to reach the override as well or a web slows every mob in the
     // game except the ones it is for.
-    const double factor = slowFactorOf(world, self, nowMillis) * 1.08;
+    double factor = slowFactorOf(world, self, nowMillis) * 1.08;
+    if (drive.healthScaledSpeed) {
+        const auto* health = world.tryGet<Health>(self);
+        if (health && health->max > 0.0)
+            factor *= 0.55 + 0.45 * clamp(health->current / health->max, 0.0, 1.0);
+    }
     const double speed = drive.speed * factor;
     const double chaseSpeed = drive.chaseSpeed * factor;
 
@@ -2697,6 +2694,17 @@ void MobAiSystem::tickPetalRings(World& world, CommandBuffer& commands) {
 void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& grid,
                       const std::vector<RealmPoint>& activePlayers,
                       double nowMillis, double dt, CommandBuffer& commands) {
+    activePlayersIndex_.rebuild(activePlayers);
+    sleepObservers_.rebuild(activePlayers);
+    wideObservers_.clear();
+    Query<PlayerTag, Transform, PlayerLocation>{world}.each(
+        [&](Entity, PlayerTag&, Transform& at, PlayerLocation& location) {
+            // The viewport diagonal covers its corners. Leave enough room to
+            // wake the body before its art enters even a large antenna view.
+            const double reach = location.viewport.length() * 0.5 + 2000.0;
+            if (reach > kSleepReach)
+                wideObservers_.push_back({{at.position, at.realm}, reach * reach});
+        });
     stats_ = Stats{};
     // Written as a failed > so a NaN step takes this branch too. A zero step
     // has nothing to integrate and would hand every mob an infinite turn.
@@ -2759,9 +2767,43 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         const MobType* type = world.tryGet<MobType>(self);
         if (at == nullptr || type == nullptr) continue;
         const Drive drive = driveFor(type->configIndex, type->rarity);
+        auto& brain = world.get<MobAi>(self);
+        const bool wasSleeping = brain.sleeping;
+        brain.sleeping = false;
+        const bool active = isBossRarity(type->rarity) || activePlayersIndex_.near(at->position, at->realm);
+        // Only idle ordinary movers. Keep encounters, long-range weapons,
+        // scripted bodies and clocks on the normal simulation path.
+        if (!active && drive.valid &&
+            brain.kind != AiKind::Stationary && brain.kind != AiKind::Sandstorm &&
+            !drive.recovers && !drive.shoots && !drive.laysWeb && !drive.dropsProjectile &&
+            !segment && !world.has<Pet>(self) && !world.has<MobPetalRing>(self) &&
+            !world.has<HoleTether>(self) && !world.has<AmbushNest>(self) &&
+            brain.target == NULL_ENTITY && brain.jumpRemaining <= 0 &&
+            brain.fleeUntilMillis <= nowMillis && world.get<Body>(self).radius <= 512 &&
+            !sleepObservers_.near(at->position, at->realm)) {
+            const auto* health = world.tryGet<Health>(self);
+            const auto* effects = world.tryGet<Afflictions>(self);
+            const auto* knockback = world.tryGet<Knockback>(self);
+            const bool resting = health && health->alive() && health->current >= health->max &&
+                health->flashUntilMillis <= nowMillis &&
+                (!effects || (!effects->poisoned(nowMillis) && effects->poisonStacks.empty())) &&
+                (!knockback || (knockback->impulse.lengthSq() == 0 && knockback->carry.lengthSq() == 0));
+            if (resting && std::none_of(wideObservers_.begin(), wideObservers_.end(),
+                [&](const auto& observer) {
+                    return observer.first.realm == at->realm &&
+                        distanceSq(observer.first.position, at->position) <= observer.second;
+                })) {
+                brain.sleeping = true;
+                world.get<Motion>(self).velocity = {};
+                if (auto* drift = world.tryGet<PassiveMotion>(self)) drift->velocity = {};
+                ++stats_.skipped;
+                continue;
+            }
+        }
         // Ahead of the stride, which it is not subject to; see recover().
         if (drive.recovers) recover(world, self, drive, nowMillis, dt);
-        if (!stepsThisTick(self, at->position, at->realm, type->rarity, activePlayers)) {
+        if (!wasSleeping && !active &&
+            (tick_ + entityIndex(self)) % static_cast<std::uint64_t>(kMobFarStride) != 0) {
             ++stats_.skipped;
             driftUnwatched(world, terrain, self, nowMillis, dt);
             continue;
@@ -2817,6 +2859,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
 
 void MobAiSystem::placeChains(World& world, const Terrain& terrain,
                               const std::vector<RealmPoint>& activePlayers) {
+    activePlayersIndex_.rebuild(activePlayers);
     followChains(world, terrain, activePlayers);
 }
 

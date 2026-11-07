@@ -1087,6 +1087,7 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
     // despawn sweep has to repeat a string compare per tick.
     m.neverAmbient = id == "target_dummy" || id == "test_dummy";
     m.glitchInfecting = id == "glitch" || id == "glitch_flower";
+    m.petDamageScale = ctx.range(src, "petDamageScale", 1.0, 0.0, 100.0);
     if (id == "digger") {
         m.petHealthScale = 0.5;
         m.petDamageScale = 0.5;
@@ -1910,10 +1911,11 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
 
     PetalStats s;
     s.damage = c.damage * strength;
-    if(c.id=="magic_peas"){
-        // Five times fewer volleys, four times the hit: 80% sustained output.
-        s.lightningDamagePerHit=120.0*strength;
-        s.lightningBounces=0;
+    if (c.id == "magic_peas") {
+        // Eternal and above can stack several volleys against the same boss.
+        const double baseDamage = tier >= Rarity::Unique ? 90.0 : 120.0;
+        s.lightningDamagePerHit = baseDamage * strength;
+        s.lightningBounces = 0;
     }
     if (c.id == "battery" || c.id == "lightning") {
         s.lightningDamagePerHit = 12.0 * strength;
@@ -1938,6 +1940,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // -- a flat amount off each hit the wearer takes -- so a bone and a mob
     // of one tier are as hard to scratch as each other.
     s.petalArmor = c.petalArmor * kMobArmorScale[static_cast<std::size_t>(rarityIndex(tier))];
+    // The geometric armour follows Bone, not the wild mob armour plateau.
+    if (c.id == "icosahedron") s.petalArmor = c.petalArmor * stat;
     s.petalEvasion = c.petalEvasion;
     s.petalPoisonImmune = c.petalPoisonImmune;
     // A claw's bonus is damage, so it is on the damage ladder beside `damage`.
@@ -2135,10 +2139,12 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         s.cameraZoom = 1.0 / antennaeVisionRangeScale(tier);
     }
     if (c.id == "observer") {
-        // The legacy subtractive growth crosses zero at Super. Preserve its
-        // original floor before applying the stronger antenna vision table.
-        s.cameraZoom = std::min(std::max(0.3, s.cameraZoom),
-                                0.9 / antennaeVisionRangeScale(tier));
+        // Trading some vision for mechanical missile targeting. Never use
+        // subtractive zoom growth, which crossed zero on high rarities.
+        static constexpr std::array<double, kLadderRarityCount> vision = {
+            1.0, 1.0, 1.12, 1.2, 1.3, 1.6, 2.2, 4.0, 8.0, 9.2,
+        };
+        s.cameraZoom = 1.0 / vision[ladderIndex(tier)];
     }
     // Apply explicit exceptions only on the authored ladder. Devine/Admin retain
     // their separate server-specific rules, not guessed extra wiki tiers.
@@ -2177,7 +2183,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         if (row.luck) s.modifiers.luck = *row.luck;
         if (row.magnetism) s.modifiers.magnetism = *row.magnetism;
     }
-    // Hyper's combat growth is capped at 1.5x the SAME petal at Eternal.
+    // Hyper utility/defence stays bounded; direct offensive stats get a real
+    // twofold upgrade over Eternal (1106 balance feedback).
     if (c.id == "domino") s.damage *= 9.0; // mean of two independent 0..6 ends
     // Apply after authored overrides so special damage/healing rows cannot
     // bypass it. Counts, reloads, proc conditions and probabilities stay put.
@@ -2205,6 +2212,12 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
             if (eternal.modifiers.*field > 1.0)
                 s.modifiers.*field = std::min(s.modifiers.*field,
                     1.0 + (eternal.modifiers.*field - 1.0) * 1.5);
+        }
+        for (const auto field : {&PetalStats::damage, &PetalStats::bodyDamage,
+                &PetalStats::critDamage, &PetalStats::poisonPerSecond,
+                &PetalStats::lightningDamagePerHit}) {
+            if (s.*field > 0.0 && eternal.*field > 0.0)
+                s.*field = std::clamp(s.*field, eternal.*field * 2.0, eternal.*field * 2.1);
         }
     }
     if (c.id == "dark_mark") s.reloadMillis = kDarkMarkReloadMillis;

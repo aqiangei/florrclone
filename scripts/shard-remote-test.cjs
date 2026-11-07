@@ -4,21 +4,32 @@
 const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_process'),assert=require('node:assert/strict');
 const q=s=>"'"+String(s).replace(/'/g,"'\\''")+"'";
 const {openSshRelay}=require('./shards/ops/live-paired-check.cjs');
+const {sshProxyOptions}=require('./shards/ops/cluster-targets.cjs');
 module.exports=async function remoteTest(configPath,home){
   const c=JSON.parse(fs.readFileSync(configPath,'utf8'));
   assert.match(c.release,/^\/opt\/florrclone\/releases\/[a-zA-Z0-9_-]+$/);
-  const stamp=path.basename(home).replace(/[^a-zA-Z0-9-]/g,'');
+  const stamp=path.basename(home);
+  assert.match(stamp,/^shards-shared-game-[a-zA-Z0-9]+$/);
   const remoteHome='/var/tmp/'+stamp;
-  const options=t=>['-i',t.key,'-p','22','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ExitOnForwardFailure=yes'];
+  const options=t=>['-i',t.key,'-p','22','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ExitOnForwardFailure=yes',...sshProxyOptions(t)];
   const ssh=(t,command)=>cp.execFileSync('ssh',[...options(t),'root@'+t.host,command],{encoding:'utf8',windowsHide:true,timeout:30000});
-  const upload=(t,file,destination)=>cp.execFileSync('scp',['-i',t.key,'-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',file,'root@'+t.host+':'+destination],{windowsHide:true,timeout:30000});
-  for(const t of Object.values(c.targets)){
-    assert.equal(ssh(t,'cat /etc/machine-id').trim(),t.machineId);
-    ssh(t,'install -d -m 700 '+q(remoteHome));
-  }
+  const upload=(t,file,destination)=>cp.execFileSync('scp',['-i',t.key,'-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',...sshProxyOptions(t),file,'root@'+t.host+':'+destination],{windowsHide:true,timeout:30000});
   const relays=[];
-  const close=()=>Promise.all(relays.map(relay=>relay.close()));
+  const scratchHosts=[];
+  async function close(){
+    const results=await Promise.allSettled(relays.map(relay=>relay.close()));
+    const failures=results.filter(result=>result.status==='rejected').map(result=>result.reason);
+    for(const t of scratchHosts){
+      try{ssh(t,'rm -rf -- '+q(remoteHome));}catch(error){failures.push(error);}
+    }
+    if(failures.length)throw new AggregateError(failures,'Remote test cleanup failed');
+  }
   try{
+    for(const t of Object.values(c.targets)){
+      assert.equal(ssh(t,'cat /etc/machine-id').trim(),t.machineId);
+      ssh(t,'mkdir -m 700 '+q(remoteHome));
+      scratchHosts.push(t);
+    }
     relays.push(await openSshRelay(c.targets.one,19090,19092));
     relays.push(await openSshRelay(c.targets.one,3093,3093));
     relays.push(await openSshRelay(c.targets.two,3094,3094));

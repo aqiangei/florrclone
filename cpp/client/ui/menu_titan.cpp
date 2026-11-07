@@ -174,21 +174,26 @@ bool TitanPanel::render(MenuContext& ctx) {
         }
         const auto* holder = knownPetal(stagedPetal_) ? ctx.net.titanHolder(stagedPetal_) : nullptr;
         const bool ownedHere = holder && !holder->empty() && *holder == profile.username;
+        const Rect releaseButton{panel.x+panel.w*0.5+12,panel.y+225,panel.w*0.5-32,46};
+        const Rect releaseSlot{panel.x+panel.w*0.25-45,panel.y+207,90,90};
+        const bool hammer=knownPetal(stagedPetal_)&&content().petal(stagedPetal_).id=="mjolnir";
         SlotCardLayout line = card;
         line.lineY = panel.y + 139;
         drawSlotLine(canvas, line, "选择在这位泰坦处持有的超凡花瓣。");
         line.lineY += kLinePitch;
-        drawSlotLine(canvas, line, "解除会永久销毁一份，并释放名额；不返还材料。");
+        drawSlotLine(canvas, line, hammer ? "解除会永久销毁花费的10个永恒碎片。" : "解除会永久销毁花费的5个永恒。");
+        line.lineY += kLinePitch;
+        drawSlotLine(canvas, line, "材料不予返还；所选超凡也会销毁，并释放名额。",kSlotCardRefusalInk);
         if (knownPetal(stagedPetal_)) {
             ItemTile tile;
             tile.petalIndex = stagedPetal_;
             tile.rarity = Rarity::Apex;
             tile.timeSeconds = now;
-            drawItemTile(canvas, ctx.sprites, card.slotRect, tile);
+            drawItemTile(canvas, ctx.sprites, releaseSlot, tile);
         }
-        drawSlotButton(canvas, card.button, confirmForge_ && ownedHere ? "确认销毁一份" : "解除所选超凡",
+        drawSlotButton(canvas, releaseButton, confirmForge_ && ownedHere ? "确认永久销毁，不返还" : "解除所选超凡",
                        ownedHere ? std::optional<std::uint32_t>(0xA34137u) : std::nullopt,
-                       card.button.contains(mouse), false);
+                       releaseButton.contains(mouse), false);
         line.lineY = panel.y + kFirstLineY;
         drawSlotLine(canvas, line, !knownPetal(stagedPetal_) ? "请从下方选择" :
                      !holder ? "正在查询持有记录…" : ownedHere ? "此处持有，可解除" : "此处没有你的持有记录");
@@ -205,7 +210,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             ctx.net.forgetTitanHolder(stagedPetal_);
             askedAt_ = -10;
             confirmForge_ = false;
-        } else if (ownedHere && card.button.contains(mouse)) {
+        } else if (ownedHere && releaseButton.contains(mouse)) {
             if (!confirmForge_) confirmForge_ = true;
             else {
                 ctx.net.sendChat("/hyper-abandon here " + content().petal(stagedPetal_).id + " confirm");

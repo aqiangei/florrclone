@@ -7,16 +7,21 @@ const crypto = require('node:crypto');
 const cp = require('node:child_process');
 const assert = require('node:assert/strict');
 
-const host = 'root@154.219.105.161';
+const targetFile=path.resolve(__dirname,'../outputs/production-backup-target.json');
+const target=fs.existsSync(targetFile)?JSON.parse(fs.readFileSync(targetFile,'utf8')):{};
+assert(!target.host||/^[a-zA-Z0-9.-]+$/.test(target.host));
+const host = 'root@'+(process.env.FLORR_BACKUP_HOST||target.host||'154.219.105.161');
 const source = '/var/lib/florrclone/cpp-state/inventory.json';
-const key = path.join(process.env.USERPROFILE || process.env.HOME, '.ssh', 'ASHFLOR.pem');
+const key = process.env.FLORR_BACKUP_KEY||target.key||path.join(process.env.USERPROFILE || process.env.HOME, '.ssh', 'ASHFLOR.pem');
 const root = path.resolve(process.argv[2] || 'D:/ashflor/backups/florrclone');
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.(\d+)Z$/, '-$1Z');
 const directory = path.join(root, stamp);
 const options = ['-i', key, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
   '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2'];
+if(process.env.FLORR_BACKUP_SSH_PROXY||target.proxyCommand)
+  options.push('-o','ProxyCommand='+(process.env.FLORR_BACKUP_SSH_PROXY||target.proxyCommand));
 const run = (exe, args, input) => cp.execFileSync(exe, args, {
-  encoding: 'utf8', input, timeout: 120000, maxBuffer: 1024 * 1024, windowsHide: true,
+  encoding: 'utf8', input, timeout: exe === 'scp' ? 600000 : 120000, maxBuffer: 1024 * 1024, windowsHide: true,
 });
 const ssh = (command, input) => run('ssh', [...options, host, command], input);
 let remote;
@@ -42,8 +47,14 @@ function authorityBackup(){
   for(const item of info.files){
     assert.match(item.sha256,/^[a-f0-9]{64}$/);
     const partial=path.join(directory,item.name+'.partial');
-    run('scp',['-C',...options,`${host}:${remoteDirectory}/${item.name}`,partial]);
-    const bytes=fs.readFileSync(partial);
+    // Compress the immutable checkpoint before transport; hash the original bytes.
+    const compressed=remoteDirectory+'/'+item.name+'.transfer.gz';
+    ssh('gzip -c -- '+remoteDirectory+'/'+item.name+' > '+compressed);
+    const packed=partial+'.gz';
+    run('scp',[...options,`${host}:${compressed}`,packed]);
+    const bytes=require('node:zlib').gunzipSync(fs.readFileSync(packed));
+    fs.writeFileSync(partial,bytes);
+    fs.unlinkSync(packed);
     assert.equal(bytes.length,item.bytes,'Authority backup size mismatch');
     assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),item.sha256,'Authority backup SHA256 mismatch');
     fs.renameSync(partial,path.join(directory,item.name));

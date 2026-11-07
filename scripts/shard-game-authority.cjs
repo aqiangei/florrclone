@@ -191,6 +191,15 @@ module.exports={
     const job=pending={key,result:null};mutate(()=>commitAsync(clone(delta))).then(result=>{job.result=result;});return 'pending';
   },
   invoke(input){
+    if(input.action==='chatAnnouncement'){
+      if(![0,1,7].includes(input.channel)||typeof input.text!=='string'||
+          Buffer.byteLength(input.text)>65535||typeof input.author!=='string'||
+          Buffer.byteLength(input.author)>128)return {ok:false};
+      if(outgoingNotices.length===256)outgoingNotices.shift();
+      outgoingNotices.push({id:crypto.randomBytes(16).toString('hex'),kind:'chat',
+        channel:input.channel,author:input.author,text:input.text});
+      return {ok:true};
+    }
     if(input.action==='mobAnnouncement'){
       if(outgoingNotices.length===256)outgoingNotices.shift();
       outgoingNotices.push({id:crypto.randomBytes(16).toString('hex'),mob:input.mob,

@@ -35,7 +35,7 @@ TEST(todo1106_new_talents_preserve_indices_costs_and_refund) {
     skills.set(SkillId::PetDamage, 9);
     CHECK(skills.prestigeUnlocked());
     CHECK_EQ(skills.spent(), 381);
-    CHECK_NEAR(skills.effectScale(SkillId::PetDamage), 2.0, 1e-12);
+    CHECK_NEAR(skills.effectScale(SkillId::PetDamage), 2.5, 1e-12);
     CHECK_NEAR(skills.healthScale(SkillId::Summoner), 1.0, 1e-12);
     skillRefundTo(skills, SkillId::PetDamage, -1);
     CHECK_EQ(skills.spent(), 225);
@@ -44,7 +44,7 @@ TEST(todo1106_new_talents_preserve_indices_costs_and_refund) {
     CHECK(!skills.prestigeUnlocked());
 }
 
-TEST(todo1106_stick_summons_gain_stats_and_pet_damage_talent_without_more_pets) {
+TEST(todo1106_stick_summons_use_hyper_stats_and_talent_without_changing_count) {
     const auto& c = testsupport::shippedContent();
     for (const char* id : {"mysterious_stick", "magic_stick"}) {
         double baseHealth = 0, baseDamage = 0;
@@ -59,23 +59,35 @@ TEST(todo1106_stick_summons_gain_stats_and_pet_damage_talent_without_more_pets) 
             w.add<PlayerSkillTree>(p);
             if(variant == 2) w.get<PlayerSkillTree>(p).skills.set(SkillId::PetDamage,9);
             w.get<Loadout>(p).slots[0] = LoadoutSlot{c.petalIndex(id), variant ? Rarity::Apex : Rarity::Unique};
-            w.get<Loadout>(p).slots[1] = LoadoutSlot{c.petalIndex("magic_cactus"), Rarity::Unique};
+            w.get<Loadout>(p).slots[1] = LoadoutSlot{c.petalIndex("mana_orb"), Rarity::Unique};
             w.get<PlayerInput>(p).current.flags = net::InputAttack;
+            petals.run(w,c,0,.05,commands); commands.flush();
+            auto& mana = w.get<ManaPool>(p);
+            mana.current = mana.max;
             std::vector<Entity> pets;
             for(int i=0;i<400 && pets.empty();++i) {
                 petals.run(w,c,i*50,.05,commands); commands.flush();
                 pets = w.get<PetalSlotState>(p).slots[0].pets;
             }
             CHECK(!pets.empty()); if(pets.empty()) continue;
+            const auto& owner = w.get<Transform>(p);
+            for (const auto pet : pets) {
+                CHECK(distance(owner.position, w.get<Transform>(pet).position) <=
+                      w.get<Body>(p).radius + 4.0 * w.get<Body>(pet).radius + 8.001);
+            }
+
             if(variant == 0) {
                 baseCount=pets.size(); baseHealth=w.get<Health>(pets[0]).max;
                 baseDamage=w.get<ContactDamage>(pets[0]).amount;
+                const auto& storm = c.mob(c.mobIndex("sandstorm"));
+                CHECK_NEAR(baseDamage, storm.damage * petalStatScale(Rarity::Unique) * 1.5, 1e-6);
             } else {
                 CHECK_EQ(pets.size(), baseCount*3);
                 for(auto pet : pets) {
-                    CHECK_NEAR(w.get<Health>(pet).max, baseHealth*1.5, 1e-6);
-                    CHECK_NEAR(w.get<ContactDamage>(pet).amount, baseDamage*1.5*(variant==2?2.0:1.0), 1e-6);
-                    CHECK_NEAR(w.get<Pet>(pet).damageTalentScale, variant==2?2.0:1.0, 1e-12);
+                    CHECK(w.get<MobType>(pet).rarity == Rarity::Apex);
+                    CHECK_NEAR(w.get<Health>(pet).max, baseHealth*1.65, 1e-6);
+                    CHECK_NEAR(w.get<ContactDamage>(pet).amount, baseDamage*1.65*(variant==2?2.5:1.0), 1e-6);
+                    CHECK_NEAR(w.get<Pet>(pet).damageTalentScale, variant==2?2.5:1.0, 1e-12);
                 }
                 if (variant == 2) {
                     const auto seed=w.create();w.add<ContactDamage>(seed,ContactDamage{200,50});
@@ -83,9 +95,9 @@ TEST(todo1106_stick_summons_gain_stats_and_pet_damage_talent_without_more_pets) 
                     w.add<MobPetalRing>(pets[0]).seats.push_back(seed);
                     w.get<PlayerSkillTree>(p).skills.set(SkillId::PetDamage, -1);
                     petals.run(w,c,19950,.05,commands); commands.flush();
-                    CHECK_NEAR(w.get<ContactDamage>(seed).amount,100,1e-6);
+                    CHECK_NEAR(w.get<ContactDamage>(seed).amount,80,1e-6);
                     for(auto pet : pets) if(w.isAlive(pet)) {
-                        CHECK_NEAR(w.get<ContactDamage>(pet).amount, baseDamage*1.5, 1e-6);
+                        CHECK_NEAR(w.get<ContactDamage>(pet).amount, baseDamage*1.65, 1e-6);
                         CHECK_NEAR(w.get<Pet>(pet).damageTalentScale, 1.0, 1e-12);
                     }
                 }
@@ -118,7 +130,7 @@ TEST(todo1106_totem_counter_tracks_active_stacks_and_clears_on_swap) {
     CHECK_EQ(w.get<PetalSlotState>(p).slots[0].counter, -1.0);
 }
 
-TEST(todo1106_hyper_egg_boosts_individual_stats_without_extra_entities) {
+TEST(todo1106_hyper_egg_uses_hyper_rarity_and_expected_hatch_count) {
     const auto& c = testsupport::shippedContent();
     double eternalHealth = 0, eternalDamage = 0;
     std::size_t eternalCount = 0;
@@ -140,8 +152,9 @@ TEST(todo1106_hyper_egg_boosts_individual_stats_without_extra_entities) {
         } else {
             CHECK_EQ(pets.size(), eternalCount * 3);
             for(auto pet : pets) {
-                CHECK_NEAR(w.get<Health>(pet).max, eternalHealth * 1.25, 1e-6);
-                CHECK_NEAR(w.get<ContactDamage>(pet).amount, eternalDamage * 1.25, 1e-6);
+                CHECK(w.get<MobType>(pet).rarity == Rarity::Apex);
+                CHECK_NEAR(w.get<Health>(pet).max, eternalHealth * 1.875, 1e-6);
+                CHECK_NEAR(w.get<ContactDamage>(pet).amount, eternalDamage * 1.875, 1e-6);
             }
         }
     }

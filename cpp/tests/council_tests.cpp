@@ -57,28 +57,28 @@ TEST(council_empty_and_failed_save_do_not_accept_vote) {
     CHECK_EQ(db.storedTable("councilPolls")["1"]["votes"].size(),0u);
 }
 
-TEST(council_publish_checks_top_ten_and_rate_limits) {
+TEST(council_publish_checks_top_twenty_and_rate_limits) {
     const std::string path="/tmp/florr-council-ranks-test.json";std::remove(path.c_str());
     Database db;std::string error;CHECK(db.load(path,error));db.setClock(councilClock);councilNow=2000000;
     std::vector<std::string> ids,tokens;
-    for(int i=0;i<11;++i){auto a=db.createUser("rankPlayer"+std::to_string(i),"password123");CHECK(a.ok());a.account->admin=false;ids.push_back(a.account->id);tokens.push_back(db.createSession(a.account->id,a.account->username));db.progress(a.account->id).totalXp=10000000.0/(i+1);}
+    for(int i=0;i<21;++i){auto a=db.createUser("rankPlayer"+std::to_string(i),"password123");CHECK(a.ok());a.account->admin=false;ids.push_back(a.account->id);tokens.push_back(db.createSession(a.account->id,a.account->username));db.progress(a.account->id).totalXp=100000000.0 * std::pow(0.8, i);}
     Json view=Json::object();view["action"]="view";
-    CHECK(council::request(db,tokens[9],view)["canPublish"].asBool());
-    CHECK(!council::request(db,tokens[10],view)["canPublish"].asBool());
-    Json create=Json::object();create["action"]="create";create["title"]="Top ten proposal";
-    CHECK(!council::request(db,tokens[10],create)["error"].isNull());
-    CHECK(council::request(db,tokens[9],create)["error"].isNull());
-    CHECK(!council::request(db,tokens[9],create)["error"].isNull());
-    councilNow+=86400000;CHECK(council::request(db,tokens[9],create)["error"].isNull());
-    councilNow+=86400000;CHECK(council::request(db,tokens[9],create)["error"].isNull());
+    CHECK(council::request(db,tokens[19],view)["canPublish"].asBool());
+    CHECK(!council::request(db,tokens[20],view)["canPublish"].asBool());
+    Json create=Json::object();create["action"]="create";create["title"]="Top twenty proposal";
+    CHECK(!council::request(db,tokens[20],create)["error"].isNull());
+    CHECK(council::request(db,tokens[19],create)["error"].isNull());
+    CHECK(!council::request(db,tokens[19],create)["error"].isNull());
+    councilNow+=86400000;CHECK(council::request(db,tokens[19],create)["error"].isNull());
+    councilNow+=86400000;CHECK(council::request(db,tokens[19],create)["error"].isNull());
     // Prior daily polls are now closed, so they do not consume active slots.
-    councilNow+=86400000;CHECK(council::request(db,tokens[9],create)["error"].isNull());
-    db.progress(ids[10]).totalXp=100000000;
-    CHECK(!council::request(db,tokens[9],view)["canPublish"].asBool());
-    CHECK(!council::request(db,tokens[9],create)["error"].isNull());
-    CHECK(council::request(db,tokens[10],create)["error"].isNull());
-    auto guest=db.findUserById(ids[10]);guest->guest=true;
-    CHECK(!council::request(db,tokens[10],create)["error"].isNull());
+    councilNow+=86400000;CHECK(council::request(db,tokens[19],create)["error"].isNull());
+    db.progress(ids[20]).totalXp=100000000;
+    CHECK(!council::request(db,tokens[19],view)["canPublish"].asBool());
+    CHECK(!council::request(db,tokens[19],create)["error"].isNull());
+    CHECK(council::request(db,tokens[20],create)["error"].isNull());
+    auto guest=db.findUserById(ids[20]);guest->guest=true;
+    CHECK(!council::request(db,tokens[20],create)["error"].isNull());
 }
 
 TEST(council_cold_start_does_not_give_one_early_visitor_forty_percent) {

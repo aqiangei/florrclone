@@ -23,6 +23,7 @@
 #include "shared/core/world.h"
 #include "shared/game/components.h"
 #include "shared/game/spatial.h"
+#include "shared/game/player_proximity.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/terrain.h"
 
@@ -285,6 +286,7 @@ private:
         Entity entity = NULL_ENTITY;
         Vec2 position;
         Team team = Team::Hostiles;
+        Realm realm = Realm::Overworld;
     };
 
     /// One mob in the separation pass, flattened out of the ECS.
@@ -373,7 +375,7 @@ private:
     /// Collected lazily: a tick with no seeking projectile pays nothing.
     void collectSeekTargets();
     Entity findSeekTarget(Entity self, const Projectile& projectile, Team team,
-                          Vec2 position, double heading) const;
+                          Vec2 position, double heading, Realm realm) const;
     /// The one-shot launch correction. Returns the velocity the shot leaves
     /// with, which is `velocity` itself when nothing was in the cone.
     Vec2 aimAtLaunch(World& world, Entity self, Vec2 position,
@@ -413,6 +415,7 @@ private:
     /// nothing. `separationSlot_` is keyed by entity INDEX, which is how a
     /// grid candidate gets back to its entry in O(1).
     std::vector<RealmPoint> separationPlayers_;
+    PlayerProximityIndex separationObservers_{kMobActiveRadius};
     std::vector<SeparationEntry> separationSet_;
     std::vector<std::uint32_t> separationSlot_;
     std::vector<Entity> separationCandidates_;

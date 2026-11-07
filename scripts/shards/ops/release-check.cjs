@@ -5,11 +5,24 @@ async function check(base,protocol,hash){
   const url=new URL(base);assert(['http:','https:'].includes(url.protocol));
   assert(Number.isInteger(protocol)&&protocol>0&&protocol<=65535);
   assert(Number.isInteger(hash)&&hash>=0&&hash<=0xffffffff);
+  let ticket="";
   const get=async(route,options)=>{
-    const response=await fetch(new URL(route,url),{...options,signal:AbortSignal.timeout(15000)});
+    const headers=new Headers(options?.headers);
+    if(ticket&&route.startsWith('/bundle'))headers.set('X-Download-Ticket',ticket);
+    const response=await fetch(new URL(route,url),{...options,headers,signal:AbortSignal.timeout(15000)});
     assert(response.ok,route+' HTTP '+response.status);return response;
   };
   const health=await (await get('/api/health')).json();assert.equal(health.ok,true);
+  try {
+  if(url.port!=='8788'){
+    const response=await fetch(new URL('/download-queue/join',url),{method:'POST',signal:AbortSignal.timeout(10000)});
+    if(response.headers.get('content-type')?.includes('application/json')){
+      assert(response.ok,'Download queue unavailable');let row=await response.json();ticket=row.ticket;
+      assert(ticket,'Queue returned no ticket');
+      for(let i=0;row.state!=='ready'&&i<60;i++){await new Promise(r=>setTimeout(r,1000));row=await(await get('/download-queue/status?ticket='+ticket)).json();}
+      assert.equal(row.state,'ready','Download queue admission timeout');
+    }
+  }
   for(const route of ['/','/council.html','/bundle.js','/bundle.wasm','/bundle.js.bin','/bundle.wasm.bin']){
     const response=await get(route);assert(Number(response.headers.get('content-length')||1)>0);await response.body.cancel();
   }
@@ -31,6 +44,8 @@ async function check(base,protocol,hash){
     ws.addEventListener('close',()=>{if(!done)finish(Error('Handshake closed'));});
   });
   return {ok:true,protocol,contentHash:hash,councilPlayers:council.players.length,health};
+  }finally{if(ticket)await fetch(new URL('/download-queue/release?ticket='+ticket,url),{method:'POST',signal:AbortSignal.timeout(5000)}).catch(()=>{});}
+
 }
 if(require.main===module)check(process.argv[2],Number(process.argv[3]),Number(process.argv[4])).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e.message);process.exitCode=1;});
 module.exports={check};

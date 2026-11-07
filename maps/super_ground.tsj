@@ -1,0 +1,41 @@
+{
+  "columns": 0,
+  "grid": {
+    "height": 1,
+    "orientation": "orthogonal",
+    "width": 1
+  },
+  "margin": 0,
+  "name": "super_ground",
+  "spacing": 0,
+  "tilecount": 1,
+  "tiledversion": "1.10.1",
+  "tileheight": 256,
+  "tilerendersize": "grid",
+  "tiles": [
+    {
+      "id": 0,
+      "image": "tiles/super_ground_c_0.svg",
+      "imageheight": 256,
+      "imagewidth": 256,
+      "properties": [
+        {
+          "name": "covers_everything",
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "type": "tile"
+    }
+  ],
+  "tilewidth": 256,
+  "transformations": {
+    "hflip": true,
+    "preferuntransformed": false,
+    "rotate": true,
+    "vflip": true
+  },
+  "type": "tileset",
+  "version": "1.10",
+  "wangsets": []
+}

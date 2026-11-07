@@ -1754,6 +1754,27 @@ TEST(another_players_petals_pets_and_shots_are_marked_as_theirs) {
     CHECK(!hidden(wild));
 }
 
+TEST(todo1106_hide_other_petals_covers_ground_fields_and_lightning_but_not_wild_attacks) {
+    Fixture f;WorldView client;const auto alice=f.addPlayer("alice",{1100,1000});
+    f.world.get<PlayerAccount>(alice).connection=2;
+    const auto wild=f.addMob({950,1000});
+    const auto field=[&](Entity owner){
+        const auto e=f.world.create();f.world.add<Transform>(e,Transform{{1050,1000},0});
+        f.world.add<GroundEffect>(e,GroundEffect{GroundEffectKind::ElectricWeb,owner,90});
+        f.world.add<NetId>(e,NetId{f.ids.next()});Replicated rep;rep.kind=net::EntityKind::Effect;
+        rep.typeIndex=static_cast<std::uint16_t>(GroundEffectKind::ElectricWeb);f.world.add<Replicated>(e,rep);return e;
+    };
+    const auto theirs=field(alice),mine=field(f.viewer),hostile=field(wild);
+    f.events.lightning({1050,1000},100,Realm::Overworld,{{1060,1000}},false,alice);
+    f.events.lightning({1050,1000},100,Realm::Overworld,{{1060,1000}},false,wild);
+    f.tick(client,1,1000);
+    WorldRenderer renderer;renderer.options.hideOtherPetals=true;
+    CHECK(renderer.hiddenByOptions(client.entities().at(netIdOf(f.world,theirs))));
+    CHECK(!renderer.hiddenByOptions(client.entities().at(netIdOf(f.world,mine))));
+    CHECK(!renderer.hiddenByOptions(client.entities().at(netIdOf(f.world,hostile))));
+    CHECK(foreign(client,f.world,theirs));CHECK(!foreign(client,f.world,hostile));
+}
+
 TEST(a_splitter_halfs_petals_and_pets_are_the_viewers_own) {
     // The parked half is a second body on the viewer's connection. It is not
     // `viewer`, and what it owns must still never read as somebody else's.

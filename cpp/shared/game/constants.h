@@ -19,7 +19,7 @@
 
 namespace flix {
 // Extra vision must come from equipment/talents, not the zoom-out control.
-inline constexpr double kMinimumUserCameraZoom = 1.0;
+inline constexpr double kMinimumUserCameraZoom = 0.75;
 
 // ---------------------------------------------------------------------------
 // World
@@ -29,7 +29,8 @@ inline constexpr double kMinimumUserCameraZoom = 1.0;
 /// -- every world realm carries its own dimensions (terrain.h) and a map is
 /// whatever shape its file says. What this still pins down is the section grid
 /// below, which is a palette rather than a geography.
-inline constexpr double kWorldSize = 60000.0;
+inline constexpr double kWorldMapScale = 2.0;
+inline constexpr double kWorldSize = 60000.0 * kWorldMapScale;
 inline constexpr double kWorldHalf = kWorldSize * 0.5;
 
 /// The default world is a 3x3 grid of biome sections, each 20000 units
@@ -53,7 +54,8 @@ inline int sectionAt(Vec2 p) {
 /// the flow field walks, the minimap falls back to and the wire carries), with
 /// each cell's authored collision SHAPES beside it for the exact tests
 /// (terrain.h).
-inline constexpr double kTileSize = 256.0;
+inline constexpr double kAuthoredTileSize = 256.0;
+inline constexpr double kTileSize = kAuthoredTileSize * kWorldMapScale;
 inline constexpr int kTilesPerAxis = static_cast<int>(kWorldSize / kTileSize);  // 234
 
 /// The widest a map may be, per axis.

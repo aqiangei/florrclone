@@ -318,7 +318,8 @@ constexpr int kDropBurstCount = ui::kDropBurstCount;
 ///
 /// A drop keeps about 50 x 0.75 = 38 grains alive, so a screen of them is
 /// bounded here rather than by the effect pool it no longer shares.
-constexpr std::size_t kMaxDropSparkles = 512;
+constexpr std::size_t kMaxDropSparkles = 128;
+constexpr int kDetailedDropsPerFrame = 48;
 /// The trickle stops short of the cap so a landing burst always has room: the
 /// shimmer is continuous and would otherwise hold the whole pool, and a burst
 /// silently swallowed is the thing a player notices.
@@ -1028,6 +1029,8 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 break;
             }
             case net::EventKind::Lightning: {
+                if ((event.flag & net::LightningForeign) &&
+                    ((event.flag & net::LightningFromPet) ? options.hideOtherPets : options.hideOtherPetals)) break;
                 // One arm per mob the strike hit. The endpoints are the
                 // server's, not the entity table's: the strike's damage lands a
                 // tick later, so some of these mobs are already dead and gone
@@ -1037,6 +1040,7 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 for (const Vec2& target : event.points) {
                     if (bolts_.size() >= kMaxLightningBolts) break;
                     LightningBolt bolt;
+                    bolt.ownership = event.flag;
                     buildLightningBolt(from, target, bolt.points);
                     if ((event.flag & net::LightningChained) != 0) from = target;
                     bolts_.push_back(std::move(bolt));
@@ -1132,7 +1136,7 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         spawn.distance = kDropSpawnNear + randomUnit() * kDropSpawnSpread;
         spawn.rotation = (randomUnit() - 0.5) * kTau;
         dropSpawns_[entity.netId] = spawn;
-        for (int i = 0; i < kDropBurstCount; ++i) {
+        for (int i = 0; i < kDropBurstCount && dropSparkles_.size() < kMaxDropSparkles; ++i) {
             pushDropGrain(entity.position, entity.rarity, kMaxDropSparkles);
         }
     }
@@ -1176,6 +1180,7 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         if (!sparklingRarity(entity.rarity)) continue;
 
         if (entity.kind == net::EntityKind::Drop) {
+            if (dropSparkles_.size() >= kDropShimmerBudget) continue;
             for (int i = grainsDue(entity.netId, since, nowSeconds_); i > 0; --i) {
                 pushDropGrain(entity.position, entity.rarity, kDropShimmerBudget);
             }
@@ -2790,6 +2795,9 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         // Lying on the ground, not turning with any ring: held at the angle
         // the server put it down at.
         rotation = entity.angle;
+    } else if (config && config->id == "blood_stinger") {
+        // The artwork points along +X; follow each grain's outward bearing.
+        rotation = entity.angle;
     } else if (config && config->hasFixedDirection) {
         rotation = config->fixedDirection;
     } else if (config && config->clumpFacesInward &&
@@ -3736,6 +3744,15 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         if (shield > kMobBarShieldMin) {
             stroke(shield, kMobBarThickness * kMobBarShieldWidth, ui::kPaper, fade(shield));
         }
+        if (labelled && isBossRarity(mob.rarity) && !invulnerable) {
+            canvas.setGlobalAlpha(static_cast<float>(base * opacity));
+            ui::TextStyle style;
+            style.size = std::max(8.0, 12.0 * zoom);
+            style.align = ui::Align::Centre;
+            style.baseline = ui::Baseline::Middle;
+            const int percent = static_cast<int>(std::lround(clamp(mob.healthFraction, 0.0, 1.0) * 100));
+            ui::text(canvas, std::to_string(percent) + "%", screen.x, sy(lineY), style);
+        }
     }
 
     canvas.setGlobalAlpha(static_cast<float>(base * opacity));
@@ -4215,13 +4232,23 @@ void WorldRenderer::drawDrop(Canvas& canvas, const Camera& camera, Vec2 at,
     if (scale <= 0.0 || alpha <= 0.0 || kDropBackdropSide * zoom * scale <= 1.0) return;
     if (!sprites_) return;
     const Vec2 screen = camera.worldToScreen(at);
+    const double cell = kDropBackdropSide * zoom * scale;
+    // Keep every visible drop marked at its position. In a dense pile, bound
+    // expensive tile art, text and shadows instead of dropping loot from view.
+    if (timing_.itemCount > kDetailedDropsPerFrame || cell < 14.0) {
+        const double side = clamp(cell * 0.32, 3.0, 11.0);
+        ui::setFill(canvas, rarityColor(rarity), alpha);
+        canvas.fillRect(static_cast<float>(screen.x - side * 0.5),
+                        static_cast<float>(screen.y - side * 0.5),
+                        static_cast<float>(side), static_cast<float>(side));
+        return;
+    }
 
     // A drop is one item tile, the same object the loadout bar and the
     // inventory draw, laid on the ground with its shadow under it. The camera
     // is folded into the transform rather than multiplied into each number:
     // the tile is written in its own 60-unit cell and only lines up when the
     // whole cell is scaled at once.
-    const double cell = kDropBackdropSide * zoom * scale;
     canvas.save();
     canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
     if (rotation != 0) canvas.rotate(static_cast<float>(rotation));
@@ -4429,6 +4456,8 @@ void WorldRenderer::drawLightning(Canvas& canvas, const Camera& camera) const {
     canvas.setLineCap("round");
     canvas.setLineJoin("round");
     for (const LightningBolt& bolt : bolts_) {
+        if ((bolt.ownership & net::LightningForeign) &&
+            ((bolt.ownership & net::LightningFromPet) ? options.hideOtherPets : options.hideOtherPetals)) continue;
         if (bolt.points.size() < 2) continue;
         const double t = clamp(bolt.ageSeconds / kLightningLifeSeconds, 0.0, 1.0);
         canvas.setGlobalAlpha(static_cast<float>(1.0 - t));
@@ -4699,14 +4728,30 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                 if (entry.second.isRingPetal() && !sacrificed(entry.second)) drawLive(entry.second);
             }
         }
-        for (const auto& entry : entities) {
-            const RemoteEntity& entity = entry.second;
-            if (layerOf(entity) != kind) continue;
-            if (mobs && sacrificed(entity)) continue;
-            // A ring seed's typeIndex is a PETAL index, so it must be ruled
-            // out before isHole reads it as a mob's.
-            if (mobs && (entity.isRingPetal() || isHole(entity.typeIndex))) continue;
-            drawLive(entity);
+        if (kind == net::EntityKind::Drop) {
+            std::vector<const RemoteEntity*> visibleDrops;
+            for (const auto& entry : entities) {
+                const RemoteEntity& entity = entry.second;
+                if (entity.kind == kind && onScreen(entity.position, entity.radius))
+                    visibleDrops.push_back(&entity);
+            }
+            if (visibleDrops.size() > static_cast<std::size_t>(kDetailedDropsPerFrame)) {
+                const auto nearest = [&](const RemoteEntity* a, const RemoteEntity* b) {
+                    return distanceSq(a->position, selfDrawn) < distanceSq(b->position, selfDrawn);
+                };
+                std::nth_element(visibleDrops.begin(), visibleDrops.begin() + kDetailedDropsPerFrame,
+                                 visibleDrops.end(), nearest);
+            }
+            for (const auto* drop : visibleDrops) drawLive(*drop);
+        } else {
+            for (const auto& entry : entities) {
+                const RemoteEntity& entity = entry.second;
+                if (layerOf(entity) != kind) continue;
+                if (mobs && sacrificed(entity)) continue;
+                // A ring seed is a petal index, not a mob index.
+                if (mobs && (entity.isRingPetal() || isHole(entity.typeIndex))) continue;
+                drawLive(entity);
+            }
         }
         for (const DyingPetal& dying : dyingPetals_) {
             if (layerOf(dying.entity) == kind) drawDyingPetal(dying);

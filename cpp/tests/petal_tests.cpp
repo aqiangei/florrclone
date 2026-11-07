@@ -2712,7 +2712,7 @@ TEST(a_bar_with_no_magic_petal_has_no_mana_pool_at_all) {
     CHECK(rig.world.tryGet<ManaPool>(rig.player) == nullptr);
 }
 
-TEST(a_worn_vessel_grants_a_pool_that_arrives_full_and_doubles_per_tier) {
+TEST(a_worn_vessel_grants_a_partial_pool_and_doubles_capacity_per_tier) {
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "vessel");
@@ -2720,7 +2720,7 @@ TEST(a_worn_vessel_grants_a_pool_that_arrives_full_and_doubles_per_tier) {
     rig.tick();
     const ManaPool& pool = rig.world.get<ManaPool>(rig.player);
     CHECK_NEAR(pool.max, 100.0, 1e-9);
-    CHECK_NEAR(pool.current, 100.0, 1e-9);
+    CHECK_NEAR(pool.current, 40.0, 1e-9);
 
     // Two vessels are two grants: the pool is summed over the bar, unlike the
     // lotus threshold beside it.
@@ -2748,7 +2748,7 @@ TEST(taking_the_pool_off_spills_the_mana_rather_than_banking_it) {
     rig.equip(0, "vessel");
     rig.settleEquips();
     rig.tick();
-    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, 100.0, 1e-9);
+    CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, 40.0, 1e-9);
 
     rig.world.get<Loadout>(rig.player).slots[0] = LoadoutSlot{};
     rig.settleEquips();
@@ -6040,7 +6040,7 @@ TEST(wiki_mechanism_lightning_bypasses_armor_and_dodge) {
 TEST(wiki_mechanism_blueberry_projectiles_use_lightning_instead_of_zero_physical_damage){
     CHECK(contentLoaded());Rig rig;rig.equip(0,"magic_peas");rig.freezeRing();rig.settleEquips();rig.settleRing();
     rig.setFlags(net::InputAttack);rig.tick();int seen=0;
-    Query<ProjectileTag,Projectile> shots{rig.world};shots.each([&](Entity,ProjectileTag&,Projectile& shot){++seen;CHECK_NEAR(shot.damage,30,1e-8);});
+    Query<ProjectileTag,Projectile> shots{rig.world};shots.each([&](Entity,ProjectileTag&,Projectile& shot){++seen;CHECK_NEAR(shot.damage,120,1e-8);});
     CHECK_EQ(seen,1);
 }
 TEST(wiki_mechanism_mecha_missile_fires_straight_with_or_without_antennae){

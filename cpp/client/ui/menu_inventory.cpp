@@ -488,14 +488,15 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (config.petMobIndex != kInvalidIndex) {
         const auto& summon=content().mob(config.petMobIndex);
         const bool apex=ladderRarity(rarity)==Rarity::Apex;
-        const auto summonRarity=apex?Rarity::Unique:rarity;
-        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config)*hyperSummonScale(config,rarity);
+        const auto summonRarity=rarity;
+        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config)*hyperSummonScale(config,rarity)*hyperSummonPromotionScale(config,rarity);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
             " x" + std::to_string((config.id=="egg"||config.id=="beetle_egg"
                 ? petalCopies(config.petCount,&skills,slot,rarityIndex(rarity),config.stackable)
                 : config.petCount)*(apex?3:1)),12.0};lines.push_back(pet);
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
+        lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
         special("召唤物伤害：", "Summon damage: ",summon.damage*summonScale*summon.petDamageScale*skills.effectScale(SkillId::PetDamage));
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
@@ -503,6 +504,14 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
         if (config.petMobId != "sandstorm") lines.push_back({chinese ? "自动索敌优先主人600范围内的高阶怪，不超900；离主人700回跟，卡住会安全接回原召唤物。光标指挥优先。" : "Auto-targets high-tier mobs within 600 of the owner, capped at 900. Follows beyond 700; stuck summons recover. Cursor commands take priority.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"孵化准备的1秒内蛋壳受保护，不会被战斗打断。":"The shell is protected during its one-second incubation.",12.0});
+    }
+    if (config.projectile.summonMobIndex != kInvalidIndex) {
+        const auto& summon = content().mob(config.projectile.summonMobIndex);
+        const double scale = petalStatScale(rarity) * strengthBoost(rarity) * hyperSummonPromotionScale(config, rarity);
+        lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(rarity), 12.0});
+        special("每人召唤上限：", "Summon cap per player: ", config.projectile.summonMax);
+        special("召唤物生命：", "Summon health: ", summon.health * scale * summon.petHealthScale * skills.healthScale(SkillId::Summoner));
+        special("召唤物伤害：", "Summon damage: ", summon.damage * scale * summon.petDamageScale * skills.effectScale(SkillId::PetDamage));
     }
     if(computerWeapon(config.id)) {
         lines.push_back({chinese?"电脑联动（只计算主槽、同阶或更高阶配件）：程序/内存/芯片/电容/光标/几何体为6种部件，重复不计。":"Computer synergy: active parts at this tier or higher; software/memory/chip/capacitor/cursor/geometry are six distinct roles.",12.0});
@@ -549,7 +558,15 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (stats.spongeDamageDurationMillis > 0)
         special("伤害分摊时间：", "Damage spread duration: ", stats.spongeDamageDurationMillis / 1000.0, "s");
-    if (stats.cameraZoom != 1.0) special("视野缩放倍率：", "Camera zoom: ", stats.cameraZoom);
+    if (stats.cameraZoom != 1.0) {
+        lines.push_back({std::string(chinese ? "视野缩放：" : "Camera zoom: ") +
+            percentNumber(stats.cameraZoom) + "%", 12.0});
+        lines.push_back({std::string(chinese ? "可见范围倍率：" : "Vision range: ") +
+            oneDecimal(1.0 / stats.cameraZoom) + "x", 12.0});
+    }
+    if (config.id == "observer") lines.push_back({chinese ?
+        "机械导弹发射时自动瞄准同地图内的敌方目标。" :
+        "Mecha Missiles automatically aim at hostile targets in the same map on launch.",12.0});
     if (stats.modifiers.luck != 0.0)
         special(stats.modifiers.luck > 0 ? "幸运加成：+" : "幸运变化：",
                 stats.modifiers.luck > 0 ? "Luck: +" : "Luck: ", stats.modifiers.luck);
@@ -561,6 +578,13 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("弹速：", "Projectile speed: ", config.projectile.speed);
         special("射程：", "Projectile range: ", config.projectile.distance);
         if (config.projectile.seekRange > 0) special("索敌范围：", "Seeking range: ", config.projectile.seekRange);
+    }
+    if (config.id == "magic_eye") {
+        special("每次消耗当前魔力：", "Current mana spent per cast: ", 50.0, "%");
+        special("每点魔力转化闪电伤害：", "Lightning damage per mana: ", 5.0);
+        special("闪电索敌距离：", "Lightning targeting range: ", 240.0);
+        special("最多连锁目标：", "Maximum lightning targets: ",
+                std::clamp(std::min(rarityIndex(rarity), rarityIndex(Rarity::Unique)) - 3, 1, 5));
     }
     if (config.radiation.present) {
         if(config.id=="uranium")
@@ -776,26 +800,27 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         pool.altText = std::string(chinese ? "魔法值上限：+" : "Max Mana: +") + exactNumber(stats.maxMana);
         lines.push_back(pool);
     }
+    const double manaTalent = skills.effectScale(SkillId::ManaRegen);
     if (stats.mana > 0.0) {
-        TooltipLine burst{std::string(chinese ? "单次恢复魔法值：" : "Mana per Burst: ") + abbreviate(stats.mana), 12.0};
+        TooltipLine burst{std::string(chinese ? "单次恢复魔法值：" : "Mana per Burst: ") + abbreviate(stats.mana * manaTalent), 12.0};
         burst.alpha = 0.56;
         burst.labelColor = kStatMana;
-        burst.altText = std::string(chinese ? "单次恢复魔法值：" : "Mana per Burst: ") + exactNumber(stats.mana);
+        burst.altText = std::string(chinese ? "单次恢复魔法值：" : "Mana per Burst: ") + exactNumber(stats.mana * manaTalent);
         lines.push_back(burst);
         const double cycle = stats.reloadMillis + stats.manaChargeMillis;
         if (cycle > 0.0) {
             TooltipLine average{std::string(chinese ? "完整周期平均回蓝/秒：" : "Full-cycle Mana/s: ") +
-                                exactNumber(stats.mana * 1000.0 / cycle), 12.0};
+                                exactNumber(stats.mana * manaTalent * 1000.0 / cycle), 12.0};
             average.alpha = 0.56;
             average.labelColor = kStatMana;
             lines.push_back(average);
         }
     }
     if (stats.passiveManaPerSecond > 0.0) {
-        TooltipLine regen{std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + abbreviate(stats.passiveManaPerSecond), 12.0};
+        TooltipLine regen{std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + abbreviate(stats.passiveManaPerSecond * manaTalent), 12.0};
         regen.alpha = 0.56;
         regen.labelColor = kStatMana;
-        regen.altText = std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + exactNumber(stats.passiveManaPerSecond);
+        regen.altText = std::string(chinese ? "魔法恢复/秒：" : "Mana/s: ") + exactNumber(stats.passiveManaPerSecond * manaTalent);
         lines.push_back(regen);
     }
 

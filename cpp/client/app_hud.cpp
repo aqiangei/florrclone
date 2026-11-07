@@ -263,7 +263,7 @@ void drawFlowerFace(Canvas& canvas, std::uint32_t colour, double radius, double 
 void App::drawHud(Canvas& canvas, double time) {
     const SelfState& self = net_.view().self();
     // altMode_ (ALT toggle) swaps abbreviated HUD numbers for exact values.
-    const bool altHeld = altMode_;
+    const bool altHeld = altMode_ || menus_.settings().showExactValues;
 
     // Invulnerability rides in the replicated state bits of the player's own
     // body rather than in SelfState, so the flag is read back off the entity.
@@ -436,6 +436,10 @@ void App::drawSquadHud(Canvas& canvas, double time) {
         std::max(kHudXpY + (net_.view().self().maxMana > 0.0 ? 20.0 : 0.0) +
                      kHudXpHeight + kHudXpPad, kFlowerCentreY + kHudFlowerBody);
     double centreY = hudBottom + 78.0 * kScale;
+    TextStyle codeStyle=label;
+    codeStyle.align=Align::Left;codeStyle.size=12;
+    const auto code=squad.id.rfind("squad_",0)==0?squad.id.substr(6):squad.id;
+    text(canvas,"组队码："+code+"  /squad-code 代码加入",barX,hudBottom+18,codeStyle);
 
     const Vec2 eye = net_.view().self().position;
     bool wearsSplitter = false;

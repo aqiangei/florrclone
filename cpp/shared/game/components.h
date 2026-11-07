@@ -831,6 +831,8 @@ struct MobAi {
     /// Set by the AI on a trapped pet. Recover it on safe ground beside its
     /// owner, preserving health and lifetime (PetalSystem::recoverDistantPets).
     bool petRecall = false;
+    /// Server movement may skip idle mobs outside every observer's reach.
+    bool sleeping = false;
 };
 
 /// Where a mob is walking to, when it walks to a POINT rather than steering on

@@ -649,7 +649,7 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
             const Transform* origin = world.tryGet<Transform>(source);
             if (target != nullptr && origin != nullptr) {
                 events_->lightning(origin->position, (target->position - origin->position).length(),
-                                   target->realm, {target->position});
+                                   target->realm, {target->position}, false, source);
             }
         }
     }
@@ -2133,7 +2133,8 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
                                      const ContentRegistry& content, double nowMillis, double dt) {
     fields_.clear();
     queries_->fields.each([&](Entity e, GroundEffect& effect, Transform& transform) {
-        if (effect.radius <= 0.0) return;
+        // In-flight or disabled fields still age; zero radius must not make
+        // their Lifetime immortal.
         // A strike's burst is a pollen puff in every respect the field pass
         // cares about -- same reach rule, same rim rule, same once-per-victim
         // chip -- and differs only in the colour of the number it reports.
@@ -2167,6 +2168,7 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
         if (field.ownerPoisonPerSecond > 0.0 && field.poisonDurationMillis > 0.0) {
             poisonFieldOwner(world, field, nowMillis);
         }
+        if (field.radius <= 0.0) continue;
         if (field.damagePerSecond <= 0.0 && field.damagePerHit <= 0.0 &&
             field.slowFactor >= 1.0) continue;
         queryBodies(grid, field.realm, field.position, field.radius + kBroadphasePad, candidates_);
@@ -2475,7 +2477,12 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.noHealDurationMillis = stats.noHealDurationMillis;
         source.armorReduction = stats.armorReduction;
         source.critDamage = stats.critDamage;
-        if (config.id == "dice") { source.critChance = 0.05; source.critMultiplier = 35.0; }
+        if (config.id == "dice") {
+            const auto* tree = world.tryGet<PlayerSkillTree>(petal.owner);
+            const double luck = tree ? tree->skills.luck() : 0.0;
+            source.critChance = 0.05 + std::clamp(luck / kLuckTalent.back(), 0.0, 1.0) * 0.02;
+            source.critMultiplier = 35.0;
+        }
         if (config.id == "domino") source.damage *= dominoDamageMultiplier(petal.dominoPips, petal.rarity);
         source.lifesteal = stats.lifesteal;
         source.owner = petal.owner;
@@ -2518,6 +2525,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
         // Resolved once per source, for the shots below: the answer canDamage()
         // would reach for every one of them.
         const Entity sourcePlayer = creditedPlayer(world, source.attacker);
+        const double sourceHalf = squareMobHalfExtent(world, source.attacker);
         queryBodies(grid, source.realm, source.position, source.radius + kBroadphasePad,
                     candidates_, sourcePlayer);
         bool ricochetHit = false;
@@ -2596,7 +2604,6 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             const double reach = source.radius + body->radius +
                                  (petPair ? kMobCollisionBuffer : 0.0) +
                                  (flushPair ? kNpcTouchSlack : 0.0);
-            const double sourceHalf=squareMobHalfExtent(world,source.attacker);
             const double targetHalf=squareMobHalfExtent(world,victim);
             if(sourceHalf>0 || targetHalf>0) {
                 const auto* sourceAt=world.tryGet<Transform>(source.attacker);
@@ -2905,7 +2912,7 @@ void CombatSystem::strikeLightning(World& world, const SpatialGrid& grid, Entity
         // The queue draws the nearest of them when there are more than fit
         // (EventQueue::lightning). The DAMAGE list is not trimmed; every
         // flower inside the radius is hit whether or not an arm was drawn.
-        events_->lightning(at, radius, realm, strikeArms_);
+        events_->lightning(at, radius, realm, strikeArms_, false, source);
     }
 
     // Entities, not pointers: applyDamage can mark a flower Dead, which

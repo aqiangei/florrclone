@@ -49,8 +49,16 @@ TEST(hyper_abandon_destroys_one_claim_without_refund_and_preserves_other_titans)
     CHECK_EQ(f.db.storedTable("hyperForges")["garden:rose"].dump(),untouched);
     CHECK_EQ(hyperForgeState(f.db,"rose").claims,1);
     CHECK(!abandonHyper(f.db,f.a,"rose").ok);
+    const auto afterAbandon = f.db.serialise();
+    CHECK(!forgeHyper(f.db,f.a,"rose",1001).ok);
+    CHECK_EQ(f.db.serialise(),afterAbandon);
+    Database restored; std::string error;
+    CHECK(restored.load(f.path,error));
+    CHECK(!forgeHyper(restored,f.a,"rose",24LL*3600000).ok);
     CHECK(forgeHyper(f.db,f.b,"rose",1001).ok);
     CHECK_EQ(hyperForgeState(f.db,"rose").claims,2);
+    CHECK_EQ(hyperForgeState(f.db,"rose").protectedUntil,1001+14LL*3600000);
+    CHECK(hyperForgeState(f.db,"rose").abandonedBy.empty());
     auto& record=f.db.progress(f.a);
     record.addItem(Rarity::Apex,"petal_rose",-1);
     StoredItem rose;rose.petalType="rose";rose.rarity=Rarity::Apex;

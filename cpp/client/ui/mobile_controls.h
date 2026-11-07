@@ -84,9 +84,10 @@ public:
     Vec2 retractCentre() const { return retractCentre_; }
     Vec2 swapCentre() const { return swapCentre_; }
     /// Answering radius of the stick (drawn radius × slack × layout scale).
-    /// Chat layout sits above this ring so a thumb sliding to move does not
+    /// Chat layout sits beside this ring so a thumb sliding to move does not
     /// land on the closed chat slot.
     double stickHitRadius() const;
+    double stickApproachBottom() const;
 
     bool attackPressed() const { return attack_.held; }
     bool retractPressed() const { return retract_.held; }

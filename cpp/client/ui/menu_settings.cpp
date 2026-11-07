@@ -64,6 +64,14 @@
 EM_JS(int, flix_settings_fullscreen_active, (), {
     return !!(document.fullscreenElement || document.webkitFullscreenElement);
 });
+EM_JS(int, flix_settings_low_quality, (), {
+    return window.flixLowMemoryGraphics === true;
+});
+EM_JS(void, flix_settings_change_quality, (int low), {
+    const url = new URL(location.href);
+    url.searchParams.set('quality', low ? 'low' : 'standard');
+    location.assign(url);
+});
 EM_JS(void, flix_settings_toggle_fullscreen, (int chinese), {
     if (window.florrToggleFullscreen) { void window.florrToggleFullscreen(); return; }
     const root = document.documentElement;
@@ -157,6 +165,7 @@ bool operator==(WidgetId a, WidgetId b) { return a.kind == b.kind && a.index == 
 enum Toggle : int {
     kShowHitboxes,
     kShowStats,
+    kShowExactValues,
     kDynamicSkybox,
     kMobDeathAnimation,
     kAntialiasing,
@@ -278,6 +287,7 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
     switch (id) {
         case kShowHitboxes: return &settings.render.hitboxes;
         case kShowStats: return &settings.showStats;
+        case kShowExactValues: return &settings.showExactValues;
         case kDebugMenuEnabled: return &settings.showDebugButton;
         case kClassicLoadoutBar: return &settings.classicLoadoutBar;
         case kUseMouseControls: return &settings.useMouseControls;
@@ -660,10 +670,9 @@ bool SettingsPanel::render(MenuContext& ctx) {
     // --- scrolling ----------------------------------------------------------
     scroll_.viewHeight = viewHeight;
     scroll_.contentHeight = st.contentHeight;
-    // Wherever the pointer is: the browser's wheel listener sits on the UI
-    // canvas, not on the card, and forwards every notch to whichever panel is
-    // open. A cursor resting over the world still scrolls this list.
-    scroll_.offset -= static_cast<double>(ctx.wheel()) * kWheelStep;
+    // Only the hovered panel owns this wheel event; chat may be focused outside it.
+    if (panel.contains(mouse))
+        scroll_.offset -= static_cast<double>(ctx.wheel()) * kWheelStep;
     // A finger is more particular: only the list itself, the band the clip
     // below spans. A sideways drag still reaches a slider -- see Window's
     // note on dragging a list.
@@ -741,12 +750,23 @@ bool SettingsPanel::render(MenuContext& ctx) {
 
         case Tab::Graphics: {
             p.fullscreenRow();
+#ifdef __EMSCRIPTEN__
+            const bool lowQuality = flix_settings_low_quality();
+            const bool zh = language() == Language::Zh;
+            const char* quality = lowQuality
+                ? (zh ? "切换到标准画质（重载）" : "Standard graphics (reload)")
+                : (zh ? "切换到低清模式（重载）" : "Low graphics (reload)");
+            if (p.button(Rect{p.x, p.cy, p.w, 30.0}, quality, kActionFill, 14.0, 9902))
+                flix_settings_change_quality(lowQuality ? 0 : 1);
+            p.cy += 40.0;
+#endif
             p.checkbox(kClassicLoadoutBar, tr(Msg::ClassicLoadoutBar));
             p.checkbox(kShowHitboxes, tr(Msg::ShowHitboxes));
             p.checkbox(kHideOtherPetals, tr(Msg::HideOtherPetals));
             p.checkbox(kHideOtherPets, tr(Msg::HideOtherPets));
             p.checkbox(kScreenShake, tr(Msg::ScreenShake));
             p.checkbox(kShowStats, tr(Msg::ShowStats));
+            p.checkbox(kShowExactValues, tr(Msg::ShowExactValues));
             p.checkbox(kDynamicSkybox, tr(Msg::DynamicSkybox));
             p.checkbox(kMobDeathAnimation, tr(Msg::MobDeathAnimation));
             p.checkbox(kAntialiasing, tr(Msg::Antialiasing));

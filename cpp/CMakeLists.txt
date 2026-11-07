@@ -946,6 +946,11 @@ target_link_libraries(projectile_bench PRIVATE flix_server flix_client)
 target_compile_definitions(projectile_bench PRIVATE FLIX_TEST_DATA_DIR="${FLIX_DATA_DIR}")
 add_dependencies(projectile_bench flix_data)
 
+# Single-slot outgoing damage against a stationary, harmless dummy.
+add_executable(petal_dps_bench tools/petal_dps_bench.cpp)
+target_link_libraries(petal_dps_bench PRIVATE flix_server)
+add_dependencies(petal_dps_bench flix_data)
+
 # What one mob type costs the mob layer, in milliseconds -- the figure that
 # says whether a mob is drawing something expensive every frame. See the
 # file's own header.
@@ -976,4 +981,14 @@ target_link_libraries(flix_tests PRIVATE flix_server flix_client)
 target_compile_definitions(flix_tests PRIVATE FLIX_TEST_DATA_DIR="${FLIX_DATA_DIR}")
 add_dependencies(flix_tests flix_data)
 add_test(NAME flix_tests COMMAND flix_tests)
+endif()
+
+if(NOT EMSCRIPTEN)
+add_executable(flix_todo1106_tests EXCLUDE_FROM_ALL
+ tests/runner.cpp tests/todo1106_tests.cpp tests/npc_tests.cpp tests/shard_presence_tests.cpp tests/council_tests.cpp
+ tests/feedback1106_combat_tests.cpp tests/pickup_cue_tests.cpp
+ tests/replication_tests.cpp tests/todo1105_tests.cpp tests/hyper_forge_tests.cpp)
+target_link_libraries(flix_todo1106_tests PRIVATE flix_server flix_client)
+target_compile_definitions(flix_todo1106_tests PRIVATE FLIX_TEST_DATA_DIR="${FLIX_DATA_DIR}")
+add_dependencies(flix_todo1106_tests flix_data)
 endif()

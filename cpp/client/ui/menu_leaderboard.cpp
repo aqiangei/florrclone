@@ -81,6 +81,7 @@ void LeaderboardPanel::reset() {
     scroll_ = {};
     requested_ = false;
     hyper_ = false;
+    playtime_ = false;
     barDrag() = {};
 }
 
@@ -96,12 +97,13 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
         ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard);
     }
 
-    const std::vector<LeaderboardRow>& rows = ctx.net.leaderboard();
+    const std::vector<LeaderboardRow>& rows = playtime_ ? ctx.net.playtimeLeaderboard() : ctx.net.leaderboard();
     const auto& holdings = ctx.net.hyperBoard();
     const bool pending = ctx.net.leaderboardPending();
     const std::size_t rowCount = hyper_ ? holdings.size() : rows.size();
     const Rect xpTab{panel.x+12, panel.y+50, 95, 28};
     const Rect hyperTab{panel.x+115, panel.y+50, 115, 28};
+    const Rect timeTab{panel.x+238, panel.y+50, 115, 28};
     const Rect prevPage{panel.right()-92, panel.y+50, 32, 28};
     const Rect nextPage{panel.right()-50, panel.y+50, 32, 28};
 
@@ -125,10 +127,8 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     scroll_.viewHeight = view.h + kTrackBottomInset;
     const bool scrollable = scroll_.contentHeight > scroll_.viewHeight;
 
-    // The reference SUBTRACTS the wheel delta from its scroll offset, so a
-    // wheel-down there walks the board back toward rank 1 rather than on to
-    // rank 50 -- the other way round from the other panels, and kept.
-    if (panel.contains(mouse)) scroll_.offset += ctx.wheel() * kWheelStep;
+    // Positive wheel delta means up: move toward the first row.
+    if (panel.contains(mouse)) scroll_.offset -= ctx.wheel() * kWheelStep;
     // A finger is not inverted: the board follows it. Everything but the
     // track, which a finger drags the other way.
     scroll_.offset -=
@@ -141,7 +141,8 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     if (ctx.pressed()) {
         if (closeRect.contains(mouse)) {
             closing = true;
-        } else if (xpTab.contains(mouse) || hyperTab.contains(mouse)) {
+        } else if (xpTab.contains(mouse) || hyperTab.contains(mouse) || timeTab.contains(mouse)) {
+            playtime_ = timeTab.contains(mouse);
             hyper_ = hyperTab.contains(mouse); scroll_.offset = 0; drag.active = false;
             ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard);
             return true; // Recompute the selected row count on the next frame.
@@ -195,8 +196,9 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
 
     pillButton(canvas, refreshRect, tipRefresh(), kLeaderboardSkin.border);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
-    pillButton(canvas, xpTab, "等级榜", !hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
+    pillButton(canvas, xpTab, "等级榜", !hyper_ && !playtime_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, hyperTab, "超凡持有", hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
+    pillButton(canvas, timeTab, "有效游玩时间", playtime_ ? 0x85530Cu : kLeaderboardSkin.border);
     if (hyper_) {
         const auto pages = std::max(1u, (ctx.net.hyperHoldingsTotal()+kHyperBoardPageSize-1)/kHyperBoardPageSize);
         TextStyle info; info.size=12; info.strokeWidth=0;
@@ -234,9 +236,9 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
         header.strokeWidth = 0.0;
         textAtAlpha(canvas, hyper_ ? "总H" : "#", rankX, y + 8.0, header, 0.8);
         textAtAlpha(canvas, "玩家", nameX, y + 8.0, header, 0.8);
-        textAtAlpha(canvas, hyper_ ? "花瓣" : "等级", levelX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, hyper_ ? "花瓣" : (playtime_ ? "" : "等级"), levelX, y + 8.0, header, 0.8);
         header.align = Align::Right;
-        textAtAlpha(canvas, hyper_ ? "数量" : "XP", xpX, y + 8.0, header, 0.8);
+        textAtAlpha(canvas, hyper_ ? "数量" : (playtime_ ? "活跃小时" : "XP"), xpX, y + 8.0, header, 0.8);
         y += kColumnHeader;
 
         for (std::size_t i = 0; i < rowCount; ++i) {
@@ -266,13 +268,15 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
             // The level travels with the row; the panel does not re-derive it
             // from XP with a curve that could drift from the server's.
             cell.fill = kPaper;
-            const auto label = hyper_ ? petalNameTr(holdings[i].petal, holdings[i].petal.c_str()) : std::to_string(rows[i].level);
+            const auto label = hyper_ ? petalNameTr(holdings[i].petal, holdings[i].petal.c_str()) : (playtime_ ? std::string() : std::to_string(rows[i].level));
             cell.size = std::min(14.0, 14.0 * (xpX-levelX-35) / std::max(1.0, measure(label,14.0)));
             text(canvas, label, levelX, middle, cell);
 
             cell.align = Align::Right;
             cell.size = 13.0;
-            textAtAlpha(canvas, hyper_ ? std::to_string(holdings[i].count) : formatXp(rows[i].totalXp), xpX, middle, cell, 0.8);
+            const auto hours = playtime_ ? std::to_string(static_cast<std::uint64_t>(rows[i].totalXp / 3600)) + "h " +
+                std::to_string(static_cast<unsigned>(rows[i].totalXp / 60) % 60) + "m" : std::string();
+            textAtAlpha(canvas, hyper_ ? std::to_string(holdings[i].count) : (playtime_ ? hours : formatXp(rows[i].totalXp)), xpX, middle, cell, 0.8);
         }
     }
     canvas.restore();

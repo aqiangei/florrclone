@@ -2,6 +2,26 @@
 #include "test.h"
 #include <iostream>
 using namespace flix;using namespace flix::shards;
+TEST(todo1106_cross_shard_chat_preserves_full_message_without_source_echo) {
+    Presence presence;
+    const Json state=Json::object(), rows=Json::array();
+    const Node one{"one","boot1",Role::Game}, two{"two","boot2",Role::Game};
+    Json batch=Json::array(), event=Json::object();
+    event["id"]="abcdef0123456789abcdef0123456789";
+    event["kind"]="chat"; event["channel"]=1; event["author"]="";
+    const std::string text=std::string(12000,'x')+"完整合成明细";
+    event["text"]=text;event["realm"]="secret";batch.push(event);
+    CHECK(presence.exchange(state,one,rows,0,batch)["notices"].size()==0);
+    presence.exchange(state,one,rows,100,batch);
+    auto delivered=presence.exchange(state,two,rows,200)["notices"];
+    CHECK_EQ(delivered.size(),1u);
+    CHECK_EQ(delivered[0]["text"].asString(),text);
+    CHECK(delivered[0]["realm"].isNull());
+    event["id"]="bbcdef0123456789abcdef0123456789";
+    event["channel"]=3;batch=Json::array();batch.push(event);
+    presence.exchange(state,one,rows,300,batch);
+    CHECK_EQ(presence.exchange(state,two,rows,400)["notices"].size(),1u);
+}
 TEST(shard_presence_ownership_handoff_expiry_and_safe_fields) {
  Presence p;Json state=Json::object();
  auto own=[&](const char* id,const char* shard,const char* boot,int epoch){auto& a=state["accounts"][id];a["phase"]="active";a["shard"]=shard;a["boot"]=boot;a["epoch"]=epoch;};

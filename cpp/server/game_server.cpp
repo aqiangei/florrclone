@@ -1,6 +1,7 @@
 #include "server/hyper_board.h"
 #include "server/council.h"
 #include "shared/net/web_channel.h"
+#include "server/playtime_board.h"
 #include "server/shop_lock.h"
 #include "server/timed_hammers.h"
 #include "server/daily_drop_bonus.h"
@@ -269,16 +270,47 @@ StoredItem presetItem(const std::string& petalType, Rarity rarity) {
     return item;
 }
 
-/// How closely a preset load came to what was saved.
+void savePresetSkills(PlayerRecord& record, const std::string& name) {
+    Json skills = Json::object();
+    for (int i = 0; i < kSkillCount; ++i) {
+        const auto skill = static_cast<SkillId>(i);
+        if (skill == SkillId::Prestige) continue;
+        const int level = record.skills.florrLevel(skill);
+        if (level > 0) skills[kSkillKeys[i]] = level;
+    }
+    record.extra["loadoutPresetSkills"][name] = std::move(skills);
+}
+
+void loadPresetSkills(PlayerRecord& record, const std::string& name) {
+    const Json& extra = record.extra;
+    const Json& saved = extra["loadoutPresetSkills"][name];
+    if (!saved.isObject()) return; // Older presets start with the current build.
+    SkillSet skills;
+    // Prestige grants access to maps. It belongs to the account and changing
+    // equipment cannot revoke the session's permission to remain there.
+    skills.set(SkillId::Prestige, record.skills.level(SkillId::Prestige));
+    for (int i = 0; i < kSkillCount; ++i) {
+        const auto skill = static_cast<SkillId>(i);
+        if (skill == SkillId::Prestige) continue;
+        skills.setFlorrLevel(skill, std::clamp(saved[kSkillKeys[i]].asInt(0), 0, skillTierCount(skill)));
+    }
+    for (const auto& gate : kSkillGates)
+        if (!skills.prerequisiteMet(gate.child)) skills.set(gate.child, -1);
+    if (skills.spent() <= record.skills.spent() + record.talentPoints()) record.skills = skills;
+}
+
 void autoSaveActivePreset(PlayerRecord& record) {
     const int active=record.extra["activeLoadoutPreset"].asInt(-1);
     if(active<0||active>=kLoadoutPresetCount)return;
     std::vector<std::optional<StoredItem>> slots(kLoadoutSlots);
     for(std::size_t i=0;i<slots.size()&&i<record.loadout.size();++i)
         if(record.loadout[i])slots[i]=presetItem(record.loadout[i]->petalType,record.loadout[i]->rarity);
-    record.loadoutPresets[loadoutPresetName(active)]=std::move(slots);
+    const std::string name = loadoutPresetName(active);
+    record.loadoutPresets[name] = std::move(slots);
+    savePresetSkills(record, name);
 }
 
+/// How closely a preset load came to what was saved.
 struct PresetLoad {
     int downgraded = 0;   ///< equipped, but at a lower rarity than was saved
     int missing = 0;      ///< not owned at the saved rarity or any below it
@@ -570,6 +602,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // The broadphase was built before the maps were: its layers are sized to
     // the default world until it is told what shape each realm really is.
     grid_.sizeToRealms(*terrain_);
+    pickupGrid_.sizeToRealms(*terrain_);
 
     movement_ = std::make_unique<MovementSystem>();
     // The AI caches queries against one world and wanders from its own
@@ -578,6 +611,13 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     petals_ = std::make_unique<PetalSystem>();
     combat_ = std::make_unique<CombatSystem>();
     spawning_ = std::make_unique<SpawnSystem>();
+    if (config.loadShedding) {
+        spawning_->ambientDensityScale = 0.5;
+        spawning_->hotZoneDensityScale = 0.7;
+        spawning_->mobCap = kMaxLiveMobs / 2;
+        petals_->volleyEntityLimit = 96;
+        std::printf("[capacity] load shedding enabled; 20 TPS, no player cap\n");
+    }
     spawning_->seedBossClocks(config.worldSeed ^ 0xB055C10C5ull);
     modes_ = std::make_unique<ModeSpawner>();
     dungeons_ = std::make_unique<DungeonSystem>();
@@ -908,6 +948,8 @@ void GameServer::serviceSharedViews() {
                 for(const auto& row:view["rows"].items()){w.str(row["name"].asString());w.u16(row["level"].asInt());w.f64(row["xp"].asDouble());}
                 w.u32(view["total"].asInt());w.u32(view["offset"].asInt());w.u16(view["holdings"].size());
                 for(const auto& row:view["holdings"].items()){w.str(row["name"].asString());w.str(row["petal"].asString());w.u32(row["count"].asInt());w.u32(row["ownerTotal"].asInt());}
+                w.u8(view["playtime"].size());
+                for (const auto& row : view["playtime"].items()) { w.str(row["name"].asString()); w.f64(row["seconds"].asDouble()); }
             }
             peer->send(w);
         }
@@ -1273,7 +1315,7 @@ void GameServer::tick(double nowMillis) {
     // sitting on the title screen is dirty in memory and would otherwise wait
     // for the next player to actually join before it reached the disk.
     if (nowMillis >= nextPersistMillis_) {
-        nextPersistMillis_ = nowMillis + kPersistIntervalMillis;
+        nextPersistMillis_ = nowMillis + kPersistIntervalMillis * (config_.loadShedding ? 2.0 : 1.0);
         for (const auto& entry : sessions_) {
             if (entry.second.playing()) persistPlayer(entry.second);
         }
@@ -1459,7 +1501,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // make a real overlap invisible for one tick.
     grid_.clear();
     Query<Transform, Body> afterMovement{world_};
-    afterMovement.without<ProjectileTag, Intangible>();
+    afterMovement.without<ProjectileTag, Intangible, DropTag>();
     afterMovement.each([&](Entity e, Transform& transform, Body& body) {
         grid_.insert(e, transform.realm, transform.position, body.radius);
     });
@@ -1492,7 +1534,14 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // Every flower, bots included, is somebody an NPC can turn to look at.
     npcs_->run(world_, *terrain_, content(), activePlayers_, nowMillis);
     markTickPhase("modes+npcs");
-    loot_->run(world_, grid_, content(), rng_, nowMillis, dt, commands_, events_);
+    // Pickups can only collect drops. Keeping them out of the body grid
+    // also keeps stationary loot out of projectile and aura queries.
+    pickupGrid_.clear();
+    Query<DropTag, Transform, Body>{world_}.each(
+        [&](Entity e, DropTag&, Transform& transform, Body& body) {
+            pickupGrid_.insert(e, transform.realm, transform.position, body.radius);
+        });
+    loot_->run(world_, pickupGrid_, content(), rng_, nowMillis, dt, commands_, events_);
     markTickPhase("loot");
 
     // A pickup is a world event; owning it is an account fact. The loot system
@@ -1682,6 +1731,7 @@ void GameServer::replicate(double nowMillis) {
     frame.snapshotIndex = ++snapshotIndex_;
     frame.nowMillis = nowMillis;
     frame.events = &events_;
+    frame.loadShedding = config_.loadShedding;
 
     if (!parallelSnapshots_) {
         unsigned workers = 3;
@@ -1955,6 +2005,8 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::LoadLoadoutPreset:
         case net::ClientMessage::BulkCraft:
         case net::ClientMessage::DailyDropBonus:
+        case net::ClientMessage::DailyLoginClaim:
+        case net::ClientMessage::AccountQQ:
         case net::ClientMessage::Craft:
         case net::ClientMessage::OracleCraft:
         case net::ClientMessage::Trade:
@@ -1988,6 +2040,28 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::SetLoadout:    handleSetLoadout(*session, reader); break;
         case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
         case net::ClientMessage::DailyDropBonus: handleDropBonus(*session, connection, reader); break;
+        case net::ClientMessage::AccountQQ: {
+            const bool save = reader.boolean();
+            const std::string value = save ? reader.str() : std::string();
+            if (!reader.ok() || !session->authenticated() || value.size() > 100) break;
+            auto& record = liveRecord(*session);
+            if (save) {
+                record.extra["qq"] = value;
+                database_.markDirty();
+            }
+            ByteWriter reply;
+            reply.u8(static_cast<std::uint8_t>(net::ServerMessage::AccountQQ));
+            reply.boolean(save);
+            reply.str(record.extra["qq"].asString());
+            connection.send(reply);
+            break;
+        }
+        case net::ClientMessage::DailyLoginClaim:
+            if (session->authenticated()) {
+                sendDailyStreak(*session, connection);
+                sendProfile(*session, connection);
+            }
+            break;
         case net::ClientMessage::ProfileCheck:  handleProfileCheck(*session, connection, reader); break;
         case net::ClientMessage::SwapLoadout:   handleSwapLoadout(*session, reader); break;
         case net::ClientMessage::SwapLoadoutRows: handleSwapLoadoutRows(*session, connection); break;
@@ -2909,7 +2983,13 @@ void GameServer::sendShopResult(net::Connection& connection, net::ShopResultKind
 }
 
 void GameServer::broadcastChat(net::ChatChannel channel, const std::string& author,
-                               const std::string& text, std::uint32_t speakerNetId) {
+                               const std::string& text, std::uint32_t speakerNetId, bool relay) {
+    if (relay && config_.authorityAuth && (channel == net::ChatChannel::Global ||
+            channel == net::ChatChannel::System || channel == net::ChatChannel::Admin)) {
+        Json event = Json::object(); event["action"] = "chatAnnouncement";
+        event["channel"] = static_cast<int>(channel); event["author"] = author; event["text"] = text;
+        config_.authorityAuth(event);
+    }
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::Chat));
     w.u8(static_cast<std::uint8_t>(channel));
@@ -3489,6 +3569,7 @@ void GameServer::handleSaveLoadoutPreset(Session& session, net::Connection& conn
     }
     const std::string name = loadoutPresetName(preset);
     record.loadoutPresets[name] = std::move(saved);
+    savePresetSkills(record, name);
     database_.markDirty();
     // The profile carries the presets, and the bar's K/L row is drawn from it.
     sendProfile(session, connection);
@@ -3519,6 +3600,7 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
     const std::vector<std::optional<StoredItem>> slots =
         saved != record.loadoutPresets.end() ? saved->second
                                              : std::vector<std::optional<StoredItem>>(kLoadoutSlots);
+    loadPresetSkills(record, name);
     const PresetLoad result = equipPreset(record, slots, record.skills.loadoutSlots());
     record.extra["activeLoadoutPreset"]=static_cast<int>(preset);
     autoSaveActivePreset(record);
@@ -3628,8 +3710,9 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     if (upgrades > 0) giveToInventory(record, petalIndex, upgradeRarity(rarity), upgrades);
     database_.markDirty();
 
-    if (upgrades > 0) announceRareCraft(session, petalIndex, upgradeRarity(rarity),
-                                           upgrades, count - petalsReturned);
+    const Rarity made = upgradeRarity(rarity);
+    if (upgrades > 0 && (!quiet || made == Rarity::Super))
+        announceRareCraft(session, petalIndex, made, upgrades, count - petalsReturned);
 
     w.boolean(upgrades > 0);
     w.u16(petalIndex);
@@ -3675,7 +3758,9 @@ void GameServer::handleBulkCraft(Session& session, net::Connection& connection, 
 void GameServer::handleOracleCraft(Session& session, net::Connection& connection,
                                   ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
-    const Rarity rarity = clampRarity(reader.u8());
+    const auto rawRarity = reader.u8();
+    const Rarity rarity = clampRarity(rawRarity);
+    const std::uint16_t quantity = reader.u16();
     if (!reader.ok() || !session.authenticated()) return;
 
     const auto refuse = [&](const std::string& reason) {
@@ -3708,42 +3793,41 @@ void GameServer::handleOracleCraft(Session& session, net::Connection& connection
         return;
     }
 
-    // Once per half hour, per ACCOUNT -- not per body or per connection.
-    const double wait = oracleWaitMillis(session.userId);
-    if (wait > 0.0) {
-        refuse(oracleCooldownText(wait));
+    const int unitCost = oracleCraftCost(rarity);
+    if (rawRarity > static_cast<unsigned>(Rarity::Ultra) || quantity == 0 ||
+        unitCost <= 0 || petalIndex >= content().petalCount() ||
+        !petalComesAt(content().petal(petalIndex), rarity) ||
+        !petalComesAt(content().petal(petalIndex), upgradeRarity(rarity))) {
+        refuse("The oracle upgrades Common through Ultra only.");
         return;
     }
-
-    // One upgrade, no roll, nothing returned: the price is the whole
-    // transaction. Apex and universal cost zero because nothing crafts out of
-    // either, which is what refuses them here.
-    const int cost = oracleCraftCost(rarity);
-    if (cost <= 0 || petalIndex >= content().petalCount()) {
-        refuse("The oracle cannot craft that.");
-        return;
-    }
+    const std::int64_t totalCost = static_cast<std::int64_t>(unitCost) * quantity;
+    if (totalCost > kMaxStackCount) { refuse("Too many petals."); return; }
+    const int cost = static_cast<int>(totalCost);
     PlayerRecord& record = liveRecord(session);
+    const Rarity made = upgradeRarity(rarity);
+    if (record.itemCount(made, inventoryKey(petalIndex)) > kMaxStackCount - quantity) {
+        refuse("The resulting stack would be too large.");
+        return;
+    }
     if (!takeFromInventory(record, petalIndex, rarity, cost)) {
         refuse("Not enough petals.");
         resyncProfile(session, connection);
         return;
     }
-    const Rarity made = upgradeRarity(rarity);
-    giveToInventory(record, petalIndex, made, 1);
-    oracleReadyAt_[session.userId] = clockMillis_ + kOracleCooldownMillis;
+    giveToInventory(record, petalIndex, made, quantity);
     database_.markDirty();
 
     // A super bought is announced exactly as a super rolled is: the line is
     // about what exists now, not about how lucky anyone got.
-    announceRareCraft(session, petalIndex, made, 1, cost);
+    announceRareCraft(session, petalIndex, made, quantity, cost);
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::OracleResult));
     w.boolean(true);
     w.u16(petalIndex);
     w.u8(static_cast<std::uint8_t>(made));
-    w.u16(1);
+    w.u16(quantity);
     w.u32(static_cast<std::uint32_t>(cost));
     w.str("");
     connection.send(w);
@@ -3752,12 +3836,7 @@ void GameServer::handleOracleCraft(Session& session, net::Connection& connection
     sendProfile(session, connection);
 }
 
-double GameServer::oracleWaitMillis(const std::string& userId) {
-    const auto found = oracleReadyAt_.find(userId);
-    if (found == oracleReadyAt_.end()) return 0.0;
-    const double wait = found->second - clockMillis_;
-    if (wait > 0.0) return wait;
-    oracleReadyAt_.erase(found);
+double GameServer::oracleWaitMillis(const std::string& /*userId*/) {
     return 0.0;
 }
 
@@ -4127,6 +4206,10 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         }
         const auto state=hyperForgeState(database_,hyperForgeOutput(petal.id),titan);
         if(state.owner==session.userId){reply(false,"你已经持有该超凡花瓣。");return;}
+        if(state.abandonedBy==session.userId){
+            reply(false,kHyperAbandonedRefusal);
+            return;
+        }
         if(state.protectedUntil>database_.nowMillis()){
             reply(false,"保护期尚未结束，剩余"+std::to_string((state.protectedUntil-database_.nowMillis()+59999)/60000)+"分钟。");return;
         }
@@ -4310,7 +4393,7 @@ int GameServer::takeUniversals(std::uint16_t petalIndex, const std::string& keep
 
 void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIndex,
                                    Rarity made, std::uint32_t quantity, std::uint32_t consumed, bool titanForge) {
-    // The top three tiers only, and ONE line however many the batch produced:
+    // ONE line however many the batch produced:
     // the reference announces the craft, not each petal it yielded. A
     // universal is never crafted -- it is forged at a titan, one at a time --
     // and says so.
@@ -4342,16 +4425,22 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
         (consumed ? ", consumed x" + std::to_string(consumed) : "") + ")";
     const std::string plain = article + " " + tier + " " + petal + verb + "@" +
                               session.username + " [" + playerName + "]" + details;
-    broadcastChat(net::ChatChannel::System, "",
-                  std::string("<b style=\"color: ") + tierColor + ";\">" + article + " " + tier +
-                      " " + petal + verb + "<b style=\"color: #00ff00;\">@" +
-                      session.username + "</b> [<b style=\"color: yellow;\">" + playerName +
-                      "</b>]</b>" + details);
+    const bool privateCraft = made == Rarity::Super;
+    const std::string marked = std::string("<b style=\"color: ") + tierColor + ";\">" +
+        article + " " + tier + " " + petal + verb + "<b style=\"color: " +
+        (privateCraft ? "yellow" : "#00ff00") + ";\">@" + session.username +
+        "</b> [<b style=\"color: " + (privateCraft ? "#00ff00" : "yellow") +
+        ";\">" + playerName + "</b>]</b>" + details;
+    if (privateCraft) {
+        if (auto* recipient = listener_.find(session.connection))
+            sendChatTo(*recipient, net::ChatChannel::System, "", marked);
+        return;
+    }
+    broadcastChat(net::ChatChannel::System, "", marked);
 
     addNotification(made == Rarity::Universal ? "universal_craft"
                     : made == Rarity::Apex   ? "apex_craft"
-                    : made == Rarity::Unique ? "unique_craft"
-                                             : "super_craft",
+                                             : "unique_craft",
                     plain);
 }
 
@@ -5381,6 +5470,9 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
         const auto& row = holdings[i];
         w.str(row.name); w.str(row.petal); w.u32(row.count); w.u32(row.ownerTotal);
     }
+    const auto playtimes = playtimeBoard(accounts, includeAdmins);
+    w.u8(static_cast<std::uint8_t>(playtimes.size()));
+    for (const auto& row : playtimes) { w.str(row.name); w.f64(row.seconds); }
     connection.send(w);
 }
 
@@ -5642,6 +5734,13 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
         }
         const auto shared=config_.authorityAuth(input);const auto local=shared["current"].asString();
         for (const auto& notice : shared["notices"].items()) {
+            if (notice["kind"].asString() == "chat") {
+                const int channel = notice["channel"].asInt(-1);
+                if (channel == 0 || channel == 1 || channel == 7)
+                    broadcastChat(static_cast<net::ChatChannel>(channel), notice["author"].asString(),
+                                  notice["text"].asString(), 0, false);
+                continue;
+            }
             const int mob = notice["mob"].asInt(-1);
             const int tier = notice["rarity"].asInt(-1);
             if (mob < 0 || mob >= kInvalidIndex || tier < 0 || tier >= kRarityCount) continue;
@@ -6038,6 +6137,28 @@ void GameServer::handleGuildKick(Session& session, net::Connection& connection,
     const std::string raw = reader.str();
     if (!reader.ok() || !session.authenticated()) return;
     guildKick(session, connection, raw);
+}
+
+void GameServer::guildTransfer(Session& session, net::Connection& connection,
+                               const std::string& raw) {
+    if (!session.authenticated()) return;
+    const auto guildName = guildNameForUser(session.username);
+    if (guildName.empty()) return;
+    Json& guild = database_.rawTable("guilds")[guildName];
+    if (lowerCase(guild["leaderUsername"].asString()) != lowerCase(session.username)) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "只有现任会长可以转让公会。");
+        return;
+    }
+    const int at = guildMemberIndex(guild, trimmed(raw));
+    if (at < 0 || lowerCase(trimmed(raw)) == lowerCase(session.username)) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "请选择本公会的其他成员。");
+        return;
+    }
+    const auto member = guild["memberUsernames"][static_cast<std::size_t>(at)].asString();
+    guild["leaderUsername"] = member;
+    database_.markDirty();
+    sendGuildSystem(guild, session.username + " 已将会长转让给 " + member + "。");
+    broadcastGuildRoster(guild);
 }
 
 void GameServer::guildKick(Session& session, net::Connection& connection,
@@ -6844,6 +6965,7 @@ void GameServer::handleRespawn(Session& session) {
         }
         despawnPlayer(session, false);
     }
+    if (corpseRealm == Realm::Arena) corpseKnown = false;
     const Entity reborn = corpseKnown ? spawnPlayerNear(session, corpseRealm, corpsePos)
                                       : spawnPlayer(session);
     // The snapshot stream restates the body but never the realm. If somehow

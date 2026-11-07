@@ -48,6 +48,25 @@ TEST(electric_web_uses_lightning_numbers_and_ruby_repeats) {
     CHECK_EQ(numbers,4);
 }
 
+TEST(todo1106_zero_radius_electric_web_expires_and_multiple_slots_are_bounded) {
+    CombatFeedback r;
+    const auto field=r.w.create();r.w.add<Transform>(field,Transform{{5000,5000},0});
+    r.w.add<GroundEffect>(field,GroundEffect{GroundEffectKind::ElectricWeb,r.player,0});
+    r.w.add<Lifetime>(field,Lifetime{.1});
+    r.hit(1000);r.hit(1050);r.hit(1100);
+    CHECK(!r.w.isAlive(field)||r.w.has<Dead>(field));
+    for(int i=0;i<5;++i)r.equip(i,"electric_web");
+    r.w.get<PlayerInput>(r.player).current.flags=net::InputDefend;
+    int peak=0;
+    for(int tick=0;tick<800;++tick){
+        r.petals.run(r.w,r.c,2000+tick*50,.05,r.commands);r.commands.flush();
+        int live=0;Query<GroundEffect> fields{r.w};fields.without<Dead>();
+        fields.each([&](Entity,GroundEffect& e){if(e.owner==r.player&&e.kind==GroundEffectKind::ElectricWeb)++live;});
+        peak=std::max(peak,live);CHECK(live<=8);
+    }
+    CHECK(peak>0);
+}
+
 TEST(third_eye_extends_electric_web_throw_without_enlarging_its_field) {
     double before=0,after=0,baseRadius=0,extendedRadius=0;
     for(bool eye:{false,true}) {
@@ -94,6 +113,37 @@ TEST(uranium_has_real_enemy_poison_and_bounded_self_poison_at_every_tier) {
         CHECK(r.w.get<Health>(mob).current<1e12);
         CHECK(r.w.get<Health>(r.player).current<before);
         CHECK(r.w.get<Health>(r.player).current>before*.9);
+    }
+}
+
+TEST(todo1106_uranium_reaches_new_outer_radius_without_hitting_beyond_it) {
+    CombatFeedback r;r.equip(0,"uranium");r.prepare();
+    Entity cloud=NULL_ENTITY;Query<GroundEffect> q{r.w};
+    q.each([&](Entity e,GroundEffect& f){if(f.kind==GroundEffectKind::Radiation)cloud=e;});
+    CHECK(cloud!=NULL_ENTITY);if(cloud==NULL_ENTITY)return;
+    std::vector<Entity> older;
+    q.each([&](Entity e,GroundEffect& f){if(f.kind==GroundEffectKind::Radiation&&e!=cloud)older.push_back(e);});
+    for(const auto e:older)r.w.destroy(e);
+    const auto centre=r.w.get<Transform>(cloud).position;
+    CHECK_NEAR(r.w.get<GroundEffect>(cloud).radius,220,1e-6);
+    const auto inside=r.mob(centre+Vec2{200,0}),outside=r.mob(centre+Vec2{250,0});
+    r.hit(10000);r.hit(10050);
+    CHECK(r.w.get<Health>(inside).current<1e12);
+    CHECK_EQ(r.w.get<Health>(outside).current,1e12);
+}
+
+TEST(todo1106_hyper_contact_damage_exceeds_et_in_actual_combat) {
+    for(const auto* id:{"rock","dust","sawblade","clover"}) {
+        double dealt[2]={};
+        for(int h=0;h<2;++h) {
+            CombatFeedback r;r.equip(0,id,h?Rarity::Apex:Rarity::Unique);r.prepare();
+            Entity petal=NULL_ENTITY;Query<PetalInstance> q{r.w};
+            q.each([&](Entity e,PetalInstance& p){if(p.slot==0)petal=e;});
+            CHECK(petal!=NULL_ENTITY);if(petal==NULL_ENTITY)continue;
+            const auto mob=r.mob(r.w.get<Transform>(petal).position);
+            r.hit(10000);dealt[h]=1e12-r.w.get<Health>(mob).current;
+        }
+        CHECK(dealt[0]>0);CHECK(dealt[1]>=dealt[0]*1.99);
     }
 }
 

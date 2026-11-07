@@ -305,10 +305,15 @@ void NetClient::forgetAccount() {
     chatBackfilled_ = false;
     whisperPartner_.clear();
     dailyStreak_ = DailyStreak{};
+    accountQQ.clear();
+    accountQQPending = false;
+    accountQQSaved = false;
+    accountQQRevision = 0;
     skinCatalog_.clear();
     equippedSkinId_.clear();
     skinAdmin_ = false;
     leaderboard_.clear();
+    playtimeLeaderboard_.clear();
     hyperBoard_.clear(); hyperHoldingsTotal_ = hyperHoldingsOffset_ = 0;
     leaderboardPending_ = false;
     notifications_.clear();
@@ -481,11 +486,27 @@ void NetClient::requestCraft(std::uint16_t petalIndex, Rarity rarity, int count)
     send(w);
 }
 
-void NetClient::requestOracleCraft(std::uint16_t petalIndex, Rarity rarity) {
+void NetClient::requestAccountQQ(bool save, const std::string& value) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::AccountQQ);
+    w.boolean(save);
+    if (save) w.str(value);
+    accountQQPending = true;
+    send(w);
+}
+
+void NetClient::requestDailyLoginClaim() {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::DailyLoginClaim);
+    send(w);
+}
+
+void NetClient::requestOracleCraft(std::uint16_t petalIndex, Rarity rarity, std::uint16_t quantity) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::OracleCraft);
     w.u16(petalIndex);
     w.u8(static_cast<std::uint8_t>(rarity));
+    w.u16(quantity);
     send(w);
 }
 
@@ -1222,6 +1243,17 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
             handlePong(reader, renderClockMillis() - connection.frameAgeMillis());
             break;
         case net::ServerMessage::Kick:         handleKick(reader); break;
+        case net::ServerMessage::AccountQQ: {
+            const bool saved = reader.boolean();
+            const std::string value = reader.str();
+            if (reader.ok()) {
+                accountQQ = value;
+                accountQQSaved = saved;
+                accountQQPending = false;
+                ++accountQQRevision;
+            }
+            break;
+        }
         case net::ServerMessage::DailyStreak:  handleDailyStreak(reader); break;
         case net::ServerMessage::ShopResult:   handleShopResult(reader); break;
         case net::ServerMessage::SkinCatalog:   handleSkinCatalog(reader); break;
@@ -1688,7 +1720,15 @@ void NetClient::handleLeaderboard(ByteReader& reader) {
         row.count = reader.u32(); row.ownerTotal = reader.u32();
         holdings.push_back(std::move(row));
     }
+    const auto playtimeCount = reader.u8();
+    if (playtimeCount > 50) return;
+    std::vector<LeaderboardRow> playtimes;
+    for (unsigned i = 0; i < playtimeCount; ++i) {
+        LeaderboardRow row; row.name = reader.str(); row.totalXp = reader.f64();
+        playtimes.push_back(std::move(row));
+    }
     if (!reader.ok()) return;
+    playtimeLeaderboard_ = std::move(playtimes);
     hyperBoard_ = std::move(holdings);
     hyperHoldingsTotal_ = hyperTotal; hyperHoldingsOffset_ = hyperOffset;
     leaderboard_ = std::move(rows);

@@ -367,7 +367,7 @@ private:
     void drawChat(Canvas&, double time);
     /// The channel strip over the open chat: a tab per channel, its checkbox
     /// filtering the transcript and its name choosing where Enter sends.
-    void drawChatTabs(Canvas&, double bottom);
+    void drawChatTabs(Canvas&, double x, double y, double width);
     /// The chat input slot, shared by the title screen and the game so the two
     /// cannot drift apart.
     void drawChatField(Canvas&, Rect box, double time);
@@ -629,6 +629,7 @@ private:
     /// Petal types the backdrop may show: everything that is not an admin
     /// petal and not an egg, which is the browser build's filter.
     std::vector<std::uint16_t> titlePetalTypes_;
+    std::string titlePetalBiome_;
     Rng titleRng_{0x5DEECE66Dull};
     /// The star of the daily-login card, one document per fill colour. Built
     /// on demand, because the colour depends on the streak.

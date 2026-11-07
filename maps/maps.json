@@ -3,6 +3,7 @@
     "Maps converted from florrclone client geometry + engine biome/portal tables.",
     "Reference florr_clone-web maps were moved to maps_ref_backup/."
   ],
+  "worldScale": 2,
   "maps": [
     {
       "file": "garden.tmj",

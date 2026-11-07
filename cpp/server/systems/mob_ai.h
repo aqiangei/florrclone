@@ -65,6 +65,7 @@
 // is flagged for the petal system to retire. A sandstorm keeps its own leash.
 
 #include <algorithm>
+#include "shared/game/player_proximity.h"
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
@@ -783,6 +784,7 @@ private:
         bool recovers = false;
         double recoverBelow = 0;
         double recoverMillis = 0;
+        bool healthScaledSpeed = false; // Roach loses sprint speed as it is hurt.
         bool valid = false;
     };
 
@@ -1046,6 +1048,10 @@ private:
 
     Rng rng_;
     Stats stats_;
+    PlayerProximityIndex activePlayersIndex_{kMobActiveRadius};
+    static constexpr double kSleepReach = kMobTargetRetainRadius + 1000.0;
+    PlayerProximityIndex sleepObservers_{kSleepReach};
+    std::vector<std::pair<RealmPoint, double>> wideObservers_;
 
     /// Ticks run, which is the phase the far stride is measured against.
     std::uint64_t tick_ = 0;

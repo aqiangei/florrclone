@@ -84,10 +84,8 @@ inline NpcService parseNpcService(const std::string& name) {
 inline constexpr double kNpcServiceReach = 250.0;
 inline constexpr double kNpcServiceSlack = 150.0;
 
-/// How long an account waits between two oracle crafts. One guaranteed
-/// upgrade per half hour: the oracle is a thing to come back to, not a second
-/// forge that never misses. Per account, so a relog does not reset it; held
-/// in the server's memory only, so a restart does (GameServer::oracleReadyAt_).
+/// Historical duration retained for legacy formatting tests; live Oracle trades
+/// are uncapped by time and use the quantity submitted by the player.
 inline constexpr double kOracleCooldownMillis = 30.0 * 60.0 * 1000.0;
 
 /// "You'll be able to craft again in 27 minutes" -- the one sentence both ends

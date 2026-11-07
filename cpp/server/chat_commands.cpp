@@ -290,7 +290,7 @@ constexpr const char* kUnknownCommand =
 /// subcommand nothing matches.
 constexpr const char* kSquadCommands =
     "Squad commands: /squad-create [public|private], /squad-invite &lt;username&gt;, "
-    "/squad-find-public, /squad-join &lt;squadId&gt;, /squad-public, /squad-private, "
+    "/squad-find-public, /squad-join &lt;squadId&gt;, /squad-code [code], /squad-public, /squad-private, "
     "/squad-accept, /squad-decline, /squad-leave, /squad-info";
 
 } // namespace
@@ -679,6 +679,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     }
     if (verb == "/guild-invite") { guildInvite(session, connection, argument); return true; }
     if (verb == "/guild-kick")   { guildKick(session, connection, argument); return true; }
+    if (verb == "/guild-transfer") { guildTransfer(session, connection, argument); return true; }
     if (verb == "/guild-accept") { handleGuildAccept(session, connection); return true; }
     if (verb == "/guild-decline"){ handleGuildDecline(session, connection); return true; }
     if (verb == "/guild-leave")  { handleGuildLeave(session, connection); return true; }
@@ -884,7 +885,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             if (!confirmed) {out("请在泰坦界面确认销毁所选超凡花瓣。");return true;}
         }
         if(database_.storedTable("hyperForges")[key]["owner"].asString()!=session.userId){out("你未持有这份超凡，请输入 /hyper-abandon 查看编号。");return true;}
-        if(!confirmed){out("确认永久销毁这1份超凡且不返还材料？再次输入：/hyper-abandon "+escapedMarkup(key)+" confirm");return true;}
+        if(!confirmed){out("确认永久销毁这1份超凡且不返还材料？其他玩家接手前，你不能重新锻造这份超凡。再次输入：/hyper-abandon "+escapedMarkup(key)+" confirm");return true;}
         if(config_.authorityAuth) {
             Json request=Json::object();request["action"]="abandon";request["forgeKey"]=key;
             if(!beginSharedHyper(session,connection,request,0,false))out("超凡事务正在处理，请稍后重试。");
@@ -897,7 +898,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             if(other.playing())applyAccountToSession(other);
             if(auto* peer=listener_.find(id))sendProfile(other,*peer);
         }
-        out("已放弃所选1份超凡，不返还材料；该份持有名额已释放。");
+        out(result.reason);
         return true;
     }
 
@@ -920,6 +921,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/squad-invite &lt;username&gt; - Invite a player to your squad<br/>";
         help += "/squad-find-public - List joinable public squads<br/>";
         help += "/squad-join &lt;squadId&gt; - Join a public squad<br/>";
+        help += "/squad-code [code] - 获取组队码，或按代码加入队伍（保留邀请功能）<br/>";
         help += "/squad-public / /squad-private - Toggle your squad's visibility (leader "
                 "only)<br/>";
         help += "/squad-accept / /squad-decline - Respond to an invite<br/>";
@@ -1017,6 +1019,18 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
     const auto out = [&](const std::string& text) { sendSystem(connection, text); };
     const SquadMemberId me = squadIdOf(session);
     const auto now = static_cast<std::int64_t>(clockMillis_);
+
+    const auto notifyDeparture = [&](const SquadRoster::Departure& left) {
+        if (!left.wasMember) return;
+        Squad* remaining = squads_.find(left.squadId);
+        if (!remaining) return;
+        if (left.promoted.valid()) {
+            sendSquadSystem(*remaining, squadDisplayName(left.promoted) +
+                                         " is now the squad leader.");
+        }
+        sendSquadSystem(*remaining, squadDisplayName(me) + " has left the squad.");
+        broadcastSquadUpdate(*remaining);
+    };
 
     if (sub == "create") {
         // A split flower already has a squad -- itself -- and may not open one
@@ -1138,25 +1152,45 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
         return;
     }
 
-    if (sub == "join" && !argument.empty()) {
+    if (sub == "code" && argument.empty()) {
+        const auto refusal=splitSquadRefusal(me,"You are");
+        if(!refusal.empty()){out(refusal);return;}
+        auto* squad = squadOrCreate(session, connection);
+        if (!squad) return;
+        const std::string& code = squads_.issueCode(*squad, rng_);
+        if (code.empty()) out("组队码暂时用完，请使用组队邀请。");
+        else out("组队码：" + code +
+                 "；同服同地图玩家输入 /squad-code 组队码 加入，也可以继续发送邀请。");
+        return;
+    }
+    if ((sub == "join" || sub == "code") && !argument.empty()) {
+        const bool byCode = sub == "code";
+        const std::string& code = argument;
         const std::string whileSplit = splitSquadRefusal(me, "You are");
         if (!whileSplit.empty()) {
             out(whileSplit);
             return;
         }
-        if (const Squad* wanted = squads_.find(argument)) {
+        const Squad* wanted = byCode ? squads_.findByCode(code) : squads_.find(argument);
+        const std::string squadId = wanted ? wanted->id : argument;
+        if (wanted) {
+            const auto targetSplit=splitSquadRefusal(wanted->leader,"The squad leader is");
+            if(!targetSplit.empty()){out(targetSplit);return;}
             const std::string wrongBiome = squadBiomeRefusal(*wanted, me, "You are");
             if (!wrongBiome.empty()) {
                 out(wrongBiome);
                 return;
             }
         }
-        const std::string error = squads_.joinPublic(argument, me);
+        SquadRoster::Departure leftPrevious;
+        const std::string error = byCode ? squads_.joinWithCode(code, me, leftPrevious)
+                                         : squads_.joinPublic(squadId, me);
         if (!error.empty()) {
             out(error);
             return;
         }
-        Squad* squad = squads_.find(argument);
+        notifyDeparture(leftPrevious);
+        Squad* squad = squads_.find(squadId);
         if (squad == nullptr) return;
         sendSquadSystem(*squad, squadDisplayName(me) + " has joined the squad.");
         broadcastSquadUpdate(*squad);
@@ -1211,19 +1245,7 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
             out(error);
             return;
         }
-        // Accept may have pulled the flower out of another party: tell that
-        // party the same way /squad-leave does, then seat them in the new one.
-        if (leftPrevious.wasMember) {
-            Squad* remaining = squads_.find(leftPrevious.squadId);
-            if (remaining != nullptr) {
-                if (leftPrevious.promoted.valid()) {
-                    sendSquadSystem(*remaining, squadDisplayName(leftPrevious.promoted) +
-                                                    " is now the squad leader.");
-                }
-                sendSquadSystem(*remaining, squadDisplayName(me) + " has left the squad.");
-                broadcastSquadUpdate(*remaining);
-            }
-        }
+        notifyDeparture(leftPrevious);
         Squad* squad = squads_.find(squadId);
         if (squad == nullptr) return;
         sendSquadSystem(*squad, squadDisplayName(me) + " has joined the squad.");

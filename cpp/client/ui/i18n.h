@@ -44,6 +44,7 @@ enum class Msg : std::uint16_t {
     HideOtherPets,
     ScreenShake,
     ShowStats,
+    ShowExactValues,
     DynamicSkybox,
     MobDeathAnimation,
     Antialiasing,

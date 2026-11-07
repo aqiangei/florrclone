@@ -30,13 +30,18 @@
 #include <emscripten.h>
 EM_JS(int, flix_shard_directory_size, (), {
     if(Module.shardDirectoryText!==undefined)return Module.shardDirectoryText===null?-1:new TextEncoder().encode(Module.shardDirectoryText).length+1;
-    if(!Module.shardDirectoryRequested) {
+    if(!Module.shardDirectoryRequested && Date.now()>=(Module.shardDirectoryRetryAt||0)) {
         Module.shardDirectoryRequested=true;
         fetch('/api/shards',{cache:'no-store',signal:AbortSignal.timeout(5000)}).then(async response=>{
+            if(response.status===404 || response.status===204){Module.shardDirectoryText=null;return;}
             if(!response.ok)throw Error('directory unavailable');
+            if(!(response.headers.get('content-type')||'').includes('application/json')){
+                Module.shardDirectoryText=null;return;
+            }
             const text=await response.text();if(text.length>8192)throw Error('directory too large');
             Module.shardDirectoryText=text;
-        }).catch(()=>{Module.shardDirectoryText=null;});
+        }).catch(()=>{Module.shardDirectoryRetryAt=Date.now()+15000;})
+          .finally(()=>{Module.shardDirectoryRequested=false;});
     }
     return 0;
 });
@@ -725,6 +730,12 @@ void App::frame(double dt) {
             return event.phase==TouchPhase::Began &&
                    menus_.capturesMouse({event.point.x,event.point.y});
         }),contacts.end());
+        if (chatOpen_ && std::any_of(contacts.begin(), contacts.end(), [&](const TouchEvent& event) {
+            return event.phase == TouchPhase::Began && mobile_.hits(event.point.x, event.point.y);
+        })) {
+            chatOpen_ = false;
+            chatSuggestion_ = -1;
+        }
         mobile_.update(contacts,timeSeconds_);
     }
     else mobile_.reset();
@@ -1139,7 +1150,13 @@ void App::publishKeyboardRegions() {
         regions.push_back(WindowRect{static_cast<float>(box.x), static_cast<float>(box.y),
                                      static_cast<float>(box.w), static_cast<float>(box.h)});
     }
-    window_.setSoftKeyboardRegions(std::move(regions));
+    WindowRect chatInput{};
+    if (chatBox_.w > 0 &&
+        !menus_.capturesMouse({chatBox_.x + chatBox_.w / 2, chatBox_.y + chatBox_.h / 2})) {
+        chatInput = {static_cast<float>(chatBox_.x), static_cast<float>(chatBox_.y),
+                     static_cast<float>(chatBox_.w), static_cast<float>(chatBox_.h)};
+    }
+    window_.setSoftKeyboardRegions(std::move(regions), chatInput);
     // Keep the hidden <input> focused while something owns the caret -- chat
     // opened by Enter never taps a field, so without ensureSoftKeyboard the
     // canvas holds focus and IME language switches mostly fail.

@@ -43,11 +43,11 @@ constexpr double kWidth = 420.0;
 constexpr double kHeight = 700.0;
 constexpr double kPad = 15.0;
 constexpr double kHeaderHeight = 30.0;
-constexpr double kFieldHeight = 32.0;
-constexpr double kFieldGap = 8.0;
+constexpr double kFieldHeight = 26.0;
+constexpr double kFieldGap = 4.0;
 constexpr double kButtonWidth = 160.0;
-constexpr double kButtonHeight = 32.0;
-constexpr double kSectionGap = 18.0;
+constexpr double kButtonHeight = 26.0;
+constexpr double kSectionGap = 6.0;
 /// Chrome reports 100 CSS px of deltaY per wheel notch; SDL reports one notch
 /// as 1.0. The settings card's step, for the same reason.
 constexpr double kWheelStep = 100.0;
@@ -90,10 +90,11 @@ enum Field : int {
     kConfirmPassword,
     kLoginName,
     kLoginPassword,
+    kQQ,
     kFieldCount,
 };
 
-enum Button : int { kNoButton = -1, kSetUsername, kChangePassword, kLogIn, kLogOut };
+enum Button : int { kNoButton = -1, kSetUsername, kChangePassword, kLogIn, kLogOut, kSaveQQ };
 
 bool masked(int field) {
     return field == kCurrentPassword || field == kNewPassword || field == kConfirmPassword ||
@@ -144,6 +145,8 @@ struct PanelState {
     RequestLine username;
     RequestLine password;
     RequestLine login;
+    bool qqRequested = false;
+    unsigned qqRevision = 0;
 
     /// The three buttons that ask twice: picking a name that can never be
     /// changed, and leaving an account that has no password to come back with
@@ -321,7 +324,7 @@ struct Painter {
 
     void heading(const std::string& caption) {
         text(canvas(), caption, x, cy + 10.0, bodyStyle(15.0, kPaper));
-        cy += 26.0;
+        cy += 22.0;
     }
 
     /// A line of explanation, word-wrapped to the column: the card is narrow
@@ -332,7 +335,7 @@ struct Painter {
         std::size_t at = 0;
         const auto flush = [&] {
             text(canvas(), line, x, cy + 8.0, bodyStyle(kSize, fill));
-            cy += 18.0;
+            cy += 16.0;
             line.clear();
         };
         while (at < caption.size()) {
@@ -385,7 +388,7 @@ struct Painter {
     /// nothing to press until the answer lands. Returns true when clicked.
     bool button(const std::string& caption, std::uint32_t fill, int id, bool pending) {
         const Rect r{x, cy, kButtonWidth, kButtonHeight};
-        cy += kButtonHeight + 10.0;
+        cy += kButtonHeight + 6.0;
         if (pending) {
             ui::button(canvas(), r, caption, false, false, gardnStyle(kNeutralFill, 14.0));
             return false;
@@ -469,6 +472,8 @@ void AccountPanel::reset() {
     // and readAnswers will put it where it belongs.
     PanelState& st = panelState();
     for (std::string& value : st.values) value.clear();
+    st.qqRequested = false;
+    st.qqRevision = 0;
     focusField(st, -1, 0.0);
     st.pressed = kNoButton;
     st.armed = kNoButton;
@@ -484,6 +489,16 @@ bool AccountPanel::render(MenuContext& ctx) {
     const Rect panel = ctx.bounds;
     const Vec2 mouse = ctx.mouse();
     const Profile& profile = ctx.net.profile();
+
+    if (ctx.net.haveSession() && !st.qqRequested) {
+        st.qqRequested = true;
+        st.qqRevision = ctx.net.accountQQRevision;
+        ctx.net.requestAccountQQ(false);
+    }
+    if (st.qqRevision != ctx.net.accountQQRevision) {
+        st.qqRevision = ctx.net.accountQQRevision;
+        if (st.focused != kQQ) st.values[kQQ] = ctx.net.accountQQ;
+    }
 
     // As the settings card does it: a button is never painted pressed on the
     // frame it fires.
@@ -509,6 +524,7 @@ bool AccountPanel::render(MenuContext& ctx) {
             // Enter submits the form the box belongs to.
             if (st.focused == kUsername) submitUsername(ctx, st);
             else if (st.focused <= kConfirmPassword) submitPassword(ctx, st);
+            else if (st.focused == kQQ) ctx.net.requestAccountQQ(true, st.values[kQQ]);
             else submitLogin(ctx, st);
         } else if (masked(st.focused)) {
             TextEditOptions typing;
@@ -526,7 +542,7 @@ bool AccountPanel::render(MenuContext& ctx) {
             typing.maxBytes = fieldCap(st.focused);
             // Account names are letters, digits and underscore; a pasted emoji
             // is dropped here rather than refused after a round trip.
-            typing.asciiOnly = true;
+            typing.asciiOnly = st.focused != kQQ;
             editText(ctx.window, value, st.caret, ctx.timeSeconds, typing);
         }
     }
@@ -584,12 +600,24 @@ bool AccountPanel::render(MenuContext& ctx) {
                  bodyStyle(13.0, kGuestBadge));
         }
         p.cy += 30.0;
-        p.note(trEnZh("Previous site: http://154.219.105.161:8088/",
-                      "旧站：http://154.219.105.161:8088/"), kGuestBadge);
-        p.note(trEnZh("Returning players: log in below with your previous username and password.",
-                      "旧站玩家请用原账号和密码登录。"), kGuestBadge);
-        p.note(trEnZh("No need to register again. See Log In to Another Account below.",
-                      "无需重新注册，请使用下方“登录其他账户”。"), kGuestBadge);
+        // --- another account ------------------------------------------------------
+        p.heading(trEnZh("Log In to Another Account", "登录其他账户"));
+        p.note(trEnZh("Old-site account? Use your original username and password here.",
+                      "已有旧站账号？请在这里输入原账号和密码。"), kGuestBadge);
+        if (!profile.hasPassword) {
+            p.note(trEnZh("Log in directly; switching leaves this passwordless account.",
+                          "直接登录旧账号即可；切换将离开当前无密码账户。"),
+                   kGuestBadge);
+        }
+        p.field(kLoginName, trEnZh("Username", "用户名"));
+        p.field(kLoginPassword, trEnZh("Password", "密码"));
+        p.answer(st.login);
+        const bool loginArmed = armedNow(st, kLogIn, ctx.timeSeconds);
+        if (p.button(loginArmed ? tr(Msg::AreYouSure) : trEnZh("Log In", "登录"),
+                     loginArmed ? kDangerFill : kActionFill, kLogIn, st.login.pending)) {
+            submitLogin(ctx, st);
+        }
+        p.cy += kSectionGap;
 
         // --- username -----------------------------------------------------------
         p.heading(trEnZh("Username", "用户名"));
@@ -617,6 +645,16 @@ bool AccountPanel::render(MenuContext& ctx) {
         }
         p.cy += kSectionGap;
 
+        p.heading(trEnZh("QQ record", "QQ 绑定记录"));
+        p.note(trEnZh("Private save note only; no QQ login or verification.", "仅保存在账号存档中，不接入 QQ，不验证号码。"));
+        p.field(kQQ, trEnZh("QQ (optional)", "QQ 号（可留空）"));
+        if (p.button(trEnZh("Save QQ", "保存 QQ"), kActionFill, kSaveQQ, ctx.net.accountQQPending))
+            ctx.net.requestAccountQQ(true, st.values[kQQ]);
+        if (ctx.net.accountQQPending) p.note(trEnZh("Waiting for server...", "等待服务器确认…"));
+        else if (ctx.net.accountQQSaved && st.values[kQQ] == ctx.net.accountQQ)
+            p.note(trEnZh("Saved.", "已保存。"));
+        p.cy += kSectionGap;
+
         // --- password -----------------------------------------------------------
         p.heading(profile.hasPassword ? trEnZh("Change Password", "修改密码")
                                       : trEnZh("Set Password", "设置密码"));
@@ -635,25 +673,6 @@ bool AccountPanel::render(MenuContext& ctx) {
                                          : trEnZh("Set Password", "设置密码"),
                      kActionFill, kChangePassword, st.password.pending)) {
             submitPassword(ctx, st);
-        }
-        p.cy += kSectionGap;
-
-        // --- another account ------------------------------------------------------
-        p.heading(trEnZh("Log In to Another Account", "登录其他账户"));
-        p.note(trEnZh("Old-site account? Use your original username and password here.",
-                      "已有旧站账号？请在这里输入原账号和密码。"), kGuestBadge);
-        if (!profile.hasPassword) {
-            p.note(trEnZh("Set a password first, or this account is lost when you switch.",
-                          "请先设置密码，否则切换账户后将无法找回。"),
-                   kGuestBadge);
-        }
-        p.field(kLoginName, trEnZh("Username", "用户名"));
-        p.field(kLoginPassword, trEnZh("Password", "密码"));
-        p.answer(st.login);
-        const bool loginArmed = armedNow(st, kLogIn, ctx.timeSeconds);
-        if (p.button(loginArmed ? tr(Msg::AreYouSure) : trEnZh("Log In", "登录"),
-                     loginArmed ? kDangerFill : kActionFill, kLogIn, st.login.pending)) {
-            submitLogin(ctx, st);
         }
         p.cy += kSectionGap;
 

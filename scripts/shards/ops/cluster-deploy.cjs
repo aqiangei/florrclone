@@ -33,6 +33,8 @@ function create(config,manifest,connections){
   fs.mkdirSync(local,{recursive:true,mode:0o700});
   const token=crypto.randomBytes(16).toString('hex'),held=[],results={};let installed=false,bonusStoppedAt=0;
   const roles=['one','two'];
+  const initialSource=config.initialSource||'one';
+  const standby=initialSource==='one'?'two':'one';
   const privateJSON=name=>JSON.parse(fs.readFileSync(path.join(config.privateDirectory,name),'utf8'));
   const writeJSON=(remote,destination,value,owner)=>{
     // Credentials go over encrypted stdin, never command arguments or output.
@@ -44,12 +46,12 @@ function create(config,manifest,connections){
   return {
     async preflight(){
       inspect(config,connections,manifest);
-      if(config.mode==='initial')stopped(connections.two,'florrclone',true);
+      if(config.mode==='initial')stopped(connections[standby],'florrclone',true);
       for(const id of roles){
         const remote=connections[id];
         assert.equal(remote.ssh(node+' --version').trim(),'v22.23.4','Unverified Node runtime');
         remote.ssh('nginx -t');
-        if(!(id==='two'&&config.mode==='initial'))assert(JSON.parse(remote.ssh('curl -fsS http://127.0.0.1:8788/api/health')).ok);
+        if(!(id===standby&&config.mode==='initial'))assert(JSON.parse(remote.ssh('curl -fsS http://127.0.0.1:8788/api/health')).ok);
       }
       if(config.mode==='initial')connections.one.ssh('test ! -e /var/lib/florrclone-shards/authority.snapshot && test ! -e /var/lib/florrclone-shards/authority.journal');
       const host=privateJSON('shard-host.json');
@@ -67,7 +69,7 @@ function create(config,manifest,connections){
       assert.equal(new Set(Object.values(host.nodes).map(n=>n.key)).size,Object.keys(host.nodes).length);
       for(const row of Object.values(host.nodes))assert.match(row.key,/^[a-f0-9]{64}$/);
       const admins=[];
-      for(const id of config.mode==='initial'?['one']:roles){
+      for(const id of config.mode==='initial'?[initialSource]:roles){
         assert(config.adminFiles?.[id]);const admin=require('../../deploy-announcement.cjs').readConfig(config.adminFiles[id]);
         const url=new URL(admin.url);assert.equal(url.hostname,config.targets[id].host);assert.equal(url.port,'8088');
         admins.push(admin.username.toLowerCase());
@@ -98,7 +100,7 @@ function create(config,manifest,connections){
       }
       const announcements=require('../../deploy-announcement.cjs'),clients=[];
       try{
-        for(const id of config.mode==='initial'?['one']:roles)clients.push(await announcements.connect(announcements.readConfig(config.adminFiles[id])));
+        for(const id of config.mode==='initial'?[initialSource]:roles)clients.push(await announcements.connect(announcements.readConfig(config.adminFiles[id])));
         await announcements.countdown(async message=>{for(const client of clients)await client.broadcast(message);});
       }finally{for(const client of clients)client.close();}
     },
@@ -112,7 +114,7 @@ function create(config,manifest,connections){
       for(const id of roles)try{
         const remote=connections[id];remote.upload(maintenance,'/var/www/florrclone-maintenance/maintenance.next.html');
         remote.ssh('mv /var/www/florrclone-maintenance/maintenance.next.html /var/www/florrclone-maintenance/maintenance.html && touch '+marker);
-        if(id==='two'&&config.mode==='initial')remote.ssh('systemctl unmask nginx && systemctl start nginx');
+        if(id===standby&&config.mode==='initial')remote.ssh('systemctl unmask nginx && systemctl start nginx');
         const page=remote.ssh('curl -sS http://127.0.0.1:8088/');assert(page.includes('花朵躲石头')&&page.includes(escape(notes.title)),'Maintenance page unavailable');
       }catch(error){errors.push(id+': '+error.message);}
       assert(!errors.length,errors.join('; '));
@@ -120,10 +122,10 @@ function create(config,manifest,connections){
     async stopGames(){
       if(!bonusStoppedAt)bonusStoppedAt=Number(connections.one.ssh('date +%s%3N').trim());assert(Number.isSafeInteger(bonusStoppedAt)&&bonusStoppedAt>0);
       fs.writeFileSync(path.join(local,'maintenance-start.json'),JSON.stringify({id:stamp,stoppedAt:bonusStoppedAt}));
-      for(const id of roles){if(!(id==='two'&&config.mode==='initial'))connections[id].ssh('systemctl stop florrclone');stopped(connections[id],'florrclone',id==='two'&&config.mode==='initial');}
+      for(const id of roles){if(!(id===standby&&config.mode==='initial'))connections[id].ssh('systemctl stop florrclone');stopped(connections[id],'florrclone',id===standby&&config.mode==='initial');}
     },
     async stopCoordinator(){if(config.mode==='upgrade')connections.one.ssh('systemctl stop florr-shard-coordinator');stopped(connections.one,'florr-shard-coordinator',config.mode==='initial');},
-    async backup(){return collect({mode:config.mode,stamp,directory:local,...connections});},
+    async backup(){return collect({mode:config.mode,initialSource,stamp,directory:local,...connections});},
     async install(backup){
       assert(fs.existsSync(path.join(local,'verified-backup.json'))&&backup.files.length);
       const primary=connections.one;
@@ -139,6 +141,14 @@ function create(config,manifest,connections){
           fs.writeFileSync(bootstrap,JSON.stringify(next));
           fs.writeFileSync(path.join(local,'council-delegation.json'),JSON.stringify({accountIds:config.councilManagerIds,originalSha256:sha(fs.readFileSync(saved)),preparedSha256:sha(fs.readFileSync(bootstrap))}));
         }
+        if(config.authorizedPetalGrantFile){
+          assert(path.isAbsolute(config.authorizedPetalGrantFile));
+          const inventory=JSON.parse(fs.readFileSync(bootstrap,'utf8'));
+          const grants=require('../../grant-authorized-petals.cjs').apply(inventory,JSON.parse(fs.readFileSync(config.authorizedPetalGrantFile,'utf8')));
+          bootstrap=path.join(local,'inventory-authorized-grants.json');
+          fs.writeFileSync(bootstrap,JSON.stringify(inventory));
+          fs.writeFileSync(path.join(local,'authorized-petals.json'),JSON.stringify(grants,null,2));
+        }
         primary.upload(bootstrap,'/var/lib/florrclone-shards/bootstrap.next.json');
         assert.equal(primary.ssh('sha256sum /var/lib/florrclone-shards/bootstrap.next.json').split(/\s+/)[0],sha(fs.readFileSync(bootstrap)));
         primary.ssh('test ! -e /var/lib/florrclone-shards/bootstrap.json && chown florr-coordinator:florr-coordinator /var/lib/florrclone-shards/bootstrap.next.json && chmod 600 /var/lib/florrclone-shards/bootstrap.next.json && mv /var/lib/florrclone-shards/bootstrap.next.json /var/lib/florrclone-shards/bootstrap.json');
@@ -150,7 +160,22 @@ function create(config,manifest,connections){
         writeJSON(remote,'/etc/florrclone/shard-supervisor.json',privateJSON('shard-supervisor-'+id+'.json'),'root:root');
         remote.ssh('install -m 644 '+q(config.release+'/florrclone-sharded.service')+' /etc/systemd/system/florrclone.service');
         if(id==='two'&&config.mode==='initial')remote.ssh('if test -L /etc/nginx/sites-enabled/default; then test "$(readlink -f /etc/nginx/sites-enabled/default)" = /etc/nginx/sites-available/default && unlink /etc/nginx/sites-enabled/default; fi');
-        remote.ssh('install -m 644 '+q(config.release+'/nginx-game.conf')+' /etc/nginx/conf.d/florrclone.conf && nginx -t');
+        if(manifest.files['download-queue.cjs']){
+          const {configure,downloadQueueUnit}=require('./client-assets.cjs');
+          const assetHost=config.targets[id].host;
+          const configFile=path.join(local,'nginx-'+id+'.conf');
+          const queueFile=path.join(local,'download-queue-'+id+'.service');
+          fs.writeFileSync(configFile,configure(fs.readFileSync(path.join(__dirname,'nginx-game.conf'),'utf8'),
+            {release:config.release,assetHost,downloadQueue:true}));
+          fs.writeFileSync(queueFile,downloadQueueUnit(config.release,assetHost));
+          remote.upload(configFile,'/etc/nginx/conf.d/florrclone.conf');
+          remote.upload(queueFile,'/etc/systemd/system/florr-download-queue.service');
+          remote.ssh('nginx -t && systemctl daemon-reload && systemctl enable florr-download-queue && systemctl restart florr-download-queue');
+          for(const asset of ['index.html','bundle.js','bundle.wasm','bundle.js.bin','bundle.wasm.bin'])
+            remote.ssh('runuser -u www-data -- test -r '+q(config.release+'/'+asset));
+        }else{
+          remote.ssh('install -m 644 '+q(config.release+'/nginx-game.conf')+' /etc/nginx/conf.d/florrclone.conf && nginx -t');
+        }
         remote.ssh('test ! -e /opt/florrclone/current.next && ln -s '+q(config.release)+' /opt/florrclone/current.next && mv -Tf /opt/florrclone/current.next /opt/florrclone/current');
       }
       writeJSON(primary,'/etc/florrclone/shard-host.json',privateJSON('shard-host.json'),'florr-coordinator:florr-coordinator');
@@ -188,6 +213,13 @@ function create(config,manifest,connections){
     }},
     async verifyPrivate(){
       for(const id of roles){let last;for(let i=0;i<45;i++){try{results[id]=executeCheck(id,8788);last=null;break;}catch(error){last=error;await pause(1000);}}if(last)throw last;}
+      if(config.skipPairedAcceptance === true){
+        assert.equal(config.skipPairedAcceptanceReason,'user-authorized-20261106');
+        results.paired={status:'skipped',reason:config.skipPairedAcceptanceReason,
+          checksSkipped:['crossHostConnection','roundTrip','saveConsistency','sustainedLoad']};
+        fs.writeFileSync(path.join(local,'private-acceptance.json'),JSON.stringify(results,null,2)+'\n');
+        return;
+      }
       assert.equal(sha(fs.readFileSync(config.acceptanceScript)),config.acceptanceSha256,'Acceptance script changed during deployment');
       const output=cp.execFileSync(process.execPath,[config.acceptanceScript,...(config.acceptanceArgs||[])],{encoding:'utf8',windowsHide:true,timeout:300000,maxBuffer:1024*1024});
       results.paired=acceptance(JSON.parse(output));
@@ -213,7 +245,7 @@ async function resumeAfterInstall(file,backupDirectory){
   assert(backup.files?.length,'Verified stopped backup required');
   for(const f of backup.files){assert(/^[a-zA-Z0-9_.-]+$/.test(f.name));assert.equal(sha(fs.readFileSync(path.join(local,f.name))),f.sha256);}
   const connections=Object.fromEntries(['one','two'].map(id=>[id,transport(config.targets[id])]));
-  const installed={...config,mode:'upgrade',targets:Object.fromEntries(['one','two'].map(id=>[id,{...config.targets[id],expectedRelease:config.release}]))};
+  const installed={...config,initialSource:undefined,mode:'upgrade',targets:Object.fromEntries(['one','two'].map(id=>[id,{...config.targets[id],expectedRelease:config.release}]))};
   const verify=()=>{inspect(installed,connections,manifest);for(const id of ['one','two'])connections[id].ssh('test -f '+marker);assert.equal(connections.one.ssh('systemctl is-active florr-shard-coordinator').trim(),'active');};
   verify();const ops=create({...config,resumeBackup:local},manifest,connections);let locked=false;
   try{locked=true;await ops.lock();verify();

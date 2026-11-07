@@ -642,7 +642,13 @@ public:
     void requestBulkCraft(Rarity target, const std::vector<std::uint16_t>& excluded = {});
     /// Buys one guaranteed upgrade of this petal from the oracle the body is
     /// standing at, for oracleCraftCost(rarity) of it.
-    void requestOracleCraft(std::uint16_t petalIndex, Rarity rarity);
+    void requestOracleCraft(std::uint16_t petalIndex, Rarity rarity, std::uint16_t quantity = 1);
+    void requestDailyLoginClaim();
+    void requestAccountQQ(bool save, const std::string& value = "");
+    std::string accountQQ;
+    bool accountQQPending = false;
+    bool accountQQSaved = false;
+    unsigned accountQQRevision = 0;
     /// How long until the account may craft at an oracle again, counted down
     /// on this client's clock from the last profile; 0 when it may now.
     double oracleCooldownRemainingMillis() const;
@@ -934,6 +940,7 @@ public:
     bool takeServerDebugStats(ServerDebugStats& out);
 
     const std::vector<LeaderboardRow>& leaderboard() const { return leaderboard_; }
+    const std::vector<LeaderboardRow>& playtimeLeaderboard() const { return playtimeLeaderboard_; }
     /// True between asking for the board and the answer arriving.
     const std::vector<HyperHoldingRow>& hyperBoard() const { return hyperBoard_; }
     std::uint32_t hyperHoldingsTotal() const { return hyperHoldingsTotal_; }
@@ -1198,6 +1205,7 @@ private:
     bool skinAdmin_ = false;
 
     std::vector<LeaderboardRow> leaderboard_;
+    std::vector<LeaderboardRow> playtimeLeaderboard_; // totalXp stores seconds in these rows.
     std::vector<HyperHoldingRow> hyperBoard_;
     std::uint32_t hyperHoldingsTotal_ = 0, hyperHoldingsOffset_ = 0;
     bool leaderboardPending_ = false;

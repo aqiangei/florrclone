@@ -40,6 +40,7 @@ constexpr Entry kTable[] = {
     {"Hide Other Players' Pets", "隐藏其他玩家宠物"},
     {"Screen Shake", "屏幕震动"},
     {"Show Performance Stats", "显示性能统计"},
+    {"Show Exact Player Values", "显示角色精确数值"},
     {"Dynamic Skybox", "动态天空"},
     {"Mob Death Animation", "怪物死亡动画"},
     {"Anti-aliasing", "抗锯齿"},

@@ -34,13 +34,24 @@ public:
         while(!notices_.empty()&&now-notices_.front().at>=30000)notices_.pop_front();
         if(notices.isArray()&&notices.size()<=64)for(const auto& notice:notices.items()) {
             const auto nonce=notice["id"].asString();
-            const int mob=notice["mob"].asInt(-1),tier=notice["rarity"].asInt(-1);
             if(nonce.size()!=32||nonce.find_first_not_of("0123456789abcdef")!=std::string::npos||
-               mob<0||mob>=65535||tier<0||tier>=kRarityCount)continue;
+               node.boot.empty())continue;
             const auto id=node.shard+"/"+node.boot+"/"+nonce;
             if(std::any_of(notices_.begin(),notices_.end(),[&](const Notice& n){return n.id==id;}))continue;
             Json event=Json::object();
-            event["id"]=id;event["mob"]=mob;event["rarity"]=tier;event["summoned"]=notice["summoned"].asBool();
+            event["id"]=id;
+            if (notice["kind"].asString() == "chat") {
+                const int channel = notice["channel"].asInt(-1);
+                const auto author = notice["author"].asString(), text = notice["text"].asString();
+                if ((channel != 0 && channel != 1 && channel != 7) || author.size() > 128 ||
+                    text.empty() || text.size() > 65535) continue;
+                event["kind"] = "chat"; event["channel"] = channel;
+                event["author"] = author; event["text"] = text;
+            } else {
+                const int mob=notice["mob"].asInt(-1),tier=notice["rarity"].asInt(-1);
+                if(mob<0||mob>=65535||tier<0||tier>=kRarityCount)continue;
+                event["mob"]=mob;event["rarity"]=tier;event["summoned"]=notice["summoned"].asBool();
+            }
             notices_.push_back({id,node.shard,std::move(event),now});
             if(notices_.size()>256)notices_.pop_front();
         }

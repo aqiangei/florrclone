@@ -203,6 +203,7 @@ double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry
 /// `viewWidth` is the viewport's width in design units, which the bar may have
 /// had to shrink to fit; 0 asks for the unclamped height.
 double inGameLoadoutBarHeight(bool classic = false, double viewWidth = 0.0);
+double inGameLoadoutBarLeft(bool classic, double viewWidth);
 
 /// Where the title screen's block of control hints starts, as an offset down
 /// from the centre of the window. Under whatever the loadout bar paints
@@ -266,6 +267,7 @@ struct ClientSettings {
     /// default, and the TypeScript client kept the same flag in
     /// `localStorage.showStats`.
     bool showStats = false;
+    bool showExactValues = false;
     /// Shows the grey bug button in the top strip, which is the only way into
     /// the debug panel. Off by default, exactly as `debugMenuEnabled` was.
     bool showDebugButton = false;
@@ -1353,6 +1355,7 @@ private:
     ui::Scroller scroll_;
     bool requested_ = false;
     bool hyper_ = false;
+    bool playtime_ = false;
 };
 
 /// Display switches, camera zoom and the menu keys.

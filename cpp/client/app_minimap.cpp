@@ -550,9 +550,9 @@ bool App::scrollOnlineRoster() {
     if (window_.wheelDelta() == 0) return false;
     if (onlineRosterBox_.w <= 0) return false;
     const Vec2 mouse{window_.mouseX(), window_.mouseY()};
-    if (!onlineRosterBox_.contains(mouse)) return false;
+    if (!onlineRosterBox_.contains(mouse) || menus_.capturesMouse(mouse)) return false;
     onlineRosterScroll_ =
-        std::max(0.0, onlineRosterScroll_ + window_.wheelDelta() * kRosterWheelStep);
+        std::max(0.0, onlineRosterScroll_ - window_.wheelDelta() * kRosterWheelStep);
     return true;
 }
 

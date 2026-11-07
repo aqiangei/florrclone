@@ -60,10 +60,46 @@ std::string SquadRoster::joinPublic(const std::string& squadId, SquadMemberId wh
     Squad* squad = find(squadId);
     if (squad == nullptr) return "Squad not found.";
     if (!squad->isPublic) return "That squad is private.";
+    if (!who.valid()) return "Squad not found.";
     if (squad->full()) return "Squad is full.";
     if (forMember(who) != nullptr) return "You are already in a squad.";
     squad->members.push_back(who);
     invites_.erase(who.connection);
+    return {};
+}
+
+const Squad* SquadRoster::findByCode(const std::string& code) const {
+    if (code.size() != 3) return nullptr;
+    for (const auto& [id, squad] : squads_) {
+        if (squad.code == code) return &squad;
+    }
+    return nullptr;
+}
+
+const std::string& SquadRoster::issueCode(Squad& squad, Rng& rng) {
+    if (!squad.code.empty()) return squad.code;
+    const unsigned start = rng.below(1000);
+    for (unsigned offset = 0; offset < 1000; ++offset) {
+        const unsigned value = (start + offset) % 1000;
+        std::string code = std::to_string(1000 + value).substr(1);
+        if (findByCode(code)) continue;
+        squad.code = std::move(code);
+        break;
+    }
+    return squad.code;
+}
+
+std::string SquadRoster::joinWithCode(const std::string& code, SquadMemberId who,
+                                     Departure& leftPrevious) {
+    leftPrevious = {};
+    const Squad* target = findByCode(code);
+    if (!target || !who.valid()) return "Squad not found.";
+    if (target->contains(who)) return "You are already in a squad.";
+    if (target->full()) return "Squad is full.";
+    Squad* squad = find(target->id);
+    squad->members.reserve(squad->members.size() + 1);
+    leftPrevious = leave(who);
+    squad->members.push_back(who);
     return {};
 }
 

@@ -1606,11 +1606,15 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             // Unless the band is SINGULAR, which is the one band whose size
             // says nothing about its population: it is drawn over everywhere
             // its one mob may be, so area buys reach, not numbers.
+            const bool hot = map.templateId() == "computer" || map.templateId() == "cyberspace" ||
+                map.templateId() == "super";
+            const double density = ambientDensityScale * (hot ? hotZoneDensityScale : 1.0);
             zone.targetMobs =
                 element.singular
                     ? 1
                     : std::max(1, static_cast<int>(std::ceil(
-                          kTargetMobDensity * element.density * element.area())));
+                          kTargetMobDensity * element.density * element.area() * density /
+                          (kWorldMapScale * kWorldMapScale))));
             zones_.push_back(std::move(zone));
         }
 
@@ -2049,7 +2053,11 @@ void SpawnSystem::stockSuperFarms(World& world, const Terrain& terrain,
                 candidates.push_back(static_cast<std::uint16_t>(i));
         }
         if (candidates.empty()) continue;
-        const int farmPopulation = map.templateId() == "hel" ? 36 : kSuperFarmPopulation;
+        const int baseline = map.templateId() == "hel" ? 36 :
+            map.templateId() == "computer" ? kSuperFarmPopulation + 6 : kSuperFarmPopulation;
+        const bool hot = map.templateId() == "computer" || map.templateId() == "cyberspace" || dedicatedFarm;
+        const int farmPopulation = std::max(1, static_cast<int>(std::ceil(
+            baseline * ambientDensityScale * (hot ? hotZoneDensityScale : 1.0))));
         auto state=std::find_if(superFarmPopulations_.begin(),superFarmPopulations_.end(),
             [&](const SuperMapState& entry){return entry.realm==map.realm();});
         if (state==superFarmPopulations_.end()) {

@@ -448,6 +448,13 @@ double inGameLoadoutBarHeight(bool classic, double viewWidth) {
                                 metrics.primarySize) * scale;
 }
 
+double inGameLoadoutBarLeft(bool classic, double viewWidth) {
+    const LoadoutMetrics& metrics = loadoutMetrics(classic);
+    const double scale = metrics.inGameScale * loadoutFitScale(metrics, viewWidth, metrics.inGameScale);
+    const auto bar = layoutLoadout({0, 0, viewWidth, 0}, metrics, scale);
+    return std::min(bar.slots.front().x, bar.slots[kLoadoutBarPrimary].x);
+}
+
 double titleHintsOffsetY(bool classic) {
     const LoadoutMetrics& metrics = loadoutMetrics(classic);
     // The lowest slot edge the title box holds, then whatever hangs under it.
@@ -795,6 +802,7 @@ bool ClientSettings::load(const std::string& path) {
             }
         }
         else if (key == "stats") showStats = number != 0;
+        else if (key == "exactValues") showExactValues = number != 0;
         else if (key == "debugButton") showDebugButton = number != 0;
         else if (key == "adminsOnBoard") showAdminsOnLeaderboard = number != 0;
         else if (key == "changelogSeen") changelogSeen = number;
@@ -856,6 +864,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "chat " << (showChat ? 1 : 0) << '\n'
          << "chatTabs " << static_cast<int>(chatChannels) << '\n'
          << "stats " << (showStats ? 1 : 0) << '\n'
+         << "exactValues " << (showExactValues ? 1 : 0) << '\n'
          << "debugButton " << (showDebugButton ? 1 : 0) << '\n'
          << "adminsOnBoard " << (showAdminsOnLeaderboard ? 1 : 0) << '\n'
          << "changelogSeen " << changelogSeen << '\n'

@@ -25,10 +25,10 @@ TEST(wiki_stat_leaf_keeps_server_three_times_and_shows_base) {
 TEST(wiki_stat_blueberries_have_real_lightning_damage_and_nonzero_tooltip){
     CHECK(loadWikiStats());ui::setLanguage(ui::Language::Zh);
     const auto id=content().petalIndex("magic_peas");
-    CHECK_NEAR(content().petalStats(id,Rarity::Common).lightningDamagePerHit,30,1e-8);
-    CHECK_NEAR(content().petalStats(id,Rarity::Unique).lightningDamagePerHit,196830,1e-8);
+    CHECK_NEAR(content().petalStats(id,Rarity::Common).lightningDamagePerHit,120,1e-8);
+    CHECK_NEAR(content().petalStats(id,Rarity::Unique).lightningDamagePerHit,590490,1e-8);
     CHECK_EQ(content().petalStats(id,Rarity::Unique).lightningBounces,0);
-    CHECK(hasLine(id,Rarity::Unique,"196830"));CHECK(hasLine(id,Rarity::Unique,"不会连锁"));
+    CHECK(hasLine(id,Rarity::Unique,"590490"));CHECK(hasLine(id,Rarity::Unique,"不会连锁"));
 }
 TEST(wiki_stat_mecha_missile_has_a_straight_projectile_without_antennae){
     CHECK(loadWikiStats());const auto& config=content().petal(content().petalIndex("mecha_missile"));

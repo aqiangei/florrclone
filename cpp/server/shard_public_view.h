@@ -1,6 +1,7 @@
 #pragma once
 #include "server/hyper_board.h"
 #include "server/hyper_forge.h"
+#include "server/playtime_board.h"
 namespace flix::shards {
 inline Json publicShardView(const Database& db,const Json& input) {
     Json result=Json::object();const auto action=input["kind"].asString();
@@ -13,6 +14,11 @@ inline Json publicShardView(const Database& db,const Json& input) {
         result["cost"]=hyperForgeCost(state.claims,material);
         result["held"]=hyperHoldingCount(db,input["account"].asString());
     } else if(action=="leaderboard") {
+        result["playtime"] = Json::array();
+        for (const auto& entry : playtimeBoard(db, input["includeAdmins"].asBool())) {
+            Json row = Json::object(); row["name"] = entry.name; row["seconds"] = entry.seconds;
+            result["playtime"].push(row);
+        }
         std::vector<std::pair<std::string,double>> rows;unsigned active=0;
         for(const auto& name:db.usernames()) {
             const auto* user=db.findUser(name);if(!user)continue;

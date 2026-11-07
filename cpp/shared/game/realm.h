@@ -19,7 +19,7 @@
 
 #include <cstdint>
 
-#include "shared/core/types.h"
+#include "shared/game/constants.h"
 
 namespace flix {
 
@@ -98,14 +98,14 @@ inline constexpr const char* kMazeSpawnChoice = "maze";
 // space with a margin of void around it so every coordinate stays positive.
 // The margin is what the client paints dark around the ring.
 
-inline constexpr double kArenaRadius = 2500.0;
-inline constexpr double kArenaMargin = 500.0;
+inline constexpr double kArenaRadius = 2500.0 * kWorldMapScale;
+inline constexpr double kArenaMargin = 500.0 * kWorldMapScale;
 inline constexpr Vec2 kArenaCentre{kArenaRadius + kArenaMargin, kArenaRadius + kArenaMargin};
 /// The square the arena space spans; what its broadphase grid is sized to.
 inline constexpr double kArenaWorldSize = 2.0 * (kArenaRadius + kArenaMargin);
 /// Where a flower joining the arena appears: 1500 east of the centre, as the
 /// reference's PVP_ARENA_SPAWN is.
-inline constexpr Vec2 kArenaSpawn{kArenaCentre.x + 1500.0, kArenaCentre.y};
+inline constexpr Vec2 kArenaSpawn{kArenaCentre.x + 1500.0 * kWorldMapScale, kArenaCentre.y};
 
 /// True inside the ring, edge inclusive -- the reference's isInPvpArena.
 inline constexpr bool insideArena(Vec2 p) {

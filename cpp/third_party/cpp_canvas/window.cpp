@@ -539,6 +539,12 @@ struct Window::Impl {
   bool pointerIsTouch = false;
   Window::TouchClaimHandler touchClaim;
   std::vector<WindowRect> keyboardRegions;
+  WindowRect tapOnlyKeyboardRegion;
+
+  bool onTapOnlyKeyboardField(float x, float y) const {
+    const auto& r = tapOnlyKeyboardRegion;
+    return r.w > 0 && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  }
   /// See Window::setClaimedShortcuts.
   std::vector<Key> claimedShortcuts;
   /// What the mirrored finger is doing when it may be scrolling a list, and
@@ -990,6 +996,7 @@ struct Window::Impl {
     if (type == EMSCRIPTEN_EVENT_TOUCHMOVE) phase = TouchPhase::Moved;
     else if (type != EMSCRIPTEN_EVENT_TOUCHSTART) phase = TouchPhase::Ended;
 
+    bool handledCanvasTouch = false;
     bool leaveToThePage = false;
     for (int i = 0; i < event->numTouches; ++i) {
       const EmscriptenTouchPoint& point = event->touches[i];
@@ -997,11 +1004,51 @@ struct Window::Impl {
       // finger on the screen, changed or not, and treating them all as moves
       // would replay a stationary finger's position on every frame.
       if (!point.isChanged) continue;
+      auto& canvasIds = impl->canvasTouchIds;
+      const auto tracked = std::find(canvasIds.begin(), canvasIds.end(), point.identifier);
+      if (phase == TouchPhase::Began) {
+        if (tracked == canvasIds.end()) canvasIds.push_back(point.identifier);
+      } else {
+        // Touch endings are bound to the window so a canvas drag can finish
+        // off-canvas. A DOM link's tap never began on the canvas and must
+        // keep its browser-generated click.
+        if (tracked == canvasIds.end()) continue;
+        if (phase == TouchPhase::Ended) canvasIds.erase(tracked);
+      }
+      handledCanvasTouch = true;
       double targetX = web_canvas_coordinate(impl->elementId.c_str(), point.clientX, 0);
       double targetY = web_canvas_coordinate(impl->elementId.c_str(), point.clientY, 1);
       impl->disguiseIfScripted(targetX, targetY);
       const float x = static_cast<float>(targetX) * toDesign;
       const float y = static_cast<float>(targetY) * toDesign;
+      if (phase == TouchPhase::Began && !impl->tapOnlyLive &&
+          impl->onTapOnlyKeyboardField(x, y)) {
+        impl->tapOnlyOrigin = {point.identifier, x, y};
+        impl->tapOnlyLive = true;
+        impl->tapOnlyMoved = false;
+      }
+      if (impl->tapOnlyLive && point.identifier == impl->tapOnlyOrigin.id) {
+        constexpr float kTapSlop = 8.0f;
+        const auto origin = impl->tapOnlyOrigin;
+        if (std::hypot(x - origin.x, y - origin.y) > kTapSlop * toDesign)
+          impl->tapOnlyMoved = true;
+        if (phase == TouchPhase::Ended) {
+          impl->tapOnlyLive = false;
+          const bool tapped = type != EMSCRIPTEN_EVENT_TOUCHCANCEL && !impl->tapOnlyMoved &&
+                              impl->onTapOnlyKeyboardField(x, y);
+          impl->ghostUntilMillis = emscripten_get_now() + kGhostWindowMillis;
+          impl->suppressGhostClick = !tapped;
+          if (tapped) {
+            impl->recordTouch(TouchPhase::Began, origin.id, x, y);
+            impl->recordTouch(TouchPhase::Ended, origin.id, x, y);
+            leaveToThePage = true;
+          }
+        } else if (!impl->tapOnlyMoved) {
+          // The native click keeps iOS keyboard focus inside the trusted gesture.
+          leaveToThePage = true;
+        }
+        continue;
+      }
       if (phase == TouchPhase::Began) {
         // A tap on a field is the one gesture this window does NOT consume.
         // Every browser refuses to raise its keyboard for a focus() made
@@ -1021,6 +1068,7 @@ struct Window::Impl {
         leaveToThePage = true;
         if (phase == TouchPhase::Ended) {
           impl->passthroughLive = false;
+          impl->suppressGhostClick = false;
           // The page is about to replay this gesture as mousedown, mouseup
           // and click. The first two are already in this frame's stream from
           // the mirror, so they are dropped -- see onMouse.
@@ -1033,7 +1081,7 @@ struct Window::Impl {
     // not scroll, zoom, select, or -- the one that would double every tap --
     // follow the touch with a synthesised mouse click of its own. The one
     // exception is the tap that is asking for a keyboard, above.
-    return leaveToThePage ? EM_FALSE : EM_TRUE;
+    return handledCanvasTouch && !leaveToThePage ? EM_TRUE : EM_FALSE;
   }
 
   /// The keyboard, raised from the one event every mobile browser honours.
@@ -1048,6 +1096,8 @@ struct Window::Impl {
   static EM_BOOL onClick(int type, const EmscriptenMouseEvent* event, void* userData) {
     Impl* impl = implOf(userData);
     const float toDesign = impl->fit > 0 ? static_cast<float>(1.0 / impl->fit) : 1.0f;
+    if (impl->suppressGhostClick && emscripten_get_now() < impl->ghostUntilMillis)
+      return EM_TRUE;
     // The click follows the mouseup it came from, which the pointer physics
     // has already judged; it is not a sample of its own.
     double targetX = web_canvas_coordinate(impl->elementId.c_str(), event->clientX, 0);
@@ -1084,6 +1134,11 @@ struct Window::Impl {
   /// comes out of it.
   std::int64_t passthrough = 0;
   bool passthroughLive = false;
+  std::vector<std::int64_t> canvasTouchIds;
+  TouchPoint tapOnlyOrigin{};
+  bool tapOnlyLive = false;
+  bool tapOnlyMoved = false;
+  bool suppressGhostClick = false;
   /// Until when the page's own mouse events are its replay of a touch this
   /// window already mirrored, rather than a mouse. Long enough to cover the
   /// mousedown/mouseup pair a browser synthesises after a touchend, which is
@@ -1115,6 +1170,8 @@ struct Window::Impl {
     Key key = fromDomCode(event->code);
     // A phone's keyboard may name the key and leave its physical code empty.
     if (key == Key::Unknown) key = fromDomKey(event->key);
+    // F11 belongs to browser fullscreen, including its keyup.
+    if (key == Key::F11) return EM_FALSE;
     const std::size_t i = static_cast<std::size_t>(key);
 
     // IME language switch (Shift, Alt+Shift, Ctrl+Space, …) must reach the OS.
@@ -1245,6 +1302,9 @@ struct Window::Impl {
     // them reads the live set, and there is nothing left in it.
     impl->touches.clear();
     impl->claimed.clear();
+    impl->tapOnlyLive = false;
+    impl->passthroughLive = false;
+    impl->canvasTouchIds.clear();
     impl->mirroring = false;
     impl->touchInside = false;
     impl->gesture.cancel();
@@ -1749,6 +1809,7 @@ bool Window::pointerInside() const {
 #endif
 }
 float Window::wheelDelta() const { return impl_->wheel; }
+void Window::consumeWheel() { impl_->wheel = 0; }
 
 const std::vector<TouchEvent>& Window::touchEvents() const { return impl_->touchEvents; }
 const std::vector<TouchPoint>& Window::touches() const { return impl_->touches; }
@@ -1776,11 +1837,13 @@ const TouchPan& Window::touchPan() const { return impl_->gesture.pan(); }
 bool Window::touchScrolling() const { return impl_->gesture.scrolling(); }
 bool Window::pointerIsTouch() const { return impl_->pointerIsTouch; }
 
-void Window::setSoftKeyboardRegions(std::vector<WindowRect> regions) {
+void Window::setSoftKeyboardRegions(std::vector<WindowRect> regions, WindowRect tapOnly) {
 #ifdef __EMSCRIPTEN__
   impl_->keyboardRegions = std::move(regions);
+  impl_->tapOnlyKeyboardRegion = tapOnly;
 #else
   (void)regions;
+  (void)tapOnly;
 #endif
 }
 

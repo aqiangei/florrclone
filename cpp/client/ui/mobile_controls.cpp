@@ -142,12 +142,14 @@ bool MobileControls::hits(double x, double y) const {
         within(swapCentre_, x, y, kSwapRadius * kButtonHitSlack * scale_)) {
         return true;
     }
-    // Approach pad under the stick: thumbs often start below the knob and
-    // slide up. Without this pad that first contact lands on the chat slot
-    // (or its old footprint) and opens the keyboard instead of steering.
-    const double padBottom = stickCentre_.y + stickR + 96.0 * scale_;
+    // Leave a short approach below the joystick without claiming the chat
+    // row below it.
     return x >= stickCentre_.x - stickR && x <= stickCentre_.x + stickR &&
-           y >= stickCentre_.y && y <= padBottom;
+           y >= stickCentre_.y && y <= stickApproachBottom();
+}
+
+double MobileControls::stickApproachBottom() const {
+    return stickCentre_.y + stickHitRadius() + 18.0 * scale_;
 }
 
 void MobileControls::update(const std::vector<TouchEvent>& events, double timeSeconds) {

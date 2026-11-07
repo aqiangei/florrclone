@@ -161,7 +161,7 @@ TEST(the_oracle_charges_the_stated_price_for_every_tier) {
     // The design's own numbers, tier by tier -- "unusual" is this game's
     // uncommon. Apex and universal cost nothing because nothing crafts out of
     // either.
-    const int expected[] = {7, 11, 19, 34, 65, 128, 253, 506, 0, 0, 0, 0};
+    const int expected[] = {7, 11, 19, 34, 65, 128, 253, 0, 0, 0, 0, 0};
     static_assert(sizeof(expected) / sizeof(expected[0]) == kRarityCount);
     for (int i = 0; i < kRarityCount; ++i) {
         CHECK_EQ(oracleCraftCost(static_cast<Rarity>(i)), expected[i]);
@@ -199,7 +199,7 @@ TEST(the_shipped_oracle_is_a_mob_that_offers_a_service) {
     const std::uint16_t titan = content().mobIndex("titan");
     const std::uint16_t assembler = content().mobIndex("assembler");
     for (std::uint16_t i = 0; i < content().mobCount(); ++i) {
-        if (i == oracle || i == dummy || i == trader || i == titan || i == assembler || content().mob(i).id=="cyber_assembler") continue;
+        if (i == oracle || i == dummy || i == trader || i == titan || i == assembler || content().mob(i).id=="cyber_assembler" || content().mob(i).id=="super_assembler") continue;
         CHECK(!content().mob(i).npc.present);
     }
 }
@@ -1206,7 +1206,9 @@ TEST(a_super_bought_from_the_oracle_is_announced) {
     CHECK(outcome.rarity == Rarity::Super);
     CHECK(h.stepUntil({&client}, [&] {
         for (std::size_t i = chatBefore; i < client.chat().size(); ++i) {
-            if (client.chat()[i].text.find("has been crafted by") != std::string::npos) return true;
+            const auto& text=client.chat()[i].text;
+            if (text.find("has been crafted by") != std::string::npos ||
+                (text.find("合成") != std::string::npos && text.find("@seer") != std::string::npos)) return true;
         }
         return false;
     }, 60));
@@ -1230,103 +1232,36 @@ TEST(the_wait_is_said_in_whole_minutes_rounded_up) {
     CHECK_EQ(oracleCooldownText(1.0), std::string("You'll be able to craft again in 1 minute"));
 }
 
-TEST(the_oracle_grants_one_craft_every_thirty_minutes) {
-    const std::string dir = oracleWorld("oracle-wait");
-    Harness h("oracle-wait", [](const std::string& path) {
+TEST(todo1106_oracle_batch_is_atomic_and_has_no_cooldown) {
+    const std::string dir = oracleWorld("oracle-batch1106");
+    Harness h("oracle-batch1106", [](const std::string& path) {
         seedAccount(path, "seer");
-        seedStack(path, "seer", "petal_rose", Rarity::Common, 20);
+        seedStack(path, "seer", "petal_rose", Rarity::Common, 35);
+        seedStack(path, "seer", "petal_rose", Rarity::Super, 1000);
     }, dir, 0);
-    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t rose = content().petalIndex("rose");
-
-    NetClient client;
-    CHECK(joinAs(h, client, "seer"));
-    h.step(3, {&client});
-
-    OracleOutcome outcome;
+    CHECK(h.ready); if (!h.ready) { removeDataDir(dir); return; }
+    const auto rose = content().petalIndex("rose");
+    NetClient client; CHECK(joinAs(h, client, "seer"));
+    OracleOutcome out;
     standBeside(h, client, "oracle");
-    client.requestOracleCraft(rose, Rarity::Common);
-    CHECK(awaitOracle(h, client, outcome));
-    CHECK(outcome.success);
-
-    // The craft started the half hour, and the profile that followed it says
-    // so -- which is what turns the panel's line red.
+    client.requestOracleCraft(rose, Rarity::Common, 3);
+    CHECK(awaitOracle(h, client, out)); CHECK(out.success);
+    CHECK_EQ(out.crafted, 3); CHECK_EQ(out.spent, 21u);
+    CHECK_EQ(client.oracleCooldownRemainingMillis(), 0.0);
+    standBeside(h, client, "oracle");
+    client.requestOracleCraft(rose, Rarity::Common, 3);
+    CHECK(awaitOracle(h, client, out)); CHECK(!out.success);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Common), 14u);
+    standBeside(h, client, "oracle");
+    client.requestOracleCraft(rose, Rarity::Common, 2);
+    CHECK(awaitOracle(h, client, out)); CHECK(out.success);
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Uncommon) == 1u;
+        return p.stackCount(rose, Rarity::Common) == 0u && p.stackCount(rose, Rarity::Uncommon) == 5u;
     }));
-    const double wait = client.oracleCooldownRemainingMillis();
-    CHECK(wait > kOracleCooldownMillis - 60000.0);
-    CHECK(wait <= kOracleCooldownMillis);
-
-    // The next one is refused in the panel's own words, and costs nothing.
     standBeside(h, client, "oracle");
-    client.requestOracleCraft(rose, Rarity::Common);
-    CHECK(awaitOracle(h, client, outcome));
-    CHECK(!outcome.success);
-    CHECK_EQ(outcome.reason, std::string("You'll be able to craft again in 30 minutes"));
-    h.step(5, {&client});
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Common), 13u);
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Uncommon), 1u);
-
-    removeDataDir(dir);
-}
-
-TEST(the_oracle_wait_is_the_accounts_across_a_relog_and_ends_on_the_server_clock) {
-    const std::string dir = oracleWorld("oracle-wait-kept");
-    Harness h("oracle-wait-kept", [](const std::string& path) {
-        seedAccount(path, "seer");
-        seedStack(path, "seer", "petal_rose", Rarity::Common, 30);
-    }, dir, 0);
-    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    const std::uint16_t rose = content().petalIndex("rose");
-
-    {
-        NetClient client;
-        CHECK(joinAs(h, client, "seer"));
-        h.step(3, {&client});
-        OracleOutcome outcome;
-        standBeside(h, client, "oracle");
-        client.requestOracleCraft(rose, Rarity::Common);
-        CHECK(awaitOracle(h, client, outcome));
-        CHECK(outcome.success);
-        client.disconnect();
-        h.step(10, {});
-    }
-
-    // A new connection is the same account, so the wait came with it: the
-    // join's profile already carries it, and the craft is refused.
-    NetClient client;
-    CHECK(joinAs(h, client, "seer"));
-    h.step(3, {&client});
-    CHECK(client.oracleCooldownRemainingMillis() > kOracleCooldownMillis - 60000.0);
-    OracleOutcome outcome;
-    standBeside(h, client, "oracle");
-    client.requestOracleCraft(rose, Rarity::Common);
-    CHECK(awaitOracle(h, client, outcome));
-    CHECK(!outcome.success);
-
-    // The wait is measured on the server's own tick clock, so moving that
-    // clock is the whole of "half an hour later". A minute and a half short,
-    // what is left rounds up to two...
-    h.clock += kOracleCooldownMillis - 90000.0;
-    h.step(3, {&client});
-    standBeside(h, client, "oracle");
-    client.requestOracleCraft(rose, Rarity::Common);
-    CHECK(awaitOracle(h, client, outcome));
-    CHECK(!outcome.success);
-    CHECK_EQ(outcome.reason, std::string("You'll be able to craft again in 2 minutes"));
-
-    // ...and past it, the oracle serves again.
-    h.clock += 120000.0;
-    h.step(3, {&client});
-    standBeside(h, client, "oracle");
-    client.requestOracleCraft(rose, Rarity::Common);
-    CHECK(awaitOracle(h, client, outcome));
-    CHECK(outcome.success);
-    CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.stackCount(rose, Rarity::Uncommon) == 2u;
-    }));
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Common), 16u);
+    client.requestOracleCraft(rose, Rarity::Super, 1);
+    CHECK(awaitOracle(h, client, out)); CHECK(!out.success);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Super), 1000u);
     removeDataDir(dir);
 }
 

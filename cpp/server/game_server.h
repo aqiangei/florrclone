@@ -134,6 +134,7 @@ struct ServerConfig {
     /// (pickBotSpawn). `/admin set_bot_count` is the same knob at run time;
     /// this is the one a harness can set before the first tick.
     int botCount = 0;
+    bool loadShedding = false;
     /// The `/admin db` key to use as is, instead of the one in the key file
     /// beside the database. Empty means the file. Only the offline page sets
     /// it: its server is a browser tab with no file anybody can open, and a
@@ -625,6 +626,7 @@ private:
                    const std::optional<std::string>& description);
     void guildInvite(Session&, net::Connection&, const std::string& target);
     void guildKick(Session&, net::Connection&, const std::string& target);
+    void guildTransfer(Session&, net::Connection&, const std::string& target);
     void guildInviteToSquad(Session&, net::Connection&, const std::string& target);
 
     // -- squads ------------------------------------------------------------
@@ -894,7 +896,7 @@ private:
     /// the default -- is the server talking in its own voice, and draws no
     /// bubble over anybody.
     void broadcastChat(net::ChatChannel, const std::string& author, const std::string& text,
-                       std::uint32_t speakerNetId = 0);
+                       std::uint32_t speakerNetId = 0, bool relay = true);
     /// One chat line to one connection, under a chosen author -- a channel's
     /// own notice, unsigned, or a line said to a group -- which a Notice,
     /// whose author is always System, cannot express.
@@ -1513,6 +1515,7 @@ private:
     /// realm an entity is in is the index into this.
     WorldMaps worldMaps_;
     SpatialGrid grid_;
+    SpatialGrid pickupGrid_;
     Rng rng_;
     /// The bots' OWN stream, separate from the world's.
     ///

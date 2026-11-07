@@ -1,19 +1,8 @@
 // The oracle.
 //
-// What the craft key opens while the flower stands at an oracle NPC (see
-// shared/game/npc.h). The forge gambles five petals on a roll; the oracle
-// takes a fixed price -- oracleCraftCost(), a table that runs from 7 commons
-// to 1012 uniques -- and the upgrade is certain.
-//
-// It is florr's oracle window (menus.h), in its slate: one slot and the
-// Craft button beside it, one line of text, and the grid, where every cell
-// carries "owned/price" and a stack that cannot yet pay its column's price
-// sits on a grey plate. florr's grid stops at super; this one keeps the
-// unique column, because unique -> apex has a price here.
-//
-// One upgrade per craft, and one craft per half hour (kOracleCooldownMillis):
-// while the account waits, the line of text turns red and says how long, and
-// every stack in the grid sits on grey with its plain count.
+// Fixed-price guaranteed upgrades, Common through Ultra -> Super.
+// Quantity is chosen with the batch controls; no account cooldown applies.
+// The server checks reach, inventory and output capacity atomically.
 //
 // The slot moves the way florr's oracle window moves it (its draw,
 // 0x1008125f0): the staged petal grows in turning once backwards; a craft
@@ -75,7 +64,7 @@ void OraclePanel::reset() {
 
 void OraclePanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity rarity) {
     const int cost = oracleCraftCost(rarity);
-    if (cost <= 0) return;
+    if (cost <= 0 || rarityIndex(rarity) > rarityIndex(Rarity::Ultra)) return;
     if (profile.stackCount(petalIndex, rarity) < static_cast<std::uint32_t>(cost)) return;
     // One upgrade, so a click REPLACES what was staged rather than adding to
     // it: there is only ever one price in the slot.
@@ -99,7 +88,7 @@ bool OraclePanel::render(MenuContext& ctx) {
     };
     // The account's wait for its next craft, counted down on this client's
     // clock from what the last profile said.
-    const double cooldown = ctx.net.oracleCooldownRemainingMillis();
+    const double cooldown = 0.0;
     const bool waiting = cooldown > 0.0;
     const auto land = [this]() {
         phase_ = Phase::Result;
@@ -153,8 +142,28 @@ bool OraclePanel::render(MenuContext& ctx) {
         }
     }
 
-    const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kOracleSkin, "Oracle", "Craft", mouse);
+    SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kOracleSkin,
+                                      trEnZh("Oracle", "神使"), "Craft", mouse);
     const Rect panel = card.panel;
+    const double centre = card.button.x + card.button.w * 0.5;
+    card.button.x = centre - 79.0;
+    card.button.w = 158.0;
+    const double controlsY = card.button.bottom() + 9.0;
+    const Rect minus{card.button.x, controlsY, 36, 28};
+    const Rect plus{minus.right() + 8, controlsY, 36, 28};
+    const Rect maximum{plus.right() + 8, controlsY, 70, 28};
+    if (phase_ == Phase::Idle && knownPetal(stagedPetal_)) {
+        drawSlotButton(canvas, minus, "−", std::nullopt, minus.contains(mouse), false);
+        drawSlotButton(canvas, plus, "+", std::nullopt, plus.contains(mouse), false);
+        drawSlotButton(canvas, maximum, trEnZh("Max", "最大"), std::nullopt, maximum.contains(mouse), false);
+        const int limit = std::min(65535, static_cast<int>(profile.stackCount(stagedPetal_, stagedRarity_) /
+            static_cast<std::uint32_t>(oracleCraftCost(stagedRarity_))));
+        if (ctx.pressed()) {
+            if (minus.contains(mouse)) crafts_ = std::max(1, crafts_ - 1);
+            if (plus.contains(mouse)) crafts_ = std::min(limit, crafts_ + 1);
+            if (maximum.contains(mouse)) crafts_ = limit;
+        }
+    }
 
     if (phase_ == Phase::Pulsing) {
         const double elapsed = now - phaseStarted_;
@@ -213,7 +222,8 @@ bool OraclePanel::render(MenuContext& ctx) {
     const bool canCraft =
         !waiting && phase_ == Phase::Idle && knownPetal(stagedPetal_) && crafts_ > 0;
     const bool overButton = card.button.contains(mouse);
-    drawSlotButton(canvas, card.button, "Craft",
+    const std::string craftLabel = std::string(trEnZh("Craft ×", "兑换 ×")) + std::to_string(crafts_);
+    drawSlotButton(canvas, card.button, craftLabel.c_str(),
                    canCraft ? std::optional<std::uint32_t>(rarityColor(upgradeRarity(stagedRarity_)))
                             : std::nullopt,
                    overButton, overButton && ctx.window.mouseDown(MouseButton::Left));
@@ -247,7 +257,7 @@ bool OraclePanel::render(MenuContext& ctx) {
             }
             const std::uint32_t price =
                 static_cast<std::uint32_t>(std::max(1, oracleCraftCost(rarity)));
-            cell.greyed = !craftsOutOf(rarity) || waiting || cell.count < price;
+            cell.greyed = rarityIndex(rarity) > rarityIndex(Rarity::Ultra) || !craftsOutOf(rarity) || waiting || cell.count < price;
             cell.badge = waiting ? "x" + stackCountText(cell.count)
                                  : stackCountText(cell.count) + "/" + std::to_string(price);
             cell.badgeCentred = true;
@@ -285,7 +295,7 @@ bool OraclePanel::render(MenuContext& ctx) {
             offeredRarity_ = stagedRarity_;
             offeredCrafts_ = crafts_;
             refusal_.clear();
-            ctx.net.requestOracleCraft(stagedPetal_, stagedRarity_);
+            ctx.net.requestOracleCraft(stagedPetal_, stagedRarity_, static_cast<std::uint16_t>(crafts_));
             // Handed over: the slot draws the offer's copy from here, and a
             // refusal is what puts it back.
             stagedPetal_ = kNoPetal;

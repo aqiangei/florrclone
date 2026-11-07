@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 100; // Appended Prestige talent in profile skill arrays.
+inline constexpr std::uint16_t kProtocolVersion = 101; // Appended ManaRegen talent in profile skill arrays.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -233,6 +233,8 @@ enum class ClientMessage : std::uint8_t {
     BulkCraft,          ///< u8 target, u16 exclusion count, u16 petal IDs; craft lower unequipped stacks.
     EnterDungeon,       ///< no payload; explicit nearby dungeon entry.
     DailyDropBonus,     ///< u8 action: 0 query, 1 claim, 2 toggle shop lock; daily one-hour drop bonus (v78).
+    DailyLoginClaim,    ///< no payload; idempotent daily login reward / refresh.
+    AccountQQ,          ///< bool save, str value if saving; private account record only.
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -458,6 +460,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< Additive; older clients skip an unknown id.
     PyramidMapState,    ///< u8 realm, u8 revealed; visit-only, never saved (v74).
     DailyDropBonusState, ///< v93: bonus fields, i64 locked rotation, locked offers, i64 current rotation, current offers. Each list: u8 count, {u16 petal,u8 rarity,f64 price,u8 discount,u16 remaining (65535 unlimited)}.
+    AccountQQ,          ///< bool saved, str current value; only to the authenticated owner.
 };
 
 // ---------------------------------------------------------------------------
@@ -992,6 +995,8 @@ enum class EventKind : std::uint8_t {
 inline constexpr std::size_t kMaxLightningTargets = 24;
 /// Lightning points form an ordered chain rather than independent radial arms.
 inline constexpr std::uint8_t LightningChained = 1u;
+inline constexpr std::uint8_t LightningForeign = 2u;
+inline constexpr std::uint8_t LightningFromPet = 4u;
 
 // ---------------------------------------------------------------------------
 // Content hash

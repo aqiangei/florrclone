@@ -740,6 +740,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
                               double nowMillis, double dt) {
     const ContentRegistry& registry = content();
     queries_->mobs.each([&](Entity e, MobTag&, Transform& transform, Motion& motion, Body&) {
+        if (const auto* ai = world.tryGet<MobAi>(e); ai && ai->sleeping) return;
         if (anchoredAgainstKnockback(world, registry, e)) motion.velocity = Vec2{0,0};
         // The shove a petal or a blast queued. The TypeScript server wrote
         // this vector on every hit and then never read it back, so a mob
@@ -974,19 +975,19 @@ void MovementSystem::collectSeekTargets() {
     // the list here, since a pet is a mob on the players' team.
     queries_->mobTargets.each([&](Entity e, MobTag&, Transform& t, Faction& f, Health& h) {
         if (!h.alive()) return;
-        seekTargets_.push_back({e, t.position, f.team});
+        seekTargets_.push_back({e, t.position, f.team, t.realm});
     });
     // A target dummy draws a guided shot like the mob it is built from. The
     // players' own NPCs are not filed at all: a mob's volley that curled onto
     // the oracle would be wasted on something that takes no hits.
     queries_->npcTargets.each([&](Entity e, NpcTag&, Transform& t, Faction& f) {
         if (f.team == Team::Players) return;
-        seekTargets_.push_back({e, t.position, f.team});
+        seekTargets_.push_back({e, t.position, f.team, t.realm});
     });
 }
 
 Entity MovementSystem::findSeekTarget(Entity self, const Projectile& projectile, Team team,
-                                      Vec2 position, double heading) const {
+                                      Vec2 position, double heading, Realm realm) const {
     // A config with a range but no cone re-aims within 45 degrees of the
     // firing bearing -- the reference's default. A full circle would let a
     // shot leave along a bearing nothing was ever fired on.
@@ -996,6 +997,7 @@ Entity MovementSystem::findSeekTarget(Entity self, const Projectile& projectile,
     Entity best = NULL_ENTITY;
 
     for (const SeekTarget& candidate : seekTargets_) {
+        if (candidate.realm != realm) continue;
         if (candidate.entity == self || candidate.entity == projectile.owner) continue;
         if (candidate.entity == projectile.creditTo) continue;
         if (candidate.team == team || candidate.team == Team::Neutral) continue;
@@ -1026,7 +1028,9 @@ Vec2 MovementSystem::aimAtLaunch(World& world, Entity self, Vec2 position,
 
     const double speed = velocity.length();
     const double heading = velocity.angle();
-    const Entity target = findSeekTarget(self, projectile, team, position, heading);
+    const auto* at = world.tryGet<Transform>(self);
+    const Entity target = findSeekTarget(self, projectile, team, position, heading,
+        at ? at->realm : Realm::Overworld);
     if (target == NULL_ENTITY) return velocity;
 
     const Transform* targetTransform = world.tryGet<Transform>(target);
@@ -1047,13 +1051,7 @@ bool MovementSystem::activeForSeparation(Vec2 position, Realm realm, Rarity rari
     // Nobody connected is the PERMISSIVE case, as it is in the reference's
     // activity field: with no observer there is nothing to save the work for,
     // and a bench or a test that never adds a player sees the unmodified rule.
-    if (separationPlayers_.empty()) return true;
-    const double reachSq = kMobActiveRadius * kMobActiveRadius;
-    for (const RealmPoint& player : separationPlayers_) {
-        if (player.realm != realm) continue;
-        if (distanceSq(position, player.position) <= reachSq) return true;
-    }
-    return false;
+    return separationObservers_.near(position, realm);
 }
 
 void MovementSystem::buildSeparationSet(World& world) {
@@ -1062,6 +1060,7 @@ void MovementSystem::buildSeparationSet(World& world) {
         if (!std::isfinite(transform.position.x) || !std::isfinite(transform.position.y)) return;
         separationPlayers_.push_back({transform.position, transform.realm});
     });
+    separationObservers_.rebuild(separationPlayers_);
 
     // Retire last pass's slots before the set they index is dropped. The table
     // is keyed by entity INDEX, which the world recycles.

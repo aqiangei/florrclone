@@ -223,6 +223,7 @@ public:
     /// builds track DOM enter/leave events; desktop builds ask SDL.
     bool pointerInside() const;
     float wheelDelta() const;
+    void consumeWheel();
 
     // -- touch ---------------------------------------------------------------
     //
@@ -319,7 +320,7 @@ public:
     /// Where this frame's text fields are, in design units. A touch landing in
     /// one raises the on-screen keyboard; a touch landing outside all of them
     /// dismisses it.
-    void setSoftKeyboardRegions(std::vector<WindowRect> regions);
+    void setSoftKeyboardRegions(std::vector<WindowRect> regions, WindowRect tapOnly = {});
 
     /// Takes the keyboard away, for a field that was closed by something other
     /// than a touch -- Escape, a send, a panel closing under it.

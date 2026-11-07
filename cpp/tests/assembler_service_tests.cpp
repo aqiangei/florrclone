@@ -37,7 +37,7 @@ TEST(assembler_conversion_cycles_cannot_mint_material_value) {
     // Positive value witness: each same-tier recipe conserves or consumes
     // value, so no composition or cycle can produce a net material gain.
     const std::map<std::string,double> value={{"glass",1},{"sand",1},{"air",1},{"bubble",1},
-        {"moon_rock",100000},{"rock",1},{"honey",1},{"wax",3},{"rose",1},{"light",1},
+        {"moon_rock",20},{"rock",1},{"honey",1},{"wax",3},{"rose",1},{"light",1},
         {"dahlia",2},{"battery",2},{"lightning",4},{"pollen",2},{"triangle",1},
         {"cutter",10},{"mimic",20},{"ram",1},{"sawblade",21},{"square",1},
         {"pentagon",2},{"cogwheel",1},{"fragment",1}};

@@ -91,6 +91,16 @@ std::uint8_t ownershipFlags(World& world, Entity e, Entity viewer,
         if (side == nullptr || side->team != Team::Players) return 0;
         player = shot->creditTo;
         if (shot->owner != shot->creditTo) flags |= net::SpawnIsPet;
+    } else if (const GroundEffect* field = world.tryGet<GroundEffect>(e)) {
+        player = field->owner;
+        if (const Pet* pet = world.tryGet<Pet>(player)) {
+            player = pet->owner;
+            flags |= net::SpawnIsPet;
+        } else if (!world.has<PlayerTag>(player)) return 0;
+    } else if (const PlantedMeteor* meteor = world.tryGet<PlantedMeteor>(e)) {
+        player = meteor->owner;
+    } else if (const HoneyBait* honey = world.tryGet<HoneyBait>(e)) {
+        player = honey->owner;
     } else {
         return 0;
     }
@@ -282,8 +292,9 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     const auto halfExtent = [&](double axis, double defaultAxis, double multiple) {
         return axis * 0.5 + std::min(axis, defaultAxis) * (multiple - 0.5);
     };
-    const double reachX = halfExtent(viewport.x, kViewportWidth, viewportReach);
-    const double reachY = halfExtent(viewport.y, kViewportHeight, viewportReach);
+    const double outerReach = frame.loadShedding ? 1.2 : viewportReach;
+    const double reachX = halfExtent(viewport.x, kViewportWidth, outerReach);
+    const double reachY = halfExtent(viewport.y, kViewportHeight, outerReach);
 
     const auto outsideView = [&](Vec2 at) {
         const double dx = at.x - centre.x;
@@ -639,7 +650,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     }
     out.patchU16(spawnCountAt, spawnCount);
 
-    const int farStride = std::max(1, farSnapshotStride);
+    const int farStride = frame.loadShedding ? 6 : std::max(1, farSnapshotStride);
     std::uint32_t previousUpdateId = 0;
     for (const Candidate& candidate : candidates_) {
         auto it = view.tracked.find(candidate.netId);
@@ -841,6 +852,16 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 continue;
             }
             std::uint8_t flag = event.flag;
+            if (event.kind == net::EventKind::Lightning && event.visualSource != NULL_ENTITY) {
+                auto owned = ownershipFlags(world, event.visualSource, viewer, viewerOwner);
+                if (world.has<PlayerTag>(event.visualSource)) {
+                    const auto* account = world.tryGet<PlayerAccount>(event.visualSource);
+                    if (event.visualSource != viewer && !(account && viewerOwner != 0 && account->connection == viewerOwner))
+                        owned |= net::SpawnForeign;
+                }
+                if (owned & net::SpawnForeign) flag |= net::LightningForeign;
+                if (owned & net::SpawnIsPet) flag |= net::LightningFromPet;
+            }
             if (dealtByViewer(event)) flag |= net::DamageByViewer;
             if (offView && event.kind == net::EventKind::Damage) flag |= net::DamageOffView;
             out.u8(static_cast<std::uint8_t>(event.kind));

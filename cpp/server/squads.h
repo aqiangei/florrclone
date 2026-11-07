@@ -59,6 +59,7 @@ struct Squad {
     std::string id;
     SquadMemberId leader;
     std::vector<SquadMemberId> members;
+    std::string code;
     bool isPublic = false;
 
     bool full() const { return members.size() >= kMaxSquadSize; }
@@ -83,6 +84,8 @@ public:
     /// Joins a public squad without an invite. Bot-led squads are always
     /// public, which is what makes them joinable at all.
     std::string joinPublic(const std::string& squadId, SquadMemberId who);
+    const std::string& issueCode(Squad& squad, Rng& rng);
+    const Squad* findByCode(const std::string& code) const;
 
     /// Adds a bot straight to `squadId`, bypassing the invite flow: a bot has
     /// nobody to answer an invitation.
@@ -119,6 +122,9 @@ public:
         /// Set when the leader left and the next member was promoted.
         SquadMemberId promoted;
     };
+
+    /// A valid code switches squads only after checking the destination.
+    std::string joinWithCode(const std::string& code, SquadMemberId who, Departure& leftPrevious);
 
     /// Answers the one pending invitation. On success `squadIdOut` names the
     /// squad joined. If the target was in another squad, they leave it first

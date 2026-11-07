@@ -284,6 +284,12 @@ void App::updateLobby() {
     // A click that landed on a panel or on the icon strip was for the menus,
     // and must not also start a game behind them.
     if (!menus_.capturesMouse(mouse)) {
+        const Rect dailyCard{window_.width() - 236.0, 16.0, 220.0, 150.0};
+        if (window_.mousePressed(MouseButton::Left) && dailyCard.contains(mouse) && net_.dailyStreak().known) {
+            net_.requestDailyLoginClaim();
+            streakSeenAt_ = -1;
+            return;
+        }
         if (window_.mousePressed(MouseButton::Left)) {
             pressedControl_.clear();
             // Every title-screen control is hit inclusive on all four edges:
@@ -362,7 +368,7 @@ void App::updateLobby() {
             // A press on the slot opens the line and one elsewhere closes it
             // -- except on the transcript above it, where selecting a message
             // is done with the box open, as in the game.
-            if (hit(titleChatBox(window_.width(), window_.height()), mouse)) {
+            if (chatBox_.w > 0 && hit(chatBox_, mouse)) {
                 chatOpen_ = true;
             } else if (!chatRegion_.contains(mouse)) {
                 chatOpen_ = false;
@@ -488,15 +494,18 @@ const SvgDocument* App::titleBackground(const std::string& backdrop) {
         {"default", "land.svg"},     {"garden", "land.svg"},
         {"desert", "desert.svg"},
         {"ocean", "ocean.svg"},   {"hel", "hel.svg"},       {"ant_hell", "ant_hell.svg"},
-        {"sewers", "sewers.svg"}, {"jungle", "jungle.svg"}, {"computer", "computer.svg"},
+        {"sewers", "sewers.svg"}, {"jungle", "jungle.svg"}, {"computer", "factory_floor_c_0.svg"},
+        {"factory", "factory_floor_c_0.svg"}, {"cyberspace", "cyber-microchip.svg"},
         {"unknown", "unknown.svg"},
         // The pyramid has no ground artwork of its own: its backdrop is its
         // floor tile, which is staged beside these. (A `pyramid.svg` here
         // would collide with the tile of that name -- everything stages flat.)
         {"pyramid", "pyramid_floor_c_0.svg"},
+        {"super", "super_ground_c_0.svg"},
     };
     const auto entry = kFiles.find(backdrop);
-    const std::string file = entry == kFiles.end() ? "land.svg" : entry->second;
+    if (entry == kFiles.end()) return nullptr;
+    const std::string file = entry->second;
 
     // Compiled on first use and kept: a player flicking along the picker would
     // otherwise re-parse an SVG per frame.
@@ -518,9 +527,36 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
     std::string backdrop = "default";
     for (const SpawnChoice& choice : spawnChoices_) {
         if (choice.id != menus_.settings().spawnChoice) continue;
-        if (!choice.backdrop.empty()) backdrop = choice.backdrop;
+        if (choice.id == kArenaSpawnChoice) backdrop = "pvp";
+        else if (!choice.backdrop.empty()) backdrop = choice.backdrop;
         else if (!choice.biome.empty()) backdrop = choice.biome;
         break;
+    }
+    if (backdrop != titlePetalBiome_) {
+        titlePetalBiome_ = backdrop;
+        titlePetals_.clear();
+        titlePetalTypes_.clear();
+        static const std::unordered_map<std::string, std::vector<const char*>> choices = {
+            {"default", {"basic", "rose", "leaf", "clover", "pollen", "honey", "egg", "web"}},
+            {"garden", {"basic", "rose", "leaf", "clover", "pollen", "honey", "egg", "web"}},
+            {"desert", {"cactus", "sand", "rock", "yucca", "stinger", "pincer", "salt", "magic_cactus"}},
+            {"ocean", {"bubble", "shell", "coral", "sponge", "pearl", "starfish", "salt", "magic_bubble"}},
+            {"jungle", {"monstera", "leaf", "grapes", "blood_stinger", "basil", "dahlia", "web", "golden_leaf"}},
+            {"hel", {"uranium", "dead_leaf", "blood_stinger", "rock", "blood_sacrifice", "third_eye", "bone", "lightning"}},
+            {"ant_hell", {"egg", "stinger", "leaf", "blood_stinger", "beetle_egg", "rice", "pincer", "web"}},
+            {"sewers", {"magnet", "uranium", "sponge", "rubber", "salt", "mysterious_powder", "bone", "cotton"}},
+            {"computer", {"computer_chip", "battery", "cogwheel", "sawblade", "ram", "mecha_missile", "magnet", "lightning"}},
+            {"cyberspace", {"computer_chip", "ram", "battery", "magnet", "lightning", "electric_web", "mecha_missile", "cogwheel"}},
+            {"super", {"rock", "stinger", "rose", "egg", "cactus", "shell", "grapes", "uranium"}},
+            {"pvp", {"claw", "stinger", "fang", "rock", "bone", "pincer", "sawblade", "lightning"}},
+            {"pyramid", {"ankh", "pharaoh_s_crown", "sand", "nazar_amulet", "bone", "third_eye", "mysterious_powder", "poker_chip"}},
+        };
+        auto selected = choices.find(backdrop == "factory" ? "computer" : backdrop);
+        if (selected == choices.end()) selected = choices.find("default");
+        for (const auto* id : selected->second) {
+            const auto index = content().petalIndex(id);
+            if (index != kNoPetal) titlePetalTypes_.push_back(index);
+        }
     }
     const SvgDocument* texture = titleBackground(backdrop);
 
@@ -573,9 +609,16 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
     } else {
         // No art: a flat field, which is what the reference falls back to. A
         // pattern here would be a second design nobody asked for.
-        setFill(canvas, kBackdrop);
+        setFill(canvas, backdrop=="pvp"?0x777777u:biomePickerColor(backdrop));
         canvas.fillRect(0, 0, static_cast<float>(canvas.width()),
                         static_cast<float>(canvas.height()));
+        if(backdrop=="pvp"){
+            ui::setStroke(canvas,0x000000u,0.18);canvas.setLineWidth(1);canvas.beginPath();
+            const double offset=std::fmod(titleBackgroundTime_*.01,50.0);
+            for(double x=offset;x<canvas.width();x+=50){canvas.moveTo(x,0);canvas.lineTo(x,canvas.height());}
+            for(double y=offset;y<canvas.height();y+=50){canvas.moveTo(0,y);canvas.lineTo(canvas.width(),y);}
+            canvas.stroke();
+        }
     }
 
     // A golden wash while the arrow is up, so the screen says which world
@@ -595,20 +638,23 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
 void App::drawTitlePetals(Canvas& canvas, double time) {
     if (titlePetalTypes_.empty()) return;
 
-    // A 2% chance per frame with no cap, which settles at about twenty petals
-    // on a 1280-wide screen. The population is meant to build up, so a screen
-    // opened a second ago is legitimately emptier than one left running.
-    if (titleRng_.chance(0.02)) {
+    // Seed several immediately when the map changes, then keep a bounded
+    // stream starting across the left third of the lobby.
+    const auto spawn = [&](std::size_t type) {
         TitlePetal petal;
-        petal.x = -50.0;
+        petal.x = titleRng_.unit() * canvas.width() / 3.0;
         petal.y = titleRng_.unit() * canvas.height();
         petal.speedX = 0.5 + titleRng_.unit() * 2.0;
         petal.size = (0.5 + titleRng_.unit() * 1.5) * kTitlePetalPixels;
         petal.rotation = titleRng_.unit() * 360.0;
         petal.rotationSpeed = (titleRng_.unit() - 0.5) * 4.0;
-        petal.petal = titlePetalTypes_[titleRng_.below(
-            static_cast<std::uint32_t>(titlePetalTypes_.size()))];
+        petal.petal = titlePetalTypes_[type];
         titlePetals_.push_back(petal);
+    };
+    if (titlePetals_.empty()) {
+        for (std::size_t i = 0; i < 12; ++i) spawn(i % titlePetalTypes_.size());
+    } else if (titlePetals_.size() < 36 && titleRng_.chance(0.075)) {
+        spawn(titleRng_.below(static_cast<std::uint32_t>(titlePetalTypes_.size())));
     }
 
     // Purely horizontal: a petal's y is set once and never touched again, so
@@ -939,7 +985,7 @@ void App::drawTitleXpBar(Canvas& canvas, const Rect& track) {
 
     // ALT for the exact figures, as on the in-game bar.
     const LevelProgress progress = levelFromTotalXp(net_.profile().totalXp);
-    const bool altHeld = altMode_;
+    const bool altHeld = altMode_ || menus_.settings().showExactValues;
     TextStyle label;
     label.size = std::max(h * kTitleXpTextShare, kTitleXpMinTextSize);
     label.align = Align::Centre;
@@ -1060,7 +1106,8 @@ void App::drawDailyStreak(Canvas& canvas, double time) {
     text(canvas,
          claimed ? ((language() == Language::Zh ? "下次领取：" : "Next: ") + formatDuration(streak.nextClaimAtMillis - now)) : (language() == Language::Zh ? "现在可领取" : "Next: now"),
          card.x + 12.0, card.y + 100.0, countdown);
-    text(canvas, std::string(tr(Msg::Resets)) + formatDuration(streak.streakExpiresAtMillis - now),
+    text(canvas, (language() == Language::Zh ? "今日奖励：" : "Today's reward: ") +
+         std::to_string(std::max(1, cycleDay)) + (language() == Language::Zh ? " 星 · 点击领取/刷新" : " stars · click to claim/refresh"),
          card.x + 12.0, card.y + 120.0, countdown);
 }
 

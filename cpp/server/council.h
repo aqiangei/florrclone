@@ -6,6 +6,7 @@
 #include <cmath>
 
 namespace flix::council {
+inline constexpr std::size_t kProposalRankLimit = 20;
 inline bool initializeLegacyActivity(Database& db) {
     if(db.storedTable("councilLegacyActivity")["version"].asInt()==1) return true;
     Json table=Json::object();table["version"]=1;table["at"]=static_cast<double>(db.nowMillis());table["accounts"]=Json::object();
@@ -113,9 +114,9 @@ inline Json request(Database& db,const std::string& token,const Json& input,
         if(action=="create") {
             const Json snapshot=weights(db);
             bool eligible=false;
-            for(std::size_t i=0;i<std::min<std::size_t>(10,snapshot.size());++i)
+            for(std::size_t i=0;i<std::min(kProposalRankLimit,snapshot.size());++i)
                 if(snapshot[i]["id"].asString()==account->id && snapshot[i]["units"].asInt()>0) eligible=true;
-            if(!eligible) return error("仅当前综合权重排行榜前10名可以发布议题");
+            if(!eligible) return error("仅当前综合权重排行榜前20名可以发布议题");
             int active=0;
             for(const auto& entry:polls.members()) if(entry.second["authorId"].asString()==account->id) {
                 if(db.nowMillis()-entry.second["createdAt"].asDouble()<86400000.0) return error("每个账号每24小时最多发布1个议题");
@@ -161,7 +162,7 @@ inline Json request(Database& db,const std::string& token,const Json& input,
     Json out=Json::object(); out["players"]=weights(db); out["me"]=account?account->id:"";
     out["activityWeight"]=out["players"].size()?out["players"][0]["activityWeight"]:Json(0);
     out["canPublish"]=false;
-    for(std::size_t i=0;i<std::min<std::size_t>(10,out["players"].size());++i)
+    for(std::size_t i=0;i<std::min(kProposalRankLimit,out["players"].size());++i)
         if(account && !account->guest && out["players"][i]["id"].asString()==account->id && out["players"][i]["units"].asInt()>0) out["canPublish"]=true;
     out["accountName"]=account?account->username:"";
     out["admin"]=account&&account->adminActive();

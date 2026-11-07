@@ -553,10 +553,10 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
     // One Tiled pixel is one world unit. See the header.
     const double tileWidth = map["tilewidth"].asDouble();
     const double tileHeight = map["tileheight"].asDouble();
-    if (tileWidth != kTileSize || tileHeight != kTileSize) {
+    if (tileWidth != kAuthoredTileSize || tileHeight != kAuthoredTileSize) {
         errorOut = path + " has " + std::to_string(static_cast<int>(tileWidth)) + "x" +
                    std::to_string(static_cast<int>(tileHeight)) + " tiles; the game's are " +
-                   std::to_string(static_cast<int>(kTileSize)) + " square";
+                   std::to_string(static_cast<int>(kAuthoredTileSize)) + " square";
         return false;
     }
     width_ = map["width"].asInt();
@@ -859,9 +859,10 @@ bool TiledMap::load(const std::string& path, std::string& errorOut) {
             if (!gid || gid>=paletteOfGid.size() || paletteOfGid[gid]<0) continue;
             TiledDecoration d; d.art=palette_[paletteOfGid[gid]].artIndex;
             if(d.art<0) continue;
-            d.x=object["x"].asDouble()+(*layer)["offsetx"].asDouble();
-            d.y=object["y"].asDouble()+(*layer)["offsety"].asDouble();
-            d.width=object["width"].asDouble();d.height=object["height"].asDouble();
+            d.x = (object["x"].asDouble() + (*layer)["offsetx"].asDouble()) * kWorldMapScale;
+            d.y = (object["y"].asDouble() + (*layer)["offsety"].asDouble()) * kWorldMapScale;
+            d.width = object["width"].asDouble() * kWorldMapScale;
+            d.height = object["height"].asDouble() * kWorldMapScale;
             d.rotation=object["rotation"].asDouble();
             d.flipX=(raw & 0x80000000u)!=0;d.flipY=(raw & 0x40000000u)!=0;
             if(d.width>0 && d.height>0) decorations_.push_back(d);

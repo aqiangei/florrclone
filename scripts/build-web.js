@@ -121,6 +121,7 @@ const TARGETS = {
         ],
         sidecars: [
             [path.join(ROOT, 'scripts', 'deploy-runtime.cjs'), 'deploy-runtime.cjs'],
+            [path.join(ROOT, 'scripts', 'download-queue.cjs'), 'download-queue.cjs'],
             [path.join(ROOT, 'scripts', 'shard-game-authority.cjs'), 'shard-game-authority.cjs'],
             [path.join(ROOT, 'scripts', 'shard-hyper-client.cjs'), 'shard-hyper-client.cjs'],
             [path.join(ROOT, 'scripts', 'shard-global-merge.cjs'), 'shard-global-merge.cjs'],

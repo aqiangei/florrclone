@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 #include "shared/core/types.h"
@@ -217,6 +218,7 @@ enum class PetalTrigger : std::uint8_t { Spawn, Collision, Interval, Break };
 /// and when they come back.
 class PetalSystem {
 public:
+    int volleyEntityLimit = 0;
     void onKill(World&, const ContentRegistry&, Entity player, double nowMillis);
     /// One tick. Phase 4: after movement, so the ring orbits where the flower
     /// ended up; before combat, so a petal hits from its final position.
@@ -303,6 +305,7 @@ public:
     std::function<bool(Entity target, Entity marker, Rarity rarity)> onPlayerMarked;
 
 private:
+    std::unordered_map<Entity, int> volleyEntitiesByOwner_;
     /// The tick's summed passive bonuses. PlayerModifiers has no field for the
     /// ring's spin and only the few lines that place the ring want one, so it
     /// rides along here rather than growing the component.
@@ -582,7 +585,7 @@ private:
     /// their health and damage on top of `rarity`'s: strengthBoost() of the
     /// petal that hatched them, so a universal egg's squad -- the apex squad
     /// -- is sqrt(2) times as strong.
-    void summonPets(World& world, const ContentRegistry& registry, Entity player,
+    int summonPets(World& world, const ContentRegistry& registry, Entity player,
                     std::uint8_t slot, std::uint16_t mobIndex, Rarity rarity, int count, Vec2 at,
                     PetalSlotState& state, double strength, double expiresAtMillis = 0.0);
     /// One summoned body, every component a pet carries, at an already

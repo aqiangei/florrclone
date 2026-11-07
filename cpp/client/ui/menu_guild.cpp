@@ -164,6 +164,7 @@ enum class Mode : std::uint8_t {
     ConfirmLeave,
     MemberActions,
     ConfirmKick,
+    ConfirmTransfer,
 };
 
 /// A field the card owns: its value and its caret.
@@ -229,6 +230,7 @@ enum class GuildAction : std::uint8_t {
     AcceptInvite,
     DeclineInvite,
     Kick,
+    Transfer,
     SquadOne,
 };
 
@@ -733,7 +735,12 @@ bool GuildPanel::render(MenuContext& ctx) {
                 break;
             case Mode::MemberActions:
                 footerQuestion(f.member);
-                rightButtons({{"Kick member...", GuildAction::Kick}, {"Cancel", GuildAction::Cancel}},
+                rightButtons({{"转让会长", GuildAction::Transfer}, {"Kick member...", GuildAction::Kick}, {"Cancel", GuildAction::Cancel}},
+                             kCloseFace, kCloseRim);
+                break;
+            case Mode::ConfirmTransfer:
+                footerQuestion("将会长交给 " + f.member + "？");
+                rightButtons({{"确认转让", GuildAction::Confirm}, {"Cancel", GuildAction::Cancel}},
                              kCloseFace, kCloseRim);
                 break;
             case Mode::ConfirmKick:
@@ -783,6 +790,7 @@ bool GuildPanel::render(MenuContext& ctx) {
     const auto confirm = [&] {
         if (f.mode == Mode::ConfirmLeave) ctx.net.requestGuildLeave();
         if (f.mode == Mode::ConfirmKick) ctx.net.requestGuildKick(f.member);
+        if (f.mode == Mode::ConfirmTransfer) ctx.net.sendChat("/guild-transfer " + f.member);
         f.view();
     };
 
@@ -800,7 +808,7 @@ bool GuildPanel::render(MenuContext& ctx) {
         }
     }
 
-    const bool confirming = f.mode == Mode::ConfirmLeave || f.mode == Mode::ConfirmKick;
+    const bool confirming = f.mode == Mode::ConfirmLeave || f.mode == Mode::ConfirmKick || f.mode == Mode::ConfirmTransfer;
     if (confirming) {
         // The footer is asking: Enter answers yes, Escape no, and neither
         // reaches the menu system's own Escape-to-close.
@@ -886,6 +894,9 @@ bool GuildPanel::render(MenuContext& ctx) {
                 break;
             case GuildAction::Kick:
                 f.mode = Mode::ConfirmKick;
+                break;
+            case GuildAction::Transfer:
+                f.mode = Mode::ConfirmTransfer;
                 break;
             case GuildAction::Confirm:
                 confirm();

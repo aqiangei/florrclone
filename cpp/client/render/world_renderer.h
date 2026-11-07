@@ -107,6 +107,7 @@ struct Effect {
 struct LightningBolt {
     std::vector<Vec2> points;
     double ageSeconds = 0;
+    std::uint8_t ownership = 0;
 };
 
 /// The flourish a drop plays as it lands: it slides in from a random offset

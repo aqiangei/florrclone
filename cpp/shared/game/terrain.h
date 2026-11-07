@@ -112,7 +112,7 @@ inline constexpr double kMazeOriginX = 0.0;
 inline constexpr double kMazeOriginY = 0.0;
 
 /// World units per grid cell, and therefore the corner fillet radius too.
-inline constexpr double kMazeCellSize = 1000.0;
+inline constexpr double kMazeCellSize = 1000.0 * kWorldMapScale;
 
 /// Difficulty bands by corridor depth, shallowest first: the zone index a cell
 /// carries is an index into the rarity ladder (0 = common .. 5 = mythic).

@@ -449,6 +449,8 @@ public:
     /// anything. It does not shrink the map's population, only how much of it
     /// is awake at once.
     int mobCap = kMaxLiveMobs;
+    double ambientDensityScale = 1.0;
+    double hotZoneDensityScale = 1.0;
 
     /// Assigns the wire id for every entity this system creates.
     ///

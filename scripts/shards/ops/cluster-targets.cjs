@@ -3,6 +3,8 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
 const quote=s=>"'"+s.replace(/'/g,"'\\''")+"'";
 function validate(config){
   assert(config&&['initial','upgrade'].includes(config.mode),'Explicit deployment mode required');
+  if(config.initialSource!==undefined)
+    assert(config.mode==='initial'&&['one','two'].includes(config.initialSource),'Invalid standalone source');
   if(config.councilManagerIds!==undefined){
     assert(Array.isArray(config.councilManagerIds),'Council manager IDs must be an array');
     assert(config.councilManagerIds.every(id=>typeof id==='string'&&id.length>0&&id.trim()===id),'Invalid council account ID');
@@ -28,9 +30,15 @@ function validate(config){
   assert.notEqual(config.targets.one.machineId,config.targets.two.machineId,'Two roles cannot target the same machine');
   return config;
 }
+function sshProxyOptions(target){
+  if(target.proxyCommand===undefined)return [];
+  assert(typeof target.proxyCommand==='string'&&target.proxyCommand.length<2048&&
+    !/[\r\n\0]/.test(target.proxyCommand),'Invalid SSH proxy command');
+  return ['-o','ProxyCommand='+target.proxyCommand];
+}
 function transport(target){
   const options=['-i',target.key,'-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',
-    '-o','ConnectTimeout=15','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3'];
+    '-o','ConnectTimeout=15','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=3',...sshProxyOptions(target)];
   const host='root@'+target.host;
   const run=(exe,args,input)=>cp.execFileSync(exe,args,{input,encoding:'utf8',timeout:180000,maxBuffer:1024*1024,windowsHide:true});
   return {host,
@@ -60,4 +68,4 @@ function inspect(config,connections,manifest){
   }
   return result;
 }
-module.exports={validate,transport,inspect,quote};
+module.exports={validate,transport,inspect,quote,sshProxyOptions};

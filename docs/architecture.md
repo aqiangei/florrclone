@@ -10,10 +10,7 @@
 
 ## 当前数据与功能入口
 
-2026-11-06 18:09 用户授权撤下分服；当前正式运行本地单服数据库。以下17:40共享架构仅保留为历史诊断，最新存档已从共享权威导出，不能再把退休的共享目录当作当前正式存档。
-
-
-- 2026-11-06 17:40 起正式两服使用共享账号权威：`cpp/tools/shard_coordinator.cpp` 和 `scripts/shard-game-authority.cjs` 协调独占、保存和跨服交接；两服世界独立。`cpp/server/db.h/.cpp`仍负责游戏内账号表示，不能把单服缓存当作正式共享存档。备份使用权威快照、日志、锁文件和初始化存档四件；生产数据不属于源码或dist。
+- 当前发布采用单服数据库：`cpp/server/db.h/.cpp`负责账号和JSON持久化，`game_server.cpp`负责服务端操作校验；生产存档不属于源码或dist发布内容。
 - 议会：`cpp/server/council.h`计算资格、权重与议题快照，`cpp/client/web/council.html`提供页面；修改HTML不能替代服务端计算变更。
 - 商店：`cpp/shared/game/shop.h`定义商品和价格规则，`cpp/server/shop_lock.h`与`game_server.cpp`校验锁定和购买，`cpp/client/ui/menu_shop.cpp`负责展示。
 - 模拟系统：`cpp/server/systems/`；输入、菜单与美术：`cpp/client/ui/`、`cpp/client/render/`。客户端提示与服务端真实效果须配套核对。

@@ -7,12 +7,20 @@
 #include <map>
 
 namespace flix {
-struct HyperForgeState {std::string owner;int claims=0;std::int64_t protectedUntil=0;};
+inline constexpr char kHyperAbandonedRefusal[] =
+    "你已主动放弃这份超凡。其他玩家接手后，你才能再次争夺。";
+
+struct HyperForgeState {
+    std::string owner;
+    int claims = 0;
+    std::int64_t protectedUntil = 0;
+    std::string abandonedBy;
+};
 inline std::string hyperForgeKey(const std::string& petal,const std::string& titan={}){return titan.empty()?petal:titan+":"+petal;}
 inline HyperForgeState hyperForgeState(const Database& db,const std::string& petal,const std::string& titan={}) {
     const auto& row=db.storedTable("hyperForges")[hyperForgeKey(petal,titan)];
     return {row["owner"].asString(),std::max(0,row["claims"].asInt()),
-            row["protectedUntil"].asInt64()};
+            row["protectedUntil"].asInt64(),row["abandonedBy"].asString()};
 }
 struct HyperForgeResult {
     bool ok=false;int consumed=0;std::string reason;std::vector<std::string> affected;
@@ -31,7 +39,7 @@ inline int hyperHoldingCount(const Database& db,const std::string& userId){
     return static_cast<int>(std::min<std::int64_t>(kMaxStackCount,total));
 }
 // Relinquish exactly one registered claim, with no material refund. Keep
-// claim history so abandoning cannot reset the protection progression.
+// claim history and let another account claim the released copy first.
 inline HyperForgeResult abandonHyper(Database& db,const std::string& userId,const std::string& forgeKey) {
     HyperForgeResult out;
     if(db.deferredCommits()){out.reason="跨服超凡事务暂未就绪，请稍后重试。";return out;}
@@ -56,12 +64,15 @@ inline HyperForgeResult abandonHyper(Database& db,const std::string& userId,cons
         for(auto& slot:slots)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal)slot.reset();
     auto& entry=db.rawTable("hyperForges")[forgeKey];
     entry["owner"]="";entry["protectedUntil"]=0;
+    entry["abandonedBy"] = userId;
     db.markDirty();
     if(!db.save()){
         db.progress(userId)=before;db.rawTable("hyperForges")=oldTable;db.markDirty();
         out.reason="存档失败，未放弃超凡。";return out;
     }
-    out.ok=true;out.affected.push_back(userId);return out;
+    out.ok=true;out.affected.push_back(userId);
+    out.reason="已放弃所选1份超凡，持有名额已释放。其他玩家接手后，你才能再次争夺。";
+    return out;
 }
 inline HyperForgeResult grantTemporaryHyperHammer(Database& db,const std::string& userId,
                                                  std::int64_t now,const std::string& request) {
@@ -98,6 +109,10 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     if(hyperHoldingCount(db,userId)>=kMaxHyperHoldings){out.reason="账号超凡持有已达5份上限；已有物品保留，数量降低后才能继续锻造。";return out;}
     const int cost=hyperForgeCost(state.claims,input);
     if(state.owner==userId){out.reason="你已经持有该超凡花瓣。";return out;}
+    if(state.abandonedBy==userId){
+        out.reason=kHyperAbandonedRefusal;
+        return out;
+    }
     if(state.protectedUntil>now){out.reason="保护期尚未结束，剩余"+
         std::to_string((state.protectedUntil-now+59999)/60000)+"分钟。";return out;}
     const auto* original=db.findProgress(userId);const std::string key="petal_"+petal;

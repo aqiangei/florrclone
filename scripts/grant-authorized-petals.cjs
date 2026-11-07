@@ -2,6 +2,14 @@
 const assert = require('node:assert/strict');
 // Called only after the deployment has stopped and SHA-verified its save.
 function apply(db, request) {
+  if (Array.isArray(request)) {
+    assert(request.length > 0 && request.length <= 100, 'Invalid grant batch');
+    const staged = structuredClone(db);
+    const results = request.map(item => apply(staged, item));
+    // Validate the entire batch before changing the caller's save.
+    Object.assign(db, staged);
+    return results;
+  }
   const {id, accountId, username, petal, rarity, count} = request;
   assert(typeof id === 'string' && id.length > 0);
   assert(typeof petal === 'string' && /^[a-z_]+$/.test(petal));

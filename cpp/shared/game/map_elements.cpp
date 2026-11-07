@@ -481,8 +481,10 @@ void MapData::adopt(const Json& array) {
         else if (kind == "teleporter") element.kind = MapElementKind::Teleporter;
         else if (kind == "npc") element.kind = MapElementKind::Npc;
         else continue;   // an annotation this build has no meaning for
-        element.bounds = {value["x"].asDouble(), value["y"].asDouble(), value["width"].asDouble(),
-                          value["height"].asDouble()};
+        element.bounds = {value["x"].asDouble() * kWorldMapScale,
+                          value["y"].asDouble() * kWorldMapScale,
+                          value["width"].asDouble() * kWorldMapScale,
+                          value["height"].asDouble() * kWorldMapScale};
         // An outline, when the element has one. The bounding box is recomputed
         // from it rather than trusted: the two are written by the same tool,
         // but a hand-edited map whose box and outline disagree would put the
@@ -492,7 +494,8 @@ void MapData::adopt(const Json& array) {
         if (outline.isArray() && outline.size() >= 3) {
             element.polygon.reserve(outline.size());
             for (const Json& point : outline.items()) {
-                element.polygon.push_back({point["x"].asDouble(), point["y"].asDouble()});
+                element.polygon.push_back({point["x"].asDouble() * kWorldMapScale,
+                                           point["y"].asDouble() * kWorldMapScale});
             }
             double minX = element.polygon[0].x, maxX = minX;
             double minY = element.polygon[0].y, maxY = minY;
@@ -578,7 +581,8 @@ void MapData::adopt(const Json& array) {
             element.targetSpawn = properties["targetSpawn"].asString();
             const Json& destination = properties["teleportTo"];
             if (destination.isObject()) {
-                element.teleportTo = {destination["x"].asDouble(), destination["y"].asDouble()};
+                element.teleportTo = {destination["x"].asDouble() * kWorldMapScale,
+                                      destination["y"].asDouble() * kWorldMapScale};
                 element.hasTeleportTo = true;
             }
             if (element.kind == MapElementKind::Teleporter) {
@@ -620,6 +624,7 @@ void MapData::adopt(const Json& array) {
             contentWarning("[map] an npc object names no `npc`; nothing will stand there\n");
             continue;
         }
+        if (element.kind == MapElementKind::Teleporter) element.padRadius *= kWorldMapScale;
         elements_.push_back(std::move(element));
     }
 
@@ -1137,10 +1142,10 @@ void WorldMaps::index() {
             choice.label = point->label.empty() ? titleCase(point->spawnId) : point->label;
             choice.color = point->color;
             choice.realm = worldRealm(static_cast<int>(slot));
-            choice.backdrop = point->backdrop.empty() ? point->spawnId : point->backdrop;
             // The map's own biome already defaults to its id, so a door that
             // says nothing lands in its map's tab.
             choice.biome = point->biome.empty() ? map.biome() : point->biome;
+            choice.backdrop = point->backdrop.empty() ? choice.biome : point->backdrop;
             for (std::size_t i = 0; i < map.elements().size(); ++i) {
                 if (&map.elements()[i] == point) {
                     choice.element = static_cast<int>(i);
