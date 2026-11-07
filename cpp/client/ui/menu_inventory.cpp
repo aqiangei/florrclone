@@ -632,6 +632,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         if(config.id=="magic_peas")lines.push_back({chinese?"四颗蓝莓分别造成闪电伤害，不会连锁跳跃。":"Four blueberries deal lightning damage individually, with no chain jumps.",12.0});
         lines.push_back({chinese ? "闪电无视护甲和闪避。" : "Lightning bypasses armor and dodge.",12.0});
         special("基础闪电伤害：", "Base lightning damage: ", stats.lightningDamagePerHit);
+        if (showHyperTechnique && stats.wildLightningScale > 1.0) {
+            special("对野怪单次雷击：", "Lightning per hit on wild mobs: ",
+                    stats.lightningDamagePerHit * stats.wildLightningScale * damageScale);
+            special("野怪接触反伤减免：", "Wild contact recoil reduction: ",
+                    (1.0 - stats.wildRecoilScale) * 100.0, "%");
+        }
         special("连锁跳跃次数：", "Chain bounces: ", stats.lightningBounces);
         special("每段索敌范围：", "Range per jump: ", stats.lightningRange);
         if (stats.batteryCharges > 0) {

@@ -67,7 +67,8 @@ struct Fixture {
     }
 
     /// Builds one snapshot and feeds it to `into`, returning the payload size.
-    std::size_t tick(WorldView& into, std::uint32_t tickNumber, double nowMillis) {
+    std::size_t tick(WorldView& into, std::uint32_t tickNumber, double nowMillis,
+                     double receivedMillis = renderClockMillis()) {
         ByteWriter out;
         Replicator::Frame frame;
         frame.tick = tickNumber;
@@ -81,7 +82,7 @@ struct Fixture {
         ByteReader reader(out.data(), out.size());
         const std::uint8_t id = reader.u8();
         CHECK_EQ(id, static_cast<std::uint8_t>(net::ServerMessage::Snapshot));
-        CHECK(into.applySnapshot(reader));
+        CHECK(into.applySnapshot(reader, receivedMillis));
         CHECK(reader.ok());
         return out.size();
     }
@@ -1062,6 +1063,47 @@ TEST(mob_playback_extrapolates_at_most_one_sample_when_starved) {
     // rides out a late packet without sending the mob through a wall.
     view.interpolate(9000 + kMobRenderDelayMillis, 1.0 / 60.0);
     CHECK_NEAR(view.entities().at(4).position.x, 200.0, 1e-9);
+}
+
+TEST(mob_playback_covers_slow_server_snapshots_without_stopping_or_snapping_back) {
+    Fixture f;
+    const Entity mob = f.addMob({1100, 1000});
+    const auto id = netIdOf(f.world, mob);
+    WorldView client;
+    std::uint32_t tick = 1;
+    constexpr int gaps[] = {90, 110, 190, 90, 130, 110};
+    int nextSnapshot = 0;
+    double minStep = 3.0;
+    double maxStep = 0.0;
+    double previous = 0.0;
+    for (int elapsed = 0; elapsed <= 6000; elapsed += 10) {
+        const double now = 1000.0 + elapsed;
+        if (elapsed == nextSnapshot) {
+            // A constant displacement per server tick, with no network jitter.
+            f.world.get<Transform>(mob).position.x += 20.0;
+            f.tick(client, tick, now + 5000.0, now);
+            nextSnapshot += gaps[(tick - 1) % 6];
+            ++tick;
+        }
+        client.interpolate(now, 0.01);
+        const double position = client.entities().at(id).position.x;
+        if (elapsed >= 2000) {
+            minStep = std::min(minStep, position - previous);
+            maxStep = std::max(maxStep, position - previous);
+        }
+        previous = position;
+    }
+    CHECK(minStep > 0.5);
+    CHECK(maxStep < 3.0);
+    CHECK(client.interpolationDelayMillis > 190.0);
+
+    // Recover the usual small buffer once the server is back at 20 Hz.
+    for (int elapsed = 6010; elapsed <= 15010; elapsed += 10) {
+        const double now = 1000.0 + elapsed;
+        if ((elapsed - 6010) % 50 == 0) f.tick(client, tick++, now + 5000.0, now);
+        client.interpolate(now, 0.01);
+    }
+    CHECK_NEAR(client.interpolationDelayMillis, kMobRenderDelayMillis, 1e-7);
 }
 
 TEST(a_mob_that_stops_is_drawn_where_it_stopped) {

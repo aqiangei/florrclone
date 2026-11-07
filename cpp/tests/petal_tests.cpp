@@ -3371,6 +3371,28 @@ TEST(a_defend_only_projectile_petal_fires_on_attack_and_on_defend) {
     CHECK_EQ(idle.countOf(net::EntityKind::Projectile), std::size_t(0));
 }
 
+TEST(spaceship_fires_with_inverted_defend_and_requires_attack) {
+    const auto& registry = testsupport::shippedContent();
+    for (const Rarity rarity : {Rarity::Super, Rarity::Unique, Rarity::Apex}) {
+        for (const auto attack : {int(net::InputAttack), net::InputAttack | net::InputDefend}) {
+            Rig rig(registry);
+            rig.equip(0, "spaceship", rarity);
+            rig.settleEquips();
+            Query<Projectile> shots{rig.world};
+            rig.setFlags(net::InputDefend);
+            rig.tick();
+            CHECK_EQ(shots.count(), 0u);
+            rig.setFlags(attack);
+            rig.tick();
+            CHECK_EQ(shots.count(), 1u);
+            shots.each([&](Entity, Projectile& shot) {
+                CHECK_EQ(shot.petalConfigIndex, registry.petalIndex("spaceship"));
+                CHECK_EQ(shot.rarity, rarity);
+            });
+        }
+    }
+}
+
 TEST(an_ordinary_projectile_petal_does_not_fire_on_defend) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -6155,6 +6177,85 @@ TEST(wiki_mechanism_egg_hatches_on_owner_side_of_thin_wall_clear_of_shells){
 }
 
 
+TEST(magic_eye_is_worn_without_spawning_an_orbit_petal) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.world.add<PlayerVisuals>(rig.player);
+    rig.equip(0, "magic_eye", Rarity::Unique);
+    rig.equip(1, "third_eye", Rarity::Unique);
+    rig.tick(200);
+    CHECK(rig.petals(0).empty());
+    CHECK(rig.petals(1).empty());
+    CHECK_EQ(rig.world.get<PlayerVisuals>(rig.player).equipFlags &
+             (EquipMagicEye | EquipThirdEye), EquipMagicEye | EquipThirdEye);
+
+    rig.unequip(0);
+    rig.tick();
+    CHECK_EQ(rig.world.get<PlayerVisuals>(rig.player).equipFlags &
+             (EquipMagicEye | EquipThirdEye), EquipThirdEye);
+}
+
+TEST(pharaoh_crown_summons_in_a_room_narrower_than_a_beetle) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.useHatchTerrain = true;
+    const int col = 4, row = 4;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx || dy) rig.terrain.setTile(col + dx, row + dy, Tile::Solid);
+        }
+    }
+    const Vec2 owner{(col + 0.5) * kTileSize, (row + 0.5) * kTileSize};
+    rig.world.get<Transform>(rig.player).position = owner;
+    rig.equip(0, "pharaoh_s_crown", Rarity::Unique);
+
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
+    Query<Pet, Transform, Body, MobType>{rig.world}.each(
+        [&](Entity, Pet& pet, Transform& at, Body& body, MobType& type) {
+            CHECK_EQ(pet.owner, rig.player);
+            CHECK_EQ(type.configIndex, registry.mobIndex("mummy_beetle"));
+            CHECK(type.rarity == Rarity::Super);
+            CHECK(body.radius > kTileSize * 0.5);
+            CHECK_NEAR(distance(at.position, owner), 0.0, 1e-7);
+            CHECK(!rig.terrain.resolveWall(at.position, kMobWallRadius, at.realm).collided);
+            CHECK_NEAR(pet.expiresAtMillis, rig.now + 6000.0, 1e-7);
+        });
+}
+
+TEST(pharaoh_crown_summons_in_a_crowd_without_stacking_or_extending_duration) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    const auto blocker = addMob(rig, rig.position(rig.player), "ladybug");
+    rig.world.get<Body>(blocker).radius = 5000.0;
+    rig.equip(0, "pharaoh_s_crown", Rarity::Apex);
+    rig.equip(1, "pharaoh_s_crown", Rarity::Apex);
+
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
+    if (rig.petCount() != 1) return;
+    const auto first = Query<Pet>{rig.world}.collect().front();
+    rig.tick(19);
+    CHECK_EQ(rig.petCount(), 1u);
+    rig.tick();
+    CHECK_EQ(rig.petCount(), 2u);
+    rig.tick(100);
+    CHECK_EQ(rig.petCount(), 6u);
+    CHECK(!rig.world.isAlive(first));
+}
+
+TEST(pharaoh_crown_waits_for_a_walkable_center_before_using_its_fallback) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.useHatchTerrain = true;
+    const Vec2 owner{4.5 * kTileSize, 4.5 * kTileSize};
+    rig.world.get<Transform>(rig.player).position = owner;
+    rig.terrain.setTile(4, 4, Tile::Solid);
+    rig.equip(0, "pharaoh_s_crown", Rarity::Unique);
+    rig.settleEquips();
+    CHECK_EQ(rig.petCount(), 0u);
+    rig.terrain.setTile(4, 4, Tile::Open);
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 25));
+}
+
 TEST(wiki_mechanism_dice_rolls_all_six_faces_and_keeps_equipment_counter_synchronized) {
     CHECK(contentLoaded());
     Rig rig; rig.equip(0,"dice"); rig.settleEquips();
@@ -6442,6 +6543,66 @@ TEST(hyper_technique_guard_and_mana_hold_for_larger_deficits) {
     }
 }
 
+TEST(honey_launches_when_attack_and_defend_are_both_held) {
+    if (!contentLoaded()) return;
+    Rig rig(testsupport::shippedContent());
+    rig.equip(0, "honey");
+    rig.settleEquips();
+
+    Query<HoneyBait, Transform> baits{rig.world};
+    rig.setFlags(net::InputDefend);
+    rig.tick();
+    CHECK_EQ(baits.count(), 0u);
+
+    rig.setFlags(net::InputAttack | net::InputDefend);
+    rig.tick();
+    CHECK_EQ(baits.count(), 1u);
+    if (baits.count() != 1) return;
+    Entity bait = NULL_ENTITY;
+    baits.each([&](Entity e, HoneyBait&, Transform&) { bait = e; });
+    const Vec2 launched = rig.position(bait);
+    rig.setFlags(0);
+    rig.tick(5);
+    CHECK(distance(launched, rig.position(bait)) > 0.0);
+}
+
+TEST(honey_ring_in_a_wall_releases_the_bait_on_the_flowers_side) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.useHatchTerrain = true;
+    const int column = 10;
+    const double wallEdge = column * kTileSize;
+    const Vec2 origin{wallEdge - 32.0, 4000.0};
+    rig.world.get<Transform>(rig.player).position = origin;
+    for (int y = 0; y < rig.terrain.tileRows(); ++y) rig.terrain.setTile(column, y, Tile::Solid);
+
+    rig.equip(0, "honey");
+    rig.freezeRing();
+    rig.settleEquips();
+    rig.world.get<PetalRing>(rig.player).spin = 0.0;
+    rig.settleRing();
+    const auto honey = rig.petals(0);
+    CHECK_EQ(honey.size(), 1u);
+    if (honey.empty()) return;
+    CHECK(rig.terrain.blocked(rig.position(honey.front()), Realm::Overworld));
+
+    rig.setFlags(net::InputAttack);
+    rig.tick();
+    Entity bait = NULL_ENTITY;
+    Query<HoneyBait>{rig.world}.each([&](Entity e, HoneyBait&) { bait = e; });
+    CHECK(bait != NULL_ENTITY);
+    if (bait == NULL_ENTITY) return;
+    const Vec2 from = rig.position(bait);
+    CHECK(!rig.terrain.blocked(from, Realm::Overworld));
+
+    rig.setFlags(0);
+    rig.tick(8);
+    const Vec2 landed = rig.position(bait);
+    CHECK(landed.x > from.x);
+    CHECK(landed.x < wallEdge);
+    CHECK(!rig.terrain.segmentBlocked(from, landed, Realm::Overworld));
+}
+
 TEST(hyper_technique_dahlia_returns_faster_and_honey_flies_further) {
     if (!contentLoaded()) return;
     double eternalReturn = 0.0;
@@ -6584,27 +6745,6 @@ TEST(hyper_catalog_covers_shipped_petals_and_blocks_other_tiers_and_copies) {
     CHECK_EQ(hyperForgeOutput("fragment"), std::string("mjolnir"));
     CHECK(!hyperForgeEligible("timed_mjolnir"));
     CHECK(!hyperForgeEligible("blood_sacrifice"));
-}
-
-TEST(hyper_catalog_ring_moves_only_the_real_hyper_petal_in_the_matching_stance) {
-    if (!contentLoaded()) return;
-    const auto radius = [](Rarity tier, std::uint8_t flags, bool mimic) {
-        Rig rig;
-        rig.freezeRing();
-        rig.equip(0, "basic", mimic ? Rarity::Unique : tier);
-        if (mimic) rig.equip(1, "mimic", tier);
-        rig.settleEquips();
-        rig.setFlags(flags);
-        rig.settleRing();
-        const auto petals = rig.petals(mimic ? 1 : 0);
-        CHECK_EQ(petals.size(), 1u);
-        if (petals.empty()) return 0.0;
-        return distance(rig.position(rig.player), rig.position(petals.front()));
-    };
-    CHECK_NEAR(radius(Rarity::Unique, net::InputDefend, false) - radius(Rarity::Apex, net::InputDefend, false),
-               8.0, 1e-5);
-    CHECK_NEAR(radius(Rarity::Unique, 0, false), radius(Rarity::Apex, 0, false), 1e-5);
-    CHECK_NEAR(radius(Rarity::Unique, net::InputDefend, true), radius(Rarity::Apex, net::InputDefend, true), 1e-5);
 }
 
 TEST(hyper_catalog_nazar_keeps_its_cooldown_across_a_loadout_swap_and_spares_small_hits) {
@@ -6924,4 +7064,208 @@ TEST(hyper_followup_stinger_focuses_near_aim_only) {
         CHECK(unfocused > 0.0);
         CHECK_NEAR(spacing(true) / unfocused, tier == Rarity::Apex ? 0.8 : 1.0, 0.02);
     }
+}
+
+TEST(hyper_final_basic_rally_is_low_health_defense_only) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+    for (const auto tier : {Rarity::Unique, Rarity::Apex}) {
+        for (const bool copy : {false, true}) {
+            Rig rig(content());
+            const auto basic = hyperContactPetal(rig, "basic", tier, copy);
+            const auto mob = hyperContactMob(rig, basic);
+            CombatSystem combat;
+            rig.setFlags(net::InputDefend);
+            rig.world.get<Health>(rig.player).current = rig.healthOf(rig.player) * 0.3;
+            CHECK_NEAR(combat.applyDamage(rig.world, basic, mob, 100.0, rig.now, DamageKind::Recoil).applied,
+                       tier == Rarity::Apex && !copy ? 92.0 : 100.0, 1e-7);
+            rig.setFlags(net::InputAttack);
+            CHECK_NEAR(combat.applyDamage(rig.world, basic, mob, 100.0, rig.now, DamageKind::Recoil).applied,
+                       100.0, 1e-7);
+        }
+    }
+}
+
+TEST(hyper_final_ranged_techniques_have_one_bounded_shot_and_do_not_copy_eternal) {
+    const auto& registry = testsupport::shippedContent();
+    struct ShotCase { const char* id; double range; double damage; };
+    for (const auto& test : {ShotCase{"clay",250,0.55}, {"hornet_missile",425,0.65},
+                             {"laser",390,0.45}, {"wasp_missile",350,0.55}, {"javascript",330,0.45}}) {
+        for (const int mode : {0, 1, 2}) {
+            Rig rig(registry);
+            rig.equip(0, test.id, mode == 0 ? Rarity::Apex : Rarity::Unique);
+            if (mode == 2) rig.equip(1, "mimic", Rarity::Apex);
+            if (std::string_view(test.id) == "javascript") {
+                rig.equip(2, "ram", Rarity::Apex);
+                rig.equip(3, "computer_chip", Rarity::Apex);
+            }
+            rig.settleEquips();
+            rig.setFlags(net::InputAttack | net::InputDefend);
+            rig.tick();
+            Query<Projectile> shots{rig.world};
+            CHECK_EQ(shots.count(), mode == 0 ? 1u : 0u);
+            shots.each([&](Entity, Projectile& shot) {
+                CHECK(shot.wildOnly);
+                CHECK_NEAR(shot.remainingDistance, test.range, 1e-7);
+                const double kit = std::string_view(test.id) == "javascript" ? 1.12 : 1.0;
+                const auto base = registry.petalStats(registry.petalIndex(test.id), Rarity::Apex).damage;
+                CHECK_NEAR(shot.damage, base * test.damage * kit, 1e-7);
+                if (std::string_view(test.id) == "wasp_missile") CHECK(shot.waveAmplitude > 0.0);
+            });
+        }
+    }
+}
+
+TEST(hyper_final_clay_shot_spends_one_impact_on_wild_mobs) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.equip(0, "clay", Rarity::Apex);
+    rig.settleEquips();
+    rig.setFlags(net::InputAttack);
+    rig.tick();
+
+    Entity shot = NULL_ENTITY;
+    Query<Projectile>{rig.world}.each([&](Entity e, Projectile&) { shot = e; });
+    CHECK(shot != NULL_ENTITY);
+    if (shot == NULL_ENTITY) return;
+    const Vec2 origin{1500.0, 1000.0};
+    rig.world.get<Transform>(shot).position = origin;
+    rig.world.get<Projectile>(shot).lastPosition = origin;
+    const auto summon = addMob(rig, origin, "ladybug");
+    rig.world.add<Pet>(summon);
+    const auto first = addMob(rig, origin + Vec2{1.0, 0.0}, "ladybug");
+    const auto second = addMob(rig, origin + Vec2{2.0, 0.0}, "ladybug");
+    rig.world.get<Health>(shot) = Health{1e9, 1e9};
+
+    CombatSystem combat;
+    ricochetCombatTick(rig, combat);
+    CHECK_EQ(rig.healthOf(summon), 10000.0);
+    CHECK_EQ((rig.healthOf(first) < 10000.0) + (rig.healthOf(second) < 10000.0), 1);
+    CHECK(rig.world.has<Dead>(shot));
+}
+
+TEST(hyper_final_triangle_counts_only_other_hyper_triangles) {
+    const auto& registry = testsupport::shippedContent();
+    const auto damage = [&](Rarity other) {
+        Rig rig(registry);
+        rig.setFlags(net::InputAttack);
+        const auto triangle = hyperContactPetal(rig, "triangle", Rarity::Apex);
+        auto& mods = rig.world.get<PlayerModifiers>(rig.player);
+        ++mods.triangleCounts[rarityIndex(Rarity::Apex)];
+        ++mods.triangleCounts[rarityIndex(other)];
+        const auto mob = hyperContactMob(rig, triangle);
+        CombatSystem combat;
+        ricochetCombatTick(rig, combat);
+        return 1e9 - rig.healthOf(mob);
+    };
+    const double base = damage(Rarity::Unique);
+    CHECK(base > 0.0);
+    // Same-tier stacking adds the petal's ordinary Triangle bonus before the
+    // Hyper technique, so compare against the same-grade base and stack stats.
+    const auto stats = registry.petalStats(registry.petalIndex("triangle"), Rarity::Apex);
+    CHECK_NEAR(base, stats.damage, 1e-6);
+    TriangleCounts counts{};
+    counts[rarityIndex(Rarity::Apex)] = 2;
+    CHECK_NEAR(damage(Rarity::Apex), (base + triangleBonusDamage(Rarity::Apex, counts)) * 1.06, 1e-6);
+}
+
+TEST(hyper_final_chip_extends_only_hyper_ship_tracking) {
+    const auto& registry = testsupport::shippedContent();
+    for (const auto tier : {Rarity::Unique, Rarity::Apex}) {
+        Rig rig(registry);
+        rig.equip(0, "spaceship", tier);
+        rig.equip(1, "computer_chip", Rarity::Apex);
+        rig.equip(2, "ram", Rarity::Apex);
+        rig.equip(3, "cube", Rarity::Apex);
+        rig.settleEquips();
+        rig.setFlags(net::InputAttack);
+        rig.tick();
+        Query<Projectile> shots{rig.world};
+        CHECK_EQ(shots.count(), 1u);
+        shots.each([&](Entity, Projectile& shot) {
+            CHECK_NEAR(shot.seekRange, tier == Rarity::Apex ? 1100.0 : 1000.0, 1e-7);
+        });
+    }
+}
+
+TEST(hyper_final_break_and_defense_effects_use_existing_field_rules) {
+    const auto& registry = testsupport::shippedContent();
+    for (const char* id : {"broccoli", "coral", "glitch"}) {
+        for (const auto tier : {Rarity::Unique, Rarity::Apex}) {
+            Rig rig(registry);
+            rig.equip(0, id, tier);
+            rig.settleEquips();
+            const auto petals = rig.petals(0);
+            CHECK_EQ(petals.size(), 1u);
+            if (petals.empty()) continue;
+            const auto mode = std::string_view(id);
+            if (mode == "glitch") rig.setFlags(net::InputDefend);
+            else rig.damage(petals.front(), rig.healthOf(petals.front()) + 1.0);
+            rig.tick();
+            Query<GroundEffect> fields{rig.world};
+            CHECK_EQ(fields.count(), tier == Rarity::Apex ? 1u : 0u);
+            fields.each([&](Entity, GroundEffect& field) {
+                CHECK_NEAR(field.radius, mode == "broccoli" ? 80.0 : mode == "coral" ? 60.0 : 75.0, 1e-7);
+                CHECK(!field.slowsFlowers);
+            });
+        }
+    }
+}
+
+TEST(hyper_final_coin_kill_grants_bounded_pickup_range_without_stacking) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    const auto coin = hyperContactPetal(rig, "coin", Rarity::Apex);
+    const auto mob = hyperContactMob(rig, coin);
+    rig.world.get<Health>(mob).current = 1.0;
+    CombatSystem combat;
+    ricochetCombatTick(rig, combat);
+    const auto* timers = rig.world.tryGet<HyperPetalTimers>(rig.player);
+    CHECK(timers != nullptr);
+    if (!timers) return;
+    CHECK_NEAR(timers->coinPickupUntilMillis, rig.now + 4000.0, 1e-7);
+    rig.tick();
+    const double boosted = rig.world.get<PlayerModifiers>(rig.player).magnetism;
+    rig.tick(90);
+    CHECK_NEAR(boosted - rig.world.get<PlayerModifiers>(rig.player).magnetism, 40.0, 1e-7);
+}
+
+TEST(hyper_final_leaf_cuts_wild_poison_only_once_per_window) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
+    rig.equip(0, "leaf", Rarity::Apex);
+    rig.settleEquips();
+    auto& health = rig.world.get<Health>(rig.player);
+    health.current = health.max * 0.30;
+    const auto mob = addMob(rig, {1600.0, 1000.0}, "ladybug");
+    auto& poison = rig.world.get<Afflictions>(rig.player);
+    poison.poisonSource = mob;
+    poison.poisonPerSecond = 1.0;
+    poison.poisonUntilMillis = rig.now + 4000.0;
+    const double before = poison.poisonUntilMillis;
+    rig.tick(2);
+    CHECK_NEAR(rig.world.get<Afflictions>(rig.player).poisonUntilMillis, before - 400.0, 1e-7);
+}
+
+TEST(hyper_final_rice_finishes_wild_mobs_only_while_attacking) {
+    const auto& registry = testsupport::shippedContent();
+    const auto damage = [&](Rarity tier, auto flag, double fraction, bool copy = false) {
+        Rig rig(registry);
+        rig.setFlags(flag);
+        const auto rice = hyperContactPetal(rig, "rice", tier, copy);
+        const auto mob = hyperContactMob(rig, rice);
+        const double before = 1e9 * fraction;
+        rig.world.get<Health>(mob).current = before;
+        CombatSystem combat;
+        ricochetCombatTick(rig, combat);
+        return before - rig.healthOf(mob);
+    };
+    const double base = damage(Rarity::Apex, net::InputAttack, 0.25);
+    CHECK(base > 0.0);
+    CHECK_NEAR(damage(Rarity::Apex, net::InputAttack, 0.24), base * 1.08, 1e-6);
+    CHECK_NEAR(damage(Rarity::Apex, net::InputDefend, 0.24), base, 1e-6);
+    CHECK_NEAR(damage(Rarity::Apex, net::InputAttack, 0.24, true), base, 1e-6);
+    CHECK_NEAR(damage(Rarity::Unique, net::InputAttack, 0.24),
+               damage(Rarity::Unique, net::InputAttack, 0.25), 1e-6);
 }

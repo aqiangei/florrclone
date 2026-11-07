@@ -27,8 +27,7 @@ namespace {
 
 const ContentRegistry& shipped() { return testsupport::shippedContent(); }
 
-constexpr double kExpectedWildBodyScale = 0.75 *
-    kMobSizeScale[rarityIndex(Rarity::Unique)] / kMobSizeScale[rarityIndex(Rarity::Apex)];
+constexpr double kExpectedWildBodyScale = 0.75;
 
 /// The shipped drop table, loaded by path from the staged directory and linked
 /// against shipped().
@@ -2421,6 +2420,23 @@ TEST(a_spawned_mob_carries_everything_the_simulation_needs) {
     CHECK_NEAR(sim.world.get<AmbientMob>(e).lastNearPlayerMillis, 1234.0, 1e-9);
 }
 
+TEST(wild_mob_body_radius_follows_the_restored_scale_at_every_tier) {
+    Sim sim;
+    const auto soldier = shipped().mobIndex("soldier_ant");
+    for (int tier = 0; tier < kLadderRarityCount; ++tier) {
+        const Rarity rarity = clampRarity(tier);
+        const Entity mob = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), soldier,
+                                                rarity, kCentre, Realm::Overworld, 0.0, sim.rng);
+        CHECK(mob != NULL_ENTITY);
+        if (mob == NULL_ENTITY) continue;
+        const auto& instance = sim.world.get<MobType>(mob);
+        const auto stats = shipped().mobStats(soldier, rarity);
+        CHECK_NEAR(sim.world.get<Body>(mob).radius,
+                   stats.radius * instance.sizeJitter * kExpectedWildBodyScale, 1e-9);
+        CHECK_NEAR(sim.world.get<Body>(mob).mass, stats.mass, 1e-9);
+    }
+}
+
 TEST(a_leech_reaches_the_world_as_a_whole_animal) {
     Sim sim;
     // The leech is the second family built out of a head and a trailing body,
@@ -2552,7 +2568,7 @@ TEST(random_size_jitters_the_body_and_nothing_else) {
         const double jitter = sim.world.get<MobType>(e).sizeJitter;
         CHECK(jitter >= lowest);
         CHECK(jitter <= highest);
-        CHECK_NEAR(sim.world.get<Body>(e).radius, stats.radius * jitter, 1e-9);
+        CHECK_NEAR(sim.world.get<Body>(e).radius, stats.radius * jitter * kExpectedWildBodyScale, 1e-9);
         // Mass is NOT jittered. It is derived from the config size and the
         // rarity step alone (gardn's `1 + radius / 25` off the stat table's
         // radius, not the jittered one), so a
@@ -3153,6 +3169,26 @@ TEST(the_drop_table_links_cleanly_against_the_shipped_content) {
     CHECK(tables.linkedTo(shipped()));
     tables.link(shipped());   // idempotent
     CHECK(tables.unresolved().empty());
+}
+
+TEST(server_ruby_roll_is_point_six_percent_across_tiers) {
+    const auto tables = shippedTables();
+    const auto server = shipped().mobIndex("server");
+    const auto ruby = shipped().petalIndex("ruby");
+    for (const auto& rows : {tables.forMob(server), tables.guaranteedForMob(server)}) {
+        const auto row = std::find_if(rows.begin(), rows.end(),
+                                      [&](const DropTables::Entry& entry) { return entry.petalIndex == ruby; });
+        CHECK(row != rows.end());
+        if (row == rows.end()) continue;
+        for (int tier = 0; tier < kLadderRarityCount; ++tier) {
+            double chance = 0.0;
+            for (const auto& rate : ratesFor(row->rates, clampRarity(tier))) chance += rate.probability;
+            CHECK_NEAR(chance, 0.006, 1e-12);
+        }
+        CHECK_EQ(rollDropRates(row->rates, Rarity::Common, 0.005), rarityIndex(Rarity::Common));
+        CHECK_EQ(rollDropRates(row->rates, Rarity::Common, 0.007), -1);
+        CHECK_NEAR(hyperSuperChance(row->rates), 0.00009, 1e-12);
+    }
 }
 
 TEST(icosahedron_uses_the_original_garbage_drop_rules) {

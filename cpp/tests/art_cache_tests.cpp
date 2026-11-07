@@ -74,6 +74,46 @@ TEST(hel_spider_legs_follow_distance_instead_of_clock_time) {
     CHECK(standing != pixels(20, 0));
 }
 
+TEST(silverfish_antennae_point_along_the_in_game_facing) {
+    const auto& content = testsupport::shippedContent();
+    const auto id = content.mobIndex("silverfish");
+    CHECK(id != kInvalidIndex);
+    if (id == kInvalidIndex) return;
+    const auto art = SvgDocument::fromString(content.mob(id).image);
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    CHECK(sprites.mobDrawable(id));
+    for (const double bearing : {0.0, kPi / 2.0}) {
+        Canvas actual = Canvas::createVirtual(128, 128);
+        sprites.drawMob(actual, id, Rarity::Common, 64, 64, 112, bearing, 0.0);
+
+        // The long antennae point upper-left in the source drawing.
+        Canvas aligned = Canvas::createVirtual(128, 128);
+        aligned.translate(64.0f, 64.0f);
+        aligned.rotate(static_cast<float>(bearing + 3.0 * kPi / 4.0));
+        art.renderFitted(aligned, -56.0f, -56.0f, 112.0f, 112.0f, 0.0f);
+        CHECK(actual.getImageData(0, 0, 128, 128) == aligned.getImageData(0, 0, 128, 128));
+    }
+}
+
+TEST(silverfish_legs_move_with_distance_and_hold_when_still) {
+    const auto& content = testsupport::shippedContent();
+    const auto id = content.mobIndex("silverfish");
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    CHECK(sprites.mobDrawable(id));
+    const auto pixels = [&](double distance, double time) {
+        Canvas canvas = Canvas::createVirtual(128, 128);
+        MobMotion motion;
+        motion.distance = distance;
+        sprites.drawMob(canvas, id, Rarity::Common, 64, 64, 112, 0.0, time,
+                        false, 0, {1, 0}, &motion);
+        return canvas.getImageData(0, 0, 128, 128);
+    };
+    CHECK(pixels(0.0, 0.0) != pixels(20.0, 0.0));
+    CHECK(pixels(20.0, 0.0) == pixels(20.0, 2.0));
+}
+
 TEST(art_cache_is_a_no_op_off_the_web) {
 #ifndef __EMSCRIPTEN__
     // Caching these tiles was measured four times SLOWER against the software

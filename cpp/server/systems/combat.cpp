@@ -519,6 +519,13 @@ Entity CombatSystem::creditedPlayer(const World& world, Entity source) {
 }
 
 bool CombatSystem::canDamage(const World& world, Entity source, Entity victim) {
+    if (const auto* shot = world.tryGet<Projectile>(source); shot && shot->wildOnly && !isWildMob(world, victim)) {
+        return false;
+    }
+    if (const auto* shot = world.tryGet<Projectile>(victim); shot && shot->wildOnly &&
+        (creditedPlayer(world, source) != NULL_ENTITY || world.has<Pet>(source))) {
+        return false;
+    }
     if (victim == NULL_ENTITY || source == victim) return false;
 
     // Resolving BOTH sides to the player behind them covers every self-harm
@@ -639,7 +646,14 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
     }
     const Entity dealer = creditedPlayer(world, source);
     const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(dealer);
-    const double chance = modifiers != nullptr ? modifiers->lightningRepeatChance : 0.0;
+    double chance = modifiers != nullptr ? modifiers->lightningRepeatChance : 0.0;
+    if (chance > 0.0) {
+        const auto* health = world.tryGet<Health>(poolOwner(world, victim));
+        if (health && health->fraction() < 0.5) {
+            chance *= hyperAmount(wornHyperTechnique(world, content(), dealer, "ruby"),
+                                  HyperTechnique::RubyEcho);
+        }
+    }
     const int limit = modifiers != nullptr ? std::clamp(modifiers->maxLightningRepeats, 0, 3) : 0;
     if (chance <= 0.0 || limit == 0) {
         return applyDamageOnce(world, victim, source, amount, nowMillis, kind);
@@ -860,27 +874,62 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
             }
         }
     }
-    // Evasion: a talisman's wearer or a fly side-steps the hit whole. Ahead of
-    // armour, the shield and root's stacks, because a hit that never landed
-    // has nothing for any of them to blunt -- root would otherwise spend a
-    // stack on a blow that went wide. Direct only: a drip is not an attack.
+    // Evasion happens before durability, armor and shields are spent.
+    const auto* petal = world.tryGet<PetalInstance>(victim);
+    const auto* technique = petal && petal->rarity == Rarity::Apex && !petal->mimicked &&
+        petal->slot < kLoadoutActiveSlots ? hyperTechniqueInfo(content().petal(petal->configIndex).id, petal->rarity)
+                                        : nullptr;
+    const bool physicalMob = kind == DamageKind::Direct && isWildMob(world, source) &&
+                             !world.has<MobRingPetal>(source);
+    double evasionBonus = 0.0;
+    if (technique && technique->technique == HyperTechnique::PokerOdds) {
+        const auto* health = world.tryGet<Health>(victim);
+        if (health && health->fraction() < 0.25 &&
+            (physicalMob || (kind == DamageKind::Direct && world.has<Projectile>(source) &&
+                             isWildMob(world, reflectionTarget(world, source))))) {
+            evasionBonus = technique->amount;
+        }
+    }
     if ((kind == DamageKind::Direct ||
          (kind == DamageKind::Recoil && world.has<PetalTag>(victim))) &&
-        !sharingColonyHit_ && rollDodge(world, victim, nowMillis)) {
+        !sharingColonyHit_ && rollDodge(world, victim, nowMillis, evasionBonus)) {
         result.dodged = true;
+        if (physicalMob && hyperDefending(world, victim)) {
+            const auto* ward = wornHyperTechnique(world, content(), victim, "talisman_of_evasion");
+            const auto* afflictions = world.tryGet<Afflictions>(poolOwner(world, source));
+            if (ward && (!afflictions || !afflictions->slowed(nowMillis))) {
+                applySlow(world, source, ward->amount, 450.0, Rarity::Apex, nowMillis);
+            }
+        }
         return result;
     }
 
-    if (kind == DamageKind::Recoil || (kind == DamageKind::Direct && world.has<Projectile>(source))) {
-        const auto* petal = world.tryGet<PetalInstance>(victim);
-        if (petal && petal->rarity == Rarity::Apex && !petal->mimicked &&
-            petal->slot < kLoadoutActiveSlots && hyperDefending(world, petal->owner)) {
-            const auto* technique = hyperTechniqueInfo(content().petal(petal->configIndex).id, petal->rarity);
-            if (kind == DamageKind::Recoil && isWildMob(world, source) && !world.has<MobRingPetal>(source)) {
-                amount *= hyperAmount(technique, HyperTechnique::RockBrace);
-            } else if (kind == DamageKind::Direct && isWildMob(world, reflectionTarget(world, source))) {
-                amount *= hyperAmount(technique, HyperTechnique::CornCover);
+    if (technique && hyperDefending(world, petal->owner)) {
+        const auto* mods = world.tryGet<PlayerModifiers>(petal->owner);
+        const int parts = mods ? computerPartCount(mods->computerParts[rarityIndex(Rarity::Apex)]) : 0;
+        if (kind == DamageKind::Recoil && isWildMob(world, source) && !world.has<MobRingPetal>(source)) {
+            amount *= hyperAmount(technique, HyperTechnique::RockBrace);
+            if (technique->technique == HyperTechnique::BasicRally) {
+                const auto* owner = world.tryGet<Health>(petal->owner);
+                if (owner && owner->fraction() < 0.35) amount *= technique->amount;
             }
+            if (parts >= 3) amount *= hyperAmount(technique, HyperTechnique::CodeParity);
+            const auto id = technique->id;
+            if (id == "leaf" || id == "golden_leaf" || id == "magic_leaf" || id == "dead_leaf") {
+                amount *= hyperAmount(wornHyperTechnique(world, content(), petal->owner, "dead_leaf"),
+                                      HyperTechnique::DeadLeafShelter);
+            }
+        } else if (kind == DamageKind::Direct && world.has<Projectile>(source) &&
+                   isWildMob(world, reflectionTarget(world, source))) {
+            amount *= hyperAmount(technique, HyperTechnique::CornCover);
+            if (parts >= 4) amount *= hyperAmount(technique, HyperTechnique::CubeBracing);
+            if (technique->technique == HyperTechnique::CardLastStand) {
+                const auto* health = world.tryGet<Health>(victim);
+                if (health && health->fraction() <= 0.5) amount *= technique->amount;
+            }
+        } else if (kind == DamageKind::Lightning && technique->technique == HyperTechnique::RubberGround &&
+                   isWildMob(world, reflectionTarget(world, source))) {
+            amount *= technique->amount;
         }
     }
 
@@ -1164,20 +1213,22 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // call, which every caller already allows for: none of them carries a
     // pointer into the world across an applyDamage().
     if (directPlayerHit && applied > 0.0) {
-        const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(victim);
-        if (modifiers != nullptr && modifiers->damageReflection > 0.0) {
+        const auto* modifiers = world.tryGet<PlayerModifiers>(victim);
+        const double cactus = physicalMob && hyperDefending(world, victim) &&
+            world.get<Health>(victim).fraction() < 0.5
+            ? hyperAmount(wornHyperTechnique(world, content(), victim, "cactus"), HyperTechnique::CactusThorns, 0.0)
+            : 0.0;
+        if (cactus > 0.0 || (modifiers && modifiers->damageReflection > 0.0)) {
             const Rarity incomingTier = hitRarity(world, source);
-            double share = modifiers->damageReflection *
-                reflectionScale(modifiers->damageReflectionRarity, incomingTier);
+            double salt = modifiers ? modifiers->damageReflection *
+                reflectionScale(modifiers->damageReflectionRarity, incomingTier) : 0.0;
             const Entity target = reflectionTarget(world, source);
             if (target != NULL_ENTITY) {
                 if (kind == DamageKind::Direct && rarityIndex(incomingTier) >= rarityIndex(Rarity::Apex) &&
                     isWildMob(world, target) && hyperDefending(world, victim)) {
-                    share *= hyperAmount(wornHyperTechnique(world, content(), victim, "salt"),
-                                         HyperTechnique::SaltRetort);
+                    salt *= hyperAmount(wornHyperTechnique(world, content(), victim, "salt"), HyperTechnique::SaltRetort);
                 }
-                applyDamage(world, target, victim, applied * share, nowMillis,
-                            DamageKind::Reflect);
+                applyDamage(world, target, victim, applied * std::max(salt, cactus), nowMillis, DamageKind::Reflect);
             }
         }
     }
@@ -1942,8 +1993,8 @@ Entity CombatSystem::reflectionTarget(const World& world, Entity source) {
     return actor;
 }
 
-bool CombatSystem::rollDodge(World& world, Entity victim, double nowMillis) {
-    const double evasion = evasionOf(world, victim);
+bool CombatSystem::rollDodge(World& world, Entity victim, double nowMillis, double bonus) {
+    const double evasion = std::min(1.0, evasionOf(world, victim) + bonus);
     // Nothing is drawn for a victim that cannot dodge, so the stream only
     // moves when evasion is actually in the fight.
     if (!(evasion > 0.0) || !rng_.chance(evasion)) return false;
@@ -2002,7 +2053,14 @@ double CombatSystem::soakIntoCotton(World& world, Entity flower, Entity source, 
         // An ordinary hit on the petal: it flashes, it breaks, its own armour
         // applies, and the slot reloads by the one path every petal does.
         // What the FLOWER is spared is the whole of `caught` either way.
-        const DamageResult hit = applyDamage(world, cotton, source, caught, nowMillis, kind);
+        double wear = caught;
+        const auto* petal = world.tryGet<PetalInstance>(cotton);
+        if (petal && petal->soaksOwnerDamage && petal->rarity == Rarity::Apex && !petal->mimicked &&
+            kind == DamageKind::Direct && hyperDefending(world, flower) &&
+            isWildMob(world, reflectionTarget(world, source))) {
+            wear *= hyperAmount(hyperTechniqueInfo("cotton", Rarity::Apex), HyperTechnique::CottonPadding);
+        }
+        const DamageResult hit = applyDamage(world, cotton, source, wear, nowMillis, kind);
         if (hit.refused || hit.dodged) continue;
         amount -= caught;
     }
@@ -2570,6 +2628,10 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.realm = transform.realm;
         source.radius = body.radius;
         source.damage = config.lightningDamage && stats.lightningDamagePerHit > 0 ? stats.lightningDamagePerHit : stats.damage;
+        if (!petal.mimicked) {
+            source.wildDamageScale = stats.wildLightningScale;
+            source.wildRecoilScale = stats.wildRecoilScale;
+        }
         source.hitIntervalMillis = stats.damageIntervalMillis;
         source.petalBreakable = stats.breakable;
         source.knockback = stats.knockback;
@@ -2808,18 +2870,6 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // INSTANCE with no victim in the key -- one glass petal lands one
             // hit per window however many mobs it is sitting on, rather than
             // one per mob, which would make it a full-rate area attack.
-            const double interval = (mobTouchesPlayer || petPair)
-                                        ? 0.0
-                                        : std::max(0.0, source.hitIntervalMillis);
-            // Read, do not create: an attacker that has never landed a hit
-            // should not pay an archetype move just for being near something.
-            const HitCooldowns* armed =
-                interval > 0.0 ? world.tryGet<HitCooldowns>(source.attacker) : nullptr;
-            if (armed != nullptr &&
-                !(source.isPetal ? armed->globalReady(nowMillis) : armed->ready(victim, nowMillis))) {
-                continue;
-            }
-
             const bool wild = isWildMob(world, victim);
             const auto* instance = source.isPetal && source.rarity == Rarity::Apex &&
                 (wild || world.has<Projectile>(victim))
@@ -2829,15 +2879,67 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 : nullptr;
             const bool guarding = technique && hyperDefending(world, source.owner);
 
+            const bool attacking = technique && hyperAttacking(world, source.owner);
+            double interval = (mobTouchesPlayer || petPair) ? 0.0 : std::max(0.0, source.hitIntervalMillis);
+            if (wild && guarding) interval *= hyperAmount(technique, HyperTechnique::GlassPhase);
+            if (wild && attacking && technique->technique == HyperTechnique::GlassPressure) {
+                const auto* state = world.tryGet<Afflictions>(poolOwner(world, victim));
+                if (state && state->slowed(nowMillis)) interval *= technique->amount;
+            }
+            // Read, do not create: an attacker that has never landed a hit
+            // should not pay an archetype move just for being near something.
+            const HitCooldowns* armed =
+                interval > 0.0 ? world.tryGet<HitCooldowns>(source.attacker) : nullptr;
+            if (armed != nullptr &&
+                !(source.isPetal ? armed->globalReady(nowMillis) : armed->ready(victim, nowMillis))) {
+                continue;
+            }
+
             // A claw's bonus is decided here, per victim, off the health the
             // victim has BEFORE this hit.
-            double swing = swingDamage(world, source.damage, source.critDamage, victim);
+            const double baseDamage = wild ? source.damage * source.wildDamageScale : source.damage;
+            double swing = swingDamage(world, baseDamage, source.critDamage, victim);
             if (wild && technique && technique->technique == HyperTechnique::TomatoRipening) {
                 const double age = nowMillis - instance->spawnedAtMillis;
                 if (age >= 5000.0) swing *= tomatoGrowth(age + technique->amount) / tomatoGrowth(age);
             }
             const bool critical = source.critChance > 0 && rng_.chance(source.critChance);
             if (critical) swing *= source.critMultiplier;
+            if (wild && technique) {
+                const Entity target = poolOwner(world, victim);
+                const auto* health = world.tryGet<Health>(target);
+                const double fraction = health ? health->fraction() : 0.0;
+                switch (technique->technique) {
+                    case HyperTechnique::BeanSolo: {
+                        const auto* ledger = world.tryGet<Bounty>(target);
+                        if (attacking && (!ledger || std::none_of(ledger->contributors.begin(), ledger->contributors.end(),
+                            [&](const Bounty::Share& share) {
+                                return share.damage > 0.0 && share.player != source.owner &&
+                                       !oneConnection(world, share.player, source.owner);
+                            }))) {
+                            swing *= technique->amount;
+                        }
+                        break;
+                    }
+                    case HyperTechnique::ClawFollowup:
+                        if (attacking && fraction > 0.75 && fraction <= kClawCritHealthFraction)
+                            swing += source.critDamage * technique->amount;
+                        break;
+                    case HyperTechnique::RiceCleanup:
+                        if (attacking && fraction < 0.25) swing *= technique->amount;
+                        break;
+                    case HyperTechnique::DiceFloor:
+                        if (guarding && !critical && fraction > 0.90) swing *= technique->amount;
+                        break;
+                    case HyperTechnique::TriangleStrike: {
+                        const auto* mods = world.tryGet<PlayerModifiers>(source.owner);
+                        if (attacking && mods && mods->triangleCounts[rarityIndex(Rarity::Apex)] >= 2)
+                            swing *= technique->amount;
+                        break;
+                    }
+                    default: break;
+                }
+            }
             if(const auto* petal=world.tryGet<FlowerMobPetal>(source.attacker)) {
                 if(petal->damageMax>swing)swing=rng_.range(swing,petal->damageMax);
                 if(petal->critChance>0 && rng_.chance(petal->critChance))
@@ -2921,7 +3023,11 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             if (landed && !hit.killed) {
                 const auto* wildTechnique = wild ? technique : nullptr;
                 if (source.isPetal) {
-                    const double shove = guarding ? hyperAmount(wildTechnique, HyperTechnique::WildShove) : 1.0;
+                    double shove = guarding ? hyperAmount(wildTechnique, HyperTechnique::WildShove) : 1.0;
+                    if (wild && guarding && technique->technique == HyperTechnique::PentagonShove) {
+                        const auto* armor = world.tryGet<Armor>(poolOwner(world, victim));
+                        if (armor && armor->amount > 0.0) shove *= technique->amount;
+                    }
                     applyKnockback(world, victim, offset, source.knockback * shove);
                 } else if (wild && source.isPlayerBody) {
                     const auto* input = world.tryGet<PlayerInput>(source.attacker);
@@ -2935,6 +3041,13 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                     const auto* prior = world.tryGet<Afflictions>(poolOwner(world, victim));
                     if (!prior || !prior->slowed(nowMillis)) {
                         applySlow(world, victim, technique->amount, 400.0, source.rarity, nowMillis);
+                    }
+                }
+                if (wild && technique && technique->technique == HyperTechnique::DustWake) {
+                    const auto* input = world.tryGet<PlayerInput>(source.owner);
+                    const auto* state = world.tryGet<Afflictions>(poolOwner(world, victim));
+                    if (input && input->current.moveStrength > 0.0 && (!state || !state->slowed(nowMillis))) {
+                        applySlow(world, victim, technique->amount, 350.0, source.rarity, nowMillis);
                     }
                 }
                 if (wild && guarding && technique->technique == HyperTechnique::SawbladeNotch) {
@@ -2986,6 +3099,24 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 stealLife(world, source.owner, healing, nowMillis);
             }
 
+            if (wild && technique && hit.applied > 0.0) {
+                if (technique->technique == HyperTechnique::CoinSweep && hit.killed) {
+                    world.ensure<HyperPetalTimers>(source.owner).coinPickupUntilMillis = nowMillis + 4000.0;
+                }
+                if (technique->technique == HyperTechnique::BloodRecovery && attacking) {
+                    const auto* owner = world.tryGet<Health>(source.owner);
+                    const auto* timers = world.tryGet<HyperPetalTimers>(source.owner);
+                    if (owner && owner->fraction() < 0.30 && !healingBlocked(world, source.owner, nowMillis) &&
+                        (!timers || nowMillis >= timers->bloodNeedleReadyAtMillis)) {
+                        const auto* mods = world.tryGet<PlayerModifiers>(source.owner);
+                        const double scale = mods ? kPlayerHealMultiplier * (1.0 + mods->healBonus) : 1.0;
+                        const double heal = std::min(hit.applied * technique->amount, owner->max * 0.005 / scale);
+                        world.ensure<HyperPetalTimers>(source.owner).bloodNeedleReadyAtMillis = nowMillis + 1000.0;
+                        stealLife(world, source.owner, heal, nowMillis);
+                    }
+                }
+            }
+
             // Record the bounce only after a real hit, and re-fetch after damage
             // may have moved an ECS row. Clearing the target prevents a second
             // hit in this same candidate loop (or on a previously visited mob).
@@ -3026,7 +3157,8 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // would halve the moon's life for nothing the player did.
             if (landed && source.isPetal && !source.isLoose && source.petalBreakable &&
                 (world.has<MobTag>(victim) || world.has<NpcTag>(victim))) {
-                applyDamage(world, source.attacker, victim, contactDamageOf(world, victim),
+                const double recoil = contactDamageOf(world, victim);
+                applyDamage(world, source.attacker, victim, wild ? recoil * source.wildRecoilScale : recoil,
                             nowMillis, DamageKind::Recoil);
             }
 
@@ -3309,6 +3441,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
         const std::uint16_t petalIndex = projectile->petalConfigIndex;
         const Rarity rarity = projectile->rarity;
         const bool infecting = projectile->glitchInfecting;
+        const bool wildOnly = projectile->wildOnly;
         const Entity owner = projectile->owner;
         const std::uint8_t slot = projectile->slot;
         // A blueberry's shot lands as lightning, exactly as its body does.
@@ -3342,7 +3475,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             // from making this pass quadratic in the size of the cloud.
             if (shooter != NULL_ENTITY && filedShotPlayer(victim) == shooter) continue;
             if (!world.isAlive(victim)) continue;
-            if (!isShootable(world, victim)) continue;
+            if (!isShootable(world, victim) || (wildOnly && !isWildMob(world, victim))) continue;
             const Transform* transform = world.tryGet<Transform>(victim);
             const Body* body = world.tryGet<Body>(victim);
             if (transform == nullptr || body == nullptr) continue;
@@ -3476,12 +3609,10 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                 applyNoHeal(world, impact.victim, stats.noHealDurationMillis, nowMillis);
             }
 
-            // What the hit cost the shot. Its own health pool is the whole of
-            // penetration: nothing counts victims, the pool simply runs out.
-            // A shot whose ammunition declares no pool was born with one point
-            // and dies here, exactly as it did before it had one.
+            // Hyper-only PvE shots spend their single impact on contact.
+            // Other ammunition can penetrate while its durability pool lasts.
             if (!world.isAlive(shot.entity) || world.has<Dead>(shot.entity)) break;
-            if (!std::isfinite(cost) || cost <= 0.0) {
+            if ((wildOnly && !hit.refused) || !std::isfinite(cost) || cost <= 0.0) {
                 world.add<Dead>(shot.entity);
                 break;
             }

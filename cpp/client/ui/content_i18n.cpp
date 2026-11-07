@@ -438,6 +438,7 @@ constexpr Pair kPetalDescs[] = {
     {"magic_firefly_egg", "孵化一个魔法萤火虫宠物"},
     {"magic_leaf", "从环境中收集能量为你的花朵提供魔力。"},
     {"magic_missile", "你可以将其发射出去……但要用魔法。"},
+    {"magic_eye", "装备后将花朵的两只眼睛换成魔眼。"},
     {"magic_orb", "创造魔力。"},
     {"magic_peas", "“嘭”地爆开；现在有了额外的秘密成分：闪电。"},
     {"magic_stick", "充满魔力的树枝，能动用风的力量。"},

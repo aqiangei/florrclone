@@ -96,7 +96,8 @@ void WorldView::clear() {
     suppressSelfCorpse_ = false;
     clockAnchored_ = false;
     clockOffsetMillis_ = 0;
-    latenessPeakMillis_ = 0;
+    lastSnapshotRenderMillis_ = 0;
+    playbackGapPeakMillis_ = 0;
     delayTargetMillis_ = kMobRenderDelayMillis;
     interpolationDelayMillis = kMobRenderDelayMillis;
 }
@@ -130,22 +131,23 @@ double WorldView::toRenderClock(double serverMillis, double localMillis) {
     if (!clockAnchored_ || std::fabs(observed - clockOffsetMillis_) > 2000.0) {
         clockOffsetMillis_ = observed;
         clockAnchored_ = true;
+        playbackGapPeakMillis_ = 0;
+        delayTargetMillis_ = kMobRenderDelayMillis;
     } else {
-        // Measured before the offset moves, so this packet is judged against
-        // the timeline as it stood when it should have arrived.
-        noteLateness(clockOffsetMillis_ - observed);
+        // How long the previous sample had to last before this one arrived.
+        // This includes slow server ticks as well as transport jitter.
+        const double gap = localMillis - lastSnapshotRenderMillis_;
+        playbackGapPeakMillis_ = std::max(gap, playbackGapPeakMillis_ * kPlaybackGapMemory);
+        delayTargetMillis_ = clamp(std::max(kSnapshotGapMillis, playbackGapPeakMillis_) +
+                                       kPlaybackMarginMillis,
+                                   kMobRenderDelayMillis, kMaxMobRenderDelayMillis);
         // Slow, because this is correcting drift between two crystals, not
         // tracking the network. A fast gain would let one late packet drag the
         // whole playback timeline and undo the de-jitter it exists for.
         clockOffsetMillis_ += (observed - clockOffsetMillis_) * 0.02;
     }
-    return serverMillis - clockOffsetMillis_;
-}
-
-void WorldView::noteLateness(double latenessMillis) {
-    latenessPeakMillis_ = std::max(latenessMillis, latenessPeakMillis_ * kLatenessMemory);
-    delayTargetMillis_ = clamp(kSnapshotGapMillis + latenessPeakMillis_ + kPlaybackMarginMillis,
-                               kMobRenderDelayMillis, kMaxMobRenderDelayMillis);
+    lastSnapshotRenderMillis_ = serverMillis - clockOffsetMillis_;
+    return lastSnapshotRenderMillis_;
 }
 
 namespace {
@@ -166,7 +168,7 @@ void pushSample(RemoteEntity& e, double timeMillis) {
 
 } // namespace
 
-bool WorldView::applySnapshot(ByteReader& reader) {
+bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
     const std::uint32_t tick = reader.u32();
     const double serverTime = reader.f64();
     const Vec2 selfPosition = reader.position();
@@ -392,7 +394,7 @@ bool WorldView::applySnapshot(ByteReader& reader) {
     tick_ = tick;
     // Mob samples are stamped on the server's own timeline, mapped onto this
     // client's render clock. See toRenderClock().
-    const double sampleMillis = toRenderClock(serverTime, renderClockMillis());
+    const double sampleMillis = toRenderClock(serverTime, receivedMillis);
 
     self_.position = selfPosition;
     self_.health = health;

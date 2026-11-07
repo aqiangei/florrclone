@@ -19,7 +19,7 @@ public:
     void run(std::size_t jobs, unsigned limit, const Job& job);
 
     static unsigned available();
-    static unsigned configuredLimit(const char* name);
+    static unsigned configuredLimit(const char* name, unsigned defaultLimit = kMaxWorkers);
 
 private:
     struct Impl;

@@ -106,6 +106,41 @@ TEST(third_eye_extends_electric_web_throw_without_enlarging_its_field) {
     CHECK(after>before); CHECK_NEAR(baseRadius,extendedRadius,1e-9);
 }
 
+TEST(real_hammers_hit_wild_mobs_harder_and_keep_duel_damage) {
+    struct HammerCase { const char* id; Rarity tier; double wildBase; double duelBase; double recoil; };
+    for (const auto& test : {HammerCase{"timed_mjolnir", Rarity::Unique, 60.0, 12.0, 0.50},
+                             {"mjolnir", Rarity::Unique, 60.0, 12.0, 0.50},
+                             {"mjolnir", Rarity::Apex, 80.0, 60.0, 0.35}}) {
+        for (const bool wild : {false, true}) {
+            CombatFeedback r;
+            r.w.get<Faction>(r.player).friendlyFireEnabled = true;
+            r.equip(0, test.id, test.tier);
+            r.prepare();
+            Entity hammer = NULL_ENTITY;
+            Query<PetalInstance>{r.w}.each([&](Entity e, PetalInstance& p) {
+                if (p.slot == 0) hammer = e;
+            });
+            CHECK(hammer != NULL_ENTITY);
+            if (hammer == NULL_ENTITY) continue;
+            const auto target = r.mob(r.w.get<Transform>(hammer).position + Vec2{wild ? 0.0 : 1.0, 0.0});
+            if (wild) {
+                r.w.add<ContactDamage>(target, ContactDamage{10000.0, kMobHitIntervalMillis});
+            } else {
+                r.w.remove<MobTag>(target);
+                r.w.add<PlayerTag>(target);
+                r.w.get<Faction>(target) = Faction{Team::Players, true};
+            }
+            const double durability = r.w.get<Health>(hammer).current;
+            r.hit(10000.0);
+            CHECK_NEAR(1e12 - r.w.get<Health>(target).current,
+                       (wild ? test.wildBase : test.duelBase) * petalStrengthScale(test.tier), 1e-5);
+            if (wild) {
+                CHECK_NEAR(durability - r.w.get<Health>(hammer).current, 10000.0 * test.recoil, 1e-7);
+            }
+        }
+    }
+}
+
 TEST(real_mjolnir_contact_receives_the_equipped_ruby_bonus) {
     double baseline=0,boosted=0;
     for(bool ruby:{false,true}) {

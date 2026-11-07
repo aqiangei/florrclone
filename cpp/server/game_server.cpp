@@ -1463,7 +1463,7 @@ void GameServer::tick(double nowMillis) {
 
 void GameServer::runSystems(double nowMillis, double dt) {
     if (!workers_) {
-        const unsigned simulation = ServerWorkers::configuredLimit("FLIX_SIMULATION_WORKERS");
+        const unsigned simulation = ServerWorkers::configuredLimit("FLIX_SIMULATION_WORKERS", 7);
         const unsigned snapshots = ServerWorkers::configuredLimit("FLIX_SNAPSHOT_WORKERS");
         workers_ = std::make_unique<ServerWorkers>(std::max(simulation, snapshots));
         mobAi_->workers = movement_->workers = loot_->workers =

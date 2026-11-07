@@ -335,6 +335,7 @@ AiKind parseAi(Ctx& ctx, const std::string& text) {
 std::uint16_t parseEquipFlags(const std::string& text) {
     if (text == "Cutter") return EquipCutter;
     if (text == "ThirdEye") return EquipThirdEye;
+    if (text == "MagicEye") return EquipMagicEye;
     if (text == "Observer") return EquipObserver;
     if (text == "Antennae") return EquipAntennae;
     if (text == "Test1") return EquipTest1;
@@ -2229,13 +2230,19 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
         s.modifiers.luck = 1.15;
         s.reloadMillis = 2100.0;
     }
-    // The contested H hammer is a sustained-output reward, independent of the
-    // temporary E hammer. Restore bite and recovery without restoring old chains.
+    // The hammers trade the blueberries' range for sustained contact with wild mobs.
+    if (graded == Rarity::Unique && (c.id == "mjolnir" || c.id == "timed_mjolnir")) {
+        s.wildLightningScale = 5.0; // 12 -> 60 base lightning per hit.
+        s.wildRecoilScale = 0.5;
+        s.reloadMillis = 5000.0;
+    }
     if (graded == Rarity::Apex && c.id == "mjolnir") {
         s.lightningDamagePerHit = 60.0 * strength;
+        s.wildLightningScale = 4.0 / 3.0; // 60 -> 80 base lightning per hit.
+        s.wildRecoilScale = 0.35;
         // 50 -> 75 base durability, retaining the existing capped H scaling.
         s.health *= 1.5;
-        s.reloadMillis = 6000.0;
+        s.reloadMillis = 4000.0;
     }
     // Admin starts with universal combat strength and apex utility, then
     // boosts the useful effects. Apply AFTER all named-petal overrides so

@@ -410,7 +410,7 @@ TEST(todo1105_meteor_plants_only_on_defense_and_expires) {
  CHECK(rock!=NULL_ENTITY);
  if(rock==NULL_ENTITY)return;
  CHECK(w.has<LoosePetal>(rock));
- CHECK_NEAR(w.get<Body>(rock).radius,100,1e-9);
+ CHECK_NEAR(w.get<Body>(rock).radius,150,1e-9);
  w.get<PlayerInput>(p).current.flags=0;
  for(int i=151;i<560;++i) {petals.run(w,c,i*50,.05,commands);commands.flush();}
  CHECK(!w.isAlive(rock));

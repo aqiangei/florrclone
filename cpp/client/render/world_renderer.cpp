@@ -2952,6 +2952,16 @@ void WorldRenderer::drawDefaultFlower(Canvas& canvas, const RemoteEntity& entity
              active ? 4.0 : 14.5, timeSeconds);
 }
 
+bool WorldRenderer::drawMagicEyes(Canvas& canvas, std::uint16_t equipFlags, double spacing,
+                                 double y, double diameter) const {
+    if (!(equipFlags & EquipMagicEye) || !sprites_ || !content_) return false;
+    const auto index = content_->petalIndex("magic_eye");
+    if (index == kInvalidIndex || !sprites_->petalDrawable(index)) return false;
+    sprites_->drawPetal(canvas, index, Rarity::Common, -spacing, y, diameter, 0.0, 0.0);
+    sprites_->drawPetal(canvas, index, Rarity::Common, spacing, y, diameter, 0.0, 0.0);
+    return true;
+}
+
 void WorldRenderer::drawCutterBlade(Canvas& canvas, std::uint16_t equipFlags,
                                     double timeSeconds) const {
     if (!sprites_ || !content_) return;
@@ -3024,6 +3034,8 @@ void WorldRenderer::drawFace(Canvas& canvas, std::uint8_t faceFlags, std::uint16
         canvas.moveTo(7 - len, -4.8f - len); canvas.lineTo(7 + len, -4.8f + len);
         canvas.moveTo(7 + len, -4.8f - len); canvas.lineTo(7 - len, -4.8f + len);
         canvas.stroke();
+    } else if (drawMagicEyes(canvas, equipFlags, 7.0, -4.8, 14.0)) {
+        // The worn artwork replaces the two ordinary eyes.
     } else if (faceFlags & FaceSquareEyes) {
         canvas.beginPath();
         canvas.rect(-10, -11.3f, 6, 13);
@@ -3144,17 +3156,20 @@ void WorldRenderer::drawPumpkin(Canvas& canvas, const RemoteEntity& entity) cons
         canvas.beginPath(); canvas.ellipse(x, 0, 6.5f, 22, 0, 0, static_cast<float>(kTau)); canvas.stroke();
     }
 
-    const double eyeX = clamp(entity.eyeX, -2.0, 2.0) * 0.7;
-    const double eyeY = clamp(entity.eyeY, -2.0, 2.0) * 0.5;
+    if (!drawMagicEyes(canvas, entity.equipFlags, 7.5, -5.0, 13.0)) {
+        const double eyeX = clamp(entity.eyeX, -2.0, 2.0) * 0.7;
+        const double eyeY = clamp(entity.eyeY, -2.0, 2.0) * 0.5;
+        ui::setFill(canvas, 0x3A1A02u);
+        canvas.beginPath();
+        canvas.moveTo(static_cast<float>(-12 + eyeX), static_cast<float>(-1 + eyeY));
+        canvas.lineTo(static_cast<float>(-3 + eyeX), static_cast<float>(-1 + eyeY));
+        canvas.lineTo(static_cast<float>(-7.5 + eyeX), static_cast<float>(-9 + eyeY)); canvas.closePath();
+        canvas.moveTo(static_cast<float>(12 + eyeX), static_cast<float>(-1 + eyeY));
+        canvas.lineTo(static_cast<float>(3 + eyeX), static_cast<float>(-1 + eyeY));
+        canvas.lineTo(static_cast<float>(7.5 + eyeX), static_cast<float>(-9 + eyeY)); canvas.closePath();
+        canvas.fill();
+    }
     ui::setFill(canvas, 0x3A1A02u);
-    canvas.beginPath();
-    canvas.moveTo(static_cast<float>(-12 + eyeX), static_cast<float>(-1 + eyeY));
-    canvas.lineTo(static_cast<float>(-3 + eyeX), static_cast<float>(-1 + eyeY));
-    canvas.lineTo(static_cast<float>(-7.5 + eyeX), static_cast<float>(-9 + eyeY)); canvas.closePath();
-    canvas.moveTo(static_cast<float>(12 + eyeX), static_cast<float>(-1 + eyeY));
-    canvas.lineTo(static_cast<float>(3 + eyeX), static_cast<float>(-1 + eyeY));
-    canvas.lineTo(static_cast<float>(7.5 + eyeX), static_cast<float>(-9 + eyeY)); canvas.closePath();
-    canvas.fill();
     canvas.beginPath();
     canvas.moveTo(-13, 6); canvas.lineTo(-9, 12); canvas.lineTo(-4.5f, 6); canvas.lineTo(0, 13);
     canvas.lineTo(4.5f, 6); canvas.lineTo(9, 12); canvas.lineTo(13, 6); canvas.lineTo(9, 9);
@@ -3176,17 +3191,20 @@ void WorldRenderer::drawRobot(Canvas& canvas, const RemoteEntity& entity) const 
     }
     ui::setFill(canvas, 0x10141Au); canvas.beginPath(); canvas.roundRect(-17, -8, 34, 13, 5); canvas.fill();
 
-    const double eyeX = clamp(entity.eyeX, -2.5, 2.5);
-    const double eyeY = clamp(entity.eyeY, -1.5, 1.5);
-    // The default flower colour is the TypeScript robot visor tint.
-    ui::setFill(canvas, 0xFFE763u);
-    canvas.setShadow(Color{255, 231, 99}, 6.0f);
-    for (const float x : {-8.0f, 8.0f}) {
-        canvas.beginPath();
-        canvas.arc(static_cast<float>(x + eyeX), static_cast<float>(-1.5 + eyeY), 2.6f, 0, static_cast<float>(kTau));
-        canvas.fill();
+    if (!drawMagicEyes(canvas, entity.equipFlags, 8.0, -1.5, 12.0)) {
+        const double eyeX = clamp(entity.eyeX, -2.5, 2.5);
+        const double eyeY = clamp(entity.eyeY, -1.5, 1.5);
+        // The default flower colour is the TypeScript robot visor tint.
+        ui::setFill(canvas, 0xFFE763u);
+        canvas.setShadow(Color{255, 231, 99}, 6.0f);
+        for (const float x : {-8.0f, 8.0f}) {
+            canvas.beginPath();
+            canvas.arc(static_cast<float>(x + eyeX), static_cast<float>(-1.5 + eyeY),
+                       2.6f, 0, static_cast<float>(kTau));
+            canvas.fill();
+        }
+        canvas.setShadow(Color{0, 0, 0, 0}, 0);
     }
-    canvas.setShadow(Color{0, 0, 0, 0}, 0);
 
     ui::setStroke(canvas, 0x3A4250u); canvas.setLineWidth(1.2f);
     for (const float y : {10.0f, 14.0f}) {
@@ -3734,15 +3752,6 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         if (shield > kMobBarShieldMin) {
             stroke(shield, kMobBarThickness * kMobBarShieldWidth, ui::kPaper, fade(shield));
         }
-        if (labelled && !mob.pet && isBossRarity(mob.rarity) && !invulnerable) {
-            canvas.setGlobalAlpha(static_cast<float>(base * opacity));
-            ui::TextStyle style;
-            style.size = std::max(8.0, 12.0 * zoom);
-            style.align = ui::Align::Centre;
-            style.baseline = ui::Baseline::Middle;
-            const int percent = static_cast<int>(std::lround(clamp(mob.healthFraction, 0.0, 1.0) * 100));
-            ui::text(canvas, std::to_string(percent) + "%", screen.x, sy(lineY), style);
-        }
     }
 
     canvas.setGlobalAlpha(static_cast<float>(base * opacity));
@@ -4031,14 +4040,17 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // visual_scale. entity.radius above is the body the server damages
             // from and stays where it is.
             const double diameter = artUnits * petalArtScale(config) * zoom;
-            const ScopedColorTint flash(canvas, hitTint(entity.netId));
             if (config && config->id == "meteor" && diameter > 12.0) {
-                const double phase = std::fmod(timeSeconds * .7 + (entity.netId % 29) / 29.0, 1.0);
-                ui::setStroke(canvas, 0xE8974Au, .24 * (1.0 - phase));
-                canvas.setLineWidth(static_cast<float>(std::max(1.0, zoom * 2.0)));
-                canvas.strokeCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
-                                    static_cast<float>(diameter * (.36 + phase * .16)));
+                ui::setFill(canvas, 0x342D2Cu, 0.22);
+                canvas.beginPath();
+                canvas.ellipse(static_cast<float>(screen.x),
+                               static_cast<float>(screen.y + diameter * 0.30),
+                               static_cast<float>(diameter * 0.40),
+                               static_cast<float>(diameter * 0.14), 0.0f, 0.0f,
+                               static_cast<float>(kTau));
+                canvas.fill();
             }
+            const ScopedColorTint flash(canvas, hitTint(entity.netId));
             if (config && config->id == "gas" && entity.rarity == Rarity::Common) {
                 // Gas is a cloud rather than a petal, and there can be hundreds
                 // of it at once.
@@ -4439,8 +4451,6 @@ void WorldRenderer::drawLightning(Canvas& canvas, const Camera& camera) const {
     const double zoom = camera.zoom();
 
     canvas.save();
-    ui::setStroke(canvas, kLightningColor);
-    canvas.setLineWidth(static_cast<float>(kLightningWidth * zoom));
     // Round on both, or every joint in a hard-angled arm shows as a notch and
     // the arm reads as a chain of separate sticks.
     canvas.setLineCap("round");
@@ -4460,7 +4470,32 @@ void WorldRenderer::drawLightning(Canvas& canvas, const Camera& camera) const {
             const Vec2 at = camera.worldToScreen(bolt.points[i]);
             canvas.lineTo(static_cast<float>(at.x), static_cast<float>(at.y));
         }
-        canvas.stroke();
+        if (!(bolt.ownership & net::LightningMagicEye)) {
+            ui::setStroke(canvas, kLightningColor);
+            canvas.setLineWidth(static_cast<float>(kLightningWidth * zoom));
+            canvas.stroke();
+            continue;
+        }
+
+        // Draw the same jagged path in three layers, keeping the bright core
+        // narrow enough to distinguish consecutive jumps in a crowded fight.
+        const auto stroke = [&](std::uint32_t colour, double width, double alpha) {
+            ui::setStroke(canvas, colour, alpha);
+            canvas.setLineWidth(static_cast<float>(width * zoom));
+            canvas.stroke();
+        };
+        stroke(0x356FCDu, 9.0, 0.28);
+        stroke(0x5AD8F5u, 4.6, 0.82);
+        stroke(0xE8FAFFu, 1.7, 1.0);
+
+        const Vec2 impact = camera.worldToScreen(bolt.points.back());
+        ui::setStroke(canvas, 0x91E5FFu, 0.55 * (1.0 - t));
+        canvas.setLineWidth(static_cast<float>(1.2 * zoom));
+        canvas.strokeCircle(static_cast<float>(impact.x), static_cast<float>(impact.y),
+                            static_cast<float>((3.5 + t * 8.0) * zoom));
+        ui::setFill(canvas, 0xEBFCFFu, 1.0 - t);
+        canvas.fillCircle(static_cast<float>(impact.x), static_cast<float>(impact.y),
+                          static_cast<float>((2.8 - t * 1.8) * zoom));
     }
     canvas.setGlobalAlpha(1.0f);
     canvas.restore();

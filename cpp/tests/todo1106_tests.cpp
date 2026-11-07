@@ -40,23 +40,67 @@ void wear(World& w, Entity p, int slot, const char* id, Rarity rarity) {
 }
 }
 
-TEST(todo1106_magic_eye_spends_half_mana_only_for_a_target_and_emits_lightning) {
-    const auto& c=shippedContent(); World w; PetalSystem petals; CommandBuffer commands{w}; EventQueue events;
-    const auto p=flower(w); wear(w,p,0,"magic_eye",Rarity::Mythic); wear(w,p,1,"mana_orb",Rarity::Mythic);
-    w.get<PlayerInput>(p).current.flags=net::InputAttack;
-    for(int tick=0;tick<120;++tick){petals.run(w,c,1000+tick*50,.05,commands,nullptr,&events);commands.flush();}
+TEST(todo1106_magic_eye_spends_half_mana_and_deals_lightning_with_inverted_defend) {
+    const auto& c = shippedContent();
+    World w;
+    PetalSystem petals;
+    CombatSystem combat;
+    CommandBuffer commands{w};
+    EventQueue events;
+    const auto p = flower(w);
+    wear(w, p, 0, "magic_eye", Rarity::Mythic);
+    wear(w, p, 1, "mana_orb", Rarity::Mythic);
+    wear(w, p, 2, "magic_eye", Rarity::Mythic);
+    w.get<PlayerInput>(p).current.flags = net::InputAttack | net::InputDefend;
+    const auto tick = [&](double now) {
+        events.clear();
+        petals.run(w, c, now, 0.05, commands, nullptr, &events);
+        commands.flush();
+        SpatialGrid grid;
+        Query<Transform, Body>{w}.each([&](Entity e, Transform& at, Body& body) {
+            grid.insert(e, at.realm, at.position, body.radius);
+        });
+        combat.run(w, grid, c, now, 0.05, commands, events);
+        commands.flush();
+    };
+    const auto target = [&](double x, Team team) {
+        const auto e = w.create();
+        w.add<MobTag>(e);
+        w.add<Transform>(e, Transform{{x, 5000}, 0.0});
+        w.add<Body>(e, Body{30, 1});
+        w.add<Health>(e, Health{100000, 100000});
+        w.add<Faction>(e, Faction{team, false});
+        w.add<Armor>(e, Armor{10000.0});
+        return e;
+    };
+    const auto ally = target(5030, Team::Players);
+    for (int i = 0; i < 120; ++i) tick(1000.0 + i * 50);
     CHECK(w.has<ManaPool>(p));
-    const double before=w.get<ManaPool>(p).current;
-    CHECK(before > 0); CHECK(before <= w.get<ManaPool>(p).max);
-    const auto mob=w.create(); w.add<MobTag>(mob); w.add<Transform>(mob,Transform{{5030,5000},0});
-    w.add<Body>(mob,Body{30,1}); w.add<Health>(mob,Health{100000,100000});
-    w.add<Faction>(mob,Faction{Team::Hostiles,false});
-    events.clear(); petals.run(w,c,7000,.05,commands,nullptr,&events); commands.flush();
-    CHECK_NEAR(w.get<ManaPool>(p).current,before*.5,1e-6);
-    bool lightning=false;
-    for(const auto& event:events.events()) if(event.kind==net::EventKind::Lightning)lightning=true;
-    CHECK(lightning);
-    int targets=0; Query<LightningTarget> q{w}; q.each([&](Entity,LightningTarget&){++targets;}); CHECK_EQ(targets,1);
+    const double before = w.get<ManaPool>(p).current;
+    CHECK(before > 1.0);
+
+    const auto first = target(5075, Team::Hostiles);
+    const auto second = target(5305, Team::Hostiles);
+    tick(7000.0);
+    CHECK_NEAR(w.get<ManaPool>(p).current, before * 0.5, 1e-6);
+    CHECK_NEAR(w.get<Health>(ally).current, 100000.0, 1e-6);
+    for (const auto mob : {first, second}) {
+        CHECK_NEAR(w.get<Health>(mob).current, 100000.0 - before * 2.5, 1e-6);
+    }
+    int strikes = 0;
+    for (const auto& event : events.events()) {
+        if (event.kind != net::EventKind::Lightning) continue;
+        ++strikes;
+        CHECK_EQ(event.flag & (net::LightningMagicEye | net::LightningChained),
+                 net::LightningMagicEye | net::LightningChained);
+        CHECK_NEAR(distance(event.position, w.get<Transform>(p).position), 0.0, 1e-8);
+        CHECK_EQ(event.points.size(), 2u);
+    }
+    CHECK_EQ(strikes, 1);
+
+    tick(7050.0);
+    CHECK_NEAR(w.get<ManaPool>(p).current, before * 0.5, 1e-6);
+    CHECK_NEAR(w.get<Health>(first).current, 100000.0 - before * 2.5, 1e-6);
 }
 
 TEST(todo1106_meteor_protects_the_owner_position_with_a_large_body) {

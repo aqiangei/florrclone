@@ -69,7 +69,7 @@ Camera frameCamera() { return testsupport::frameCamera(kFrameSize, kStrikeAt); }
 /// One frame of a strike on `targets`, `age` seconds after it landed. No
 /// content and no sprites: the ground falls back to its flat biome colour,
 /// which is all a white bolt has to stand out against.
-std::vector<std::uint8_t> renderStrike(const std::vector<Vec2>& targets, double age) {
+std::vector<std::uint8_t> renderStrike(const std::vector<Vec2>& targets, double age, std::uint8_t flags = 0) {
     Canvas canvas = Canvas::createVirtual(kFrameSize, kFrameSize);
     const Camera camera = frameCamera();
 
@@ -80,6 +80,7 @@ std::vector<std::uint8_t> renderStrike(const std::vector<Vec2>& targets, double 
     if (!targets.empty()) {
         ViewEvent strike;
         strike.kind = net::EventKind::Lightning;
+        strike.flag = flags;
         strike.position = kStrikeAt;
         strike.radius = 1000.0;
         strike.points = targets;
@@ -118,6 +119,17 @@ TEST(a_strike_paints_an_arm_to_every_mob_it_names) {
     for (const Vec2& target : targets) {
         CHECK(paintedNear(frame, camera.worldToScreen(target), 3.0));
     }
+}
+
+TEST(magic_eye_lightning_has_its_own_impact_and_fades) {
+    const Vec2 target{kStrikeAt.x + 105.0, kStrikeAt.y + 20.0};
+    const auto style = net::LightningMagicEye | net::LightningChained;
+    const auto ordinary = renderStrike({target}, 0.0, net::LightningChained);
+    const auto magic = renderStrike({target}, 0.0, style);
+    CHECK(paintedNear(magic, frameCamera().worldToScreen(target), 2.0));
+    CHECK(testsupport::differingPixels(ordinary, magic) > 100);
+    CHECK_EQ(testsupport::differingPixels(renderStrike({}, 0.0),
+                                         renderStrike({target}, 0.6, style)), 0);
 }
 
 TEST(an_arm_wanders_off_the_straight_line_between_its_ends) {

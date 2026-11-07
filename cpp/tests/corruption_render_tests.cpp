@@ -1,4 +1,5 @@
 #include "test.h"
+#include "client/render/sprites.h"
 #include "client/render/world_renderer.h"
 #include "client/world_view.h"
 #include "render_rig.h"
@@ -50,4 +51,48 @@ TEST(pharaoh_crown_is_visible_over_every_player_skin) {
             flower.equipFlags=0;const auto after=render();CHECK_EQ(testsupport::differingPixels(before,after),0);
         }
     }
+}
+
+TEST(magic_eye_replaces_both_eyes_and_keeps_the_third_eye_independent) {
+    const auto& content = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    CHECK(sprites.petalDrawable(content.petalIndex("magic_eye")));
+    WorldRenderer renderer;
+    renderer.setContent(&content);
+    renderer.setSprites(&sprites);
+    const auto render = [&](std::uint16_t flags, PlayerRenderFlag skin = PlayerRenderNone) {
+        RemoteEntity flower;
+        flower.netId = 1;
+        flower.kind = net::EntityKind::Player;
+        flower.radius = playerRadiusForLevel(1);
+        flower.level = 1;
+        flower.equipFlags = flags;
+        flower.renderFlags = skin;
+        WorldView view;
+        view.seedForTest(flower);
+        Canvas canvas = Canvas::createVirtual(160, 160);
+        renderer.draw(canvas, view, testsupport::frameCamera(160, {}), {}, 0);
+        return canvas.getImageData(0, 0, 160, 160);
+    };
+    const auto changes = [](const auto& a, const auto& b, int x0, int x1, int y0, int y1) {
+        int count = 0;
+        for (int y = y0; y < y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                const std::size_t i = static_cast<std::size_t>(y * 160 + x) * 4;
+                if (a[i] != b[i] || a[i + 1] != b[i + 1] || a[i + 2] != b[i + 2]) ++count;
+            }
+        }
+        return count;
+    };
+    for (const auto skin : {PlayerRenderNone, PlayerRenderPumpkin, PlayerRenderRobot}) {
+        const auto ordinary = render(EquipNone, skin);
+        const auto magic = render(EquipMagicEye, skin);
+        CHECK(changes(ordinary, magic, 65, 79, 68, 85) > 8);
+        CHECK(changes(ordinary, magic, 81, 96, 68, 85) > 8);
+    }
+    const auto third = render(EquipThirdEye);
+    const auto both = render(EquipMagicEye | EquipThirdEye);
+    CHECK(changes(third, both, 78, 83, 57, 68) == 0);
+    CHECK(changes(render(EquipMagicEye), both, 78, 83, 57, 68) > 0);
 }

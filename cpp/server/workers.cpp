@@ -128,7 +128,7 @@ unsigned ServerWorkers::available() {
 #endif
 }
 
-unsigned ServerWorkers::configuredLimit(const char* name) {
+unsigned ServerWorkers::configuredLimit(const char* name, unsigned defaultLimit) {
     const unsigned ceiling = available();
 #if defined(__EMSCRIPTEN_PTHREADS__)
     char setting[64];
@@ -143,7 +143,7 @@ unsigned ServerWorkers::configuredLimit(const char* name) {
             requested <= static_cast<long>(kMaxWorkers))
             return std::min(ceiling, static_cast<unsigned>(requested));
     }
-    return ceiling;
+    return std::min(ceiling, defaultLimit);
 }
 
 } // namespace flix

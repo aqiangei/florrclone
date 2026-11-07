@@ -1182,6 +1182,8 @@ struct PetalStats {
     /// Mana added to the wearer's pool while this petal is worn, this tier.
     double totemHealPerSecond = 0;
     double lightningDamagePerHit = 0;
+    double wildLightningScale = 1.0;
+    double wildRecoilScale = 1.0;
     int lightningBounces = 0;
     double lightningRange = 240.0;
     int batteryCharges = 0;

@@ -14,11 +14,7 @@
 namespace flix {
 namespace {
 
-constexpr double kFixtureBodyScale = 0.75;
-// One multiplier across the rarity ladder, so a Hyper's body matches the
-// previous Eternal of the same species and size roll.
-constexpr double kWildMobBodyScale = kFixtureBodyScale *
-    kMobSizeScale[rarityIndex(Rarity::Unique)] / kMobSizeScale[rarityIndex(Rarity::Apex)];
+constexpr double kSpawnedMobBodyScale = 0.75;
 
 /// Mobs that are never put to sleep and never recycled: they stay live
 /// entities wherever they stand, however long nobody looks at them.
@@ -710,10 +706,8 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     const MobStats stats = content.mobStats(mobIndex, rarity);
 
     const double jitter = rollSizeJitter(config, rarity, rng);
-    // Wild animals shrink visually and physically, without lowering mass and
-    // making the same projectile throw them further. Pets/NPCs use other paths.
-    const double bodyScale = config.neverAmbient ? kFixtureBodyScale : kWildMobBodyScale;
-    const double radius = stats.radius * jitter * bodyScale;
+    // The same radius drives the mob's collisions and its replicated body.
+    const double radius = stats.radius * jitter * kSpawnedMobBodyScale;
 
     // A mob meets walls as a point, so any open spot will do; resolveCircle
     // is for the callers -- a nest, a script, a summon -- that hand over a
@@ -908,7 +902,7 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
         // Admit the whole animal once its head was admitted. Cutting this
         // loop at the cap leaves bosses with a partial body (or just a head).
         // The remaining beads may exceed the cap by one animal.
-        const double bodyRadius = bodyStats.radius * kWildMobBodyScale;
+        const double bodyRadius = bodyStats.radius * kSpawnedMobBodyScale;
         const double spacing = config.segmentSpacing(leaderRadius, bodyRadius);
         leaderRadius = bodyRadius;
         at = at + back * spacing;

@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <unordered_map>
 #include <vector>
@@ -123,6 +124,7 @@ struct PetalSlotState {
     /// PLAYER rather than per petal, so two cutters share one cadence.
     double nextLightningMillis = 0;
     double nextPharaohSummonMillis = 0;
+    double nextMagicEyeMillis = 0;
     std::vector<Entity> pollenClouds; // Oldest first, bounded when a cloud is released.
 
     /// The flower's position at the END of the previous tick, which is the
@@ -350,7 +352,8 @@ private:
     /// place.
     void serveLentPetal(World& world, const ContentRegistry& registry, Entity player,
                         double nowMillis);
-    Aggregate recomputeModifiers(World& world, const ContentRegistry& registry, Entity player);
+    Aggregate recomputeModifiers(World& world, const ContentRegistry& registry, Entity player,
+                                 double nowMillis = -1.0);
     /// Bank root's armour: one stack per kArmorStackIntervalMillis, capped at
     /// kMaxArmorStacks, and nothing at all for a flower wearing no root.
     ///
@@ -359,8 +362,8 @@ private:
     /// Combat SPENDS what this banks -- see ArmorStackState.
     void tickArmorStacks(World& world, const ContentRegistry& registry, Entity player,
                          const Aggregate& aggregate, double dt);
-    void applyPassiveHeal(World& world, Entity player, const Aggregate& aggregate,
-                          double nowMillis, double dt);
+    void applyPassiveHeal(World& world, const ContentRegistry& registry, Entity player,
+                          const Aggregate& aggregate, double nowMillis, double dt);
     /// Resize the flower's mana pool to what the bar now grants and run this
     /// tick's regeneration. Called every tick, including on a bar with no
     /// magic petal on it at all: that is how a pool DISAPPEARS when the orb
@@ -398,6 +401,9 @@ private:
                           double spinSpeed, double nowMillis, double dt);
     void runActions(World& world, const ContentRegistry& registry, Entity player,
                     double nowMillis, double dt);
+
+    void castMagicEye(World& world, const ContentRegistry& registry, Entity player,
+                      const Loadout& loadout, double nowMillis);
 
     /// The flower's own damage field, which no petal emits.
     ///
@@ -455,8 +461,9 @@ private:
     /// Fire one volley. Returns whether a shot actually left the petal: a spec
     /// with no speed or no reach fires nothing, and a petal that fired nothing
     /// must not be spent for it.
-    bool fireProjectiles(World& world, Entity player, Entity petal, const PetalConfig& config,
-                         const PetalStats& stats, std::uint16_t configIndex, Rarity rarity);
+    bool fireProjectiles(World& world, const ContentRegistry& registry, Entity player, Entity petal,
+                         const PetalConfig& config, const PetalStats& stats, std::uint16_t configIndex,
+                         Rarity rarity, const ProjectileSpec* hyperShot);
 
     /// Take a petal that spent itself firing off the ring and put its slot on
     /// the reload, whichever of the two health models the slot runs on.
@@ -486,7 +493,9 @@ private:
     /// One strike. `damage` is the petal's own stat, already up the rarity
     /// ladder; `rarity` is the tier it came from, which is what puts the
     /// fallback on that same ladder for a petal whose `damage` is 0.
-    void strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity, int bounces = -1, double reachScale = 1.0);
+    bool strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity,
+                         int bounces = -1, double reachScale = 1.0,
+                         std::optional<double> magicEyeCastAt = std::nullopt);
     /// The strike's visual half: one event carrying the bolts' endpoints. The
     /// damage half is a field, and a field has nothing on the wire the client
     /// could draw a strike from.

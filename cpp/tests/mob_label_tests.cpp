@@ -253,6 +253,25 @@ TEST(a_mobs_bar_hangs_ten_units_under_its_hitbox) {
     }
 }
 
+TEST(high_rarity_wild_mob_bars_have_no_extra_text_over_the_fill) {
+    for (Rarity rarity : {Rarity::Super, Rarity::Unique, Rarity::Apex}) {
+        const auto wild = frameOf("ant_egg", false, nullptr, rarity);
+        const auto summon = frameOf("ant_egg", true, nullptr, rarity);
+        const auto rows = rowsOf(summon, kTrack);
+        CHECK(!rows.empty());
+        CHECK(!rowsOf(wild, ui::kHealth).empty());
+        if (rows.empty()) continue;
+
+        // The summon caption sits below the track. Only compare the centre of
+        // the track itself, where a numeric overlay would change the pixels.
+        for (int y = rows.front(); y <= rows.back(); ++y) {
+            const auto first = (y * kFrameSize + kFrameSize / 2 - 20) * 4;
+            const auto end = first + 40 * 4;
+            CHECK(std::equal(wild.begin() + first, wild.begin() + end, summon.begin() + first));
+        }
+    }
+}
+
 TEST(a_pets_summon_label_never_runs_into_its_tier) {
     // The shortest bars there are -- florr's 80 units at common, 90 at
     // uncommon -- under the two longest tier names a low egg hatches.

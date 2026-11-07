@@ -249,7 +249,8 @@ public:
     /// -- the browser build shipped that bug, and every bolt in a dense pile
     /// fanned the same way. Only the drawing is trimmed; what the strike
     /// damages is the caller's own list.
-    void lightning(Vec2 at, double radius, Realm realm, std::vector<Vec2> targets, bool chained = false, Entity source = NULL_ENTITY) {
+    void lightning(Vec2 at, double radius, Realm realm, std::vector<Vec2> targets, bool chained = false,
+                   Entity source = NULL_ENTITY, std::uint8_t style = 0) {
         if (chained && targets.size() > net::kMaxLightningTargets) targets.resize(net::kMaxLightningTargets);
         if (targets.size() > net::kMaxLightningTargets) {
             const auto cap = static_cast<std::ptrdiff_t>(net::kMaxLightningTargets);
@@ -262,7 +263,7 @@ public:
         WireEvent e;
         e.kind = net::EventKind::Lightning;
         e.visualSource = source;
-        e.flag = chained ? net::LightningChained : 0;
+        e.flag = (chained ? net::LightningChained : 0) | style;
         e.position = at;
         e.radius = radius;
         e.realm = realm;

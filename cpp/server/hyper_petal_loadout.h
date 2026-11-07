@@ -9,11 +9,19 @@ struct HyperPetalTimers {
     double wardReadyAtMillis = 0.0;
     double monsteraReadyAtMillis = 0.0;
     double leafReadyAtMillis = 0.0;
+    double bloodNeedleReadyAtMillis = 0.0;
+    double coinPickupUntilMillis = 0.0;
+    double leafRegrowthReadyAtMillis = 0.0;
 };
 
 inline bool hyperDefending(const World& world, Entity entity) {
     const auto* input = world.tryGet<PlayerInput>(entity);
     return input && input->current.defending() && !input->current.attacking();
+}
+
+inline bool hyperAttacking(const World& world, Entity entity) {
+    const auto* input = world.tryGet<PlayerInput>(entity);
+    return input && input->current.attacking() && !input->current.defending();
 }
 
 inline const HyperTechniqueInfo* wornHyperTechnique(const World& world, const ContentRegistry& registry,

@@ -410,6 +410,8 @@ private:
     void drawEntity(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
     void drawFlower(Canvas&, const RemoteEntity&, const Camera&, Vec2 at, double timeSeconds) const;
     void drawDefaultFlower(Canvas&, const RemoteEntity&, double timeSeconds) const;
+    bool drawMagicEyes(Canvas&, std::uint16_t equipFlags, double spacing, double y,
+                       double diameter) const;
     void drawPumpkin(Canvas&, const RemoteEntity&) const;
     void drawRobot(Canvas&, const RemoteEntity&) const;
     void drawHitbox(Canvas&, const RemoteEntity&, const Camera&, Vec2 at) const;

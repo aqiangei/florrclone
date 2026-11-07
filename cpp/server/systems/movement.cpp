@@ -998,7 +998,7 @@ void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, doubl
         // into the surface is turned round, the part along it kept. The
         // surface's normal is the way the resolver pushed it back out.
         const bool bounces = projectile.bouncesOffWalls;
-        if (javascript != kInvalidIndex && projectile.petalConfigIndex == javascript &&
+        if ((projectile.wildOnly || (javascript != kInvalidIndex && projectile.petalConfigIndex == javascript)) &&
             terrain.segmentBlocked(transform.position, transform.position + attempted * dt,
                                    transform.realm)) {
             spentProjectiles_.push_back(e);

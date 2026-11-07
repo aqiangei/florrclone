@@ -34,13 +34,27 @@ TEST(ant_and_beetle_tooltips_match_the_buffed_summon_stats){
     }
 }
 
-TEST(temporary_hammer_stays_twelve_and_contested_hammer_recovers_output){
-    std::string error;CHECK(loadContent(testsupport::dataDir(),error));
-    for(const auto* id:{"mjolnir","timed_mjolnir"})for(const auto rarity:{Rarity::Unique,Rarity::Apex}){
-        const auto stats=content().petalStats(content().petalIndex(id),rarity);
-        const bool contested = std::string(id)=="mjolnir" && rarity==Rarity::Apex;
-        CHECK_NEAR(stats.lightningDamagePerHit,(contested?48:12)*petalStrengthScale(rarity),1e-6);
-        CHECK_NEAR(stats.reloadMillis,contested?6000:8000,1e-6);
+TEST(hammer_tooltip_matches_wild_lightning_recoil_and_reload) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    ui::setLanguage(ui::Language::En);
+    for (const auto rarity : {Rarity::Unique, Rarity::Apex}) {
+        const bool hyper = rarity == Rarity::Apex;
+        const auto index = content().petalIndex(hyper ? "mjolnir" : "timed_mjolnir");
+        const auto stats = content().petalStats(index, rarity);
+        CHECK_NEAR(stats.lightningDamagePerHit * stats.wildLightningScale,
+                   (hyper ? 80.0 : 60.0) * petalStrengthScale(rarity), 1e-6);
+        CHECK_NEAR(stats.wildRecoilScale, hyper ? 0.35 : 0.5, 1e-9);
+        CHECK_NEAR(stats.reloadMillis, hyper ? 4000.0 : 5000.0, 1e-6);
+        CHECK_EQ(stats.lightningBounces, 0);
+        const auto lines = ui::petalTooltipLines(index, rarity, {}, 1.0);
+        bool lightning = false, recoil = false;
+        for (const auto& line : lines) {
+            lightning |= line.text.find("Lightning per hit on wild mobs: ") == 0;
+            recoil |= line.text.find(hyper ? "65%" : "50%") != std::string::npos;
+        }
+        CHECK(lightning);
+        CHECK(recoil);
     }
 }
 

@@ -995,6 +995,7 @@ inline constexpr std::size_t kMaxLightningTargets = 24;
 inline constexpr std::uint8_t LightningChained = 1u;
 inline constexpr std::uint8_t LightningForeign = 2u;
 inline constexpr std::uint8_t LightningFromPet = 4u;
+inline constexpr std::uint8_t LightningMagicEye = 8u;
 
 // ---------------------------------------------------------------------------
 // Content hash

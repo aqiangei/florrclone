@@ -419,6 +419,8 @@ private:
         Vec2 position;
         double radius = 0;
         double damage = 0;
+        double wildDamageScale = 1.0;
+        double wildRecoilScale = 1.0;
         double hitIntervalMillis = kMobHitIntervalMillis;
         double knockback = 0;
         double poisonPerSecond = 0;
@@ -723,7 +725,7 @@ private:
     /// a flower that dodges is given the post-hit window a landed hit buys.
     /// Behind applyDamage, and asked directly only for a swing of zero, which
     /// applyDamage refuses before it would roll.
-    bool rollDodge(World& world, Entity victim, double nowMillis);
+    bool rollDodge(World& world, Entity victim, double nowMillis, double bonus = 0.0);
 
     /// The colony's and the relic's split: `amount` shared evenly over `group`
     /// plus `victim`, each share going back through applyDamage as that body's

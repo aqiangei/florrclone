@@ -15,7 +15,8 @@ namespace {
 
 // Imported walking legs already have separate pivots. Drive their transforms
 // from travelled distance, using the garden spider's gait rate and amplitude.
-std::string walkingLegArtwork(const std::string& source) {
+std::string walkingLegArtwork(const std::string& source, int legsPerSide = 4,
+                              double alternatingPhase = kPi * 0.5) {
     std::string out;
     std::size_t at = 0;
     int leg = 0;
@@ -32,8 +33,8 @@ std::string walkingLegArtwork(const std::string& source) {
             if (pivot != std::string::npos) std::sscanf(tag.c_str() + pivot + 12, "%f %f", &x, &y);
             out += "<animateTransform attributeName=\"transform\" type=\"rotate\" dur=\"6.283185307s\" repeatCount=\"indefinite\" values=\"";
             for (int step = 0; step <= 16; ++step) {
-                const double phase = step * kTau / 16 + (leg % 2 ? kPi * .5 : 0);
-                const double angle = std::sin(phase) * .2 * 180 / kPi * (leg < 4 ? 1 : -1);
+                const double phase = step * kTau / 16 + (leg % 2 ? alternatingPhase : 0.0);
+                const double angle = std::sin(phase) * .2 * 180 / kPi * (leg < legsPerSide ? 1 : -1);
                 char value[96];
                 std::snprintf(value, sizeof value, "%s%.7f %.3f %.3f", step ? ";" : "", angle, x, y);
                 out += value;
@@ -638,11 +639,15 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
             mobs_[i].usable = petals_[petal].usable;
             continue;
         }
-        const bool walkingLegs = config.id == "hel_spider" || config.id == "mecha_spider" ||
-                                 config.id == "mecha_crab";
-        compile(walkingLegs ? walkingLegArtwork(config.image) : config.image,
-                config.colorRgba, "mob " + config.id, mobs_[i]);
+        const bool silverfish = config.id == "silverfish";
+        const bool walkingLegs = silverfish || config.id == "hel_spider" ||
+                                 config.id == "mecha_spider" || config.id == "mecha_crab";
+        const std::string& art = silverfish ? walkingLegArtwork(config.image, 3, kPi)
+                             : walkingLegs ? walkingLegArtwork(config.image) : config.image;
+        compile(art, config.colorRgba, "mob " + config.id, mobs_[i]);
         mobs_[i].distanceAnimated = walkingLegs;
+        // The source Silverfish's antennae point up-left at zero rotation.
+        if (silverfish) mobs_[i].facingOffset = 3.0 * kPi / 4.0;
         mobs_[i].articulatedEyes = config.id == "mecha_flower" || config.id == "gambler";
         if (!mobs_[i].document) continue;
         const std::string petArt = petArtwork(config.image);
@@ -813,7 +818,8 @@ void SpriteCache::drawMob(Canvas& canvas, std::uint16_t index, Rarity rarity, do
                           double diameter, double rotation, double timeSeconds, bool mirrored,
                           double worldRadius, Vec2 gaze, const MobMotion* motion) const {
     if (index >= mobs_.size()) return;
-    draw(canvas, mobSprite(index, rarity), x, y, diameter, rotation, timeSeconds, mirrored,
+    const double aligned = rotation + mobs_[index].facingOffset;
+    draw(canvas, mobSprite(index, rarity), x, y, diameter, aligned, timeSeconds, mirrored,
          worldRadius, gaze, motion);
 }
 

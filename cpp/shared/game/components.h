@@ -1356,6 +1356,7 @@ struct Projectile {
     /// The shot is turned back by walls, mirror-fashion, where every other
     /// shot flies over them. A carrot's. The map edge turns it too.
     bool bouncesOffWalls = false;
+    bool wildOnly = false;
 };
 
 struct Lifetime {

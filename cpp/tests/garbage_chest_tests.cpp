@@ -58,20 +58,37 @@ TEST(todo1107_garbage_rare_items_remain_visible_but_less_frequent) {
     const auto& c = garbageRegistry();
     const auto pool = garbageEligiblePetals(c, Rarity::Super);
     std::array<int, 4> before{}, after{};
+    const auto ruby = c.petalIndex("ruby");
     const std::array ids{c.petalIndex("mimic"), c.petalIndex("sawblade"),
-                         c.petalIndex("golden_leaf"), c.petalIndex("ruby")};
+                         c.petalIndex("golden_leaf"), ruby};
+    unsigned visibleRuby = 0;
+    unsigned hiddenRuby = 0;
     for (unsigned seed = 1; seed <= 50000; ++seed) {
         const auto original = garbageContents(pool, seed, {1000, 1000}, nullptr);
         const auto adjusted = garbageContents(pool, seed, {1000, 1000}, &c);
         for (std::size_t i = 0; i < ids.size(); ++i) {
             const auto matches = [&](const GarbagePetal& petal) { return petal.index == ids[i]; };
-            before[i] += std::any_of(original.begin(), original.end(), matches);
-            after[i] += std::any_of(adjusted.begin(), adjusted.end(), matches);
+            const bool originallyShown = std::any_of(original.begin(), original.end(), matches);
+            const bool shown = std::any_of(adjusted.begin(), adjusted.end(), matches);
+            before[i] += originallyShown;
+            after[i] += shown;
+            if (ids[i] == ruby) {
+                if (shown) visibleRuby = seed;
+                if (originallyShown && !shown) hiddenRuby = seed;
+            }
         }
     }
     for (std::size_t i = 0; i < ids.size(); ++i) {
-        CHECK(after[i] > before[i] * 0.77);
-        CHECK(after[i] < before[i] * 0.93);
+        const bool isRuby = ids[i] == ruby;
+        CHECK(after[i] > before[i] * (isRuby ? 0.54 : 0.77));
+        CHECK(after[i] < before[i] * (isRuby ? 0.67 : 0.93));
+    }
+    CHECK(visibleRuby != 0 && hiddenRuby != 0);
+    for (const int bonus : {1, 3}) {
+        auto shown = openBag(c, Rarity::Super, visibleRuby, 1, bonus);
+        auto hidden = openBag(c, Rarity::Super, hiddenRuby, 1, bonus);
+        CHECK(shown.loot[0].count(ruby) == 1);
+        CHECK(hidden.loot[0].count(ruby) == 0);
     }
 }
 

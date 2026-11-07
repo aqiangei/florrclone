@@ -296,9 +296,9 @@ struct SelfState {
 class WorldView {
 public:
     /// Consumes a Snapshot payload. The message id must already be read.
-    /// Returns false when the frame was truncated, in which case nothing is
-    /// applied -- a half-read snapshot is worse than a skipped one.
-    bool applySnapshot(ByteReader& reader);
+    /// receivedMillis uses the same local clock as interpolate().
+    /// Returns false when the frame was truncated, in which case nothing is applied.
+    bool applySnapshot(ByteReader& reader, double receivedMillis = renderClockMillis());
 
     /// Advances every drawn position and facing by one frame. Call once per
     /// rendered frame, not once per snapshot: this is what decouples a 144 Hz
@@ -418,20 +418,10 @@ public:
     double easeTimeConstantSeconds = easeTimeConstant(kDefaultInterpolationAmount);
 
     /// How far behind the render clock buffered mobs are played back THIS
-    /// frame. interpolate() slews it toward the delay the recent stream asks
-    /// for (delayTargetMillis_, which noteLateness() derives), so anything
-    /// written here holds only until the stream disagrees with it.
+    /// frame. interpolate() slews it toward the delay the recent stream asks for.
     double interpolationDelayMillis = kMobRenderDelayMillis;
 
 private:
-    /// Records how much later than usual a snapshot landed and re-derives the
-    /// playback delay from it: the longest gap the cadence produces, plus the
-    /// worst lateness lately, plus a margin.
-    ///
-    /// Lateness is measured against the clock offset's running average, so it
-    /// is jitter, not latency -- a steady 200 ms ping costs nothing here, a
-    /// connection that alternates 20 and 120 ms costs 100.
-    void noteLateness(double latenessMillis);
     /// Maps a server timestamp onto the local render clock.
     ///
     /// Mob samples MUST be stamped with the server's own tick time and not
@@ -473,8 +463,9 @@ private:
     bool suppressSelfCorpse_ = false;
     double clockOffsetMillis_ = 0;
     bool clockAnchored_ = false;
-    /// The worst recent lateness, decaying by kLatenessMemory per snapshot.
-    double latenessPeakMillis_ = 0;
+    double lastSnapshotRenderMillis_ = 0;
+    /// The longest recent wait from a sample to the arrival of its successor.
+    double playbackGapPeakMillis_ = 0;
     double delayTargetMillis_ = kMobRenderDelayMillis;
 };
 
