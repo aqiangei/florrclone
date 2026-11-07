@@ -152,6 +152,7 @@ private:
     struct Sprite {
         std::shared_ptr<SvgDocument> document;
         bool distanceAnimated = false;
+        bool articulatedEyes = false;
         /// The same document in a summon's colours (kPetBodyColor), drawn in
         /// its place for a pet. Only a palette marker can say which of a
         /// document's colours is the body, so this is null for every other

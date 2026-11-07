@@ -40,16 +40,22 @@
             -webkit-user-select: none;
             -webkit-touch-callout: none;
         }
-        #council-link {position:fixed;z-index:6;display:flex;align-items:center;justify-content:center;
+        #lobby-links {position:fixed;z-index:6;display:flex;gap:6px;}
+        #lobby-links[hidden] {display:none;}
+        #lobby-links > * {display:flex;align-items:center;justify-content:center;
             gap:.42em;white-space:nowrap;border:3px solid #54217d;border-radius:10px;
             background:#8b3bd2;color:#fff5ff;text-decoration:none;font-weight:700;
             text-shadow:0 2px #54217d;box-shadow:0 4px #54217d;touch-action:manipulation;
             transition:background-color .15s,transform .15s,box-shadow .15s;}
-        #council-link[hidden],#council-link[data-compact] svg {display:none;}
+        #council-link {flex:1.15;min-width:0;}
+        #open-server-guide {flex:1;min-width:0;font:inherit;cursor:pointer;
+            border-color:#245e3b;background:#388355;text-shadow:0 2px #245e3b;box-shadow:0 4px #245e3b;}
+        #lobby-links[data-compact] svg {display:none;}
         #council-link svg {width:1.25em;height:1.25em;flex:none;}
         #council-link:hover {background:#a455e6;transform:translateY(-1px);box-shadow:0 5px #54217d;}
         #council-link:active {transform:translateY(3px);box-shadow:0 1px #54217d;}
-        #council-link:focus-visible,#loading-quality:focus-visible,#loading-retry:focus-visible {
+        #lobby-links > :focus-visible,#loading-quality:focus-visible,#loading-retry:focus-visible,
+        #loading-server-guide:focus-visible,#serverNotice :focus-visible {
             outline:3px solid #fff1a1;outline-offset:4px;}
         #loadingScreen { position:fixed;inset:0;z-index:5;display:grid;place-items:center;
             padding:20px;overflow:auto;overscroll-behavior:contain;touch-action:pan-y;color:#fff;
@@ -83,15 +89,26 @@
             #council-link {transition:none;}
             .loading-petals,.loading-face {animation:none;}
         }
-        #serverNotice {position:fixed;z-index:4;top:max(12px,env(safe-area-inset-top,0px));
-            right:max(12px,env(safe-area-inset-right,0px));width:min(340px,calc(100vw - 24px));
-            max-height:45vh;overflow:auto;padding:16px 38px 16px 16px;border:1px solid #b4e69a66;
-            border-radius:12px;background:#123d27f2;color:#fff;font-size:14px;line-height:1.65;
-            box-shadow:0 6px 24px #0005;touch-action:pan-y;}
-        #serverNotice[hidden]{display:none;}
-        #serverNotice p{margin-top:7px;}#serverNotice a{color:#c5f28f;overflow-wrap:anywhere;}
-        #closeServerNotice{position:absolute;right:8px;top:7px;border:0;background:transparent;
-            color:white;font-size:24px;line-height:28px;width:28px;height:28px;cursor:pointer;}
+        #loading-server-guide {display:block;min-height:44px;margin:10px auto 0;padding:0 16px;
+            border:1px solid #b4e69a;border-radius:10px;background:#173e2d;color:#e4ffba;
+            font:inherit;cursor:pointer;touch-action:manipulation;}
+        #serverNotice {position:fixed;inset:0;margin:auto;padding:0;
+            width:min(480px,calc(100vw - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+            max-height:calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+            overflow:auto;overscroll-behavior:contain;touch-action:pan-y;
+            border:2px solid #85b563;border-radius:16px;background:#173e2d;
+            color:#fff;font-size:15px;line-height:1.55;box-shadow:0 8px 32px #0008;}
+        #serverNotice::backdrop {background:#0b1b15a8;}
+        .server-notice-header {position:sticky;top:0;display:flex;align-items:center;
+            justify-content:space-between;gap:8px;padding:8px 10px 8px 16px;background:#173e2d;}
+        .server-notice-header h2 {font-size:18px;}
+        .server-notice-body {padding:0 16px 16px;}
+        #serverNotice p {margin:8px 0;}
+        #serverNotice a {display:block;width:fit-content;min-height:44px;padding:9px 0;
+            color:#dfff9b;overflow-wrap:anywhere;}
+        #closeServerNotice {flex:none;display:grid;place-items:center;width:48px;height:48px;
+            border:1px solid #9ecb83;border-radius:10px;background:#244e37;color:#fff;
+            font:26px/1 sans-serif;cursor:pointer;touch-action:manipulation;}
 
         #landscape-btn{position:fixed;z-index:8;bottom:max(20px,env(safe-area-inset-bottom,0px));left:50%;
             transform:translateX(-50%);border:2px solid #dfff9b;border-radius:14px;padding:13px 24px;
@@ -107,12 +124,15 @@
     </style>
 </head>
 <body>
-    <a id="council-link" hidden href="/council.html" target="_blank" rel="noopener" aria-label="玩家议会与更新投票">
+    <nav id="lobby-links" hidden aria-label="游戏入口与议会">
+    <a id="council-link" href="/council.html" target="_blank" rel="noopener" aria-label="玩家议会与更新投票">
       <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="m8 8 4-5 6 5-4 5m-7-1-3 3v6h16v-6l-2-3M4 15h16m-11 3h6"/>
       </svg>
       <span>玩家议会 · 更新投票 ↗</span>
     </a>
+    <button id="open-server-guide" type="button">服务器指引</button>
+    </nav>
     <section id="loadingScreen" role="status" aria-live="polite">
       <div class="loading-card">
         <svg class="loading-flower" viewBox="0 0 110 88" aria-hidden="true">
@@ -137,15 +157,25 @@
         <p id="loading-meta">首次进入需要下载资源，之后会使用缓存。</p>
         <button id="loading-retry" hidden type="button">重新连接</button>
         <a id="loading-quality" href="?quality=low">低清模式</a>
+        <button id="loading-server-guide" type="button">服务器指引 · 一服迁移提醒</button>
         <p class="loading-hint">加载期间无需反复刷新。账号和存档保存在服务器。</p>
       </div>
     </section>
-    <aside id="serverNotice" role="note" aria-label="游戏公告" hidden>
-      <button id="closeServerNotice" type="button" aria-label="关闭游戏公告">×</button>
-      <strong>游戏公告</strong>
-      <p>本服为 florr 克隆私服，另有版本访问地址：<a href="https://viepnex.duckdns.org/" target="_blank" rel="noopener noreferrer">https://viepnex.duckdns.org/</a>。</p>
-      <p>前端作者：666 &amp; hyper1Qa；服务端：flowrix-io。</p>
-    </aside>
+    <dialog id="serverNotice" aria-labelledby="server-notice-title">
+      <div class="server-notice-header">
+        <h2 id="server-notice-title">服务器指引 · 一服迁移提醒</h2>
+        <form method="dialog">
+          <button id="closeServerNotice" type="submit" aria-label="关闭服务器指引">×</button>
+        </form>
+      </div>
+      <div class="server-notice-body">
+        <p><strong>一服保留原有进度。</strong>旧地址 154.219.105.161:8088 会自动跳转到新地址。有用户名和密码的玩家请用原账号登录。</p>
+        <a href="http://154.219.105.158:8088/">一服 · 154.219.105.158:8088</a>
+        <p><strong>原一服游客请留意。</strong>如果你还在旧地址登录着，请在「账户」里设置用户名和密码。新网址无法读取旧网址的游客登录凭据，未设置密码的游客可能无法找回原进度。</p>
+        <p><strong>二服从零开始。</strong>新玩家建议去二服。两台服务器各自保存进度，换服不会带走等级、花瓣或装备。</p>
+        <a href="http://154.219.105.161:10000/">二服 · 154.219.105.161:10000</a>
+      </div>
+    </dialog>
     <button id="landscape-btn" type="button" hidden>横屏游戏 · 全屏</button>
     <aside id="landscape-hint" role="status" hidden><button type="button" aria-label="关闭横屏提示">×</button><span></span></aside>
     <script>
@@ -220,8 +250,21 @@
   else qualityUrl.searchParams.set('quality', 'low');
   quality.href = qualityUrl.href;
   const serverNotice = document.getElementById('serverNotice');
-  let noticeDismissed = true;
-  document.getElementById('closeServerNotice').onclick=()=>{noticeDismissed=true;serverNotice.hidden=true;};
+  const noticeKey = 'florr-server-migration-1107-dismissed';
+  const openNotice = () => {
+    if (!serverNotice.open) serverNotice.showModal();
+  };
+  document.getElementById('open-server-guide').onclick = openNotice;
+  document.getElementById('loading-server-guide').onclick = openNotice;
+  serverNotice.addEventListener('close', () => {
+    try { sessionStorage.setItem(noticeKey, '1'); } catch (_) {}
+  });
+  const officialEntry = ['154.219.105.158:8088', '154.219.105.161:8088', '154.219.105.161:10000'];
+  if (officialEntry.includes(location.host)) {
+    let dismissed = false;
+    try { dismissed = sessionStorage.getItem(noticeKey) === '1'; } catch (_) {}
+    if (!dismissed) openNotice();
+  }
   const began = performance.now();
   let failed = false, bytes = 0, total = 0, lastProgress = performance.now();
   const ui = window.flixLoading = {
@@ -237,7 +280,7 @@
       status.setAttribute('data-static', '');
       progress.hidden=true;retry.hidden=false;meta.textContent='你的账号和存档不会因此丢失。';
     },
-    finish() { if(!failed){status.hidden=true;serverNotice.hidden=noticeDismissed;window.florrMobileReady();} }
+    finish() { if(!failed){status.hidden=true;window.florrMobileReady();} }
   };
   retry.onclick=()=>location.reload();
   const timer=setInterval(()=>{

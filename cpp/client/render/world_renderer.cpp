@@ -3375,7 +3375,7 @@ void WorldRenderer::drawGarbagePile(Canvas& canvas, Vec2 at, double baseSize,
     const std::vector<std::uint16_t>& eligible = droppablePetals(rarity);
     if (eligible.empty() || !sprites_ || !content_) return;
 
-    const auto contents=garbageContents(eligible,stableId,at,content_->petalIndex("c++"));
+    const auto contents=garbageContents(eligible,stableId,at,content_);
     const int count=static_cast<int>(contents.size());
     for (int i = 0; i < count; ++i) {
         const auto petalSeed=contents[static_cast<std::size_t>(i)].poseSeed;
@@ -3659,19 +3659,9 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
         // drawn by code cut their detail from how big the mob IS. Not the death
         // scale and not the zoom: a rock does not gain facets while it pops,
         // and it does not lose them when the camera pulls back.
+        const Vec2 gaze = id == "mecha_flower" || id == "gambler" ? mobEye(mob) : Vec2{1.0, 0.0};
         sprites_->drawMob(canvas, mob.typeIndex, mob.rarity, art.x, art.y, diameter, rotation,
-                          timeSeconds, mirrored, mob.radius * visualScale, {1.0, 0.0}, &motion);
-        if (id == "mecha_flower" || id == "gambler") {
-            // These upright SVGs have fixed eye sockets. Track travel in the
-            // same eased way as the other upright flower mobs.
-            const Vec2 eye = mobEye(mob);
-            const double scale = diameter / 58.0;
-            ui::setFill(canvas, 0x151515u);
-            for (const double x : {-8.5, 8.5})
-                canvas.fillCircle(static_cast<float>(art.x + (x + eye.x * .65) * scale),
-                                  static_cast<float>(art.y + (2.0 + eye.y * .3) * scale),
-                                  static_cast<float>(1.45 * scale));
-        }
+                          timeSeconds, mirrored, mob.radius * visualScale, gaze, &motion);
     } else {
         // No artwork: the tier colour, which is at least the one fact about a
         // mob worth reading from across the screen.
@@ -3744,7 +3734,7 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         if (shield > kMobBarShieldMin) {
             stroke(shield, kMobBarThickness * kMobBarShieldWidth, ui::kPaper, fade(shield));
         }
-        if (labelled && isBossRarity(mob.rarity) && !invulnerable) {
+        if (labelled && !mob.pet && isBossRarity(mob.rarity) && !invulnerable) {
             canvas.setGlobalAlpha(static_cast<float>(base * opacity));
             ui::TextStyle style;
             style.size = std::max(8.0, 12.0 * zoom);
@@ -4636,7 +4626,11 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
     // A seed on a mob's ammunition ring grows OUT of the mob, so it goes down
     // under it: in the mob layer, after the holes and before every body. In
     // the petal layer a dandelion's seeds were painted over its own head.
-    const auto layerOf = [](const RemoteEntity& entity) {
+    const auto meteor = content_ ? content_->petalIndex("meteor") : kInvalidIndex;
+    const auto layerOf = [meteor](const RemoteEntity& entity) {
+        // A planted meteor is ground art, including its fade after removal.
+        if (meteor != kInvalidIndex && entity.kind == net::EntityKind::Projectile &&
+            entity.typeIndex == meteor) return net::EntityKind::Effect;
         if (entity.isLoosePetal()) return net::EntityKind::Npc;
         if (entity.isRingPetal()) return net::EntityKind::Mob;
         return entity.kind;

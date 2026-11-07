@@ -1653,6 +1653,8 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 // petal is reloading; this is the same rule as tickBroadcast.
                 equipFlags |= registry.petal(equipped.configIndex).equipFlags;
                 const auto& worn = registry.petal(equipped.configIndex);
+                if (worn.id == "triangle")
+                    ++aggregate.modifiers.triangleCounts[rarityIndex(equipped.rarity)];
                 if (worn.id == "pharaoh_s_crown") equipFlags |= EquipPharaohCrown;
                 if (worn.id == "corruption") {
                     equippedCorruption = true;
@@ -1988,9 +1990,8 @@ void PetalSystem::updateManaPool(World& world, Entity player, const Aggregate& a
     // flower in the world just to write a zero into it.
     if (pool == nullptr && max <= 0.0) return;
     if (pool == nullptr) {
-        // Spawn/respawn starts at 40%: enough to cast, without a free full
-        // refill. Keep this component when unequipping so swapping a mana
-        // petal cannot repeatedly claim the initial allowance.
+        // A new flower's first pool starts at 40%. Respawn and revival seed
+        // an empty pool. Keep it on unequip so swapping cannot refill it.
         pool = &world.ensure<ManaPool>(player);
         pool->current = max * 0.4;
     }
@@ -3470,6 +3471,7 @@ bool PetalSystem::revivePlayerNear(World& world, Entity reviver, Realm realm, Ve
         health->current = health->max;
         health->invulnerableUntilMillis =
             nowMillis + kRespawnInvulnerabilitySeconds * 1000.0;
+        world.ensure<ManaPool>(other).current = 0.0;
         // Written before the tag comes off: removing a component moves the
         // flower to another archetype and `health` goes with it.
         if (world.has<Dead>(other)) world.remove<Dead>(other);

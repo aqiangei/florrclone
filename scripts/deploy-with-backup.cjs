@@ -19,11 +19,25 @@ const root=path.resolve(__dirname,'..');
 const backupRoot=path.resolve(process.argv[3]||path.join(root,'../backups/florrclone'));
 const stamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+Z$/,'Z');
 const local=path.join(backupRoot,stamp);fs.mkdirSync(local,{recursive:true});
-const remote='/var/lib/florrclone/cutover-backups/'+stamp;
 const target=process.env.FLORR_DEPLOY_TARGET_FILE?JSON.parse(fs.readFileSync(process.env.FLORR_DEPLOY_TARGET_FILE,'utf8')):{};
 assert(!target.host||/^[a-zA-Z0-9.-]+$/.test(target.host));
 const key=target.key||path.join(process.env.USERPROFILE||process.env.HOME,'.ssh/ASHFLOR.pem');
-const host='root@'+(target.host||'154.219.105.161'),marker='/var/www/florrclone-maintenance/enabled';
+assert(target.instance === undefined || target.instance === 'fresh', 'Unknown deployment instance');
+const fresh = target.instance === 'fresh';
+if (fresh) assert.equal(target.host, '154.219.105.161', 'Unexpected fresh instance host');
+const host='root@'+(target.host||'154.219.105.161');
+const service = fresh ? 'florr-fresh' : 'florrclone';
+const current = fresh ? '/opt/florr-fresh/current' : '/opt/florrclone/current';
+const stateRoot = fresh ? '/var/lib/florr-fresh' : '/var/lib/florrclone';
+const databaseFile = stateRoot + '/cpp-state/inventory.json';
+const databaseNext = stateRoot + '/cpp-state/inventory.next.json';
+const remote = stateRoot + '/cutover-backups/' + stamp;
+const maintenance = fresh ? '/var/www/florr-fresh-maintenance' : '/var/www/florrclone-maintenance';
+const marker = maintenance + '/enabled';
+const nginxConfig = fresh ? '/etc/nginx/conf.d/florr-fresh-10000.conf' : '/etc/nginx/conf.d/florrclone.conf';
+const publicPort = fresh ? 10000 : 8088;
+const backendPort = fresh ? 28788 : 8788;
+const backend = 'http://127.0.0.1:' + backendPort;
 const run=(exe,args)=>{
   for(let attempt=0;;attempt++)try{return cp.execFileSync(exe,args,{encoding:'utf8',maxBuffer:1024*1024});}
   catch(error){
@@ -38,14 +52,36 @@ if(process.env.FLORR_DEPLOY_SSH_PROXY)sshOptions.push('-o','ProxyCommand='+proce
 const ssh=s=>run('ssh',[...sshOptions,host,s]);
 const scp=(a,b)=>run('scp',[...sshOptions,a,b]);
 const q=s=>"'"+s.replace(/'/g,"'\\''")+"'";
-let locked=false,stopped=false,switched=false,opened=false,old='',bonusStoppedAt=0,bonusHelper='';
+let locked=false,stopped=false,saveInstallStarted=false,switched=false,opened=false,old='',bonusStoppedAt=0,bonusHelper='';
 function preserveMaintenanceBonus(){
   assert(bonusHelper&&bonusStoppedAt>0,'Maintenance bonus preparation missing');
-  const state=ssh('systemctl show florrclone -p MainPID -p ActiveState -p SubState');
+  const state=ssh('systemctl show '+service+' -p MainPID -p ActiveState -p SubState');
   assert(state.includes('MainPID=0')&&state.includes('ActiveState=inactive')&&state.includes('SubState=dead'),'Bonus adjustment requires a stopped game');
-  const result=JSON.parse(ssh('/opt/florrclone/runtime/bin/node '+q(bonusHelper)+' /var/lib/florrclone/cpp-state/inventory.json '+q(stamp)+' '+bonusStoppedAt));
+  const result=JSON.parse(ssh('/opt/florrclone/runtime/bin/node '+q(bonusHelper)+' '+q(databaseFile)+' '+q(stamp)+' '+bonusStoppedAt));
   fs.writeFileSync(path.join(local,'maintenance-bonus.json'),JSON.stringify(result,null,2));
   return result;
+}
+function nginxFor(version) {
+  let base = fs.readFileSync(path.join(__dirname, 'shards/ops/nginx-game.conf'), 'utf8');
+  if (fresh) {
+    base = base.replaceAll('8088 default_server', '10000')
+      .replaceAll('127.0.0.1:8788', '127.0.0.1:' + backendPort)
+      .replaceAll('florrclone_connection_upgrade', 'florr_fresh_connection_upgrade');
+  }
+  return require('./shards/ops/client-assets.cjs').configure(base, {
+    release: version,
+    assetHost: process.env.FLORR_CLIENT_ASSET_HOST,
+    downloadQueue: process.env.FLORR_DOWNLOAD_QUEUE === '1',
+    entryProxy: process.env.FLORR_ENTRY_PROXY_IP,
+  }).replaceAll(':8088/client-assets/', ':' + publicPort + '/client-assets/')
+    .replaceAll('/var/www/florrclone-maintenance/', maintenance + '/');
+}
+function installNginx(localFile, backupFile) {
+  const staging = remote + '/nginx-next.conf';
+  scp(localFile, host + ':' + staging);
+  ssh('cp '+q(nginxConfig)+' '+q(backupFile)+' && cp '+q(staging)+' '+q(nginxConfig)+
+      ' && { nginx -t && systemctl reload nginx || { cp '+q(backupFile)+' '+q(nginxConfig)+
+      '; nginx -t && systemctl reload nginx; exit 1; }; }');
 }
 async function main(){
   const announcements=require("./deploy-announcement.cjs");
@@ -56,8 +92,19 @@ async function main(){
     // its local cache nor silently roll one server back to independent storage.
     assert(ssh('if test -e /etc/florrclone/shard-game.json || test -e /var/lib/florrclone-shards/authority.snapshot; then echo SHARDED; else echo LEGACY; fi').trim()==='LEGACY',
       'Shared-account servers require deploy-with-backup.cjs --cluster CONFIG');
-    ssh('mkdir /var/lib/florrclone/deploy.lock');locked=true;
-    old=ssh('readlink -f /opt/florrclone/current').trim();
+    ssh('mkdir '+q(stateRoot+'/deploy.lock'));locked=true;
+    old=ssh('readlink -f '+q(current)).trim();
+    if (fresh) {
+      assert(process.env.FLORR_PRESERVE_SAVE === '1' && process.env.FLORR_DOWNLOAD_QUEUE === '1' &&
+             process.env.FLORR_CLIENT_ASSET_HOST === target.host && !process.env.FLORR_ENTRY_PROXY_IP &&
+             !process.env.FLORR_PASSWORD_RESET_FILE,
+             'Fresh instance requires its own download queue and preserved save');
+      const command = ssh('systemctl show florr-fresh --property=ExecStart --value');
+      assert(command.includes(current+'/server.js') &&
+             command.includes('--db '+databaseFile+' '),
+             'Unexpected fresh instance command or save');
+      ssh('test -f '+q(nginxConfig)+' && test ! -e '+q(marker)+' && install -d -m 755 '+q(maintenance));
+    }
     assert.match(old,/^\/opt\/florrclone\/releases\/[a-zA-Z0-9_-]+$/);
     if(process.env.FLORR_EXPECTED_RELEASE)assert.equal(old,process.env.FLORR_EXPECTED_RELEASE,'Online release changed; coordinate before deploying');
     const releaseProbe=release+'/release-hello.cjs';
@@ -67,7 +114,7 @@ async function main(){
       for(const file of ['index.html','bundle.js','bundle.wasm','bundle.js.bin','bundle.wasm.bin'])
         ssh('runuser -u www-data -- test -r '+q(release+'/'+file));
     }
-    ssh('curl -fsS http://127.0.0.1:8788/api/health');
+    ssh('curl -fsS '+q(backend+'/api/health'));
     ssh('install -d -m 700 '+q(remote));
     // Publish this release's Chinese notes before enabling maintenance.
     const notes=JSON.parse(fs.readFileSync(process.env.FLORR_RELEASE_NOTES_FILE||path.join(__dirname,'release-notes.json'),'utf8'));
@@ -76,13 +123,24 @@ async function main(){
     const html=fs.readFileSync(path.join(__dirname,'maintenance.html'),'utf8').replace('<!-- RELEASE_NOTES -->',
       '<section style="text-align:left;font-size:14px"><h2>'+escape(notes.title)+'</h2><ul>'+notes.changes.map(t=>'<li>'+escape(t)+'</li>').join('')+'</ul></section>');
     const waitingFile=path.join(local,'maintenance.html');fs.writeFileSync(waitingFile,html);
-    scp(waitingFile,host+':/var/www/florrclone-maintenance/maintenance.next.html');
-    ssh('mv /var/www/florrclone-maintenance/maintenance.next.html /var/www/florrclone-maintenance/maintenance.html');
+    scp(waitingFile,host+':'+maintenance+'/maintenance.next.html');
+    ssh('mv '+q(maintenance+'/maintenance.next.html')+' '+q(maintenance+'/maintenance.html'));
+    if (fresh) {
+      const nginx = path.join(local, 'nginx-waiting-ready.conf');
+      fs.writeFileSync(nginx, nginxFor(old));
+      installNginx(nginx, remote+'/nginx-initial.conf');
+    }
     // Announce while players are still connected, before the maintenance gate.
     // Only an echoed Admin-channel broadcast counts as delivery confirmation.
     if (!bootstrap) {
       const announcer=await announcements.connect(noticeConfig);
-      try { await announcements.countdown(message=>announcer.broadcast(message)); }
+      try {
+        if (process.env.FLORR_ANNOUNCE_MIGRATION === '1') {
+          await announcer.broadcast('【一服迁移】旧入口跳转至新址；游客请在账户设置用户名和密码，避免丢失进度。');
+          console.log('已确认一服迁移提醒广播');
+        }
+        await announcements.countdown(message=>announcer.broadcast(message));
+      }
       finally { announcer.close(); }
     } else {
       assert(process.env.FLORR_PRESERVE_SAVE==='1', 'Operator bootstrap requires preserving every existing account');
@@ -90,14 +148,14 @@ async function main(){
     }
     // Serve the waiting page before gracefully stopping the old process.
     ssh('touch '+q(marker));
-    const waiting=ssh('curl -sS http://127.0.0.1:8088/');
+    const waiting=ssh('curl -sS http://127.0.0.1:'+publicPort+'/');
     assert(waiting.includes('花朵躲石头'),'Waiting page must work before stopping');
     assert(waiting.includes(escape(notes.title)) && waiting.includes(escape(notes.changes[0])),'Current release notes must be visible before stopping');
     if (bootstrap) await new Promise(resolve=>setTimeout(resolve,60000));
     bonusStoppedAt=Number(ssh('date +%s%3N').trim());
     assert(Number.isSafeInteger(bonusStoppedAt)&&bonusStoppedAt>0);
-    stopped=true;ssh('systemctl stop florrclone');
-    ssh('cp /var/lib/florrclone/cpp-state/inventory.json '+q(remote+'/inventory.json')+' && chmod 600 '+q(remote+'/inventory.json'));
+    stopped=true;ssh('systemctl stop '+service);
+    ssh('cp '+q(databaseFile)+' '+q(remote+'/inventory.json')+' && chmod 600 '+q(remote+'/inventory.json'));
     scp(host+':'+remote+'/inventory.json',path.join(local,'inventory.json'));
     const bytes=fs.readFileSync(path.join(local,'inventory.json'));
     const hash=crypto.createHash('sha256').update(bytes).digest('hex');
@@ -222,32 +280,35 @@ async function main(){
     }
     scp(next,host+':'+remote+'/inventory.next.json');
     // All validation and the local backup gate have completed at this point.
-    ssh('install -o florrclone -g florrclone -m 600 '+q(remote+'/inventory.next.json')+' /var/lib/florrclone/cpp-state/inventory.next.json');
-    ssh('mv /var/lib/florrclone/cpp-state/inventory.next.json /var/lib/florrclone/cpp-state/inventory.json');
-    ssh('ln -s '+q(release)+' /opt/florrclone/current.next && mv -Tf /opt/florrclone/current.next /opt/florrclone/current');switched=true;
+    saveInstallStarted=true;
+    ssh('install -o florrclone -g florrclone -m 600 '+q(remote+'/inventory.next.json')+' '+q(databaseNext));
+    ssh('mv '+q(databaseNext)+' '+q(databaseFile));
+    ssh('ln -s '+q(release)+' '+q(current+'.next')+' && mv -Tf '+q(current+'.next')+' '+q(current));switched=true;
     report.maintenanceBonus=preserveMaintenanceBonus();
-    ssh('systemctl start florrclone');
+    ssh('systemctl start '+service);
     let healthy=false;
     for(let i=0;i<40;i++){
-      try{const h=JSON.parse(ssh('curl -fsS http://127.0.0.1:8788/api/health'));if(h.ok){healthy=true;break;}}catch{}
+      try{const h=JSON.parse(ssh('curl -fsS '+q(backend+'/api/health')));if(h.ok){healthy=true;break;}}catch{}
       await new Promise(r=>setTimeout(r,1000));
     }
     assert(healthy,'New service failed health check');
     for(const file of ['','bundle.js','bundle.wasm','bundle.js.bin','bundle.wasm.bin'])
-      ssh('curl -fsS -o /dev/null '+q('http://127.0.0.1:8788/'+file));
-    ssh('PORT=8788 /opt/florrclone/runtime/bin/node '+q(probe));
+      ssh('curl -fsS -o /dev/null '+q(backend+'/'+file));
+    ssh('PORT='+backendPort+' /opt/florrclone/runtime/bin/node '+q(probe));
     if(process.env.FLORR_REQUIRE_COUNCIL==='1') {
-      ssh('test -s '+q(release+'/council.html')+' && curl -fsS -o /dev/null http://127.0.0.1:8788/council.html');
-      const check="(async()=>{const r=await fetch('http://127.0.0.1:8788/api/council',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'view'})});if(!r.ok)throw Error('Council HTTP '+r.status);const j=await r.json();if(j.error||!Array.isArray(j.players)||!Array.isArray(j.polls))throw Error('Invalid council state');if(j.players.length&&j.players.reduce((s,p)=>s+p.units,0)!==1000000)throw Error('Invalid council weights');console.log('PASS council API and exact weight total');})().catch(e=>{console.error(e.message);process.exitCode=1});";
+      ssh('test -s '+q(release+'/council.html')+' && curl -fsS -o /dev/null '+q(backend+'/council.html'));
+      const councilUrl = JSON.stringify(backend+'/api/council');
+      const check="(async()=>{const r=await fetch("+councilUrl+",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'view'})});if(!r.ok)throw Error('Council HTTP '+r.status);const j=await r.json();if(j.error||!Array.isArray(j.players)||!Array.isArray(j.polls))throw Error('Invalid council state');if(j.players.length&&j.players.reduce((s,p)=>s+p.units,0)!==1000000)throw Error('Invalid council weights');console.log('PASS council API and exact weight total');})().catch(e=>{console.error(e.message);process.exitCode=1});";
       console.log(ssh('/opt/florrclone/runtime/bin/node -e '+q(check)));
     }
     if (bootstrap) {
       const newHash=Number(process.env.FLORR_NEXT_CONTENT_HASH);
       assert(Number.isInteger(newHash) && newHash>=0 && newHash<=0xffffffff, 'Candidate content hash required for operator validation');
-      const candidate={...noticeConfig,contentHash:newHash,url:'ws://127.0.0.1:8788/ws'};
-      const verify=`const fs=require('fs');(async()=>{const a=await require(${JSON.stringify(release+'/deploy-announcement.cjs')}).connect(JSON.parse(fs.readFileSync(0,'utf8')));try{await a.broadcast('维护更新验证完成：花粉伤害、数量和冷却保持不变。');console.log('PASS operator Admin broadcast');}finally{a.close();}})().catch(e=>{console.error(e.message);process.exitCode=1});`;
-      console.log(cp.execFileSync('ssh',['-i',key,host,'/opt/florrclone/runtime/bin/node -e '+q(verify)],{input:JSON.stringify(candidate),encoding:'utf8',timeout:30000}));
-      fs.writeFileSync(process.env.FLORR_DEPLOY_ADMIN_FILE,JSON.stringify({...noticeConfig,contentHash:newHash}));
+      const version = Number(process.env.FLORR_NEXT_PROTOCOL_VERSION || noticeConfig.protocolVersion);
+      assert(Number.isInteger(version) && version > 0 && version <= 65535, 'Invalid candidate protocol');
+      const candidate={...noticeConfig,protocolVersion:version,contentHash:newHash,url:'ws://127.0.0.1:'+backendPort+'/ws'};
+      const verify=`const fs=require('fs');(async()=>{const a=await require(${JSON.stringify(release+'/deploy-announcement.cjs')}).connect(JSON.parse(fs.readFileSync(0,'utf8')));try{await a.broadcast('维护更新验证完成，即将开放入口。');console.log('PASS operator Admin broadcast');}finally{a.close();}})().catch(e=>{console.error(e.message);process.exitCode=1});`;
+      console.log(cp.execFileSync('ssh',[...sshOptions,host,'/opt/florrclone/runtime/bin/node -e '+q(verify)],{input:JSON.stringify(candidate),encoding:'utf8',timeout:30000}));
     }
     if(report.passwordReset){
       const requests=[JSON.parse(fs.readFileSync(process.env.FLORR_PASSWORD_RESET_FILE,'utf8'))].flat();
@@ -256,7 +317,9 @@ async function main(){
       const verifier=remote+'/verify-account-login.cjs';scp(path.join(__dirname,'deploy-announcement.cjs'),host+':'+verifier);
       const code="const fs=require('fs');require("+JSON.stringify(verifier)+").connect(JSON.parse(fs.readFileSync(0,'utf8'))).then(a=>{a.close();console.log('PASS reset account login')}).catch(e=>{console.error(e.message);process.exitCode=1});";
       for(const request of requests){
-        const login={username:request.username,password:request.password,protocolVersion:noticeConfig.protocolVersion,contentHash:nextHash,url:'ws://127.0.0.1:8788/ws'};
+        const login={username:request.username,password:request.password,
+          protocolVersion:Number(process.env.FLORR_NEXT_PROTOCOL_VERSION || noticeConfig.protocolVersion),
+          contentHash:nextHash,url:'ws://127.0.0.1:'+backendPort+'/ws'};
         console.log(cp.execFileSync('ssh',[...sshOptions,host,'/opt/florrclone/runtime/bin/node -e '+q(code)],{input:JSON.stringify(login),encoding:'utf8',timeout:30000,windowsHide:true}));
       }
       for(const result of [report.passwordReset].flat())result.loginVerified=true;
@@ -264,7 +327,7 @@ async function main(){
     if(process.env.FLORR_DOWNLOAD_QUEUE==='1'){
       assert(process.env.FLORR_CLIENT_ASSET_HOST,'Queue requires a versioned asset host');
       const unit=path.join(local,'florr-download-queue.service');
-      const assetBase='http://'+process.env.FLORR_CLIENT_ASSET_HOST+':8088/client-assets/'+release.split('/').pop()+'/';
+      const assetBase='http://'+process.env.FLORR_CLIENT_ASSET_HOST+':'+publicPort+'/client-assets/'+release.split('/').pop()+'/';
       const slots=Number(process.env.FLORR_DOWNLOAD_SLOTS||8);
       assert(Number.isInteger(slots)&&slots>=1&&slots<=32,'Invalid download slot count');
       fs.writeFileSync(unit,'[Unit]\nDescription=Florr client download queue\nAfter=network.target\n[Service]\nUser=florrclone\nEnvironment=PORT=8789\nEnvironment=DOWNLOAD_SLOTS='+slots+'\nEnvironment=DOWNLOAD_ASSET_BASE='+assetBase+'\nExecStart=/opt/florrclone/runtime/bin/node '+release+'/download-queue.cjs\nRestart=on-failure\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\n[Install]\nWantedBy=multi-user.target\n');
@@ -276,10 +339,9 @@ async function main(){
     }
     if(process.env.FLORR_CLIENT_ASSET_HOST){
       const nginx=path.join(local,'nginx-client-assets.conf');
-      fs.writeFileSync(nginx,require('./shards/ops/client-assets.cjs').configure(fs.readFileSync(path.join(__dirname,'shards/ops/nginx-game.conf'),'utf8'),{release,assetHost:process.env.FLORR_CLIENT_ASSET_HOST,downloadQueue:process.env.FLORR_DOWNLOAD_QUEUE==='1',entryProxy:process.env.FLORR_ENTRY_PROXY_IP}));
-      scp(nginx,host+':/var/tmp/florrclone-client-assets-next.conf');
-      ssh('cp /etc/nginx/conf.d/florrclone.conf '+q(remote+'/nginx-before.conf')+' && cp /var/tmp/florrclone-client-assets-next.conf /etc/nginx/conf.d/florrclone.conf && nginx -t && systemctl reload nginx');
-      const assetRoot='http://127.0.0.1:8088/client-assets/'+release.split('/').pop()+'/';
+      fs.writeFileSync(nginx, nginxFor(release));
+      installNginx(nginx, remote+'/nginx-before.conf');
+      const assetRoot='http://127.0.0.1:'+publicPort+'/client-assets/'+release.split('/').pop()+'/';
       const verifyAssets=`(async()=>{
         const queue='http://127.0.0.1:8789/download-queue/';
         let ticket;
@@ -305,11 +367,13 @@ async function main(){
       ssh('/opt/florrclone/runtime/bin/node -e '+q(verifyAssets));
     }
     ssh('rm '+q(marker));opened=true;
-    ssh('PORT=8088 /opt/florrclone/runtime/bin/node '+q(probe));
+    ssh('PORT='+publicPort+' /opt/florrclone/runtime/bin/node '+q(probe));
     if(report.operatorRequest)ssh('touch '+q(report.operatorRequest.readyFile)+' && chmod 644 '+q(report.operatorRequest.readyFile));
     if(process.env.FLORR_NEXT_CONTENT_HASH){
       const nextHash=Number(process.env.FLORR_NEXT_CONTENT_HASH);assert(Number.isInteger(nextHash)&&nextHash>=0&&nextHash<=0xffffffff);
-      fs.writeFileSync(process.env.FLORR_DEPLOY_ADMIN_FILE,JSON.stringify({...noticeConfig,contentHash:nextHash}));
+      fs.writeFileSync(process.env.FLORR_DEPLOY_ADMIN_FILE,JSON.stringify({...noticeConfig,
+        protocolVersion:Number(process.env.FLORR_NEXT_PROTOCOL_VERSION || noticeConfig.protocolVersion),
+        contentHash:nextHash}));
     }
     fs.writeFileSync(path.join(local,'deployment-result.json'),JSON.stringify({...metadata,...report,status:'deployed'},null,2));
     console.log(JSON.stringify({status:'deployed',backup:local,...report}));
@@ -322,21 +386,21 @@ async function main(){
       console.error('Public verification failed after reopening; current save and backend retained behind maintenance.');
     }else if(stopped){
       if(process.env.FLORR_DOWNLOAD_QUEUE==='1'){
-        ssh('if test -s '+q(remote+'/nginx-before.conf')+'; then cp '+q(remote+'/nginx-before.conf')+' /etc/nginx/conf.d/florrclone.conf && nginx -t && systemctl reload nginx; fi');
+        ssh('if test -s '+q(remote+'/nginx-before.conf')+'; then cp '+q(remote+'/nginx-before.conf')+' '+q(nginxConfig)+' && nginx -t && systemctl reload nginx; fi');
         ssh('if test -s '+q(remote+'/download-queue-before.service')+'; then cp '+q(remote+'/download-queue-before.service')+' /etc/systemd/system/florr-download-queue.service && systemctl daemon-reload && systemctl restart florr-download-queue; else systemctl disable --now florr-download-queue || true; fi');
       }
 
       // The maintenance gate has kept players out throughout this attempt.
       ssh('touch '+q(marker));
-      ssh('systemctl stop florrclone');
-      ssh('install -o florrclone -g florrclone -m 600 '+q(remote+'/inventory.json')+' /var/lib/florrclone/cpp-state/inventory.json');
-      if(switched)ssh('ln -s '+q(old)+' /opt/florrclone/current.rollback && mv -Tf /opt/florrclone/current.rollback /opt/florrclone/current');
+      ssh('systemctl stop '+service);
+      if(saveInstallStarted)ssh('install -o florrclone -g florrclone -m 600 '+q(remote+'/inventory.json')+' '+q(databaseFile));
+      if(switched)ssh('ln -s '+q(old)+' '+q(current+'.rollback')+' && mv -Tf '+q(current+'.rollback')+' '+q(current));
       if(bonusHelper)preserveMaintenanceBonus();
-      ssh('systemctl start florrclone');
+      ssh('systemctl start '+service);
     }
     // Keep a useful waiting page on failure; never reopen an unverified backend.
     throw error;
-  }finally{if(locked)ssh('rmdir /var/lib/florrclone/deploy.lock');}
+  }finally{if(locked)ssh('rmdir '+q(stateRoot+'/deploy.lock'));}
 }
 main().catch(e=>{console.error(e.message);process.exitCode=1;});
 }

@@ -18,8 +18,8 @@
 #include "shared/net/protocol.h"
 
 namespace flix {
-// Extra vision must come from equipment/talents, not the zoom-out control.
-inline constexpr double kMinimumUserCameraZoom = 0.75;
+// The manual camera can show four default screens across, before equipment.
+inline constexpr double kMinimumUserCameraZoom = 0.25;
 
 // ---------------------------------------------------------------------------
 // World
@@ -29,7 +29,7 @@ inline constexpr double kMinimumUserCameraZoom = 0.75;
 /// -- every world realm carries its own dimensions (terrain.h) and a map is
 /// whatever shape its file says. What this still pins down is the section grid
 /// below, which is a palette rather than a geography.
-inline constexpr double kWorldMapScale = 2.0;
+inline constexpr double kWorldMapScale = 1.0;
 inline constexpr double kWorldSize = 60000.0 * kWorldMapScale;
 inline constexpr double kWorldHalf = kWorldSize * 0.5;
 

@@ -2022,6 +2022,44 @@ TEST(the_shipped_titan_stands_in_clear_jungle_space_with_next_tier_petals) {
     CHECK_EQ(prestigeTitans, 1);
 }
 
+TEST(todo1107_titan_batch_charges_sequential_prices_and_respects_capacity) {
+    const std::string dir = titanWorld("titan-batch");
+    Harness h("titan-batch", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_rose", Rarity::Super, 303);
+        seedStack(path, "smith", "petal_fragment", Rarity::Super, 46);
+        seedStack(path, "smith", "petal_wing", Rarity::Super, 100);
+        seedStack(path, "smith", "petal_wing", Rarity::Unique, kMaxStackCount - 2);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const std::vector<NetClient*> clients{&client};
+    h.step(3, clients);
+    standAtTitan(h, clients, "smith");
+    const auto exchange = [&](const char* id, unsigned quantity, unsigned remaining, unsigned total) {
+        const auto index = content().petalIndex(id);
+        TitanForgeOutcome out;
+        client.requestTitanForge(index, false, true, true);
+        CHECK(awaitForge(h, clients, client, out));
+        CHECK_EQ(out.success, quantity > 0);
+        CHECK_EQ(out.quantity, quantity);
+        CHECK_EQ(out.petalIndex, index);
+        CHECK(awaitProfile(h, client, [&](const Profile& p) {
+            return p.stackCount(index, Rarity::Super) == remaining &&
+                   p.stackCount(index, Rarity::Unique) == total;
+        }));
+    };
+    exchange("rose", 20, 8, 20);
+    exchange("rose", 0, 8, 20);
+    exchange("fragment", 3, 1, 3);
+    exchange("wing", 2, 75, kMaxStackCount);
+    exchange("wing", 0, 75, kMaxStackCount);
+    CHECK_EQ(client.profile().titanForgeCount(content().petalIndex("rose")), 2u);
+    CHECK_EQ(client.profile().stackCount(content().petalIndex("timed_mjolnir"), Rarity::Unique), 0u);
+    removeDataDir(dir);
+}
+
 TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_accounts) {
     const std::string dir = titanWorld("titan-permanent");
     Harness h("titan-permanent", [](const std::string& path) {

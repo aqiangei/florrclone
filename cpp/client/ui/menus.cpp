@@ -2173,12 +2173,25 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         // Resolve against the displayed bar, including pending drag changes.
         // A mimic's own config has zero damage; its card must describe the
         // copied petal at the mimic's tier and the source's reload tier.
-        const auto equipped = resolveEquippedPetal(content(), tipIndex, [&](int i) {
+        const auto slotAt = [&](int i) {
             if (i < 0 || i >= static_cast<int>(shown.size())) return EquippedPetal{};
             const auto& at = shown[static_cast<std::size_t>(i)];
             return EquippedPetal{at.petalIndex, at.rarity, at.rarity};
-        });
-        const auto lines = equippedPetalTooltipLines(slot.petalIndex, equipped, profile.skills, reloadScale, tipIndex);
+        };
+        const auto equipped = resolveEquippedPetal(content(), tipIndex, slotAt);
+        double triangleBonus = 0.0;
+        if (tipIndex < profile.skills.loadoutSlots() &&
+            content().petal(equipped.configIndex).id == "triangle") {
+            TriangleCounts counts{};
+            for (int i = 0; i < profile.skills.loadoutSlots(); ++i) {
+                const auto worn = resolveEquippedPetal(content(), i, slotAt);
+                if (!worn.empty() && content().petal(worn.configIndex).id == "triangle")
+                    ++counts[rarityIndex(worn.rarity)];
+            }
+            triangleBonus = triangleBonusDamage(equipped.rarity, counts);
+        }
+        const auto lines = equippedPetalTooltipLines(slot.petalIndex, equipped, profile.skills,
+                                                    reloadScale, tipIndex, triangleBonus);
         const bool alt = altMode_;
         const Vec2 size = measureTooltip(lines, 0.0, 0.0, alt);
         // Slot boxes are laid out in screen space; the slide only moves the

@@ -1127,6 +1127,8 @@ private:
     bool abandon_ = false;
     bool eternalFragment_ = true;
     bool confirmForge_ = false;
+    bool confirmBatch_ = false;
+    std::uint32_t resultQuantity_ = 0;
     SlotTierGrid grid_;
     SlotMotion motion_;
     /// The petal in the slot: five of it at apex, which is what one forge

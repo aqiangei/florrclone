@@ -1469,7 +1469,7 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
     // blind: the range grows on the same size ladder as the body, so a mob's
     // circle reaches the same multiple of its own radius at every tier -- a
     // super wasp's is 3,355 units against a 436-unit body.
-    const double range = (ai.aggroRange > 0.0 ? ai.aggroRange : kEnemyChaseRange) * 1.12;
+    const double range = (ai.aggroRange > 0.0 ? ai.aggroRange : kEnemyChaseRange) * 1.30;
 
     // Provocation first, which is where gardn has it: over there it happens in
     // the damage phase (inflict_damage targets the attacker of any mob with no
@@ -1827,14 +1827,14 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
     // The ten player-speed chasers never read `speed` while pursuing, so the
     // slow has to reach the override as well or a web slows every mob in the
     // game except the ones it is for.
-    double factor = slowFactorOf(world, self, nowMillis) * 1.08;
+    double factor = slowFactorOf(world, self, nowMillis);
     if (drive.healthScaledSpeed) {
         const auto* health = world.tryGet<Health>(self);
         if (health && health->max > 0.0)
             factor *= 0.55 + 0.45 * clamp(health->current / health->max, 0.0, 1.0);
     }
-    const double speed = drive.speed * factor;
-    const double chaseSpeed = drive.chaseSpeed * factor;
+    const double speed = drive.speed * factor * 1.20;
+    const double chaseSpeed = drive.chaseSpeed * factor * 1.30;
 
     Vec2 desired{0, 0};
     // Where the mob points, when that is not simply where it is going. Only a
@@ -1909,7 +1909,7 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
     } else if (driven) {
         motion.velocity = desired;
     } else {
-        desired = steerIdle(world, terrain, self, transform, motion, ai, drive, factor, nowMillis,
+        desired = steerIdle(world, terrain, self, transform, motion, ai, drive, factor * 1.20, nowMillis,
                             dt);
     }
 
@@ -2802,7 +2802,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         }
         // Ahead of the stride, which it is not subject to; see recover().
         if (drive.recovers) recover(world, self, drive, nowMillis, dt);
-        if (!wasSleeping && !active &&
+        if (!wasSleeping && !active && brain.target == NULL_ENTITY &&
             (tick_ + entityIndex(self)) % static_cast<std::uint64_t>(kMobFarStride) != 0) {
             ++stats_.skipped;
             driftUnwatched(world, terrain, self, nowMillis, dt);

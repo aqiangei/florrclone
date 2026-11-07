@@ -1049,24 +1049,28 @@ void App::frame(double dt) {
     // Use this frame's actual menu bounds, in the same design coordinates as
     // the daily card. The link occupies the free top gap, never the icon strip.
     EM_ASM({
-        const link=document.getElementById("council-link");const canvas=Module.canvas;
-        if(!link||!canvas)return;
-        link.hidden=!$0;if(!$0)return;
+        const links=document.getElementById("lobby-links");
+        const council=document.getElementById("council-link");
+        const guide=document.getElementById("open-server-guide");
+        const canvas=Module.canvas;
+        if(!links||!council||!guide||!canvas)return;
+        links.hidden=!$0;if(!$0)return;
         const box=canvas.getBoundingClientRect();const scale=box.width/$1;
         const left=$2+12;const right=$1-($4?252:16);const space=right-left;
         const compact=space*scale<220;
-        const belowStrip=space*scale<84;
+        const belowStrip=space*scale<128;
         const width=belowStrip?Math.min(128/scale,right-16):Math.min(Math.max(384,220/scale),space);
         const x=belowStrip?Math.max(16,right-width):(left+right-width)/2;
         const y=belowStrip?$3+12:12;
         const key=([x,y,width,scale,box.left,box.top,compact]).join(',');
         if(Module.councilPlacement!==key){Module.councilPlacement=key;
-            link.style.left=(box.left+x*scale)+'px';link.style.top=(box.top+y*scale)+'px';
-            link.style.width=(width*scale)+'px';
-            link.style.minHeight=Math.max(44,58*scale)+'px';
-            link.style.fontSize=Math.max(compact?14:17,(compact?16:23)*scale)+'px';
-            link.toggleAttribute('data-compact',compact);
-            link.querySelector('span').textContent=compact?'议会投票 ↗':'玩家议会 · 更新投票 ↗';
+            links.style.left=(box.left+x*scale)+'px';links.style.top=(box.top+y*scale)+'px';
+            links.style.width=(width*scale)+'px';
+            links.style.minHeight=Math.max(44,58*scale)+'px';
+            links.style.fontSize=Math.max(compact?14:17,(compact?16:23)*scale)+'px';
+            links.toggleAttribute('data-compact',compact);
+            council.querySelector('span').textContent=compact?'议会':'议会投票 ↗';
+            guide.textContent=compact?'服务器':'服务器指引';
         }
     }, (screen_==Screen::Login||screen_==Screen::Lobby)&&!menus_.anyOpen()&&!net_.joinPending(),
        window_.width(),menus_.stripRight(),menus_.stripBottom(),screen_==Screen::Lobby&&net_.dailyStreak().known);

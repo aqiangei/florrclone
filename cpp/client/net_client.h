@@ -259,8 +259,9 @@ struct OracleOutcome {
 struct TitanForgeOutcome {
     bool pending = false;      ///< a result arrived that the panel has not read
     bool success = false;
-    /// The petal forged -- one universal of it -- or offered on a refusal.
+    /// The petal forged, or offered on a refusal.
     std::uint16_t petalIndex = 0;
+    std::uint32_t quantity = 0;
     std::string reason;
 };
 
@@ -672,7 +673,7 @@ public:
     void requestAbsorb(const std::vector<AbsorbStack>& stacks);
     /// Forges kTitanForgeCost apex of this petal into one universal at the
     /// titan the body is standing at.
-    void requestTitanForge(std::uint16_t petalIndex, bool hyper=false, bool eternalFragment=true);
+    void requestTitanForge(std::uint16_t petalIndex, bool hyper=false, bool eternalFragment=true, bool batch=false);
     /// Asks the titan the body is standing at who holds this petal at
     /// universal. The answer lands in titanHolder(); the server drops a query
     /// that comes too soon after the last, so a caller asks again until one

@@ -2508,6 +2508,8 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         //
         // A claw's bonus is petal damage too, and takes the same curve.
         if (const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(petal.owner)) {
+            if (config.id == "triangle")
+                source.damage += triangleBonusDamage(petal.rarity, modifiers->triangleCounts);
             source.damage *= modifiers->petalDamageScale;
             source.critDamage *= modifiers->petalDamageScale;
         }

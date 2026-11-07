@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 101; // Appended ManaRegen talent in profile skill arrays.
+inline constexpr std::uint16_t kProtocolVersion = 102; // Titan forge result includes the actual output count.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -159,7 +159,7 @@ enum class ClientMessage : std::uint8_t {
     GuildEdit,          ///< str displayName, str description -- both replace
                         ///< what the guild has. Leader only; the tag is the
                         ///< guild's key and cannot be edited. (Version 45.)
-    TitanForge,         ///< u16 input petal, u8 mode (0 permanent, 1 hyper, 2 Eternal fragment, 3 timed hammer). Normal: 10 then 15 Super;
+    TitanForge,         ///< u16 input petal, u8 mode (0 permanent, 1 hyper, 2 Eternal fragment, 3 timed hammer, 4 max permanent batch). Normal: 10 then 15 Super;
                         ///< Hyper: 5 Eternal -> globally contested Hyper (v82).
                         ///< permanent next-tier petal, Fragment -> Mjolnir.
                         ///< Per-account/per-petal price ledger; never takes
@@ -391,10 +391,8 @@ enum class ServerMessage : std::uint8_t {
     AdminDb,            ///< u8 AdminDbReply, then that reply's payload -- the
                         ///< database editor's answers (shared/net/admin_db.h).
                         ///< Sent to full admins only. (Version 44.)
-    TitanForgeResult,   ///< u8 ok, u16 itemType, str reason. `itemType` is the
-                        ///< petal that was forged, or offered on a refusal;
-                        ///< a success is always one universal of it. Its own
-                        ///< reply for OracleResult's reason. (Version 47.)
+    TitanForgeResult,   ///< u8 ok, u16 itemType, str reason, u32 quantity.
+                        ///< On refusal, itemType is the offer and quantity is zero.
     TitanHolder,        ///< u16 itemType, str username, u32 protection remainingMs (v82).
                         ///< ClientMessage::TitanHolder: the account holding that
                         ///< petal at universal, or empty for nobody. (Version 47.)

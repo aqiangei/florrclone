@@ -330,7 +330,8 @@ inline constexpr int kZonePlacementAttempts = 60;
 /// 60000-unit square, which is what a band's target population is derived from
 /// (and what mode_spawning.h sizes a maze corridor by), so a stocked band reads
 /// as ordinary ground rather than as a pit.
-inline constexpr double kTargetMobDensity = 9000.0 / (kWorldSize * kWorldSize);
+inline constexpr double kSpawnReferenceWidth = kWorldSize / kWorldMapScale;
+inline constexpr double kTargetMobDensity = 9000.0 / (kSpawnReferenceWidth * kSpawnReferenceWidth);
 
 /// The tier at which a spawn is worth telling the whole server about, and at
 /// which a mob is simulated wherever it stands. Supers, uniques and apexes are
@@ -449,8 +450,6 @@ public:
     /// anything. It does not shrink the map's population, only how much of it
     /// is awake at once.
     int mobCap = kMaxLiveMobs;
-    double ambientDensityScale = 1.0;
-    double hotZoneDensityScale = 1.0;
 
     /// Assigns the wire id for every entity this system creates.
     ///

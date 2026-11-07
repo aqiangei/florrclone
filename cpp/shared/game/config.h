@@ -1756,6 +1756,19 @@ inline PetalStats equippedPetalStats(const ContentRegistry& registry, const Equi
 /// amulet -- a broken leaf still cuts, so the bar's reloads do not change
 /// under it as it breaks.
 ///
+using TriangleCounts = std::array<std::uint8_t, kRarityCount>;
+
+inline double triangleBonusDamage(Rarity rarity, const TriangleCounts& counts) {
+    const int tier = rarityIndex(rarity);
+    // Eternal gets its bonus from Super triangles. Custom higher tiers
+    // continue the same-tier rule.
+    const int matches = rarity == Rarity::Unique
+        ? counts[rarityIndex(Rarity::Super)] : std::max(0, counts[tier] - 1);
+    constexpr std::array<int, kRarityCount> bonus{
+        4, 12, 36, 108, 324, 972, 2916, 8748, 26244, 78732, 236196, 708588};
+    return static_cast<double>(matches) * bonus[tier];
+}
+
 /// A template over the accessor for the reason resolveEquippedPetal is one:
 /// the server sizes every reload by it and the client sweeps the bar's wedge
 /// by it.

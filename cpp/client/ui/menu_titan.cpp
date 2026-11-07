@@ -86,6 +86,7 @@ void TitanPanel::reset() {
     phase_ = Phase::Idle;
     resultPending_ = false;
     confirmForge_ = false;
+    confirmBatch_ = false;
     refusal_.clear();
     askedPetal_ = kNoPetal;
     askedAt_ = -1.0;
@@ -108,6 +109,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         outcome.pending = false;
         if (outcome.success && knownPetal(outcome.petalIndex)) {
             resultPetal_ = outcome.petalIndex;
+            resultQuantity_ = outcome.quantity;
             // Mid-spin the result is only recorded: the spin decides when it
             // has run long enough. Anywhere else it lands now.
             if (phase_ == Phase::Forging) {
@@ -152,6 +154,8 @@ bool TitanPanel::render(MenuContext& ctx) {
          !(hyper_?hyperForgeEligible(content().petal(stagedPetal_).id):titanForgeEligible(content().petal(stagedPetal_).id)) ||
          (!hyper_ && !eternalFragment_ && content().petal(stagedPetal_).id!="fragment"))) {
         stagedPetal_ = kNoPetal;
+        confirmForge_ = false;
+        confirmBatch_ = false;
     }
 
     const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin,
@@ -236,6 +240,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     ItemTile forgedTile;
     forgedTile.petalIndex = resultPetal_;
     forgedTile.rarity = outputTier;
+    if (resultQuantity_ > 1) forgedTile.badge = "x" + stackCountText(resultQuantity_);
     forgedTile.timeSeconds = now;
     motion_.drawSlotScene(canvas, ctx.sprites, card, kTitanSkin, (now - phaseStarted_) * 1000.0,
                           dtMs, !forged && knownPetal(shown) ? &shownTile : nullptr, shown,
@@ -245,18 +250,43 @@ bool TitanPanel::render(MenuContext& ctx) {
     // --- forge button ------------------------------------------------------
     // The colour of the tier it forges toward once five are in the slot --
     // florr's forge wears its top tier's grey.
-    const Rect button = card.button;
+    const bool permanent = !hyper_ && eternalFragment_;
+    Rect button = card.button;
+    Rect batchButton{};
+    if (permanent) {
+        constexpr double gap = 10.0;
+        constexpr double width = 110.0;
+        const double centre = button.x + button.w * 0.5;
+        button.x = centre - gap * 0.5 - width;
+        button.w = width;
+        batchButton = {centre + gap * 0.5, button.y, width, button.h};
+    }
     const auto* holder=knownPetal(stagedPetal_)?ctx.net.titanHolder(stagedPetal_):nullptr;
     const bool canForge = phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
         (!hyper_ || (holder&&ctx.net.hyperHoldings()<kMaxHyperHoldings&&ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
                      *holder!=profile.username));
     const bool fragment=knownPetal(stagedPetal_)&&content().petal(stagedPetal_).id=="fragment";
-    const char* action=fragment&&!hyper_?(eternalFragment_?(confirmForge_?"确认：E碎片":"兑换E碎片"):(confirmForge_?"确认：限时锤":"制作限时锤")):(confirmForge_?"确认锻造":"锻造");
+    const char* action=fragment&&!hyper_?(eternalFragment_?(confirmForge_ && !confirmBatch_?"确认：E碎片":"兑换E碎片"):(confirmForge_ && !confirmBatch_?"确认：限时锤":"制作限时锤")):(confirmForge_ && !confirmBatch_?"确认锻造":"锻造");
     drawSlotButton(canvas, button, action,
                    canForge ? std::optional<std::uint32_t>(rarityColor(outputTier))
                             : std::nullopt,
                    button.contains(mouse),
                    button.contains(mouse) && ctx.window.mouseDown(MouseButton::Left));
+    TitanForgeBatch batch;
+    if (permanent && canForge) {
+        const auto owned = forgeInputOwned(profile, stagedPetal_);
+        const auto held = std::min(profile.stackCount(stagedPetal_, outputTier),
+                                   static_cast<std::uint32_t>(kMaxStackCount));
+        batch = titanForgeBatch(static_cast<int>(owned), kMaxStackCount - static_cast<int>(held),
+                                profile.titanForgeCount(stagedPetal_), content().petal(stagedPetal_).id);
+    }
+    const bool canBatch = batch.quantity > 1;
+    if (permanent) {
+        drawSlotButton(canvas, batchButton, confirmBatch_ && canBatch ? "确认批量" : "批量兑换",
+                       canBatch ? std::optional<std::uint32_t>(rarityColor(outputTier)) : std::nullopt,
+                       batchButton.contains(mouse),
+                       batchButton.contains(mouse) && ctx.window.mouseDown(MouseButton::Left));
+    }
     // A refusal stands in place of the card's lines, on the middle one, until
     // it expires.
     if (refusal_.empty() || now >= refusalUntil_) {
@@ -276,7 +306,10 @@ bool TitanPanel::render(MenuContext& ctx) {
     if (knownPetal(stagedPetal_)) {
         SlotCardLayout line = card;
         line.lineY = (card.slotRect.bottom() + panel.y + kFirstLineY - kLinePitch * 0.5) * 0.5;
-        drawSlotLine(canvas, line, "本次消耗：" + std::to_string(forgeCost(profile, stagedPetal_, hyper_, ctx.net)) + (hyper_?" 个同种永恒，成功率100%":" 个同种超级，成功率100%"));
+        if (confirmBatch_ && canBatch)
+            drawSlotLine(canvas, line, std::to_string(batch.cost) + " 个超级 → " +
+                         std::to_string(batch.quantity) + " 个永久永恒");
+        else drawSlotLine(canvas, line, "本次消耗：" + std::to_string(forgeCost(profile, stagedPetal_, hyper_, ctx.net)) + (hyper_?" 个同种永恒，成功率100%":" 个同种超级，成功率100%"));
     }
 
     if(hyper_&&knownPetal(stagedPetal_)){
@@ -328,17 +361,20 @@ bool TitanPanel::render(MenuContext& ctx) {
         return true;
     }
 
-    if (button.contains(mouse)) {
-        if (canForge) {
-            if(!confirmForge_){confirmForge_=true;return true;}
-            confirmForge_=false;
+    const bool batchPressed = permanent && batchButton.contains(mouse);
+    if (button.contains(mouse) || batchPressed) {
+        if (batchPressed ? canBatch : canForge) {
+            const bool confirmed = confirmForge_ && confirmBatch_ == batchPressed;
+            confirmForge_ = !confirmed;
+            confirmBatch_ = !confirmed && batchPressed;
+            if (!confirmed) return true;
             phase_ = Phase::Forging;
             phaseStarted_ = now;
             offeredPetal_ = stagedPetal_;
-            offeredCost_ = forgeCost(profile, stagedPetal_, hyper_, ctx.net);
+            offeredCost_ = batchPressed ? batch.cost : forgeCost(profile, stagedPetal_, hyper_, ctx.net);
             resultPending_ = false;
             refusal_.clear();
-            ctx.net.requestTitanForge(stagedPetal_,hyper_,eternalFragment_ && content().petal(stagedPetal_).id=="fragment");
+            ctx.net.requestTitanForge(stagedPetal_, hyper_, eternalFragment_, batchPressed);
             // Handed over: the ring draws the offer from here, and a refusal
             // is what puts it back.
             stagedPetal_ = kNoPetal;
@@ -361,7 +397,8 @@ bool TitanPanel::render(MenuContext& ctx) {
         // Explain a disabled stack; colour alone cannot explain a recipe.
         // Any other one REPLACES the ring -- one forge takes five of one petal.
         if (!hovered->greyed) {
-            confirmForge_=false;
+            confirmForge_ = false;
+            confirmBatch_ = false;
             stagedPetal_ = hovered->petalIndex;
             refusal_.clear();
         } else {

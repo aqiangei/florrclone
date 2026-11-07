@@ -31,6 +31,31 @@ struct CombatFeedback {
 };
 }
 
+TEST(todo1107_triangle_stacks_before_talent_and_eternal_counts_super_slots) {
+    for (const auto tier : {Rarity::Common, Rarity::Unique}) {
+        CombatFeedback r;
+        r.equip(0, "triangle", tier);
+        r.equip(1, "triangle", Rarity::Common);
+        r.equip(2, "triangle", Rarity::Super);
+        r.equip(kLoadoutActiveSlots, "triangle", Rarity::Common);
+        auto& skills = r.w.add<PlayerSkillTree>(r.player).skills;
+        skills.set(SkillId::Damage, 2);
+        r.prepare();
+        Entity triangle = NULL_ENTITY;
+        Query<PetalInstance> petals{r.w};
+        petals.each([&](Entity e, PetalInstance& petal) {
+            if (petal.slot == 0) triangle = e;
+        });
+        CHECK(triangle != NULL_ENTITY);
+        if (triangle == NULL_ENTITY) continue;
+        const auto mob = r.mob(r.w.get<Transform>(triangle).position);
+        const double expected = (tier == Rarity::Common ? 5 + 4 : 32805 + 26244) *
+            skills.effectScale(SkillId::Damage);
+        r.hit(10000);
+        CHECK_NEAR(1e12 - r.w.get<Health>(mob).current, expected, 1e-3);
+    }
+}
+
 TEST(electric_web_uses_lightning_numbers_and_ruby_repeats) {
     CombatFeedback r;
     auto mob=r.mob({5000,5000});

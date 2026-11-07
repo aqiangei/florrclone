@@ -549,12 +549,12 @@ void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks) {
     send(w);
 }
 
-void NetClient::requestTitanForge(std::uint16_t petalIndex,bool hyper,bool eternalFragment) {
+void NetClient::requestTitanForge(std::uint16_t petalIndex,bool hyper,bool eternalFragment,bool batch) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::TitanForge);
     w.u16(petalIndex);
     const bool fragment = petalIndex < content().petalCount() && content().petal(petalIndex).id == "fragment";
-    w.u8(hyper ? 1 : fragment ? (eternalFragment ? 2 : 3) : 0);
+    w.u8(hyper ? 1 : batch && eternalFragment ? 4 : fragment ? (eternalFragment ? 2 : 3) : 0);
     send(w);
 }
 
@@ -1606,6 +1606,7 @@ void NetClient::handleTitanForgeResult(ByteReader& reader) {
     outcome.success = reader.boolean();
     outcome.petalIndex = reader.u16();
     outcome.reason = reader.str();
+    outcome.quantity = reader.u32();
     if (!reader.ok()) return;
     outcome.pending = true;
     titanForgeOutcome_ = std::move(outcome);

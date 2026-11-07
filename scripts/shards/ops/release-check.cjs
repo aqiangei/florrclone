@@ -14,7 +14,7 @@ async function check(base,protocol,hash){
   };
   const health=await (await get('/api/health')).json();assert.equal(health.ok,true);
   try {
-  if(url.port!=='8788'){
+  if(url.port!=='8788' && url.port!=='28788'){
     const response=await fetch(new URL('/download-queue/join',url),{method:'POST',signal:AbortSignal.timeout(10000)});
     if(response.headers.get('content-type')?.includes('application/json')){
       assert(response.ok,'Download queue unavailable');let row=await response.json();ticket=row.ticket;

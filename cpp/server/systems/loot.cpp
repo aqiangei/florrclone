@@ -675,7 +675,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const bool visibleGarbage = content.mob(mobIndex).id == "garbage" && !content.garbageDropRates().empty();
         if (visibleGarbage) {
             const auto* id = world.tryGet<NetId>(corpse);
-            const auto contents = garbageContents(garbageEligiblePetals(content,mobRarity),id ? id->value : 0,at,content.petalIndex("c++"));
+            const auto contents = garbageContents(garbageEligiblePetals(content,mobRarity),id ? id->value : 0,at,&content);
             for (const auto& item : contents) {
                 DropTables::Entry entry;entry.petalIndex=item.index;entry.probability=1;
                 entry.rates=content.garbageDropRates();

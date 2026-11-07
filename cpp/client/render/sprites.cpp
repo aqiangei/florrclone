@@ -642,6 +642,7 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
         compile(walkingLegs ? walkingLegArtwork(config.image) : config.image,
                 config.colorRgba, "mob " + config.id, mobs_[i]);
         mobs_[i].distanceAnimated = walkingLegs;
+        mobs_[i].articulatedEyes = config.id == "mecha_flower" || config.id == "gambler";
         if (!mobs_[i].document) continue;
         const std::string petArt = petArtwork(config.image);
         if (!petArt.empty()) {
@@ -766,6 +767,30 @@ void SpriteCache::draw(Canvas& canvas, const Sprite& sprite, double x, double y,
                            static_cast<float>(sprite.distanceAnimated
                                ? (motion ? motion->distance * kGaitRadiansPerUnitWalked : 0.0)
                                : timeSeconds));
+    if (sprite.articulatedEyes) {
+        const Vec2 eye = motion ? Vec2{gaze.x / 2.0, gaze.y / 4.4} : Vec2{};
+        const float fit = static_cast<float>(diameter / 58.0);
+        canvas.scale(fit, fit);
+        for (const float side : {-1.0f, 1.0f}) {
+            canvas.save();
+            canvas.translate(side * 8.5f + static_cast<float>(eye.x * 0.7),
+                             2.0f + static_cast<float>(eye.y * 0.5));
+            canvas.rotate(static_cast<float>(eye.x * 0.22 + eye.y * side * 0.17));
+            canvas.scale(side, 1.0f);
+            ui::setFill(canvas, 0xEEEEEEu);
+            canvas.beginPath();
+            canvas.moveTo(4.5f, -2.0f);
+            canvas.quadraticCurveTo(-0.5f, -5.0f, -4.5f, -2.0f);
+            canvas.quadraticCurveTo(-3.5f, 4.0f, 0.5f, 4.0f);
+            canvas.quadraticCurveTo(3.5f, 4.0f, 4.5f, -2.0f);
+            canvas.closePath();
+            canvas.fill();
+            ui::setFill(canvas, 0x151515u);
+            canvas.fillCircle(static_cast<float>(eye.x * side * 0.65),
+                              static_cast<float>(eye.y * 0.3), 1.45f);
+            canvas.restore();
+        }
+    }
     canvas.restore();
 }
 

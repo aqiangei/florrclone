@@ -15,7 +15,7 @@ GarbageKill openBag(const ContentRegistry& c,Rarity rarity,std::uint32_t seed,in
     for(int i=0;i<people;++i){const auto p=w.create();players.push_back(p);w.add<PlayerTag>(p);w.add<Transform>(p,Transform{{10000.0+i*100,10000},0});w.add<Health>(p,Health{100,100});w.add<Body>(p,Body{25,1});if(orb){w.add<Loadout>(p);w.get<Loadout>(p).slots[0].configIndex=c.petalIndex("mana_orb");w.get<Loadout>(p).slots[0].rarity=Rarity::Common;}}
     const auto corpse=w.create();const Vec2 at{1000,1000};w.add<MobTag>(corpse);w.add<MobType>(corpse,MobType{c.mobIndex("garbage"),rarity,1});w.add<Transform>(corpse,Transform{at,0});w.add<Health>(corpse,Health{0,100});w.add<NetId>(corpse,NetId{seed});
     Bounty bounty;for(auto p:players)bounty.credit(p,100);w.add<Bounty>(corpse,bounty);w.add<Dead>(corpse,Dead{players.front()});
-    GarbageKill result;result.visible=garbageContents(garbageEligiblePetals(c,rarity),seed,at,c.petalIndex("c++"));result.loot.resize(players.size());
+    GarbageKill result;result.visible=garbageContents(garbageEligiblePetals(c,rarity),seed,at,&c);result.loot.resize(players.size());
     loot.run(w,grid,c,rng,1000,0,commands,events);commands.flush();
     auto gather=[&](){std::vector<std::map<std::uint16_t,unsigned>> found(players.size());Query<DropTag,DropItem> drops{w};result.entities=0;drops.each([&](Entity,DropTag&,DropItem& item){++result.entities;CHECK(petalComesAt(c.petal(item.configIndex),item.rarity));CHECK(!c.petal(item.configIndex).isAdminPetal);for(std::size_t i=0;i<players.size();++i)if(LootSystem::mayPickUp(item,players[i],0))found[i][item.configIndex]+=item.quantity;});return found;};
     result.loot=gather();loot.run(w,grid,c,rng,1100,0,commands,events);commands.flush();CHECK(gather()==result.loot);
@@ -25,7 +25,7 @@ GarbageKill openBag(const ContentRegistry& c,Rarity rarity,std::uint32_t seed,in
 TEST(garbage_preview_is_stable_unique_and_covers_playable_types){
     const auto& c=garbageRegistry();std::set<std::uint16_t> seen;
     const auto pool=garbageEligiblePetals(c,Rarity::Super);CHECK(pool.size()>50);
-    for(unsigned seed=1;seed<=2000;++seed){const auto a=garbageContents(pool,seed,{10,20},c.petalIndex("c++")),b=garbageContents(pool,seed,{9000,8000},c.petalIndex("c++"));CHECK(a.size()>=5&&a.size()<=9);CHECK_EQ(a.size(),b.size());std::set<std::uint16_t> unique;for(std::size_t i=0;i<a.size();++i){CHECK_EQ(a[i].index,b[i].index);CHECK_EQ(a[i].poseSeed,b[i].poseSeed);unique.insert(a[i].index);seen.insert(a[i].index);}CHECK_EQ(unique.size(),a.size());}
+    for(unsigned seed=1;seed<=2000;++seed){const auto a=garbageContents(pool,seed,{10,20},&c),b=garbageContents(pool,seed,{9000,8000},&c);CHECK(a.size()>=5&&a.size()<=9);CHECK_EQ(a.size(),b.size());std::set<std::uint16_t> unique;for(std::size_t i=0;i<a.size();++i){CHECK_EQ(a[i].index,b[i].index);CHECK_EQ(a[i].poseSeed,b[i].poseSeed);unique.insert(a[i].index);seen.insert(a[i].index);}CHECK_EQ(unique.size(),a.size());}
     CHECK_EQ(seen.size(),pool.size());CHECK(seen.count(c.petalIndex("leaf")));CHECK(seen.count(c.petalIndex("mana_orb")));CHECK(seen.count(c.petalIndex("splitter")));CHECK(!seen.count(c.petalIndex("timed_mjolnir")));
 }
 
@@ -34,8 +34,8 @@ TEST(garbage_cpp_is_rarer_but_visible_cpp_still_really_drops) {
     const auto cpp=c.petalIndex("c++"); const auto pool=garbageEligiblePetals(c,Rarity::Super);
     int before=0,after=0; unsigned visibleSeed=0,hiddenSeed=0;
     for(unsigned seed=1;seed<=50000;++seed) {
-        const auto old=garbageContents(pool,seed,{1000,1000},kInvalidIndex);
-        const auto now=garbageContents(pool,seed,{1000,1000},cpp);
+        const auto old=garbageContents(pool,seed,{1000,1000},nullptr);
+        const auto now=garbageContents(pool,seed,{1000,1000},&c);
         const auto has=[&](const auto& items){return std::any_of(items.begin(),items.end(),[&](const auto& item){return item.index==cpp;});};
         before+=has(old); after+=has(now);
         if(has(now))visibleSeed=seed; else if(has(old))hiddenSeed=seed;
@@ -54,6 +54,27 @@ TEST(garbage_cpp_is_rarer_but_visible_cpp_still_really_drops) {
         CHECK_NEAR(a.reloadMillis,b.reloadMillis,1e-9);
     }
 }
+TEST(todo1107_garbage_rare_items_remain_visible_but_less_frequent) {
+    const auto& c = garbageRegistry();
+    const auto pool = garbageEligiblePetals(c, Rarity::Super);
+    std::array<int, 4> before{}, after{};
+    const std::array ids{c.petalIndex("mimic"), c.petalIndex("sawblade"),
+                         c.petalIndex("golden_leaf"), c.petalIndex("ruby")};
+    for (unsigned seed = 1; seed <= 50000; ++seed) {
+        const auto original = garbageContents(pool, seed, {1000, 1000}, nullptr);
+        const auto adjusted = garbageContents(pool, seed, {1000, 1000}, &c);
+        for (std::size_t i = 0; i < ids.size(); ++i) {
+            const auto matches = [&](const GarbagePetal& petal) { return petal.index == ids[i]; };
+            before[i] += std::any_of(original.begin(), original.end(), matches);
+            after[i] += std::any_of(adjusted.begin(), adjusted.end(), matches);
+        }
+    }
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        CHECK(after[i] > before[i] * 0.77);
+        CHECK(after[i] < before[i] * 0.93);
+    }
+}
+
 TEST(garbage_every_visible_type_drops_and_no_hidden_types_appear_with_or_without_orbs){
     const auto& c=garbageRegistry();
     for(const auto rarity:{Rarity::Common,Rarity::Ultra,Rarity::Super,Rarity::Unique})for(const bool orb:{false,true})for(unsigned seed=1;seed<=8;++seed){

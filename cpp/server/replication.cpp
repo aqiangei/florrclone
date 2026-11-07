@@ -305,8 +305,12 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // enough to being drawn that it has to be current. Built the same way, so
     // everything on a big screen is updated every snapshot and the margin
     // around it stays the default screen's.
-    const double nearX = halfExtent(viewport.x, kViewportWidth, nearReach);
-    const double nearY = halfExtent(viewport.y, kViewportHeight, nearReach);
+    // Under load, keep the full visible rectangle but sample distant mobs
+    // at the existing far cadence even when the camera is pulled back.
+    const double nearWidth = frame.loadShedding ? std::min(viewport.x, kViewportWidth) : viewport.x;
+    const double nearHeight = frame.loadShedding ? std::min(viewport.y, kViewportHeight) : viewport.y;
+    const double nearX = halfExtent(nearWidth, kViewportWidth, nearReach);
+    const double nearY = halfExtent(nearHeight, kViewportHeight, nearReach);
     // Measured to the nearest edge of the BODY, not its centre. The margin is
     // a quarter screen, 270 units top and bottom, and an ultra is a radius of
     // 300 and more: tested on its centre, one can stand half on screen while

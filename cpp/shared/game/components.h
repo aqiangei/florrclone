@@ -592,6 +592,7 @@ struct PlayerVisuals {
 /// missed unwind is a permanent stat the player keeps forever.
 struct PlayerModifiers {
     std::array<std::uint8_t, kRarityCount> computerParts{};
+    std::array<std::uint8_t, kRarityCount> triangleCounts{};
     double maxHealthScale = 1.0;
     double speedScale = 1.0;
     /// The flower's BODY damage: equipped petal damage modifiers times the

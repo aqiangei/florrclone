@@ -129,6 +129,20 @@ inline int titanForgeCost(unsigned completed, const std::string& inputId = {}) {
     if (inputId == "fragment") return 15;
     return completed == 0 ? 10 : 15;
 }
+struct TitanForgeBatch {
+    int quantity = 0;
+    int cost = 0;
+};
+
+inline TitanForgeBatch titanForgeBatch(int owned, int space, unsigned completed,
+                                      const std::string& inputId) {
+    const int first = titanForgeCost(completed, inputId);
+    if (owned < first || space <= 0) return {};
+    const int next = titanForgeCost(completed + 1, inputId);
+    const int additional = std::min(space - 1, (owned - first) / next);
+    return {1 + additional, first + additional * next};
+}
+
 inline constexpr int kHyperForgeCost=5;
 inline constexpr int kMaxHyperHoldings=5;
 inline constexpr int kHyperForgeRefund=4;

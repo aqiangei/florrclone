@@ -27,6 +27,7 @@ struct Fixture {
     EventQueue events;
     Entity viewer = NULL_ENTITY;
     Entity splitOther = NULL_ENTITY;
+    bool loadShedding = false;
     /// The viewer's squadmates (Replicator::Frame::alwaysVisible), if any.
     std::vector<Entity> squad;
 
@@ -73,6 +74,7 @@ struct Fixture {
         frame.nowMillis = nowMillis;
         frame.events = &events;
         frame.splitOther = splitOther;
+        frame.loadShedding = loadShedding;
         frame.alwaysVisible = squad.empty() ? nullptr : &squad;
         replicator.build(world, viewer, view, frame, out);
 
@@ -473,6 +475,25 @@ TEST(a_camera_petals_view_is_streamed_edge_to_edge_and_only_a_screen_past_it) {
         f.tick(client, static_cast<std::uint32_t>(2 + i), 1040.0 + 40.0 * i);
         CHECK_NEAR(client.entities().at(netIdOf(f.world, corner)).targetPosition.x, moved.x, 0.05);
     }
+}
+
+TEST(todo1107_manual_wide_view_keeps_distant_mobs_visible_under_load) {
+    Fixture f;
+    f.loadShedding = true;
+    const Vec2 drawn = Vec2{kViewportWidth, kViewportHeight} / kMinimumUserCameraZoom;
+    f.world.get<PlayerLocation>(f.viewer).viewport = drawn;
+    const Vec2 centre = f.world.get<Transform>(f.viewer).position;
+    const auto mob = f.addMob(centre + drawn * 0.5 - Vec2{50, 50});
+    const auto id = netIdOf(f.world, mob);
+    CHECK(id % 6 != 0);
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK(client.entities().count(id));
+    if (!client.entities().count(id)) return;
+    const double first = client.entities().at(id).targetPosition.x;
+    f.world.get<Transform>(mob).position.x -= 25;
+    f.tick(client, 2, 1050);
+    CHECK_NEAR(client.entities().at(id).targetPosition.x, first, 0.05);
 }
 
 TEST(a_big_mob_half_on_screen_is_current_every_snapshot) {

@@ -40,7 +40,7 @@ int main(){
     const auto pool=garbageEligiblePetals(content(),Rarity::Super);
     for(int side=0;side<2;++side){const int wanted=side?9:5;std::uint32_t id=1000;
         const Vec2 at=centre+Vec2{side?250.0:-250.0,0};
-        for(;id<100000;++id)if(garbageContents(pool,id,at,content().petalIndex("c++")).size()==static_cast<std::size_t>(wanted))break;
+        for(;id<100000;++id)if(garbageContents(pool,id,at,&content()).size()==static_cast<std::size_t>(wanted))break;
         RemoteEntity bag;bag.netId=id;bag.kind=net::EntityKind::Mob;bag.typeIndex=content().mobIndex("garbage");
         bag.rarity=Rarity::Super;bag.radius=140;bag.position=bag.targetPosition=at;bag.needsSnap=false;bag.healthFraction=1;garbageView.seedForTest(bag);
     }

@@ -132,10 +132,10 @@ Vec2 tooltipAnchor(Rect anchor, Vec2 size, double viewWidth, double viewHeight);
 /// the Reload talent times the bar's golden-leaf cut, so the header matches
 /// what the equipped wedge actually times.
 std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
-        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot = -1);
+        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot = -1, double triangleBonus = 0.0);
 
 std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rarity,
-                                           const SkillSet& skills, double reloadScale, int slot = -1);
+                                           const SkillSet& skills, double reloadScale, int slot = -1, double triangleBonus = 0.0);
 
 /// The 200 ms the browser waits before a tooltip appears, and the mouse-down
 /// that cancels it. One per hoverable grid; `update` is called every frame

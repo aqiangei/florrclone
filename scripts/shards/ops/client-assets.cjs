@@ -15,6 +15,7 @@ function configure(base,{release,assetHost,downloadQueue=false,entryProxy}) {
     base=base.replace(listen,listen+'\n    set_real_ip_from '+entryProxy+';\n    real_ip_header X-Florr-Client-IP;');
   }
   const version=release.split('/').pop();
+  const assetBase='http://'+assetHost+':8088/client-assets/'+version+'/';
   const queueRoutes=downloadQueue?`
     location ^~ /download-queue/ {
         if (-f /var/www/florrclone-maintenance/enabled) { return 503; }
@@ -30,7 +31,16 @@ function configure(base,{release,assetHost,downloadQueue=false,entryProxy}) {
         proxy_set_header X-Original-URI $request_uri;
         proxy_set_header X-Download-Ticket $http_x_download_ticket;
     }
-`:'';
+`:`
+    # Older client builds still ask for a download ticket. Let those clients
+    # proceed immediately, while the versioned assets are served directly.
+    location ^~ /download-queue/ {
+        if (-f /var/www/florrclone-maintenance/enabled) { return 503; }
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        return 200 '{"ok":true,"ticket":"direct-download","state":"ready","ahead":0,"active":0,"assetBase":"${assetBase}"}';
+    }
+`;
   const routes=queueRoutes+`
     location = / {
         if (-f /var/www/florrclone-maintenance/enabled) { return 503; }

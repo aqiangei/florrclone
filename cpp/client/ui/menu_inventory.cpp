@@ -314,12 +314,12 @@ namespace ui {
 /// `reloadScale` -- the Reload talent and the bar's golden leaves -- for the
 /// same reason.
 std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
-        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot) {
+        const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot, double triangleBonus) {
     const auto effectiveStats = equippedPetalStats(content(), equipped);
     const auto baseStats = content().petalStats(equipped.configIndex, equipped.rarity);
     const double scale = baseStats.reloadMillis > 0.0
         ? reloadScale * effectiveStats.reloadMillis / baseStats.reloadMillis : reloadScale;
-    auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, scale, slot);
+    auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, scale, slot, triangleBonus);
     if (originalIndex != equipped.configIndex && !lines.empty()) {
         lines.front().text = std::string(language() == Language::Zh ? "拟态 → " : "Mimic → ") + lines.front().text;
     }
@@ -327,11 +327,14 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
 }
 
 std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rarity,
-                                           const SkillSet& skills, double reloadScale, int slot) {
+                                           const SkillSet& skills, double reloadScale, int slot, double triangleBonus) {
     const PetalConfig& config = content().petal(petalIndex);
     const PetalStats stats = content().petalStats(petalIndex, rarity);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
-    const double damage = std::round(config.lightningDamage&&stats.lightningDamagePerHit>0?stats.lightningDamagePerHit:stats.damage);
+    const double damageScale = skills.effectScale(SkillId::Damage);
+    const double baseDamage = config.lightningDamage && stats.lightningDamagePerHit > 0
+        ? stats.lightningDamagePerHit : stats.damage;
+    const double damage = std::round((baseDamage + triangleBonus) * damageScale);
 
     std::vector<TooltipLine> lines;
     // florr's header: on the name's right, what bringing the petal out costs
@@ -722,7 +725,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Claw. Petal damage like the line above, so it carries the same talent.
     if (stats.critDamage > 0.0) {
-        const double crit = std::round(stats.critDamage);
+        const double crit = std::round(stats.critDamage * damageScale);
         TooltipLine bonus{std::string(tipCritDamage()) + "+" + abbreviate(crit), 12.0};
         bonus.alpha = 0.56;
         bonus.labelColor = kStatDamage;

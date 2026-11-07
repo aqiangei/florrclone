@@ -2245,7 +2245,7 @@
       "count": 1,
       "spreadAngle": 1.5708,
       "speed": 640,
-      "distance": 700
+      "distance": 1000
     },
     "zh": "豌豆",
     "rarityStats": {
@@ -2331,7 +2331,7 @@
       "count": 1,
       "spreadAngle": 1.5708,
       "speed": 640,
-      "distance": 700
+      "distance": 1000
     },
     "zh": "葡萄",
     "rarityStats": {
@@ -2427,7 +2427,7 @@
       "count": 1,
       "spreadAngle": 1.5708,
       "speed": 640,
-      "distance": 700
+      "distance": 1000
     },
     "zh": "蓝莓",
     "rarityStats": {

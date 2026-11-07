@@ -8,6 +8,8 @@
 #include "server/systems/movement.h"
 #include "server/systems/mob_ai.h"
 #include "server/systems/npcs.h"
+#include "server/systems/spawning.h"
+#include "client/ui/menu_widgets.h"
 #include <map>
 #include "server/systems/combat.h"
 
@@ -224,6 +226,8 @@ TEST(todo1106_arena_respawn_uses_spawn_instead_of_corpse) {
     const auto reborn=bodyNamed(world,"gladiator");
     CHECK(reborn!=NULL_ENTITY);if(reborn==NULL_ENTITY)return;
     CHECK_NEAR(distance(world.get<Transform>(reborn).position,kArenaSpawn),0,1);
+    CHECK(world.has<ManaPool>(reborn));
+    if (world.has<ManaPool>(reborn)) CHECK_NEAR(world.get<ManaPool>(reborn).current, 0, 1e-9);
 }
 
 TEST(todo1106_square_hatches_without_waiting_an_hour_and_hyper_egg_really_is_hyper) {
@@ -349,8 +353,9 @@ TEST(todo1106_initial_mana_is_partial_and_reequipping_does_not_refill) {
     petals.run(w,c,1100,0,commands);commands.flush();
     CHECK_NEAR(w.get<ManaPool>(p).current,0,1e-6);
     const auto respawn=flower(w);wear(w,respawn,0,"mana_orb",Rarity::Unique);
+    w.add<ManaPool>(respawn);
     petals.run(w,c,1150,0,commands);commands.flush();
-    CHECK_NEAR(w.get<ManaPool>(respawn).current,max*.4,1e-6);
+    CHECK_NEAR(w.get<ManaPool>(respawn).current,0,1e-6);
 }
 
 TEST(todo1106_spaceship_hatches_actual_hyper_with_two_pet_cap_and_modest_stats) {
@@ -533,6 +538,69 @@ TEST(todo1106_proximity_index_preserves_exact_activation_boundaries) {
     CHECK(index.near({10000+kMobActiveRadius,10000},Realm::Overworld));
     CHECK(!index.near({10000+kMobActiveRadius+.01,10000},Realm::Overworld));
     CHECK(!index.near({10000,10000},Realm::Arena));
+}
+
+TEST(todo1107_berry_ranges_and_blueberry_tooltip_use_current_stats) {
+    const auto& c = shippedContent();
+    for (const auto* id : {"peas", "grapes", "magic_peas"}) {
+        const auto& petal = c.petal(c.petalIndex(id));
+        CHECK_NEAR(petal.projectile.distance, 1000, 1e-6);
+    }
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto blueberry = content().petalIndex("magic_peas");
+    const auto base = c.petalStats(blueberry, Rarity::Unique).lightningDamagePerHit;
+    CHECK(base > 0);
+    SkillSet skills;
+    skills.set(SkillId::Damage, 2);
+    const auto damageText = std::to_string(std::llround(base * skills.effectScale(SkillId::Damage)));
+    const auto lines = ui::petalTooltipLines(blueberry, Rarity::Unique, skills, 1.0);
+    CHECK(std::any_of(lines.begin(), lines.end(), [&](const auto& line) {
+        auto actual = line.altText;
+        actual.erase(std::remove(actual.begin(), actual.end(), ','), actual.end());
+        return actual.find(damageText) != std::string::npos;
+    }));
+}
+
+TEST(todo1107_map_scale_and_density_use_original_physical_units) {
+    CHECK_NEAR(kWorldMapScale, 1.0, 1e-9);
+    CHECK_NEAR(kTileSize, 256, 1e-9);
+    CHECK_NEAR(kTargetMobDensity * 60000 * 60000, 9000, 1e-9);
+    CHECK_EQ(kMaxLiveMobs, 3000);
+}
+
+TEST(todo1107_hostile_acquires_earlier_and_closes_the_gap) {
+    const auto& c = shippedContent();
+    World world;
+    Terrain terrain;
+    SpatialGrid grid;
+    CommandBuffer commands{world};
+    MobAiSystem ai(world);
+    const auto player = flower(world);
+    const auto mob = world.create();
+    const auto index = c.mobIndex("soldier_ant");
+    const auto stats = c.mobStats(index, Rarity::Common);
+    const Vec2 at = world.get<Transform>(player).position - Vec2{stats.aggroRange * 1.22, 0};
+    world.add<MobTag>(mob);
+    world.add<MobType>(mob, MobType{index, Rarity::Common, 1});
+    world.add<Transform>(mob, Transform{at, 0});
+    world.add<Motion>(mob);
+    world.add<Health>(mob, Health{stats.health, stats.health});
+    world.add<Body>(mob, Body{stats.radius, stats.mass});
+    world.add<Faction>(mob, Faction{Team::Hostiles, false});
+    auto& brain = world.add<MobAi>(mob);
+    brain.kind = AiKind::Hostile;
+    brain.aggroRange = stats.aggroRange;
+
+    const auto observer = world.get<Transform>(player);
+    grid.insert(player, observer.realm, observer.position, 25);
+    for (int i = 0; i < 90; ++i) {
+        ai.run(world, terrain, grid, {{observer.position, observer.realm}}, 1000 + i * 50, .05, commands);
+        commands.flush();
+        if (i == 0) CHECK_EQ(world.get<MobAi>(mob).target, player);
+    }
+    CHECK_EQ(world.get<MobAi>(mob).target, player);
+    CHECK(world.get<Motion>(mob).velocity.x > stats.chaseSpeed * 1.15);
 }
 
 TEST(todo1106_idle_mob_sleeps_until_observed_or_hurt) {

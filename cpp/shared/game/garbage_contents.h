@@ -34,15 +34,24 @@ inline std::vector<std::uint16_t> garbageEligiblePetals(const ContentRegistry& c
 /// authoritative net id. No camera time, local RNG or claimant affects it.
 inline std::vector<GarbagePetal> garbageContents(std::vector<std::uint16_t> pool,
                                                 std::uint32_t stableId, Vec2 position,
-                                                std::uint16_t cppIndex) {
+                                                const ContentRegistry* content) {
     const std::uint64_t seed = stableId ? std::uint64_t(stableId) * 104729u
         : static_cast<std::uint64_t>(static_cast<std::int64_t>(std::floor(position.x/256.0)*1009+std::floor(position.y/256.0)));
     Rng rng{seed ^ 0x4741524241474531ull};
     // C++ gets three fifths of its previous opportunity to enter a bag.
     // Filter before drawing the preview, never after paying visible contents.
     Rng rareRng{seed ^ 0x4350505241524531ull};
-    if (cppIndex != kInvalidIndex && !rareRng.chance(0.60))
-        pool.erase(std::remove(pool.begin(),pool.end(),cppIndex),pool.end());
+    if (content) {
+        if (!rareRng.chance(0.60)) {
+            const auto cppIndex = content->petalIndex("c++");
+            pool.erase(std::remove(pool.begin(), pool.end(), cppIndex), pool.end());
+        }
+        for (const char* id : {"mimic", "sawblade", "golden_leaf", "ruby"}) {
+            if (rareRng.chance(0.85)) continue;
+            const auto index = content->petalIndex(id);
+            pool.erase(std::remove(pool.begin(), pool.end(), index), pool.end());
+        }
+    }
     const auto count = std::min<std::size_t>(pool.size(), 5 + rng.below(5));
     std::vector<GarbagePetal> out;out.reserve(count);
     for (std::size_t i=0;i<count;++i) {

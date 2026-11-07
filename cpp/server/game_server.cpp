@@ -612,9 +612,6 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     combat_ = std::make_unique<CombatSystem>();
     spawning_ = std::make_unique<SpawnSystem>();
     if (config.loadShedding) {
-        spawning_->ambientDensityScale = 0.5;
-        spawning_->hotZoneDensityScale = 0.7;
-        spawning_->mobCap = kMaxLiveMobs / 2;
         petals_->volleyEntityLimit = 96;
         std::printf("[capacity] load shedding enabled; 20 TPS, no player cap\n");
     }
@@ -973,7 +970,7 @@ void GameServer::finishSharedHyper(const Json& result) {
         if(pendingHyper_.forge) {
             ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanForgeResult));w.boolean(ok);
             const auto output=content().petalIndex(hyperForgeOutput(content().petal(pendingHyper_.petal).id));
-            w.u16(ok?output:pendingHyper_.petal);w.str(ok?"":reason);peer->send(w);
+            w.u16(ok?output:pendingHyper_.petal);w.str(ok?"":reason);w.u32(ok ? 1 : 0);peer->send(w);
             if(ok)announceRareCraft(*session,output,Rarity::Apex,1,result["consumed"].asInt(),true);
         } else sendNotice(*peer,ok?net::NoticeSeverity::Info:net::NoticeSeverity::Warning,reason);
     }
@@ -4156,16 +4153,18 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     const bool hyper=forgeMode==1;
     const bool eternalFragment=forgeMode==2;
     const bool timedHammer=forgeMode==3;
-    if(forgeMode>3)return;
+    const bool batch = forgeMode == 4;
+    if (forgeMode > 4) return;
     if (!reader.ok() || !session.authenticated()) return;
 
     std::uint16_t outputIndex = petalIndex;
-    const auto reply = [&](bool ok, const std::string& reason) {
+    const auto reply = [&](bool ok, const std::string& reason, int quantity = 1) {
         ByteWriter w;
         w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanForgeResult));
         w.boolean(ok);
         w.u16(ok ? outputIndex : petalIndex);
         w.str(reason);
+        w.u32(ok ? static_cast<std::uint32_t>(quantity) : 0);
         connection.send(w);
     };
 
@@ -4237,26 +4236,30 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     PlayerRecord& record = liveRecord(session);
     if (expireTimedHammer(record) && session.playing()) applyAccountToSession(session);
     const int completed = clamp(record.extra["titanForgeCounts"][petal.id].asInt(0), 0, 2);
-    const int cost = titanForgeCost(completed, petal.id);
-    // Refuse before spending when the output cannot fit. Never remove anybody else's items.
-    if (record.itemCount(kTitanOutputRarity, inventoryKey(outputIndex)) >= kMaxStackCount) {
+    const int space = kMaxStackCount - record.itemCount(kTitanOutputRarity, inventoryKey(outputIndex));
+    if (space <= 0) {
         reply(false, "目标花瓣堆叠已满。");
         return;
     }
-    if (!takeFromInventory(record, petalIndex, kTitanInputRarity, cost)) {
-        reply(false, "需要 " + std::to_string(cost) + " 个同种超级花瓣。");
+    const int firstCost = titanForgeCost(completed, petal.id);
+    const auto exchange = batch
+        ? titanForgeBatch(record.itemCount(kTitanInputRarity, inventoryKey(petalIndex)),
+                          space, completed, petal.id)
+        : TitanForgeBatch{1, firstCost};
+    if (exchange.quantity == 0 || !takeFromInventory(record, petalIndex, kTitanInputRarity, exchange.cost)) {
+        reply(false, "需要 " + std::to_string(firstCost) + " 个同种超级花瓣。");
         resyncProfile(session, connection);
         return;
     }
     if (timedHammer) {
         addHammerLease(record, static_cast<double>(database_.nowMillis()));
         sendNotice(connection, net::NoticeSeverity::Info,"已获得1把限时雷神之锤，每把独立计时1小时，离线也计时。");
-    } else giveToInventory(record, outputIndex, kTitanOutputRarity, 1);
-    record.extra["titanForgeCounts"][petal.id] = std::min(2, completed + 1);
+    } else giveToInventory(record, outputIndex, kTitanOutputRarity, exchange.quantity);
+    record.extra["titanForgeCounts"][petal.id] = std::min(2, completed + exchange.quantity);
     database_.markDirty();
-    announceRareCraft(session, outputIndex, kTitanOutputRarity, 1, cost, true);
+    announceRareCraft(session, outputIndex, kTitanOutputRarity, exchange.quantity, exchange.cost, true);
 
-    reply(true, "");
+    reply(true, "", exchange.quantity);
     sendProfile(session, connection);
 }
 
@@ -6973,6 +6976,8 @@ void GameServer::handleRespawn(Session& session) {
     // different map than the client was drawing, restate the realm the same
     // way a pad does.
     if (reborn != NULL_ENTITY) {
+        // An existing empty pool bypasses the first-entry mana allowance.
+        world_.ensure<ManaPool>(reborn).current = 0.0;
         const Transform* transform = world_.tryGet<Transform>(reborn);
         if (transform != nullptr) {
             sendRealmChange(session, transform->position);
