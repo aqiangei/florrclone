@@ -157,23 +157,25 @@
         <p id="loading-meta">首次进入需要下载资源，之后会使用缓存。</p>
         <button id="loading-retry" hidden type="button">重新连接</button>
         <a id="loading-quality" href="?quality=low">低清模式</a>
-        <button id="loading-server-guide" type="button">服务器指引 · 一服迁移提醒</button>
+        <button id="loading-server-guide" type="button">服务器指引</button>
         <p class="loading-hint">加载期间无需反复刷新。账号和存档保存在服务器。</p>
       </div>
     </section>
     <dialog id="serverNotice" aria-labelledby="server-notice-title">
       <div class="server-notice-header">
-        <h2 id="server-notice-title">服务器指引 · 一服迁移提醒</h2>
+        <h2 id="server-notice-title">服务器指引</h2>
         <form method="dialog">
           <button id="closeServerNotice" type="submit" aria-label="关闭服务器指引">×</button>
         </form>
       </div>
       <div class="server-notice-body">
-        <p><strong>一服保留原有进度。</strong>旧地址 154.219.105.161:8088 会自动跳转到新地址。有用户名和密码的玩家请用原账号登录。</p>
-        <a href="http://154.219.105.158:8088/">一服 · 154.219.105.158:8088</a>
-        <p><strong>原一服游客请留意。</strong>如果你还在旧地址登录着，请在「账户」里设置用户名和密码。新网址无法读取旧网址的游客登录凭据，未设置密码的游客可能无法找回原进度。</p>
-        <p><strong>二服从零开始。</strong>新玩家建议去二服。两台服务器各自保存进度，换服不会带走等级、花瓣或装备。</p>
-        <a href="http://154.219.105.161:10000/">二服 · 154.219.105.161:10000</a>
+        <p>请记下或收藏以下服务器地址。</p>
+        <a data-server href="http://154.219.105.158:8088/">一服 · 154.219.105.158:8088</a>
+        <a data-server href="http://154.219.105.161:10000/">二服 · 154.219.105.161:10000</a>
+        <a data-server href="http://154.219.105.164:10000/">三服 · 154.219.105.164:10000</a>
+        <p><strong>各服存档独立，互不相通。</strong>等级、花瓣和装备只保存在获得它们的服务器。</p>
+        <p>请在「账户」里设置用户名和密码，建议填写 QQ 号作为找回凭据。未填写 QQ 号而丢失账号，恕不负责找回。</p>
+        <p>QQ群 <strong>227990150</strong></p>
       </div>
     </dialog>
     <button id="landscape-btn" type="button" hidden>横屏游戏 · 全屏</button>
@@ -250,7 +252,7 @@
   else qualityUrl.searchParams.set('quality', 'low');
   quality.href = qualityUrl.href;
   const serverNotice = document.getElementById('serverNotice');
-  const noticeKey = 'florr-server-migration-1107-dismissed';
+  const noticeKey = 'florr-server-guide-three-servers-dismissed';
   const openNotice = () => {
     if (!serverNotice.open) serverNotice.showModal();
   };
@@ -259,20 +261,23 @@
   serverNotice.addEventListener('close', () => {
     try { sessionStorage.setItem(noticeKey, '1'); } catch (_) {}
   });
-  const officialEntry = ['154.219.105.158:8088', '154.219.105.161:8088', '154.219.105.161:10000'];
+  const officialEntry = Array.from(serverNotice.querySelectorAll('[data-server]'), link => link.host);
   if (officialEntry.includes(location.host)) {
     let dismissed = false;
     try { dismissed = sessionStorage.getItem(noticeKey) === '1'; } catch (_) {}
     if (!dismissed) openNotice();
   }
   const began = performance.now();
-  let failed = false, bytes = 0, total = 0, lastProgress = performance.now();
+  let failed = false, queued = false, bytes = 0, total = 0, lastProgress = performance.now();
   const ui = window.flixLoading = {
     phase(title, message) { if(failed)return; status.hidden=false;stage.textContent=title;detail.textContent=message; },
-    download(received, expected) {
+    download(received, expected, hasQueueTicket) {
       if(failed)return; bytes=received;total=expected;lastProgress=performance.now();
+      queued=hasQueueTicket;
       stage.textContent='正在下载游戏资源';
-      detail.textContent='资源下载后会自动启动，请保持页面打开。';
+      detail.textContent=queued
+        ? '已获下载名额。资源下载后会自动启动，请保持页面打开。'
+        : '资源下载后会自动启动，请保持页面打开。';
       if(total>0){progress.max=total;progress.value=bytes;}else progress.removeAttribute('value');
     },
     error(message) {
@@ -282,14 +287,26 @@
     },
     finish() { if(!failed){status.hidden=true;window.florrMobileReady();} }
   };
-  retry.onclick=()=>location.reload();
+  const recoveryKey = '_flix_recover';
+  let recovering = false;
+  window.flixRecoverStartup = (automatic = true) => {
+    if (recovering) return true;
+    const url = new URL(location.href);
+    if (automatic && url.searchParams.has(recoveryKey)) return false;
+    recovering = true;
+    url.searchParams.set(recoveryKey, Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
+    ui.phase('正在恢复游戏资源', '正在重新获取游戏资源，会保留登录和设置。');
+    location.replace(url.href);
+    return true;
+  };
+  retry.onclick=()=>window.flixRecoverStartup(false);
   const timer=setInterval(()=>{
     if(failed||status.hidden)return;
     const seconds=Math.floor((performance.now()-began)/1000);
     const size=bytes ? (bytes/1048576).toFixed(1)+' MB'+(total?' / '+(total/1048576).toFixed(1)+' MB':'')+' · ' : '';
     meta.textContent=size+'已等待 '+seconds+' 秒';
     if(bytes && performance.now()-lastProgress>10000 && stage.textContent==='正在下载游戏资源')
-      detail.textContent='网络传输较慢，正在继续下载；超过等待时间会提供重试。';
+      detail.textContent=(queued?'已获下载名额。':'')+'当前传输较慢，下载中断会自动重试。';
   },500);
 
 
@@ -333,9 +350,6 @@
         return;
       }
       ui.phase('正在启动游戏', '资源已就绪，正在准备画面和本地设置。');
-    },
-    onAbort: (what) => {
-      ui.error('游戏启动失败，请点击重新连接；若仍失败，请反馈给管理员。');
     },
   };
   window.Module = Module;
@@ -405,7 +419,7 @@
   // file.
   let canInflate=false;
   try { new DecompressionStream('deflate-raw');canInflate=true; } catch (_) {}
-  const fetchOptions={cache:'no-cache'};
+  const recoveryToken=new URLSearchParams(location.search).get('_flix_recover');
   const ui=window.flixLoading;
   let downloadTicket='',downloadBase='',queueHeartbeat=null,compileWatchdog=null;
   let admission=null;
@@ -457,56 +471,79 @@
     })().finally(()=>{admission=null;});
     return admission;
   };
-  const resourceUrl=name=>downloadBase?downloadBase+name:name;
+  const resourceUrl=name=>{
+    const source=downloadBase?downloadBase+name:name;
+    if(!recoveryToken)return source;
+    const url=new URL(source,location.href);
+    url.searchParams.set('_flix_recover',recoveryToken);
+    return url.href;
+  };
   const downloadCompleted=name=>{
     completedDownloads.add(name);
     if(completedDownloads.size===2){releaseDownload();compileWatchdog=setTimeout(()=>fail('资源编译启动超时'),90000);}
   };
   const streamLowMemory = gameArguments.includes('--low-memory') &&
     typeof WebAssembly.compileStreaming === 'function';
-  // Count compressed transfer bytes, rather than calling the entire wait
-  // "decompressing". An idle transfer is aborted; retry once, then offer an
-  // explicit reconnect instead of leaving the player on an endless spinner.
+@FLIX_ASSET_STREAM_JS@
+
+  // Each resumed request uses the current ticket, but may only append bytes
+  // from the original resource and version.
+  const assetResponse=async(url,signal,offset=0,retry=false)=>{
+    if(admission)await admission;
+    const ticket=downloadTicket;
+    const headers={};
+    if(ticket)headers['X-Download-Ticket']=ticket;
+    if(offset)headers.Range='bytes='+offset+'-';
+    // The versioned route redirects to an immutable URL keyed by the file
+    // bytes. Normal requests can reuse that URL across deployments.
+    const cache=offset?'no-store':(retry||recoveryToken)?'reload':downloadBase?'default':'no-cache';
+    const options={cache,signal,headers};
+    let response=await networkFetch(url,options);
+    if(response.status===403&&ticket){
+      await response.body?.cancel().catch(()=>{});
+      if(ticket===downloadTicket){
+        const row=await queueCall('status?ticket='+encodeURIComponent(ticket));
+        if(!row&&ticket===downloadTicket){releaseDownload();await enterDownloadQueue();}
+      }
+      if(admission)await admission;
+      if(ticket===downloadTicket)throw Error('Resource access refused');
+      if(downloadTicket)headers['X-Download-Ticket']=downloadTicket;
+      response=await networkFetch(url,options);
+    }
+    return response;
+  };
+
   const load=async(name,contentType,consumeStream)=>{
     for(let attempt=0;attempt<2;attempt++){
       const controller=new AbortController();let timer;
       const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>controller.abort(),25000);};
       try {
         arm();
-        const ticket=downloadTicket;
-        const options={...fetchOptions,cache:downloadBase?'force-cache':'no-cache',signal:controller.signal,headers:ticket?{'X-Download-Ticket':ticket}:{}};
         let packed=canInflate;
-        let response=await networkFetch(resourceUrl(name+(packed?'.bin':'')),options);
+        let url=resourceUrl(name+(packed?'.bin':''));
+        let response=await assetResponse(url,controller.signal,0,attempt>0);
         if(packed&&(response.status===404||response.status===410)){
-          packed=false;response=await networkFetch(resourceUrl(name),options);
+          await response.body?.cancel().catch(()=>{});
+          packed=false;
+          url=resourceUrl(name);
+          response=await assetResponse(url,controller.signal,0,attempt>0);
         }
-        if(response.status===403&&ticket&&!attempt){
-          clearTimeout(timer);
-          if(ticket===downloadTicket){
-            const row=await queueCall('status?ticket='+encodeURIComponent(ticket));
-            if(!row&&ticket===downloadTicket){releaseDownload();await enterDownloadQueue();}
-          }
-          if(admission)await admission;
-          continue;
-        }
-        if(!response.ok)throw Error('HTTP '+response.status);
-        const expected=Number(response.headers.get('content-length'))||0;
-        const reader=response.body.getReader();let received=0;
-        const stream=new ReadableStream({
-          async pull(out){
-            try {
-              const next=await reader.read();
-              if(next.done){
-                clearTimeout(timer);downloadCompleted(name);
-                if(consumeStream&&!quiet())ui.phase('正在启动游戏引擎','资源已到齐，正在完成编译。');
-                out.close();return;
-              }
-              arm();received+=next.value.byteLength;
-              if(name==='bundle.wasm'&&!quiet())ui.download(received,expected);
-              out.enqueue(next.value);
-            } catch(error){clearTimeout(timer);out.error(error);}
+        clearTimeout(timer);
+        if(response.status!==200)throw Error('HTTP '+response.status);
+        const stream=resumableAssetBody(response,{
+          controller,wait,
+          reopen:downloadBase?(offset,signal)=>assetResponse(url,signal,offset):null,
+          progress:(received,expected)=>{
+            if(name==='bundle.wasm'&&!quiet())
+              ui.download(received,expected,/^[a-f0-9]{48}$/.test(downloadTicket));
           },
-          cancel(reason){clearTimeout(timer);controller.abort();return reader.cancel(reason);}
+          complete:()=>{
+            downloadCompleted(name);
+            if(consumeStream&&!quiet())ui.phase('正在启动游戏引擎','资源已到齐，正在完成编译。');
+          },
+          reconnecting:()=>{
+            if(!quiet())ui.phase('正在续传游戏资源','连接中断，正在从已下载的位置继续。');
+          }
         });
         if(consumeStream){
           const body=packed?stream.pipeThrough(new DecompressionStream('deflate-raw')):stream;
@@ -537,6 +574,7 @@
     if (!loadError) loadError = what;
     if (runtimeFailed) runtimeFailed(new Error(what));
     if (quiet()) return;
+    if (!runtimeReady && completedDownloads.size===2 && window.flixRecoverStartup()) return;
     const message = what.startsWith('下载队列')
       ? '暂时连不上下载队列。已自动重试，请稍后点「重新连接」。'
       : completedDownloads.size===2
@@ -544,6 +582,7 @@
         : '资源下载中断。已自动重试，请点「重新连接」。';
     ui.error(message);
   };
+  game.onAbort = what => fail('游戏启动失败：'+what);
 
   // Everything from here to the boot section below is the game's own load. It
   // is a function rather than straight-line code because a boot script may run
@@ -680,7 +719,8 @@
   };
   const bootMode = new URLSearchParams(location.search).get('boot');
   if (bootMode === 'reset') forget();
-  const bootSource = bootMode === 'game' || bootMode === 'reset' ? '' : stored('boot-script');
+  const bootSource = recoveryToken || bootMode === 'game' || bootMode === 'reset'
+    ? '' : stored('boot-script');
   const bootPath = bootSource ? (stored('boot-path') || 'boot-script.js') : '';
   const flixBoot = {
     // What this load runs instead of the game, by the path it was set from.
@@ -706,6 +746,7 @@
   // A script that throws on its way in leaves a way out on screen.
   const bootFailed = (error) => {
     console.error('[boot] ' + bootPath + ' failed: ' + error);
+    if (!gameStarted && window.flixRecoverStartup()) return;
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;' +
       'align-items:center;justify-content:center;gap:16px;padding:24px;background:#16191c;' +

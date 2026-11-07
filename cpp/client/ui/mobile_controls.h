@@ -20,6 +20,7 @@
 // finger can load a saved loadout (tap a tile) or save into one (hold a tile
 // ~0.42 s). That is ashflor / florr's hold-X on mobile.
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -88,6 +89,7 @@ public:
     /// land on the closed chat slot.
     double stickHitRadius() const;
     double stickApproachBottom() const;
+    std::array<Rect, 4> hitBounds() const;
 
     bool attackPressed() const { return attack_.held; }
     bool retractPressed() const { return retract_.held; }

@@ -27,6 +27,9 @@ namespace {
 
 const ContentRegistry& shipped() { return testsupport::shippedContent(); }
 
+constexpr double kExpectedWildBodyScale = 0.75 *
+    kMobSizeScale[rarityIndex(Rarity::Unique)] / kMobSizeScale[rarityIndex(Rarity::Apex)];
+
 /// The shipped drop table, loaded by path from the staged directory and linked
 /// against shipped().
 ///
@@ -2387,7 +2390,7 @@ TEST(a_spawned_mob_carries_everything_the_simulation_needs) {
     const MobStats stats = shipped().mobStats(bee, Rarity::Rare);
     CHECK_NEAR(sim.world.get<Health>(e).max, stats.health, 1e-9);
     CHECK_NEAR(sim.world.get<Health>(e).current, stats.health, 1e-9);
-    CHECK_NEAR(sim.world.get<Body>(e).radius, stats.radius, 1e-9);
+    CHECK_NEAR(sim.world.get<Body>(e).radius, stats.radius * kExpectedWildBodyScale, 1e-9);
     CHECK_NEAR(sim.world.get<Bounty>(e).xp, stats.xp, 1e-9);
     CHECK_EQ(sim.world.get<Replicated>(e).kind, net::EntityKind::Mob);
     CHECK_EQ(sim.world.get<Replicated>(e).typeIndex, bee);
@@ -2424,7 +2427,7 @@ TEST(a_leech_reaches_the_world_as_a_whole_animal) {
 
     // Every segment is a leech_body at the HEAD's tier, each trailing the one
     // in front of it at the spacing the chain pass will hold it to.
-    const double bodyRadius = shipped().mobStats(body, Rarity::Rare).radius;
+    const double bodyRadius = shipped().mobStats(body, Rarity::Rare).radius * kExpectedWildBodyScale;
     chain[0] = head;
     for (int i = 1; i <= kCentipedeSegmentCount; ++i) {
         const Entity e = chain[static_cast<std::size_t>(i)];
@@ -5741,6 +5744,44 @@ TEST(stacked_drops_preserve_independent_rolls_and_each_players_full_share) {
     }
     CHECK(liveDrops(world).empty());
 }
+
+TEST(stacked_drops_merge_in_each_realm_with_a_death_that_tick) {
+    World world;
+    CommandBuffer commands{world};
+    SpatialGrid grid;
+    EventQueue events;
+    LootSystem loot;
+    Rng rng{44};
+    const auto& content = shipped();
+    const auto path = testsupport::tempDir("stacked-loot-realms") + "/drops.json";
+    CHECK(testsupport::writeText(path, R"({"bee":{"drops":[{"type":"petal","itemType":"stinger","rarity":"common","probability":1}]}})"));
+    std::string error;
+    CHECK(loot.loadTables(content, path, error));
+    const auto player = makePlayer(world, kCentre + Vec2{5000, 0});
+    const auto bee = content.mobIndex("bee");
+    const auto stinger = content.petalIndex("stinger");
+
+    const auto overworld = loot.spawnDrop(world, stinger, Rarity::Common, kCentre, Realm::Overworld, {player});
+    const auto maze = loot.spawnDrop(world, stinger, Rarity::Common, kCentre, Realm::Maze, {player});
+    const auto arena = loot.spawnDrop(world, stinger, Rarity::Common, kCentre, Realm::Arena, {player});
+    makeCorpse(world, bee, Rarity::Common, kCentre, player, {player});
+    const auto mazeCorpse = makeCorpse(world, bee, Rarity::Common, kCentre, player, {player});
+    world.get<Transform>(mazeCorpse).realm = Realm::Maze;
+
+    loot.run(world, grid, content, rng, 0, 0, commands, events);
+    commands.flush();
+    CHECK(world.get<DropItem>(overworld).quantity > 1);
+    CHECK(world.get<DropItem>(maze).quantity > 1);
+    CHECK_EQ(world.get<DropItem>(arena).quantity, 1u);
+    std::array<std::uint32_t, kMaxRealms> stingersByRealm{};
+    Query<DropItem, Transform>{world}.each([&](Entity, DropItem& item, Transform& at) {
+        if (item.configIndex == stinger) stingersByRealm[realmIndex(at.realm)] += item.quantity;
+    });
+    CHECK_EQ(stingersByRealm[realmIndex(Realm::Overworld)], 1u + kLootFeelCopies);
+    CHECK_EQ(stingersByRealm[realmIndex(Realm::Maze)], 1u + kLootFeelCopies);
+    CHECK_EQ(stingersByRealm[realmIndex(Realm::Arena)], 1u);
+}
+
 #include "server/systems/npcs.h"
 TEST(jungle_practice_row_is_fixed_and_reachable_at_every_rarity) {
     WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(testsupport::dataDir(),&terrain,error));

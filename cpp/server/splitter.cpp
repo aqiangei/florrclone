@@ -258,7 +258,7 @@ bool GameServer::splitSession(Session& session) {
     if(!squads_.forMember(squadIdOf(session))) {
         session.splitCreatedSoloSquad=squads_.create(squadIdOf(session),false,rng_)!=nullptr;
     }
-    if(const auto* squad=squads_.forMember(squadIdOf(session)))broadcastSquadUpdate(*squad);
+    if(auto* squad=squads_.forMember(squadIdOf(session)))broadcastSquadUpdate(*squad);
     return true;
 }
 
@@ -314,7 +314,7 @@ void GameServer::endSplit(Session& session, double nowMillis, bool armReload) {
                        at != nullptr ? at->realm : Realm::Overworld);
     }
 
-    if(const auto* squad=squads_.forMember(squadIdOf(session))) {
+    if(auto* squad=squads_.forMember(squadIdOf(session))) {
         if(session.splitCreatedSoloSquad && squad->members.size()==1)
             departSquad(session,listener_.find(session.connection),squadDisplayName(squadIdOf(session)));
         else broadcastSquadUpdate(*squad);
@@ -354,7 +354,7 @@ void GameServer::switchSplitHalf(Session& session, double nowMillis) {
     // The roster carries wire ids and the two halves have just swapped places
     // in it, so the party HUD would otherwise point at the body the player is
     // now standing in and call it their squadmate.
-    if (const Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
+    if (Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
 }
 
 void GameServer::serviceSplitters(double nowMillis) {
@@ -386,7 +386,7 @@ void GameServer::serviceSplitters(double nowMillis) {
                 // And an admin steering this flower is now steering the half
                 // that is left, so their view moves onto it as well.
                 followControlledHalf(session);
-                if (const Squad* squad = squads_.forMember(squadIdOf(session))) {
+                if (Squad* squad = squads_.forMember(squadIdOf(session))) {
                     broadcastSquadUpdate(*squad);
                 }
                 continue;

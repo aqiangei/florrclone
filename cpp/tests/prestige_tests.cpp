@@ -7,6 +7,7 @@
 #include "server/db.h"
 #include "server/systems/spawning.h"
 #include "shared/game/prestige.h"
+#include "shared/game/difficulty.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/skills.h"
 #include "shared/game/terrain.h"
@@ -70,6 +71,29 @@ TEST(an_prestige_band_rolls_one_tier_up_and_stops_at_super) {
     CHECK(!barredFromPrestige(Rarity::Super));
     CHECK(barredFromPrestige(Rarity::Unique));
     CHECK(barredFromPrestige(Rarity::Apex));
+}
+
+TEST(deep_prestige_sewers_keeps_super_a_minority) {
+    constexpr int samples = 50000;
+    Rng band{711}, promotion{117};
+    int ultra = 0;
+    int oldSupers = 0;
+    int newSupers = 0;
+    for (int i = 0; i < samples; ++i) {
+        const auto ordinary = rollReferenceSpawnRarity(75, 1.0, band);
+        const auto adjusted = rollPrestigeAmbientRarity(ordinary, promotion);
+        ultra += adjusted == Rarity::Ultra;
+        oldSupers += prestigeRarity(ordinary) == Rarity::Super;
+        newSupers += adjusted == Rarity::Super;
+        if (ordinary != Rarity::Ultra) CHECK(adjusted == prestigeRarity(ordinary));
+    }
+    CHECK(oldSupers > samples * .75);
+    CHECK(newSupers > samples * .18 && newSupers < samples * .22);
+    CHECK(ultra > samples * .70);
+    std::printf("[prestige sewers difficulty 75] full promotion Super %.2f%%, "
+                "retuned Super %.2f%%, Ultra %.2f%%\n",
+                100.0 * oldSupers / samples, 100.0 * newSupers / samples,
+                100.0 * ultra / samples);
 }
 
 TEST(prestige_is_one_root_node_costing_225) {

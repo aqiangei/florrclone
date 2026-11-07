@@ -176,6 +176,8 @@ void App::sendInputFrame(double dt) {
     // same window and the server has to widen what it streams to match. It
     // rides every frame, including the menu-open one below, so a resize or a
     // wheel zoom takes effect on the next tick rather than at the next join.
+    // A saturated axis asks the server for the largest authorized viewport
+    // when the camera can show more than fits in the wire's uint16.
     const double zoom = camera_.zoom() > 1e-6 ? camera_.zoom() : 1.0;
     input.viewportWidth = static_cast<std::uint16_t>(
         std::min(65535.0, std::round(window_.width() / zoom)));

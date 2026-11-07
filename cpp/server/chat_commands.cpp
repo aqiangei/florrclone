@@ -1166,6 +1166,10 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
     if ((sub == "join" || sub == "code") && !argument.empty()) {
         const bool byCode = sub == "code";
         const std::string& code = argument;
+        if (byCode && (code.size() != 3 || code.find_first_not_of("0123456789") != std::string::npos)) {
+            out("请输入三位数字组队码，例如 /squad-code 007。");
+            return;
+        }
         const std::string whileSplit = splitSquadRefusal(me, "You are");
         if (!whileSplit.empty()) {
             out(whileSplit);

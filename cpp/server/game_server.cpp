@@ -6,7 +6,9 @@
 #include "server/timed_hammers.h"
 #include "server/daily_drop_bonus.h"
 #include "server/game_server.h"
+#include "shared/game/assembler.h"
 #include "server/hyper_forge.h"
+#include "shared/game/hyper_petal_techniques.h"
 #include "shared/game/dark_mark.h"
 
 #include "shared/core/process_stats.h"
@@ -20,6 +22,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <random>
 #include <utility>
@@ -82,7 +85,7 @@ constexpr double kViewportCeilingSlack = 1.01;
 /// cannot claim more than its loadout pays for.
 Vec2 claimableViewport(World& world, Entity body, const ContentRegistry& content, double width,
                        double height) {
-    bool goggles = false;
+    double gogglesScale = 0.0;
     const auto* talents = world.tryGet<PlayerSkillTree>(body);
     double zoom = talents ? 1.0 / (1.0 + talents->skills.antennaeFovBonus()) : 1.0;
     if (const Loadout* loadout = world.tryGet<Loadout>(body)) {
@@ -91,16 +94,24 @@ Vec2 claimableViewport(World& world, Entity body, const ContentRegistry& content
             // pulls the camera out as one at the mimic's tier.
             const EquippedPetal slot = equippedPetal(content, *loadout, i);
             if (slot.empty()) continue;
-            goggles = goggles || content.petal(slot.configIndex).id == "paranormal_goggles";
-            zoom = std::min(zoom, petalCameraZoom(content, slot.configIndex, slot.rarity));
+            if (content.petal(slot.configIndex).id == "paranormal_goggles") {
+                const auto* technique = hyperTechniqueInfo("paranormal_goggles", slot.rarity,
+                                                           slot.reloadRarity != slot.rarity);
+                const double scale = hyperAmount(technique, HyperTechnique::GhostSight, 1.25);
+                gogglesScale = gogglesScale > 0.0 ? std::min(gogglesScale, scale) : scale;
+            }
+            zoom = std::min(zoom, equippedCameraZoom(content, slot));
         }
     }
-    // Antennae bottoms out at 0.1; this only stops a bad figure dividing by
-    // zero or by a negative.
-    zoom = std::max(zoom * (goggles ? 1.25 : 1.0) * kMinimumUserCameraZoom, 0.01);
+    // Guard against zero or negative zoom before sizing the viewport.
+    zoom = std::max(zoom * (gogglesScale > 0.0 ? gogglesScale : 1.0) * kMinimumUserCameraZoom, 0.01);
     const double ceilingX = std::max(kMaxViewportAxis, kViewportWidth / zoom * kViewportCeilingSlack);
     const double ceilingY = std::max(kMaxViewportAxis, kViewportHeight / zoom * kViewportCeilingSlack);
-    return {clamp(width, 320.0, ceilingX), clamp(height, 240.0, ceilingY)};
+    // A camera axis at the wire maximum may be wider than a uint16 can
+    // express. Treat it as a request for the server-authorized ceiling.
+    constexpr double saturated = std::numeric_limits<std::uint16_t>::max();
+    return {width == saturated ? ceilingX : clamp(width, 320.0, ceilingX),
+            height == saturated ? ceilingY : clamp(height, 240.0, ceilingY)};
 }
 
 /// How often account progress is written back from the live entity.
@@ -116,6 +127,7 @@ constexpr double kDeltaSmoothing = 0.1;
 /// A tick this long gets its phase split logged. Three nominal ticks: a
 /// healthy tick is a few milliseconds, and one this long is a visible hitch.
 constexpr double kSlowTickLogMillis = net::kTickMillis * 3.0;
+constexpr double kTickCadenceLogMillis = 10000.0;
 
 /// The batch a craft consumes.
 constexpr int kCraftBatch = 5;
@@ -602,6 +614,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // The broadphase was built before the maps were: its layers are sized to
     // the default world until it is told what shape each realm really is.
     grid_.sizeToRealms(*terrain_);
+    mobTargetGrid_.sizeToRealms(*terrain_);
     pickupGrid_.sizeToRealms(*terrain_);
 
     movement_ = std::make_unique<MovementSystem>();
@@ -720,6 +733,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         if(!database_.save()){errorOut="initial authority save failed";return false;}
         if(!database_.setDeltaSink(config_.authorityDeltaCommit)){errorOut="authority delta adapter initialization failed";return false;}
     }
+    if (config_.backgroundSave && !database_.enableBackgroundSave(errorOut)) return false;
     running_ = true;
     return true;
 }
@@ -737,7 +751,15 @@ void GameServer::shutdown() {
     shutdownDone_=true;
     // Flush account progress before exiting; an orderly shutdown must not cost
     // anyone their session.
-    if (!persistenceFrozen_&&(!config_.authorityDeltaCommit||!authorityStopPrepared_)) persistAll();
+    if (database_.backgroundSaveEnabled()) {
+        captureLiveProgress();
+        if (persistenceFrozen_ || !saveDatabase(false, true)) {
+            std::fprintf(stderr, "[persist-shutdown] final save failed\n");
+            exitCode_ = 1;
+        }
+    } else if (!persistenceFrozen_ && (!config_.authorityDeltaCommit || !authorityStopPrepared_)) {
+        persistAll();
+    }
     if(database_.authoritative()) {
         const bool saved=!persistenceFrozen_&&!database_.commitUncertain()&&!database_.commitPending()&&
             commitBeforeReply()&&!database_.dirty();
@@ -854,7 +876,7 @@ std::size_t GameServer::persistAll() {
     return saved;
 }
 
-void GameServer::saveDatabase() {
+bool GameServer::saveDatabase(bool periodic, bool stopping) {
     // Which bosses stand NOW, not as of the last population pass: the file is
     // what a restart -- a crash included -- comes back to, so a boss placed or
     // killed in the last half second has to be on the right side of it.
@@ -862,7 +884,12 @@ void GameServer::saveDatabase() {
         spawning_->noteStandingBosses(world_, commands_);
         persistBossClocks();
     }
-    database_.save();
+    if (periodic && database_.backgroundSaveEnabled()) {
+        database_.requestBackgroundSave();
+        return true;
+    }
+    if (stopping) return database_.finishBackgroundSave();
+    return database_.save();
 }
 
 void GameServer::restoreBossClocks(double nowMillis) {
@@ -1058,7 +1085,8 @@ bool GameServer::step() {
         }
         return false;
     }
-    if (database_.commitUncertain() && !commitBeforeReply()) return false;
+    if (database_.commitUncertain() &&
+        (database_.backgroundSaveEnabled() || !commitBeforeReply())) return false;
 
     const double now = monotonicMillis();
 
@@ -1077,6 +1105,7 @@ bool GameServer::step() {
 
     const double tickNow = monotonicMillis();
     if (tickNow >= nextTickMillis_) {
+        const double tickLagMillis = tickNow - nextTickMillis_;
         // Real elapsed time, clamped, then low-pass filtered -- see
         // smoothedDeltaSeconds_. Sampled before the tick so a slow tick
         // shows up in the NEXT step's delta, exactly as the reference's
@@ -1111,6 +1140,7 @@ bool GameServer::step() {
         // reset to almost nothing, stood still.
         if (nextTickMillis_ < monotonicMillis()) nextTickMillis_ = monotonicMillis();
 
+        recordTickCadence(tickNow, tickLagMillis, tookMillis);
         if (tickNow >= nextDebugStatsMillis_) {
             broadcastDebugStats();
             nextDebugStatsMillis_ = tickNow + 1000.0;
@@ -1171,6 +1201,41 @@ std::size_t GameServer::playerCount() const {
 // ---------------------------------------------------------------------------
 // Tick
 // ---------------------------------------------------------------------------
+
+void GameServer::recordTickCadence(double nowMillis, double lagMillis, double workMillis) {
+    if (tickCadenceStartMillis_ == 0) {
+        tickCadenceStartMillis_ = nowMillis;
+        return;
+    }
+
+    ++tickCadenceSamples_;
+    if (workMillis >= net::kTickMillis) ++tickCadenceOverBudget_;
+    tickCadenceMaxWorkMillis_ = std::max(tickCadenceMaxWorkMillis_, workMillis);
+    tickCadenceMaxLagMillis_ = std::max(tickCadenceMaxLagMillis_, lagMillis);
+    const double elapsedMillis = nowMillis - tickCadenceStartMillis_;
+    if (elapsedMillis < kTickCadenceLogMillis) return;
+
+    const auto players = playerCount();
+    if (players > 0 || tickCadenceOverBudget_ > 0) {
+        std::printf("[tick] cadence %.2f/%d TPS over %.1f s, players=%zu, over budget=%u/%u, "
+                    "max work=%.1f ms, max start lag=%.1f ms\n",
+                    tickCadenceSamples_ * 1000.0 / elapsedMillis, net::kTicksPerSecond,
+                    elapsedMillis / 1000.0, players, tickCadenceOverBudget_, tickCadenceSamples_,
+                    tickCadenceMaxWorkMillis_, tickCadenceMaxLagMillis_);
+        std::printf("[tick] load players=%zu, sessions=%zu, entities=%zu, mobs=%zu, pets=%zu, "
+                    "drops=%zu, projectiles=%zu, archetypes=%zu, rss=%.1f MiB\n",
+                    players, sessions_.size(), world_.size(), Query<MobTag>{world_}.count(),
+                    Query<Pet>{world_}.count(), Query<DropTag>{world_}.count(),
+                    Query<ProjectileTag>{world_}.count(), world_.archetypeCount(),
+                    residentBytes() / (1024.0 * 1024.0));
+        std::fflush(stdout);
+    }
+    tickCadenceStartMillis_ = nowMillis;
+    tickCadenceSamples_ = 0;
+    tickCadenceOverBudget_ = 0;
+    tickCadenceMaxWorkMillis_ = 0;
+    tickCadenceMaxLagMillis_ = 0;
+}
 
 void GameServer::markTickPhase(const char* name) {
     if (tickPhaseCount_ < tickPhases_.size()) {
@@ -1313,13 +1378,12 @@ void GameServer::tick(double nowMillis) {
     // for the next player to actually join before it reached the disk.
     if (nowMillis >= nextPersistMillis_) {
         nextPersistMillis_ = nowMillis + kPersistIntervalMillis * (config_.loadShedding ? 2.0 : 1.0);
-        for (const auto& entry : sessions_) {
-            if (entry.second.playing()) persistPlayer(entry.second);
-        }
+        captureLiveProgress();
         database_.pruneExpiredSessions();
-        saveDatabase();
+        saveDatabase(true);
     }
-    markTickPhase("persist");
+    database_.pollBackgroundSave();
+    markTickPhase(database_.backgroundSaveEnabled() ? "save handoff" : "persist");
 
     // Bot population is maintained on every tick, INCLUDING the idle ones the
     // gate below returns out of -- that is where the reference calls it, and
@@ -1356,6 +1420,7 @@ void GameServer::tick(double nowMillis) {
     // flower they are no longer steering. It is also where the split follows
     // the loadout: equipping the petal splits, taking it off merges.
     serviceSplitters(nowMillis);
+    bankExperience();
     markTickPhase("splitters");
 
     // After the splitters, which may have moved a controlled flower onto its
@@ -1396,6 +1461,16 @@ void GameServer::tick(double nowMillis) {
 }
 
 void GameServer::runSystems(double nowMillis, double dt) {
+    if (!workers_) {
+        const unsigned simulation = ServerWorkers::configuredLimit("FLIX_SIMULATION_WORKERS");
+        const unsigned snapshots = ServerWorkers::configuredLimit("FLIX_SNAPSHOT_WORKERS");
+        workers_ = std::make_unique<ServerWorkers>(std::max(simulation, snapshots));
+        movement_->workers = loot_->workers = simulation ? workers_.get() : nullptr;
+        movement_->workerLimit = loot_->workerLimit = simulation;
+        parallelSnapshots_ = std::make_unique<ParallelSnapshots>(*workers_, snapshots);
+        std::printf("[workers] pool=%u simulation=%u snapshots=%u\n", workers_->count(),
+                    std::min(simulation, workers_->count()), std::min(snapshots, workers_->count()));
+    }
     // Order matters and is the tick's whole contract:
     //   bot intent -> players -> petals -> mob intent/movement -> projectiles
     //   -> combat -> spawning -> loot.
@@ -1457,6 +1532,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
         }
     }
     grid_.clear();
+    mobTargetGrid_.clear();
     // Every body but the projectiles, which combat files in a broadphase of
     // its own (CombatSystem::fileShots): nothing else that asks this grid
     // wants a shot, and a flower on a full loadout of gas would otherwise put
@@ -1471,6 +1547,14 @@ void GameServer::runSystems(double nowMillis, double dt) {
     afterPlayers.without<ProjectileTag, Intangible, DropTag>();
     afterPlayers.each([&](Entity e, Transform& transform, Body& body) {
         grid_.insert(e, transform.realm, transform.position, body.radius);
+        // Wild mobs look for flowers; summoned mobs look for wild mobs or
+        // training posts. Both scans used to walk every petal and summon in
+        // a crowded cell before finding those candidates. Use the same
+        // cells and insertion order to preserve equal-score target choices.
+        if (world_.has<PlayerTag>(e) ||
+            ((world_.has<MobTag>(e) || world_.has<Npc>(e)) && !world_.has<Pet>(e))) {
+            mobTargetGrid_.insert(e, transform.realm, transform.position, body.radius);
+        }
     });
     markTickPhase("broadphase");
 
@@ -1481,7 +1565,8 @@ void GameServer::runSystems(double nowMillis, double dt) {
     combat_->runContactPhase(world_, grid_, content(), nowMillis);
     markTickPhase("contact");
 
-    mobAi_->run(world_, *terrain_, grid_, activePlayers_, nowMillis, net::kTickSeconds, commands_);
+    mobAi_->run(world_, *terrain_, mobTargetGrid_, activePlayers_, nowMillis,
+                net::kTickSeconds, commands_);
     markTickPhase("mob ai");
     movement_->runWorldPhase(world_, *terrain_, nowMillis, net::kTickSeconds);
     markTickPhase("mob movement");
@@ -1730,18 +1815,6 @@ void GameServer::replicate(double nowMillis) {
     frame.events = &events_;
     frame.loadShedding = config_.loadShedding;
 
-    if (!parallelSnapshots_) {
-        unsigned workers = 3;
-        if (const char* value = std::getenv("FLIX_SNAPSHOT_WORKERS")) {
-            char* end = nullptr;
-            const long requested = std::strtol(value, &end, 10);
-            if (end != value && *end == '\0' && requested >= 0 && requested <= 3)
-                workers = static_cast<unsigned>(requested);
-        }
-        parallelSnapshots_ = std::make_unique<ParallelSnapshots>(workers);
-        std::printf("[replication] snapshot workers=%u, simulation=%d TPS, snapshots=%d Hz\n",
-                    parallelSnapshots_->workers(), net::kTicksPerSecond, net::kSnapshotsPerSecond);
-    }
     std::size_t count = 0;
     for (auto& entry : sessions_) {
         Session& session = entry.second;
@@ -2585,7 +2658,7 @@ void GameServer::handleSetUsername(Session& session, net::Connection& connection
 
     sendSetUsernameResult(connection, true, newName, "");
     sendProfile(session, connection);
-    if (const Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
+    if (Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
     if (!guildName.empty()) {
         broadcastGuildRoster(std::as_const(database_).storedTable("guilds")[guildName]);
     }
@@ -2953,7 +3026,7 @@ void GameServer::sendDailyStreak(Session& session, net::Connection& connection) 
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::DailyStreak));
     w.u16(static_cast<std::uint16_t>(std::max(0, streak.streak)));
     w.boolean(streak.newDay);
-    w.u16(static_cast<std::uint16_t>(std::max(0, streak.starsAwarded)));
+    w.u16(static_cast<std::uint16_t>(std::max(0, streak.todayReward)));
     w.i64(streak.nextClaimAtMillis);
     w.i64(streak.streakExpiresAtMillis);
     connection.send(w);
@@ -3499,6 +3572,8 @@ void GameServer::handleSwapLoadout(Session& session, ByteReader& reader) {
     if (loadoutLockedInMaze(session)) return;
 
     PlayerRecord& record = liveRecord(session);
+    const int slots = record.skills.loadoutSlots();
+    if (a % kLoadoutActiveSlots >= slots || b % kLoadoutActiveSlots >= slots) return;
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
     std::swap(record.loadout[a], record.loadout[b]);
     autoSaveActivePreset(record);
@@ -3529,7 +3604,7 @@ void GameServer::handleSwapLoadoutRows(Session& session, net::Connection& connec
     PlayerRecord& record = liveRecord(session);
     if (record.loadout.size() < kLoadoutSlots) record.loadout.resize(kLoadoutSlots);
     bool changed = false;
-    for (std::size_t i = 0; i < kLoadoutActiveSlots; ++i) {
+    for (int i = 0; i < record.skills.loadoutSlots(); ++i) {
         const auto& reserve = record.loadout[i + kLoadoutActiveSlots];
         if (!reserve || reserve->petalType.empty()) continue;
         std::swap(record.loadout[i], record.loadout[i + kLoadoutActiveSlots]);
@@ -3974,6 +4049,9 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     // All or nothing: every input is counted before any is taken, so a batch
     // short of its last petal destroys none of the others.
     const AssemblyRecipe& recipe = recipes[recipeIndex];
+    const auto takes = [&](std::uint16_t petal) {
+        return assemblerInputCount(recipe, content(), rarity, petal, recipe.takes(petal));
+    };
     const Rarity outputRarity = recipe.outputRarity.value_or(rarity);
     if (rarityIndex(outputRarity) >= rarityIndex(Rarity::Apex)) {
         reply(0, "Hyper items cannot be created by an assembler.");
@@ -3990,7 +4068,7 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     for (const auto& output : recipe.outputs) produced[output.petal] += output.count * count;
     for (const auto& [petal, amount] : produced) {
         const auto held = record.itemCount(outputRarity,inventoryKey(petal));
-        const auto consumed = outputRarity==rarity ? recipe.takes(petal)*count : 0;
+        const auto consumed = takes(petal) * count;
         if (!petalComesAt(content().petal(petal),outputRarity) || amount>kMaxStackCount ||
             held-consumed+amount>kMaxStackCount) {
             reply(0, "The output is unavailable at this rarity or its stack is full.");
@@ -3998,7 +4076,7 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
         }
     }
     for (const AssemblyRecipe::Stack& input : recipe.inputs) {
-        const std::int64_t need = recipe.takes(input.petal) * count;
+        const std::int64_t need = takes(input.petal) * count;
         if (!petalComesAt(content().petal(input.petal),rarity) || need > kMaxStackCount ||
             record.itemCount(rarity, inventoryKey(input.petal)) < need) {
             reply(0, "You don't have enough " + content().petal(input.petal).name + ".");
@@ -4012,7 +4090,7 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     for (const AssemblyRecipe::Stack& input : recipe.inputs) {
         if (std::find(taken.begin(), taken.end(), input.petal) != taken.end()) continue;
         takeFromInventory(record, input.petal, rarity,
-                          static_cast<int>(recipe.takes(input.petal) * count));
+                          static_cast<int>(takes(input.petal) * count));
         taken.push_back(input.petal);
     }
     for (const AssemblyRecipe::Stack& output : recipe.outputs) {
@@ -4027,7 +4105,7 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     // seats and greys whatever is now short.
     sendProfile(session, connection);
     std::uint32_t consumed = 0;
-    for (const auto& input : recipe.inputs) consumed += static_cast<std::uint32_t>(input.count * count);
+    for (const auto petal : taken) consumed += static_cast<std::uint32_t>(takes(petal) * count);
     for (const auto& output : recipe.outputs)
         announceRareCraft(session, output.petal, outputRarity,
                           static_cast<std::uint32_t>(output.count * count), consumed);
@@ -6468,7 +6546,7 @@ net::Connection* GameServer::squadConnection(SquadMemberId member) {
     return member.bot() ? nullptr : listener_.find(member.connection);
 }
 
-void GameServer::sendSquadUpdate(net::Connection& connection, const Squad* squad) {
+void GameServer::sendSquadUpdate(net::Connection& connection, Squad* squad) {
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SquadUpdate));
     if (squad == nullptr) {
@@ -6478,6 +6556,7 @@ void GameServer::sendSquadUpdate(net::Connection& connection, const Squad* squad
     }
     w.boolean(true);
     w.str(squad->id);
+    w.str(squads_.issueCode(*squad, rng_));
     w.boolean(squad->isPublic);
 
     // A ROW PER BODY, not per member. A splitter's owner is one member with
@@ -6515,7 +6594,7 @@ void GameServer::sendSquadUpdate(net::Connection& connection, const Squad* squad
     connection.send(w);
 }
 
-void GameServer::broadcastSquadUpdate(const Squad& squad) {
+void GameServer::broadcastSquadUpdate(Squad& squad) {
     for (const SquadMemberId& member : squad.members) {
         if (net::Connection* peer = squadConnection(member)) sendSquadUpdate(*peer, &squad);
     }
@@ -7247,7 +7326,7 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     // The roster carries WIRE IDS, and this player just acquired a new one.
     // Without this a squadmate's dot and party bar stay pinned to the body
     // they had before they died.
-    if (const Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
+    if (Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
     return entity;
 }
 
@@ -7383,6 +7462,26 @@ void GameServer::applyAccountToSession(Session& session) {
     }
 }
 
+void GameServer::bankExperience() {
+    // Combat pays the live body, including squad members without a gallery
+    // kill. Use the merged splitter progress before a death can reap the body.
+    for (auto& entry : sessions_) {
+        Session& session = entry.second;
+        if (!session.playing() || session.realm == Realm::Arena) continue;
+        const PlayerProgress* progress = world_.tryGet<PlayerProgress>(session.entity);
+        if (progress == nullptr) continue;
+
+        const auto* current = database_.findProgress(session.userId);
+        if (current && (session.realm == Realm::Maze ? current->mazeTotalXp : current->totalXp) == progress->totalXp)
+            continue;
+        PlayerRecord& record = database_.progress(session.userId);
+        double& trackXp = session.realm == Realm::Maze ? record.mazeTotalXp : record.totalXp;
+        trackXp = progress->totalXp;
+        database_.markDirty();
+        session.profileDue = true;
+    }
+}
+
 void GameServer::persistPlayer(const Session& session) {
     if (!session.playing() || !world_.isAlive(session.entity)) return;
     const PlayerProgress* progress = world_.tryGet<PlayerProgress>(session.entity);
@@ -7424,7 +7523,7 @@ void GameServer::despawnPlayer(Session& session, bool persist) {
     views_[session.connection].reset();
     // Same reason as the spawn: the id this member was known by is gone, and a
     // roster still naming it points every squadmate's HUD at nothing.
-    if (const Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
+    if (Squad* squad = squads_.forMember(squadIdOf(session))) broadcastSquadUpdate(*squad);
 }
 
 void GameServer::destroyBody(Entity body) {

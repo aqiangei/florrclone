@@ -79,6 +79,14 @@ public:
     /// allocates.
     void query(Realm realm, Vec2 center, double radius, std::vector<Entity>& out) const;
 
+    // A frozen grid can serve concurrent queries with one scratch per reader.
+    struct QueryScratch {
+        std::vector<std::uint32_t> stamp;
+        std::uint32_t epoch = 0;
+    };
+    void query(Realm realm, Vec2 center, double radius, std::vector<Entity>& out,
+               QueryScratch& scratch) const;
+
     void queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out) const;
     void queryRect(Realm realm, const Rect& area, std::vector<Entity>& out) const;
 
@@ -101,6 +109,9 @@ public:
     int cellY(Realm realm, double y) const { return cellIndex(y, invCellSize_, layer(realm).rows); }
 
 private:
+    void queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out,
+                   QueryScratch& scratch) const;
+
     /// Hard cap per axis. A caller asking for a one-unit cell over the whole
     /// world would otherwise ask for 3.6 billion buckets.
     static constexpr int kMaxAxisCells = 512;
@@ -139,10 +150,7 @@ private:
     /// grid only ever holds live ones. Shared by every layer -- a query only
     /// ever walks one.
     ///
-    /// Mutable because it is scratch space for a logically const read, which
-    /// also means a single grid cannot be queried from two threads at once.
-    mutable std::vector<std::uint32_t> stamp_;
-    mutable std::uint32_t queryEpoch_ = 0;
+    mutable QueryScratch defaultScratch_;
 };
 
 } // namespace flix

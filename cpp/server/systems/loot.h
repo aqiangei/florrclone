@@ -31,6 +31,8 @@
 
 namespace flix {
 
+class ServerWorkers;
+
 // ---------------------------------------------------------------------------
 // Components owned by this system
 // ---------------------------------------------------------------------------
@@ -218,6 +220,9 @@ public:
         return tables_.load(content, path, errorOut);
     }
 
+    ServerWorkers* workers = nullptr;
+    unsigned workerLimit = 0;
+
     void run(World& world, const SpatialGrid& grid, const ContentRegistry& content, Rng& rng,
              double nowMillis, double dt, CommandBuffer& commands, EventQueue& events);
 
@@ -295,6 +300,13 @@ private:
 
     /// Reused every tick so the steady state does not allocate.
     std::vector<Entity> candidates_;
+    struct DropMaintenanceBatch {
+        const Entity* entities;
+        Transform* transforms;
+        Lifetime* lifetimes;
+        std::size_t size;
+    };
+    std::vector<DropMaintenanceBatch> maintenanceBatches_;
     std::vector<Entity> expired_;
     std::vector<Entity> fresh_;
     std::vector<Entity> corpseList_;

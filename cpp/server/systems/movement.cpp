@@ -1,4 +1,5 @@
 #include "server/systems/movement.h"
+#include "server/workers.h"
 
 #include <algorithm>
 #include <cmath>
@@ -365,6 +366,12 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
                                    double nowMillis, double dt) {
     bind(world);
     seekTargetsReady_ = false;
+    meteorDiscs_.clear();
+    Query<PlantedMeteor, Transform, Body> meteors{world};
+    meteors.without<Dead>();
+    meteors.each([&](Entity, PlantedMeteor&, Transform& at, Body& body) {
+        meteorDiscs_.push_back({at.position, sanitizeCollisionRadius(body.radius), at.realm});
+    });
     moveMobs(world, terrain, nowMillis, dt);
     // Projectiles after mobs: a shot fired this tick takes its launch bearing
     // from where the mobs ended up, not from where they were.
@@ -377,8 +384,11 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
     // still presses toward a training target, maintaining contact damage.
     collectNpcDiscs();
     queries_->mobBodies.each([&](Entity e, MobTag&, Transform& transform, Body& body, MobType& type) {
-        if (world.has<Pet>(e)) pushOutOfNpcs(terrain, transform,
-            body.radius * mobBodyContactScale(content().mob(type.configIndex).id));
+        if (!world.has<Pet>(e)) return;
+        const Vec2 from = transform.position;
+        const double radius = body.radius * mobBodyContactScale(content().mob(type.configIndex).id);
+        pushOutOfNpcs(terrain, transform, radius);
+        stopMobAtMeteors(terrain, transform.realm, from, transform.position, radius);
     });
     // And the loose petals after that, off the separation pass's own grid,
     // so what they are solid against is where the mobs finally stand.
@@ -395,6 +405,7 @@ void MovementSystem::collectNpcDiscs() {
 void MovementSystem::collectLooseDiscs() {
     looseDiscs_.clear();
     queries_->looseBodies.each([&](Entity e, LoosePetal&, Transform& transform, Body& body) {
+        if (boundWorld_->has<PlantedMeteor>(e)) return;
         // A degenerate coordinate would put a NaN into every flower and mob it
         // shoved; the petal pass retires a wax that has one.
         const Vec2 p = transform.position;
@@ -550,8 +561,7 @@ void MovementSystem::shoveLooseBodies(const Terrain& terrain, Transform& transfo
     const double mass = bodyMass(&body);
     for (LooseDisc& disc : looseDiscs_) {
         // Moon is a ring centre, not an obstacle to any flower.
-        if (boundWorld_->has<RingAnchor>(disc.entity) ||
-            boundWorld_->has<PlantedMeteor>(disc.entity)) continue;
+        if (boundWorld_->has<RingAnchor>(disc.entity)) continue;
         if (disc.realm != transform.realm) continue;
         const double reach = disc.radius + radius;
         const Vec2 offset = transform.position - disc.position;
@@ -615,14 +625,17 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
             // make every monster flatten it; players can still push the slab.
             const double slabShare=anchored ? 1.0 : wax ?
                 std::min(0.2,mobMass/(mobMass+disc.mass)) : mobMass/(mobMass+disc.mass);
+            const Vec2 from = transform->position;
             softLooseContact(terrain, disc.realm, disc.position, disc.radius,
                              slabShare,
                              transform->position, kMobWallRadius, !anchored, out,
                              loosePetalContactPush(reach - gap));
+            if (!anchored)
+                stopMobAtMeteors(terrain, disc.realm, from, transform->position, entry.radius);
         }
 
         // NPCs never give way, to a flower or to anything else.
-        for (NpcDisc& npc : npcDiscs_) {
+        for (ObstacleDisc& npc : npcDiscs_) {
             if (npc.realm != disc.realm) continue;
             const double reach = npc.radius + disc.radius;
             const Vec2 offset = npc.position - disc.position;
@@ -661,7 +674,7 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
 void MovementSystem::pushOutOfNpcs(const Terrain& terrain, Transform& transform,
                                    double radius) const {
     bool moved = false;
-    for (const NpcDisc& npc : npcDiscs_) {
+    for (const ObstacleDisc& npc : npcDiscs_) {
         if (npc.realm != transform.realm) continue;
         const Vec2 offset = transform.position - npc.position;
         const double reach = npc.radius + radius;
@@ -736,12 +749,63 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
     }
 }
 
+bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
+                                      Vec2& position, double radius) const {
+    if (meteorDiscs_.empty()) return false;
+    const Vec2 intended = position - from;
+    bool blocked = false;
+    for (const auto& meteor : meteorDiscs_) {
+        if (meteor.realm != realm) continue;
+        const double reach = meteor.radius + radius + kContactEpsilon;
+        const Vec2 offset = from - meteor.position;
+        if (offset.lengthSq() >= reach * reach) continue;
+
+        // A meteor can be planted over an existing mob. Eject it toward its
+        // own side, using the terrain step so the correction respects walls.
+        Vec2 outward = offset.normalized();
+        if (outward.lengthSq() == 0.0)
+            outward = intended.lengthSq() > 0.0 ? (intended * -1.0).normalized() : Vec2{1.0, 0.0};
+        const Vec2 edge = meteor.position + outward * reach;
+        stepCollide(terrain, realm, from, edge - from, kMobWallRadius, 1.0, true, true);
+        blocked = true;
+    }
+
+    const Vec2 delta = position - from;
+    const double lengthSq = delta.lengthSq();
+    double limit = 1.0;
+    if (lengthSq > 0.0) {
+        for (const auto& meteor : meteorDiscs_) {
+            if (meteor.realm != realm) continue;
+            const double reach = meteor.radius + radius + kContactEpsilon;
+            const Vec2 offset = from - meteor.position;
+            const double toward = -(offset.x * delta.x + offset.y * delta.y);
+            if (toward <= 0.0) continue;
+            const double gapSq = std::max(0.0, offset.lengthSq() - reach * reach);
+            const double discriminant = toward * toward - lengthSq * gapSq;
+            if (discriminant <= 0.0) continue;
+            // First intersection of the swept mob circle, even if both ends
+            // of the move are clear. Clamp to the nearest meteor on the path.
+            limit = std::min(limit, gapSq / (toward + std::sqrt(discriminant)));
+        }
+    }
+    if (!blocked && limit >= 1.0) return false;
+    position = from + delta * limit;
+    return true;
+}
+
 void MovementSystem::moveMobs(World& world, const Terrain& terrain,
                               double nowMillis, double dt) {
     const ContentRegistry& registry = content();
-    queries_->mobs.each([&](Entity e, MobTag&, Transform& transform, Motion& motion, Body&) {
+    const auto moveMob = [&](Entity e, Transform& transform, Motion& motion) {
         if (const auto* ai = world.tryGet<MobAi>(e); ai && ai->sleeping) return;
-        if (anchoredAgainstKnockback(world, registry, e)) motion.velocity = Vec2{0,0};
+        const bool anchored = anchoredAgainstKnockback(world, registry, e);
+        if (anchored) motion.velocity = Vec2{0,0};
+        double barrierRadius = 0.0;
+        if (!anchored && !meteorDiscs_.empty()) {
+            const auto* type = world.tryGet<MobType>(e);
+            barrierRadius = sanitizeCollisionRadius(world.get<Body>(e).radius) *
+                (type ? mobBodyContactScale(registry.mob(type->configIndex).id) : 1.0);
+        }
         // The shove a petal or a blast queued. The TypeScript server wrote
         // this vector on every hit and then never read it back, so a mob
         // walked straight through a ring; that was a bug, not a design.
@@ -759,7 +823,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         // whole recoil.
         if (Knockback* kb = world.tryGet<Knockback>(e)) {
             const Vec2 fresh = takeKnockback(world, e);
-            if (anchoredAgainstKnockback(world, registry, e) ||
+            if (anchored ||
                 !std::isfinite(kb->carry.x) || !std::isfinite(kb->carry.y)) {
                 kb->carry = Vec2{0, 0};
             } else {
@@ -772,10 +836,13 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
                     const double kept =
                         dt > 0.0 ? std::pow(kKnockbackSpendDecay, dt * kKnockbackSpendRate) : 0.0;
                     const Vec2 spend = kb->carry * (1.0 - kept);
+                    const Vec2 from = transform.position;
                     const StepOutcome out = stepCollide(terrain, transform.realm,
                                                         transform.position, spend, kMobWallRadius,
                                                         1.0, true, true);
-                    kb->carry = out.blocked ? Vec2{0, 0} : kb->carry * kept;
+                    const bool stopped = stopMobAtMeteors(terrain, transform.realm, from,
+                                                          transform.position, barrierRadius);
+                    kb->carry = out.blocked || stopped ? Vec2{0, 0} : kb->carry * kept;
                 }
             }
         }
@@ -793,14 +860,42 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         // again here squares the factor (a 0.5 web becomes 0.25 speed).
 
         const Vec2 attempted = velocity * envScale;
-        const StepOutcome out = stepCollide(terrain, transform.realm, transform.position, attempted,
-                                            kMobWallRadius, dt);
+        const Vec2 from = transform.position;
+        StepOutcome out = stepCollide(terrain, transform.realm, transform.position, attempted,
+                                      kMobWallRadius, dt);
+        if (!anchored && stopMobAtMeteors(terrain, transform.realm, from, transform.position, barrierRadius)) {
+            out.blocked = true;
+            out.displacement = transform.position - from;
+        }
 
         // No friction is applied here: the AI phase owns a mob's velocity --
         // published raw, or carried under gardn's friction or the drift
         // machine's own (mob_ai.h) -- and a knockback is positional, so it
         // does not alter this stored velocity at all.
         motion.velocity = velocityAfterStep(attempted, out, dt, envScale);
+    };
+
+    if (!workers || !workerLimit || !workers->count() || queries_->mobs.count() < 256) {
+        queries_->mobs.each([&](Entity e, MobTag&, Transform& transform, Motion& motion, Body&) {
+            moveMob(e, transform, motion);
+        });
+        return;
+    }
+    constexpr std::size_t batchSize = 32;
+    mobMovementBatches_.clear();
+    queries_->mobs.chunks([&](std::size_t size, const Entity* entities, MobTag*, Transform* transforms,
+                              Motion* motions, Body*) {
+        for (std::size_t i = 0; i < size; i += batchSize) {
+            mobMovementBatches_.push_back({entities + i, transforms + i, motions + i,
+                                           std::min(batchSize, size - i)});
+        }
+    });
+    // A mover writes only its own transform, motion and knockback. No query
+    // or structural changes run until the terrain steps have all finished.
+    workers->run(mobMovementBatches_.size(), workerLimit, [&](std::size_t index, unsigned) {
+        const auto& batch = mobMovementBatches_[index];
+        for (std::size_t i = 0; i < batch.size; ++i)
+            moveMob(batch.entities[i], batch.transforms[i], batch.motions[i]);
     });
 }
 
@@ -1129,15 +1224,16 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
     // started with and applied afterwards, so the outcome does not depend on
     // the order the set happens to be walked in. Mass plays no part -- the
     // separation is symmetric and driven purely by the two radii.
-    for (SeparationEntry& self : separationSet_) {
-        if (self.noCollision || anchoredAgainstKnockback(world, content(), self.entity)) continue;
+    const ContentRegistry& registry = content();
+    const auto accumulatePush = [&](SeparationEntry& self, SeparationScratch& scratch) {
+        if (self.noCollision || anchoredAgainstKnockback(world, registry, self.entity)) return;
         // The grid files a mob under every cell its own circle touches, so a
         // query of this mob's radius plus the buffer already returns every
         // neighbour that can be inside the sum of the two radii.
         separationGrid_.query(self.realm, self.position, self.radius + kMobCollisionBuffer,
-                              separationCandidates_);
+                              scratch.candidates, scratch.grid);
 
-        for (const Entity candidate : separationCandidates_) {
+        for (const Entity candidate : scratch.candidates) {
             const std::uint32_t index = entityIndex(candidate);
             const std::uint32_t slot =
                 index < separationSlot_.size() ? separationSlot_[index] : kNoSeparationEntry;
@@ -1188,6 +1284,19 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
                 Vec2{self.entity < other.entity ? 1.0 : -1.0, 0.0};
             self.push -= (shaped?shape.normal:direction) * push;
         }
+    };
+    constexpr std::size_t batchSize = 16;
+    const unsigned limit = workers ? std::min(workerLimit, workers->count()) : 0;
+    separationScratch_.resize(limit + 1);
+    if (limit && separationSet_.size() >= 128) {
+        workers->run((separationSet_.size() + batchSize - 1) / batchSize, limit,
+                     [&](std::size_t batch, unsigned lane) {
+            const auto end = std::min((batch + 1) * batchSize, separationSet_.size());
+            for (std::size_t i = batch * batchSize; i < end; ++i)
+                accumulatePush(separationSet_[i], separationScratch_[lane]);
+        });
+    } else {
+        for (auto& entry : separationSet_) accumulatePush(entry, separationScratch_[0]);
     }
 
     // The cap is on the SUM, not on each pair: a mob wedged in a crowd would
@@ -1210,6 +1319,7 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
         Vec2 position = entry.position;
         stepCollide(terrain, entry.realm, position, entry.push.clampedLength(std::max(cap, entry.petPushCap)), kMobWallRadius,
                     1.0);
+        stopMobAtMeteors(terrain, entry.realm, entry.position, position, entry.radius);
         transform->position = position;
     }
 }

@@ -638,6 +638,7 @@ private:
     /// When the streak card first had a state to draw, which is what its
     /// post-claim wobble is measured from. Negative until then.
     double streakSeenAt_ = -1;
+    bool streakDetailsOpen_ = false;
     /// The title XP gauge's fill as drawn, easing after the profile's, and the
     /// level it belongs to. A different level starts the fill over from empty
     /// rather than sliding back down from where the last one left off.

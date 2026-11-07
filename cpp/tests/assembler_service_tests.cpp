@@ -17,19 +17,30 @@ TEST(assembler_all_player_tiers_have_safe_sites_and_no_hyper) {
     NpcSystem npcs; std::vector<std::string> warnings;
     npcs.loadSites(maps,registry,warnings);
     World w; npcs.placeMissing(w,terrain,registry,0);
-    bool found=false; const auto realm=maps.realmOfId("cyberspace",found); CHECK(found);
-    std::array<int,kRarityCount> counts{};
-    std::vector<std::pair<Vec2,double>> positions;
-    for(const auto& site:npcs.sites()) {
-        if(site.realm!=realm || registry.mob(site.mobIndex).npc.service!=NpcService::Assembler) continue;
-        CHECK(w.isAlive(site.entity)); if(!w.isAlive(site.entity)) continue;
-        const auto& at=w.get<Transform>(site.entity); const auto radius=w.get<Body>(site.entity).radius;
-        ++counts[rarityIndex(site.rarity)];
-        CHECK(!terrain.blocked(at.position,realm));
-        for(const auto& previous:positions) CHECK(distanceSq(at.position,previous.first)>(radius+previous.second)*(radius+previous.second));
-        positions.push_back({at.position,radius});
+    for (const char* map : {"computer", "cyberspace"}) {
+        bool found = false;
+        const auto realm = maps.realmOfId(map, found);
+        CHECK(found);
+        std::array<int, kRarityCount> counts{};
+        std::vector<std::pair<Vec2, double>> positions;
+        for (const auto& site : npcs.sites()) {
+            const auto& mob = registry.mob(site.mobIndex);
+            if (site.realm != realm || mob.npc.service != NpcService::Assembler) continue;
+            CHECK(w.isAlive(site.entity));
+            if (!w.isAlive(site.entity)) continue;
+            const auto& at = w.get<Transform>(site.entity);
+            const double radius = registry.mobStats(site.mobIndex, site.rarity).radius * mob.visualScale;
+            ++counts[rarityIndex(site.rarity)];
+            CHECK(!terrain.blocked(at.position, realm));
+            for (const auto& previous : positions) {
+                const double reach = radius + previous.second;
+                CHECK(distanceSq(at.position, previous.first) >= reach * reach);
+            }
+            positions.push_back({at.position, radius});
+        }
+        for (int tier = 0; tier < kRarityCount; ++tier)
+            CHECK_EQ(counts[tier], tier <= rarityIndex(Rarity::Unique) ? 1 : 0);
     }
-    for(int tier=0;tier<kRarityCount;++tier) CHECK_EQ(counts[tier],tier<=rarityIndex(Rarity::Unique)?1:0);
 }
 
 TEST(assembler_conversion_cycles_cannot_mint_material_value) {
@@ -207,7 +218,7 @@ TEST(assembler_batches_charge_exact_recipe_inputs_and_refuse_invalid_requests) {
     server.world().get<Transform>(flower)=at;
     const auto& recipes=content().mob(server.world().get<Npc>(npc).configIndex).npc.recipes;
     const auto key=[](std::uint16_t p){return "petal_"+content().petal(p).id;};
-    const auto request=[&](int recipe,int quantity){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ClientMessage::Assemble));w.u8(static_cast<std::uint8_t>(Rarity::Unique));w.u8(recipe);w.u16(quantity);deliver(w);};
+    const auto request=[&](int recipe,int quantity,Rarity tier=Rarity::Unique){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ClientMessage::Assemble));w.u8(static_cast<std::uint8_t>(tier));w.u8(recipe);w.u16(quantity);deliver(w);};
     for(std::size_t i=0;i<recipes.size();++i){
         const auto& recipe=recipes[i];
         server.world().get<Npc>(npc).recipe=static_cast<std::uint8_t>(i);
@@ -245,5 +256,72 @@ TEST(assembler_batches_charge_exact_recipe_inputs_and_refuse_invalid_requests) {
     forged.u8(static_cast<std::uint8_t>(Rarity::Apex)); forged.u8(0); forged.u16(1);
     deliver(forged); CHECK_EQ(record.inventory.dump(),full);
     std::printf("  %zu recipes: exact x3 costs/results; invalid batches and distance refused\n",recipes.size());
+
+    server.onDisconnect(connection,"test complete");
+}
+
+TEST(assembler_super_sawblade_costs_28_fragments_and_2_gears_per_craft) {
+    testsupport::HarnessFiles files("assembler-super");
+    GameServer server;
+    ServerConfig config;
+    config.port=0;config.botCount=0;config.dataDir=testsupport::dataDir();
+    config.databasePath=files.dbPath;
+    std::string error;
+    CHECK(server.start(config,error));
+    if(!error.empty())return;
+    net::Connection connection(-1,82,"127.0.0.1");
+    server.onConnect(connection);
+    const auto deliver=[&](ByteWriter& w){ByteReader reader(w.data(),w.size());server.onMessage(connection,reader);CHECK(reader.ok());};
+    ByteWriter hello;hello.u8(static_cast<std::uint8_t>(net::ClientMessage::Hello));
+    hello.u16(net::kProtocolVersion);hello.u32(content().contentHash());deliver(hello);
+    ByteWriter guest;guest.u8(static_cast<std::uint8_t>(net::ClientMessage::RegisterGuest));deliver(guest);
+    ByteWriter join;join.u8(static_cast<std::uint8_t>(net::ClientMessage::JoinGame));
+    join.u16(1280);join.u16(720);join.str("");join.str("Assembler QA");join.boolean(false);deliver(join);
+    Entity flower=NULL_ENTITY;
+    Query<PlayerTag,PlayerAccount> players{server.world()};
+    players.each([&](Entity e,PlayerTag&,PlayerAccount& a){if(a.connection==82)flower=e;});
+    CHECK(flower!=NULL_ENTITY);
+    if(flower==NULL_ENTITY)return;
+    Query<NpcTag,Npc> stations{server.world()};
+    const auto uid=server.world().get<PlayerAccount>(flower).userId;
+    // Isolated test DB, no server loop or concurrent writer is running.
+    auto& record=*const_cast<PlayerRecord*>(server.database().findProgress(uid));
+    const auto key=[](std::uint16_t p){return "petal_"+content().petal(p).id;};
+    const auto request=[&](int recipe,int quantity,Rarity tier){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ClientMessage::Assemble));w.u8(static_cast<std::uint8_t>(tier));w.u8(recipe);w.u16(quantity);deliver(w);};
+    Entity superStation = NULL_ENTITY;
+    stations.each([&](Entity e, NpcTag&, Npc& n) {
+        if (n.service == NpcService::Assembler && n.rarity == Rarity::Super) superStation = e;
+    });
+    CHECK(superStation != NULL_ENTITY);
+    if (superStation == NULL_ENTITY) return;
+    auto& superNpc = server.world().get<Npc>(superStation);
+    const auto& superRecipes = content().mob(superNpc.configIndex).npc.recipes;
+    const auto fragment = content().petalIndex("fragment");
+    const auto gear = content().petalIndex("cogwheel");
+    const auto blade = content().petalIndex("sawblade");
+    const auto saw = std::find_if(superRecipes.begin(), superRecipes.end(), [&](const auto& recipe) {
+        return recipe.takes(fragment) > 0 && recipe.takes(gear) > 0 &&
+               recipe.outputs.size() == 1 && recipe.outputs.front().petal == blade;
+    });
+    CHECK(saw != superRecipes.end());
+    if (saw == superRecipes.end()) return;
+    superNpc.recipe = static_cast<std::uint8_t>(saw - superRecipes.begin());
+    server.world().get<Transform>(flower) = server.world().get<Transform>(superStation);
+    record.inventory = Json::object();
+    record.setItemCount(Rarity::Super, key(fragment), 28);
+    record.setItemCount(Rarity::Super, key(gear), 1);
+    const auto shortGear = record.inventory.dump();
+    request(superNpc.recipe, 1, Rarity::Super);
+    CHECK_EQ(record.inventory.dump(), shortGear);
+    record.setItemCount(Rarity::Super, key(fragment), 55);
+    record.setItemCount(Rarity::Super, key(gear), 4);
+    const auto shortFragment = record.inventory.dump();
+    request(superNpc.recipe, 2, Rarity::Super);
+    CHECK_EQ(record.inventory.dump(), shortFragment);
+    record.setItemCount(Rarity::Super, key(fragment), 57);
+    request(superNpc.recipe, 2, Rarity::Super);
+    CHECK_EQ(record.itemCount(Rarity::Super, key(fragment)), 1);
+    CHECK_EQ(record.itemCount(Rarity::Super, key(gear)), 0);
+    CHECK_EQ(record.itemCount(Rarity::Super, key(blade)), 2);
     server.onDisconnect(connection,"test complete");
 }

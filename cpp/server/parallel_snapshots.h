@@ -1,7 +1,7 @@
 #pragma once
 
-#include <memory>
 #include "server/replication.h"
+#include "server/workers.h"
 
 namespace flix {
 
@@ -17,15 +17,12 @@ public:
         std::vector<Entity> squad;
         ByteWriter output;
     };
-    explicit ParallelSnapshots(unsigned workers = 3);
-    ~ParallelSnapshots();
-    ParallelSnapshots(const ParallelSnapshots&) = delete;
-    ParallelSnapshots& operator=(const ParallelSnapshots&) = delete;
+    ParallelSnapshots(ServerWorkers& workers, unsigned limit);
     void build(World& world, std::vector<Job>& jobs);
-    unsigned workers() const;
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl_;
+    ServerWorkers& workers_;
+    unsigned limit_;
+    std::vector<Replicator> lanes_;
 };
 
 } // namespace flix

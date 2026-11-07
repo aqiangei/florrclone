@@ -318,6 +318,7 @@ int main(int argc, char** argv) {
         else if (arg == "--seed") config.worldSeed = std::strtoull(next("--seed"), nullptr, 10);
         else if (arg == "--bots") config.botCount = std::atoi(next("--bots"));
         else if (arg == "--load-shed") config.loadShedding = true;
+        else if (arg == "--background-save") config.backgroundSave = true;
         else if (arg == "--cert") config.certPath = next("--cert");
         else if (arg == "--key") config.keyPath = next("--key");
         else if (arg == "--web-root") config.webRoot = next("--web-root");

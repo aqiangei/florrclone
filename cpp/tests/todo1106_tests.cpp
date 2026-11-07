@@ -325,6 +325,11 @@ TEST(todo1106_private_squad_code_joins_through_real_chat_protocol) {
     b.sendChat("/squad-create");
     CHECK(h.stepUntil({&a,&b},[&]{return b.squad().inSquad;}));
     const std::string oldId = b.squad().id;
+    CHECK_EQ(b.squad().joinCode.size(), 3u);
+    CHECK(b.squad().joinCode.find_first_not_of("0123456789") == std::string::npos);
+    b.sendChat("/squad-code " + oldId.substr(6));
+    CHECK(h.stepUntil({&a,&b},[&]{return sawText(b,"请输入三位数字组队码");}));
+    CHECK_EQ(b.squad().id, oldId);
     a.sendChat("/squad-code");
     CHECK(h.stepUntil({&a,&b},[&]{return sawText(a,"组队码：");}));
     std::string code;
@@ -334,9 +339,11 @@ TEST(todo1106_private_squad_code_joins_through_real_chat_protocol) {
         if (position != std::string::npos) code = line.text.substr(position + prefix.size(), 3);
     }
     CHECK_EQ(code.size(), 3u);
+    CHECK_EQ(a.squad().joinCode, code);
     b.sendChat("/squad-code " + code);
     CHECK(h.stepUntil({&a,&b},[&]{return b.squad().inSquad&&a.squad().members.size()==2;}));
     CHECK_EQ(a.squad().id,b.squad().id);CHECK(!a.squad().isPublic);
+    CHECK_EQ(b.squad().joinCode, code);
     CHECK(b.squad().id != oldId);
 }
 

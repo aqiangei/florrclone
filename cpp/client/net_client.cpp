@@ -1810,6 +1810,7 @@ void NetClient::handleSquadUpdate(ByteReader& reader) {
     next.inSquad = reader.boolean();
     if (next.inSquad) {
         next.id = reader.str();
+        next.joinCode = reader.str();
         next.isPublic = reader.boolean();
         const std::uint8_t count = reader.u8();
         next.members.reserve(count);
@@ -2306,7 +2307,7 @@ void NetClient::handleDailyStreak(ByteReader& reader) {
     DailyStreak next;
     next.streak = reader.u16();
     next.newDay = reader.boolean();
-    next.starsAwarded = reader.u16();
+    next.todayReward = reader.u16();
     next.nextClaimAtMillis = reader.i64();
     next.streakExpiresAtMillis = reader.i64();
     if (!reader.ok()) return;

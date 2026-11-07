@@ -949,11 +949,11 @@ bool AdminDbPanel::render(MenuContext& ctx) {
             const double py = treeTop + 2.0;
             text(canvas, "New password", right.x + 12.0, py + 14.0, label(13.0));
             passwordRect = Rect{right.x + 112.0, py, 240.0, 28.0};
-            inputField(canvas, passwordRect, s.password, "8 characters or more",
-                       s.passwordField.focused, now, &s.passwordField);
-            const Rect set{passwordRect.right() + 8.0, py + 1.0, 64.0, 26.0};
+            inputField(canvas, passwordRect, s.password, "Up to 72 bytes",
+                       s.passwordField.focused, now, &s.passwordField, true);
+            const Rect set{passwordRect.right() + 8.0, py + 1.0, 110.0, 26.0};
             const Rect cancel{set.right() + 6.0, py + 1.0, 70.0, 26.0};
-            chip(canvas, set, "Set", set.contains(mouse), kGoChip);
+            chip(canvas, set, "Set & sign out", set.contains(mouse), kGoChip);
             chip(canvas, cancel, "Cancel", cancel.contains(mouse), kChip);
             addRegion(set, Act::SavePassword);
             addRegion(cancel, Act::CancelPassword);
@@ -1140,10 +1140,6 @@ bool AdminDbPanel::render(MenuContext& ctx) {
         trackTextMouse(ctx.window, s.searchField, searchRect,
                        inputFieldRun(searchRect, s.search, s.searchField), s.search, now);
     }
-    if (s.passwording && passwordRect.w > 0) {
-        trackTextMouse(ctx.window, s.passwordField, passwordRect,
-                       inputFieldRun(passwordRect, s.password, s.passwordField), s.password, now);
-    }
 
     const bool enter = ctx.window.keyPressed(Key::Enter);
     const bool escape = ctx.window.keyPressed(Key::Escape);
@@ -1188,7 +1184,7 @@ bool AdminDbPanel::render(MenuContext& ctx) {
     if (s.passwording && s.passwordField.focused) {
         ctx.wantsText = true;
         TextEditOptions secret;
-        secret.maxBytes = 128;
+        secret.maxBytes = 72;
         secret.copyable = false;
         editText(ctx.window, s.password, s.passwordField, now, secret);
         if (enter && !s.password.empty()) {
@@ -1198,6 +1194,7 @@ bool AdminDbPanel::render(MenuContext& ctx) {
             s.passwordField.blur();
         }
         if (escape) {
+            s.password.clear();
             s.passwording = false;
             s.passwordField.blur();
         }

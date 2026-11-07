@@ -179,6 +179,7 @@ struct SquadState {
 
     bool inSquad = false;
     std::string id;
+    std::string joinCode;
     bool isPublic = false;
     std::vector<Member> members;
 
@@ -507,7 +508,7 @@ struct DailyStreak {
     /// session, exactly as the browser build latches it, so the card keeps its
     /// brighter star until the next login.
     bool newDay = false;
-    int starsAwarded = 0;
+    int todayReward = 0;
     std::int64_t nextClaimAtMillis = 0;
     std::int64_t streakExpiresAtMillis = 0;
 };

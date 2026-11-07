@@ -54,6 +54,26 @@ TEST(svg_document_reports_whether_it_animates) {
     CHECK(SvgDocument::fromString(kAnimatedChild).animated());
 }
 
+TEST(hel_spider_legs_follow_distance_instead_of_clock_time) {
+    const ContentRegistry& content = testsupport::shippedContent();
+    const std::uint16_t mob = content.mobIndex("hel_spider");
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    CHECK(sprites.mobDrawable(mob));
+    const auto pixels = [&](double distance, double time) {
+        Canvas canvas = Canvas::createVirtual(128, 128);
+        MobMotion motion;
+        motion.distance = distance;
+        sprites.drawMob(canvas, mob, Rarity::Common, 64, 64, 112, 0, time,
+                        false, 0, {1, 0}, &motion);
+        return canvas.getImageData(0, 0, 128, 128);
+    };
+
+    const auto standing = pixels(0, 0);
+    CHECK(standing == pixels(0, 2));
+    CHECK(standing != pixels(20, 0));
+}
+
 TEST(art_cache_is_a_no_op_off_the_web) {
 #ifndef __EMSCRIPTEN__
     // Caching these tiles was measured four times SLOWER against the software

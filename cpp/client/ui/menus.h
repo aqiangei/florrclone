@@ -154,9 +154,8 @@ bool boundKeyPressed(const Window& window, Key key);
 /// The loadout the bar draws: ten primary slots, ten secondary slots under
 /// them, and a trash slot at the end of the second row.
 ///
-/// Layout, not capacity: `kLoadoutSlots` is what an account holds and the wire
-/// carries, and `kLoadoutActiveSlots` is how many of those are in orbit. A slot
-/// past what the account actually holds still draws as an empty one.
+/// Slot indices stay fixed for storage and the wire. Only the number
+/// unlocked by the current loadout talent is laid out in each equipment row.
 inline constexpr int kLoadoutBarPrimary = 10;
 inline constexpr int kLoadoutBarSecondary = 10;
 inline constexpr int kLoadoutBarSlots = kLoadoutBarPrimary + kLoadoutBarSecondary;
@@ -202,8 +201,9 @@ double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry
 /// ClientSettings::classicLoadoutBar.
 /// `viewWidth` is the viewport's width in design units, which the bar may have
 /// had to shrink to fit; 0 asks for the unclamped height.
-double inGameLoadoutBarHeight(bool classic = false, double viewWidth = 0.0);
-double inGameLoadoutBarLeft(bool classic, double viewWidth);
+double inGameLoadoutBarHeight(bool classic = false, double viewWidth = 0.0,
+                              int slots = kBaseLoadoutSlots);
+double inGameLoadoutBarLeft(bool classic, double viewWidth, int slots);
 
 /// Where the title screen's block of control hints starts, as an offset down
 /// from the centre of the window. Under whatever the loadout bar paints
@@ -1583,7 +1583,10 @@ public:
     /// The screen owns the loadout bar's slide: the browser builds a fresh
     /// `CanvasLoadoutBar` per screen, so crossing between them replays the
     /// rise rather than leaving the bar already seated from last time.
-    void setTouchLayout(bool touch) { touchLayout_ = touch; }
+    void setTouchLayout(bool touch, const std::array<Rect, 4>& hitBounds) {
+        touchLayout_ = touch;
+        touchHitBounds_ = hitBounds;
+    }
     void setInGame(bool inGame) {
         if (inGame == inGame_) return;
         inGame_ = inGame;
@@ -1832,6 +1835,7 @@ private:
 
     bool inGame_ = false;
     bool touchLayout_ = false;
+    std::array<Rect, 4> touchHitBounds_{};
     bool exitRequested_ = false;
     bool logoutRequested_ = false;
     bool adminGrantOffered_ = false;

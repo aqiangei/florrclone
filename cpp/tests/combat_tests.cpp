@@ -4192,6 +4192,29 @@ TEST(a_plank_hits_a_shot_twenty_times_as_hard_as_a_mob) {
     CHECK(shotLossFrom(f.plain) < 18.0 * kPlankShotDamageScale);
 }
 
+TEST(crowded_melee_skips_peaceful_shots_but_preserves_pvp_and_corruption) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    if (!f.ok) return;
+    for (int mode = 0; mode < 4; ++mode) {
+        Arena a;
+        const Entity alice = a.player({800, 1000});
+        const Entity bob = a.player({1400, 1000});
+        const Vec2 contact{1100, 1000};
+        const Entity shot = spawnDurableShot(a, contact, {}, 10, 500, bob, bob, 10000);
+        equipPetal(a, alice, f.plank, Rarity::Common, contact);
+        if (mode == 1) a.world.get<Faction>(alice).friendlyFireEnabled = true;
+        if (mode == 2) a.world.get<Faction>(shot).friendlyFireEnabled = true;
+        if (mode == 3) a.world.ensure<PlayerVisuals>(bob).corrupted = true;
+
+        a.rebuildGrid();
+        a.combat.beginTick(a.world, 1000, net::kTickSeconds, a.events);
+        a.combat.runContactPhase(a.world, a.grid, f.registry, 1000);
+        const double damage = mode == 0 ? 0.0 : 18.0 * kPlankShotDamageScale;
+        CHECK_NEAR(a.health(shot), 10000.0 - damage, 1e-9);
+    }
+}
+
 TEST(a_basil_and_a_mob_pass_through_each_other) {
     const Fixture& f = fixture();
     CHECK(f.ok);

@@ -17,7 +17,7 @@ namespace flix::web {
 /// Reloads the page so a stale build is replaced by the served one.
 ///
 /// False means nothing happened, and there are two ways for that: a native
-/// build, and a second call within one page session. If the freshly loaded
+/// build, and a second call during the same recovery. If the freshly loaded
 /// bundle STILL disagrees with the server then the mismatch is not staleness
 /// -- a half-finished deploy, a proxy serving yesterday's wasm -- and a client
 /// that reloads on every refusal would spin on it forever. The caller shows
@@ -26,9 +26,7 @@ bool reloadForStaleBuild();
 
 /// Forgets that a reload was tried, so the NEXT stale build gets one too.
 ///
-/// Called whenever a handshake succeeds. Without it the guard above is a
-/// one-per-tab budget rather than a one-per-mismatch one: a page that reloaded
-/// through this morning's deploy would sit stale through this afternoon's.
+/// Called whenever a handshake succeeds so the next version can recover too.
 void clearStaleBuildGuard();
 
 } // namespace flix::web

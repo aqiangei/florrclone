@@ -870,6 +870,15 @@ TEST(the_database_editor_resets_a_password) {
     Harness h("admindb-actions", [](const std::string& path) {
         seedUser(path, "boss", "password7", true);
         seedUser(path, "bob", "password7");
+        Database seed;
+        std::string error;
+        if (seed.load(path, error)) {
+            if (const auto* account = seed.findUser("bob")) {
+                seed.progress(account->id).totalXp = 123456;
+                seed.markDirty();
+                seed.save();
+            }
+        }
     }, dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
@@ -878,12 +887,29 @@ TEST(the_database_editor_resets_a_password) {
     CHECK(loginAs(h, boss, "boss", "password7"));
     CHECK(unlock(h, boss));
     CHECK(loginAs(h, bob, "bob", "password7"));
+    const std::string bobToken = bob.sessionToken();
+    const auto& db = h.server.database();
+    const auto* account = db.findUser("bob");
+    if (!account) { CHECK(false); return; }
+    const std::string userId = account->id;
 
     // A reset signs whoever holds the account out, and the new one works.
     boss.adminDbSetPassword("bob", "brandnew9");
     CHECK(awaitResult(h, {&boss, &bob}, boss));
     CHECK(h.stepUntil({&boss, &bob},
                       [&] { return bob.status() != NetClient::Status::LoggedIn; }, 100));
+    NetClient old;
+    CHECK(connectClient(h, old));
+    old.authAnswered = false;
+    old.resumeSession(bobToken);
+    CHECK(h.stepUntil({&old}, [&] { return old.authAnswered; }));
+    CHECK(old.authStatus == net::AuthStatus::SessionExpired);
+    old.authAnswered = false;
+    old.requestLogin("bob", "password7");
+    CHECK(h.stepUntil({&old}, [&] { return old.authAnswered; }));
+    CHECK(old.authStatus == net::AuthStatus::BadCredentials);
+    const auto* progress = db.findProgress(userId);
+    CHECK(progress && progress->totalXp == 123456.0);
     NetClient again;
     CHECK(loginAs(h, again, "bob", "brandnew9"));
 

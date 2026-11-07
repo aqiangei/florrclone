@@ -1,4 +1,5 @@
 #include "shared/game/config.h"
+#include "shared/game/hyper_petal_techniques.h"
 #include "shared/game/dark_mark.h"
 
 #include <algorithm>
@@ -2220,6 +2221,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
                 s.*field = std::clamp(s.*field, eternal.*field * 2.0, eternal.*field * 2.1);
         }
     }
+    s.reloadMillis *= hyperAmount(hyperTechniqueInfo(c.id, r), HyperTechnique::SplitRecovery);
     if (c.id == "dark_mark") s.reloadMillis = kDarkMarkReloadMillis;
     if (graded == Rarity::Apex && c.id == "clover") {
         // Give the luck petal a meaningful upgrade even when repeated boss

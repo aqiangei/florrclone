@@ -144,6 +144,8 @@ private:
     void bind(World& world);
     /// A spot inside a roaming site's area for its NPC to stand on.
     Vec2 pickRoamingSpot(const Terrain& terrain, const ContentRegistry& content, const Site& site);
+    Vec2 clearAssemblerPosition(const Terrain& terrain, const ContentRegistry& content,
+                                const Site& site);
 
     std::vector<Site> sites_;
     /// Glances, and the cruises' re-picked headings: the NPCs' own stream.

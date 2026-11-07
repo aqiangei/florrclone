@@ -449,13 +449,13 @@ TEST(entities_leaving_view_are_removed) {
 }
 
 TEST(a_camera_petals_view_is_streamed_edge_to_edge_and_only_a_screen_past_it) {
-    // Unique antennae draws ten default screens of world. Everything on that
+    // Hyper antennae draws eleven default screens of world. Everything on that
     // screen has to be streamed, and current every snapshot, or mobs vanish
     // and stutter in plain view. The margin PAST it stays the default
     // screen's: things move at the same speed however far out the camera is,
     // and a margin ten screens wide would be the whole map.
     Fixture f;
-    const Vec2 drawn{kViewportWidth * 10.0, kViewportHeight * 10.0};
+    const Vec2 drawn{kViewportWidth * 11.0, kViewportHeight * 11.0};
     f.world.get<PlayerLocation>(f.viewer).viewport = drawn;
     const Vec2 centre = f.world.get<Transform>(f.viewer).position;
     const Entity corner = f.addMob(centre + drawn * 0.5 - Vec2{50.0, 50.0});
@@ -1852,7 +1852,7 @@ TEST(current_squad_updates_do_not_dismiss_another_squads_invite) {
     const auto deliver=[&](ByteWriter& w){ByteReader r(w.data(),w.size());client.onMessage(connection,r);CHECK(r.ok());};
     ByteWriter auth;auth.u8(static_cast<std::uint8_t>(net::ServerMessage::AuthResult));
     auth.u8(static_cast<std::uint8_t>(net::AuthStatus::Ok));auth.str("test-token");auth.str("player");auth.str("");deliver(auth);
-    const auto squad=[&](const char* id){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::SquadUpdate));w.boolean(true);w.str(id);w.boolean(false);w.u8(0);deliver(w);};
+    const auto squad=[&](const char* id){ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::SquadUpdate));w.boolean(true);w.str(id);w.str("007");w.boolean(false);w.u8(0);deliver(w);};
     squad("old");
     ByteWriter invite;invite.u8(static_cast<std::uint8_t>(net::ServerMessage::SquadInviteReceived));invite.str("new-member");invite.u8(0);deliver(invite);
     CHECK(client.squadInvite().waiting);CHECK(client.squadInvite().justArrived);

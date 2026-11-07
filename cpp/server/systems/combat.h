@@ -313,6 +313,7 @@ public:
     ///
     /// Only a mob can be stripped -- a flower has no armour to take.
     void applyArmorShred(World& world, Entity victim, double amount, double nowMillis);
+    void applyArmorShred(World& world, Entity victim, double amount, double nowMillis, double durationScale);
 
     /// A dandelion's lockout: `victim` heals from nothing for `durationMillis`.
     ///
@@ -646,7 +647,7 @@ private:
     void dischargeOnContact(World& world, const SpatialGrid& grid, const MeleeSource& source,
                             double nowMillis);
     void gatherPetals(World& world, const ContentRegistry& content, double nowMillis);
-    void resolveMelee(World& world, const SpatialGrid& grid, double nowMillis);
+    void resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry, double nowMillis);
     /// A petal swinging at another flower, which is a different collision from
     /// the petal-vs-mob one beside it: gated by the arena/corruption rule
     /// rather than by the faction alone, throttled per victim, costing the

@@ -13,7 +13,7 @@ namespace flix {
 
 namespace {
 
-// Imported mechanical legs already have separate pivots. Drive their transforms
+// Imported walking legs already have separate pivots. Drive their transforms
 // from travelled distance, using the garden spider's gait rate and amplitude.
 std::string walkingLegArtwork(const std::string& source) {
     std::string out;
@@ -638,7 +638,8 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
             mobs_[i].usable = petals_[petal].usable;
             continue;
         }
-        const bool walkingLegs = config.id == "mecha_spider" || config.id == "mecha_crab";
+        const bool walkingLegs = config.id == "hel_spider" || config.id == "mecha_spider" ||
+                                 config.id == "mecha_crab";
         compile(walkingLegs ? walkingLegArtwork(config.image) : config.image,
                 config.colorRgba, "mob " + config.id, mobs_[i]);
         mobs_[i].distanceAnimated = walkingLegs;

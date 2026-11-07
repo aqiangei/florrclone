@@ -50,6 +50,7 @@
 #include "client/ui/menu_style.h"
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
+#include "shared/game/assembler.h"
 #include "client/ui/content_i18n.h"
 #include "client/ui/text.h"
 #include "shared/game/config.h"
@@ -137,7 +138,8 @@ int affordable(const Profile& profile, const AssemblyRecipe& recipe, Rarity tier
     std::int64_t most = kAssemblerMaxBatch;
     for (const AssemblyRecipe::Stack& input : recipe.inputs) {
         if (!knownPetal(input.petal)) return 0;
-        const std::int64_t takes = std::max<std::int64_t>(1, recipe.takes(input.petal));
+        const std::int64_t takes = assemblerInputCount(recipe, content(), tier, input.petal,
+                                                       recipe.takes(input.petal));
         const std::int64_t held = static_cast<std::int64_t>(profile.stackCount(input.petal, tier));
         most = std::min(most, held / takes);
     }
@@ -311,7 +313,8 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
         // florr's "held/needed": what the bag holds, and what the count in
         // the field takes of it -- one run's worth while the field reads 0.
         const std::uint64_t held = profile.stackCount(input, tier);
-        const std::uint64_t needed = static_cast<std::uint64_t>(recipe.inputs[i].count) *
+        const auto perRun = assemblerInputCount(recipe, content(), tier, input, recipe.inputs[i].count);
+        const std::uint64_t needed = static_cast<std::uint64_t>(perRun) *
                                      static_cast<std::uint64_t>(std::max(1, count));
         tile.badge = stackCountText(held) + "/" + stackCountText(needed);
         tile.badgeCentred = true;
@@ -379,20 +382,22 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
                      "每20分钟轮换；长按箭头加速调整数量。"));
     }
     if (nextRecipe < recipes.size()) {
-        const auto describe = [&](const std::vector<AssemblyRecipe::Stack>& stacks) {
+        const auto& upcoming = recipes[nextRecipe];
+        const auto describe = [&](const std::vector<AssemblyRecipe::Stack>& stacks, bool inputs) {
             std::string text;
             for (const auto& stack : stacks) {
                 if (!text.empty()) text += " + ";
                 const auto& petal = content().petal(stack.petal);
-                text += std::to_string(stack.count) + "×" + petalNameTr(petal.id, petal.name.c_str());
+                const auto amount = inputs
+                    ? assemblerInputCount(upcoming, content(), tier, stack.petal, stack.count) : stack.count;
+                text += std::to_string(amount) + "×" + petalNameTr(petal.id, petal.name.c_str());
             }
             return text;
         };
-        const auto& upcoming = recipes[nextRecipe];
         auto line = card;
         line.lineY += 30;
         drawSlotLine(canvas, line, trEnZh("Next: ", "下个配方：") +
-                     describe(upcoming.inputs) + " → " + describe(upcoming.outputs));
+                     describe(upcoming.inputs, true) + " → " + describe(upcoming.outputs, false));
         const int seconds = static_cast<int>(std::ceil(std::max(0.0, refreshRemainingMillis) / 1000.0));
         line.lineY += 28;
         drawSlotLine(canvas, line, trEnZh("Changes in: ", "下次轮换：") +

@@ -718,7 +718,7 @@ void App::frame(double dt) {
     // placed.
     mobile_.layout(window_.width(), window_.height(),
                    inGameLoadoutBarHeight(menus_.settings().classicLoadoutBar,
-                                          window_.width()));
+                                          window_.width(), net_.profile().skills.loadoutSlots()));
     // This frame's contacts, before any screen reads them. Here rather than in
     // updatePlaying because the frames the controls are NOT up for are the
     // ones that matter: dying, or a panel opening over a deflected stick, has
@@ -855,7 +855,7 @@ void App::frame(double dt) {
     const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
     menus_.setInGame(inWorld);
     menus_.setTouchLayout(config_.forceTouchControls || menus_.settings().touchControlsWanted(
-        coarsePointer_ || window_.touchSeen()));
+        coarsePointer_ || window_.touchSeen()), mobile_.hitBounds());
     // Re-measured every frame, so the craft panel turns into the oracle's (or
     // the trader's) as the flower walks up and back into the forge as it walks
     // off. Only a living, placed flower is standing anywhere: the corpse on the

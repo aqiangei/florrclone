@@ -29,6 +29,8 @@
 
 namespace flix {
 
+class ServerWorkers;
+
 /// Place the whole respawn hull without crossing a wall from an open corpse centre.
 Vec2 playerRespawnPosition(const Terrain& terrain, Realm realm, Vec2 around, double radius);
 
@@ -195,6 +197,9 @@ bool anchoredAgainstKnockback(World& world, const ContentRegistry& registry, Ent
 
 class MovementSystem {
 public:
+    ServerWorkers* workers = nullptr;
+    unsigned workerLimit = 0;
+
     /// Every staged map's annotation layer, or null when the server has none.
     ///
     /// Set once rather than passed per tick: a teleporter pad is a fixture of
@@ -259,16 +264,15 @@ private:
         Query<RingAnchor, Transform, Motion, Body> ringAnchors;
     };
 
-    /// One NPC's body, flattened out of the ECS once per player pass: a handful
-    /// of them, each tested against every flower.
-    struct NpcDisc {
+    /// A fixed obstacle flattened out of the ECS for the movement passes.
+    struct ObstacleDisc {
         Vec2 position;
         double radius = 0;
         Realm realm = Realm::Overworld;
     };
 
     /// One loose petal, flattened out of the ECS for the passes that shove it.
-    /// Unlike an NpcDisc it MOVES during the pass -- every flower or mob that
+    /// Unlike a fixed obstacle it moves during the pass -- every flower or mob that
     /// pushes it leaves it somewhere new for the next one -- so the position
     /// is worked on here and written back to the Transform once at the end.
     struct LooseDisc {
@@ -360,6 +364,8 @@ private:
     /// the mobs where they finally stand this tick.
     void collideLooseBodies(World& world, const Terrain& terrain);
     void moveMobs(World& world, const Terrain& terrain, double nowMillis, double dt);
+    bool stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
+                          Vec2& position, double radius) const;
     void moveProjectiles(World& world, const Terrain& terrain, double dt);
 
     /// Pushes overlapping mobs apart. Runs once everything has moved, so a
@@ -406,7 +412,8 @@ private:
     std::optional<Queries> queries_;
     std::vector<SeekTarget> seekTargets_;
     /// Rebuilt at the top of every player pass. See pushOutOfNpcs().
-    std::vector<NpcDisc> npcDiscs_;
+    std::vector<ObstacleDisc> npcDiscs_;
+    std::vector<ObstacleDisc> meteorDiscs_;
     /// Rebuilt at the top of each pass that shoves loose petals.
     std::vector<LooseDisc> looseDiscs_;
     bool seekTargetsReady_ = false;
@@ -419,6 +426,18 @@ private:
     std::vector<SeparationEntry> separationSet_;
     std::vector<std::uint32_t> separationSlot_;
     std::vector<Entity> separationCandidates_;
+    struct SeparationScratch {
+        std::vector<Entity> candidates;
+        SpatialGrid::QueryScratch grid;
+    };
+    std::vector<SeparationScratch> separationScratch_;
+    struct MobMovementBatch {
+        const Entity* entities;
+        Transform* transforms;
+        Motion* motions;
+        std::size_t size;
+    };
+    std::vector<MobMovementBatch> mobMovementBatches_;
     SpatialGrid separationGrid_{kMobCollisionCellSize};
 };
 

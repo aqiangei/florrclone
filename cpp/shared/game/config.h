@@ -1659,7 +1659,7 @@ private:
 /// The camera multiplier one worn petal asks for at `rarity`: below 1 pulls
 /// the camera out, 1 leaves it alone. Ordinary zoom petals keep the browser's
 /// 0.3 floor, so no tier can take the figure through zero and invert the
-/// camera; antennae's explicit vision-range table reaches 10x (0.1) and is
+/// camera; antennae's explicit vision-range table reaches 11x and is
 /// exempt from it.
 ///
 /// Shared because both sides have to agree about it. The client draws the
@@ -1685,6 +1685,14 @@ struct EquippedPetal {
 
     bool empty() const { return configIndex == kNoPetal; }
 };
+
+/// A Hyper Mimic can copy the Eternal antennae view from a lower tier.
+inline double equippedCameraZoom(const ContentRegistry& registry, const EquippedPetal& slot) {
+    const auto tier = slot.rarity == Rarity::Apex && slot.reloadRarity != Rarity::Apex &&
+                      registry.petal(slot.configIndex).id == "antennae"
+        ? Rarity::Unique : slot.rarity;
+    return petalCameraZoom(registry, slot.configIndex, tier);
+}
 
 /// Resolves slot `slot` of a bar. `slotAt(i)` returns slot i AS STORED -- its
 /// petal index (kNoPetal for empty) and rarity, `reloadRarity` ignored -- or an

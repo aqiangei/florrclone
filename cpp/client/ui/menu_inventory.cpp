@@ -1,3 +1,4 @@
+#include "shared/game/hyper_petal_techniques.h"
 #include "shared/game/computer_set.h"
 // The petal inventory.
 //
@@ -319,7 +320,10 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
     const auto baseStats = content().petalStats(equipped.configIndex, equipped.rarity);
     const double scale = baseStats.reloadMillis > 0.0
         ? reloadScale * effectiveStats.reloadMillis / baseStats.reloadMillis : reloadScale;
-    auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, scale, slot, triangleBonus);
+    const bool copiedSawblade = originalIndex != equipped.configIndex &&
+        content().petal(equipped.configIndex).id == "sawblade";
+    auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, scale, slot,
+                                   triangleBonus, equipped.reloadRarity == equipped.rarity && !copiedSawblade);
     if (originalIndex != equipped.configIndex && !lines.empty()) {
         lines.front().text = std::string(language() == Language::Zh ? "拟态 → " : "Mimic → ") + lines.front().text;
     }
@@ -327,7 +331,8 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
 }
 
 std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rarity,
-                                           const SkillSet& skills, double reloadScale, int slot, double triangleBonus) {
+                                           const SkillSet& skills, double reloadScale, int slot, double triangleBonus,
+                                           bool showHyperTechnique) {
     const PetalConfig& config = content().petal(petalIndex);
     const PetalStats stats = content().petalStats(petalIndex, rarity);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
@@ -376,6 +381,21 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         body.maxWidth = kTooltipWrapWidth;
         body.markup = true;
         lines.push_back(body);
+    }
+
+    const auto* technique = showHyperTechnique ? hyperTechniqueInfo(config.id, rarity) : nullptr;
+    if (technique) {
+        const bool zh = language() == Language::Zh;
+        TooltipLine special{std::string(zh ? "超凡机制 · " : "Hyper technique · ") +
+                            (zh ? technique->chinese : technique->english), 12.0, kPaper};
+        special.gapBefore = 6.0;
+        special.maxWidth = kTooltipWrapWidth;
+        lines.push_back(special);
+        TooltipLine hint{std::string(zh ? "神秘提示 · " : "Mysterious hint · ") +
+                         hyperMysteryHint(technique->technique, zh), 12.0, kPaper};
+        hint.alpha = 0.78;
+        hint.maxWidth = kTooltipWrapWidth;
+        lines.push_back(hint);
     }
 
     // Dimmed to gardn's 0xffffff90 rather than a pre-mixed grey, and spaced
@@ -561,11 +581,13 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (stats.spongeDamageDurationMillis > 0)
         special("伤害分摊时间：", "Damage spread duration: ", stats.spongeDamageDurationMillis / 1000.0, "s");
-    if (stats.cameraZoom != 1.0) {
+    const double cameraZoom = config.id == "antennae" && !showHyperTechnique && rarity == Rarity::Apex
+        ? petalCameraZoom(content(), petalIndex, Rarity::Unique) : stats.cameraZoom;
+    if (cameraZoom != 1.0) {
         lines.push_back({std::string(chinese ? "视野缩放：" : "Camera zoom: ") +
-            percentNumber(stats.cameraZoom) + "%", 12.0});
+            percentNumber(cameraZoom) + "%", 12.0});
         lines.push_back({std::string(chinese ? "可见范围倍率：" : "Vision range: ") +
-            oneDecimal(1.0 / stats.cameraZoom) + "x", 12.0});
+            oneDecimal(1.0 / cameraZoom) + "x", 12.0});
     }
     if (config.id == "observer") lines.push_back({chinese ?
         "机械导弹发射时自动瞄准同地图内的敌方目标。" :
@@ -1146,6 +1168,7 @@ bool InventoryPanel::render(MenuContext& ctx) {
         // Equip it into the first free slot, which is what a player wants nine
         // times out of ten and saves the trip to the bar.
         for (std::size_t slot = 0; slot < kLoadoutSlots; ++slot) {
+            if (slot % kLoadoutActiveSlots >= static_cast<std::size_t>(profile.skills.loadoutSlots())) continue;
             if (slot < profile.loadout.size() && !profile.loadout[slot].empty()) continue;
             ctx.net.setLoadoutSlot(static_cast<int>(slot), ctx.drag.petalIndex, ctx.drag.rarity);
             break;

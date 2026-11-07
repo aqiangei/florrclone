@@ -7,11 +7,9 @@
 // talent can flip the title screen's yellow arrow and join any biome's twin
 // instead of the biome itself; every pad inside a twin leads to another twin.
 //
-// What makes a twin harder is the spawn roll, and only that: every mob a band
-// grows there comes out one tier higher than the same band would grow it in the
-// ordinary biome. The top two rungs are the exception. A twin has no boss
-// clocks, so a unique or an apex never spawns in one by any path -- the band's
-// own roll stops at super, as it does everywhere, and the +1 stops there too.
+// A twin's bands raise the ordinary roll a tier through Ultra. At the top of
+// the curve, only a small share of natural Ultra rolls becomes Super. A twin
+// has no boss clocks and caps at Super.
 //
 // The PVP arena and the maze are generated rather than authored, have no map
 // file to copy, and have no prestige version; neither do the instanced dungeon
@@ -20,6 +18,7 @@
 
 #include <string>
 
+#include "shared/core/types.h"
 #include "shared/game/rarity.h"
 
 namespace flix {
@@ -51,6 +50,16 @@ inline constexpr Rarity prestigeRarity(Rarity rolled) {
     const int raised = rarityIndex(rolled) + kPrestigeRarityStep;
     return raised > rarityIndex(kPrestigeRarityCap) ? kPrestigeRarityCap
                                                     : static_cast<Rarity>(raised);
+}
+
+inline constexpr double kPrestigeUltraPromotionChance = 0.25;
+
+/// Ultra is already the main tier in the deepest bands. Promote a minority of
+/// those rolls so the band stays challenging without becoming a Super farm.
+inline Rarity rollPrestigeAmbientRarity(Rarity rolled, Rng& rng) {
+    if (rolled == Rarity::Ultra && !rng.chance(kPrestigeUltraPromotionChance))
+        return Rarity::Ultra;
+    return prestigeRarity(rolled);
 }
 
 /// The tier whose XP a mob of `rarity` pays in a prestige twin: one below it,

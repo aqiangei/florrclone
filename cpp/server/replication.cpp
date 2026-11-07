@@ -342,6 +342,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         viewerAccount != nullptr ? viewerAccount->connection : 0;
     Query<NetId, Replicated, Transform> replicated{world};
     replicated.each([&](Entity e, NetId& id, Replicated&, Transform& transform) {
+        if (e != viewer && transform.realm != realm) return;
+        if (e != viewer && outsideView(transform.position) && !exempt(e)) return;
         if (world.has<GhostTag>(e)) {
             const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
             if (!visuals || !visuals->seesGhosts) return;
@@ -357,8 +359,6 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // A squadmate is exempt for its own reason -- see Frame::alwaysVisible
         // -- but only within the viewer's realm: a party member in the maze has
         // no position that means anything on an overworld screen.
-        if (e != viewer && transform.realm != realm) return;
-        if (e != viewer && outsideView(transform.position) && !exempt(e)) return;
         const double distanceSq = flix::distanceSq(transform.position, centre);
         // The observer and nearby claimable loot must survive a full
         // snapshot even if a barrage fills the remaining entity budget.

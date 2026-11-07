@@ -285,12 +285,12 @@ inline double petalZoomScale(Rarity r) {
     return std::pow(4.0 / 3.0, ladderIndex(r));
 }
 
-/// Antennae's effective vision-range multiplier from the requested output
-/// table. Apex keeps the unique-tier cap.
+/// Antennae's effective vision-range multiplier. Hyper widens Eternal's
+/// ten-screen view by one screen, keeping the lower tiers on the same curve.
 inline double antennaeVisionRangeScale(Rarity r) {
     static constexpr std::array<double, kLadderRarityCount> kVisionScale = {
         1.0, 1.0, 1.25, 4.0 / 3.0, 10.0 / 7.0,
-        2.0, 20.0 / 7.0, 5.0, 10.0, 10.0,
+        2.0, 20.0 / 7.0, 5.0, 10.0, 11.0,
     };
     return kVisionScale[static_cast<std::size_t>(ladderIndex(clampRarity(rarityIndex(r))))];
 }

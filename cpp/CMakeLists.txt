@@ -245,6 +245,7 @@ add_library(flix_server STATIC
   server/chat_moderation.cpp
   server/replication.cpp
   server/parallel_snapshots.cpp
+  server/workers.cpp
   server/session.cpp
   server/sacrifice.cpp
   server/splitter.cpp
@@ -615,10 +616,12 @@ if(EMSCRIPTEN)
   # The two pages' shells, as emcc is given them: each with the boot script's
   # view of the files (client/web/boot_files.js) written in where it says
   # @FLIX_BOOT_FILES_JS@, so the two pages share one copy of it. Generated at
-  # configure time; editing any of the three re-runs the configure.
+  # configure time; editing either script re-runs the configure.
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/client/web/boot_files.js FLIX_BOOT_FILES_JS)
+  file(READ ${CMAKE_CURRENT_SOURCE_DIR}/client/web/asset_stream.js FLIX_ASSET_STREAM_JS)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-               ${CMAKE_CURRENT_SOURCE_DIR}/client/web/boot_files.js)
+               ${CMAKE_CURRENT_SOURCE_DIR}/client/web/boot_files.js
+               ${CMAKE_CURRENT_SOURCE_DIR}/client/web/asset_stream.js)
   set(FLIX_CLIENT_SHELL ${CMAKE_CURRENT_BINARY_DIR}/shells/client.html)
   set(FLIX_OFFLINE_SHELL ${CMAKE_CURRENT_BINARY_DIR}/shells/offline.html)
   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/client/web/shell.html ${FLIX_CLIENT_SHELL} @ONLY)
@@ -793,13 +796,13 @@ if(EMSCRIPTEN)
   endforeach()
   target_link_libraries(flix_server_parallel PUBLIC flix_shared_parallel)
   set_property(TARGET flowrix_server PROPERTY LINK_LIBRARIES flix_server_parallel)
-  target_link_options(flowrix_server PRIVATE "-pthread" "-sPTHREAD_POOL_SIZE=3"
+  target_link_options(flowrix_server PRIVATE "-pthread" "-sPTHREAD_POOL_SIZE=16"
     "-sPTHREAD_POOL_SIZE_STRICT=2" "-sDEFAULT_PTHREAD_STACK_SIZE=2097152")
   add_executable(flix_parallel_snapshot_tests EXCLUDE_FROM_ALL
     tests/runner.cpp tests/parallel_snapshots_tests.cpp)
   target_link_libraries(flix_parallel_snapshot_tests PRIVATE flix_server_parallel)
   target_link_options(flix_parallel_snapshot_tests PRIVATE "-pthread" "-sENVIRONMENT=node"
-    "-sPTHREAD_POOL_SIZE=3" "-sPTHREAD_POOL_SIZE_STRICT=2" "-sEXIT_RUNTIME=1"
+    "-sPTHREAD_POOL_SIZE=15" "-sPTHREAD_POOL_SIZE_STRICT=2" "-sEXIT_RUNTIME=1"
     "-sSTACK_SIZE=8388608" "-sINITIAL_MEMORY=64MB" "-sALLOW_MEMORY_GROWTH=1")
 
   # --- the offline build -----------------------------------------------------

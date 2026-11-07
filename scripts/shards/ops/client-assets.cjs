@@ -1,11 +1,31 @@
 'use strict';
 const assert=require('node:assert/strict');
+const assetNames=['bundle.js','bundle.wasm','bundle.js.bin','bundle.wasm.bin'];
+const releasePattern=/^\/opt\/florrclone\/releases\/[a-zA-Z0-9_-]+$/;
 // The entry must overwrite this private hop header. Trust it on the backend
 // only when the TCP peer is the configured entry server.
 const entryClientHeader = '        proxy_set_header X-Florr-Client-IP $remote_addr;';
 
-function configure(base,{release,assetHost,downloadQueue=false,entryProxy}) {
-  assert.match(release,/^\/opt\/florrclone\/releases\/[a-zA-Z0-9_-]+$/);
+function readAssetHashes(ssh,release) {
+  assert.match(release,releasePattern);
+  const lines=ssh('cd '+release+' && sha256sum -- '+assetNames.join(' ')).trim().split(/\r?\n/);
+  assert.equal(lines.length,assetNames.length,'Incomplete client asset checksums');
+  return Object.fromEntries(assetNames.map((name,i)=>{
+    const row=lines[i].match(/^([a-f0-9]{64})  (.+)$/);
+    assert(row&&row[2]===name,'Unexpected checksum for '+name);
+    return [name,row[1]];
+  }));
+}
+
+function cacheAssetPath(name,assetHashes) {
+  assert(assetNames.includes(name),'Unknown client asset '+name);
+  const hash=assetHashes[name];
+  assert.match(hash,/^[a-f0-9]{64}$/);
+  return '/client-assets/sha256-'+hash+'/'+name;
+}
+
+function configure(base,{release,assetHost,downloadQueue=false,entryProxy,assetHashes}) {
+  assert.match(release,releasePattern);
   assert.match(assetHost,/^[a-zA-Z0-9.-]+$/);
   if(entryProxy){
     assert.match(entryProxy,/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/);
@@ -41,6 +61,36 @@ function configure(base,{release,assetHost,downloadQueue=false,entryProxy}) {
         return 200 '{"ok":true,"ticket":"direct-download","state":"ready","ahead":0,"active":0,"assetBase":"${assetBase}"}';
     }
 `;
+  const accessHeaders=`
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Access-Control-Allow-Headers "X-Download-Ticket, Range" always;
+        add_header Access-Control-Allow-Methods "GET, OPTIONS" always;
+        add_header Access-Control-Expose-Headers "Content-Range, Content-Encoding, ETag" always;
+        add_header Cross-Origin-Resource-Policy "cross-origin" always;`;
+  const assetFile=(location,file)=>`
+    location ${location} {
+        ${downloadQueue?'auth_request /__download_authorize;':''}
+        if ($request_method = OPTIONS) { return 204; }
+        alias ${release}/${file};
+        default_type application/octet-stream;
+        types { application/wasm wasm; application/javascript js; }
+        gzip off;
+        sendfile on;
+        etag on;${accessHeaders}
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+`;
+  const assets=assetHashes?assetNames.map(name=>{
+    const stable=cacheAssetPath(name,assetHashes);
+    return `
+    location = /client-assets/${version}/${name} {
+        if ($request_method = OPTIONS) { return 204; }
+        absolute_redirect off;${accessHeaders}
+        add_header Cache-Control "no-store" always;
+        return 302 ${stable}$is_args$args;
+    }
+`+assetFile('= '+stable,name);
+  }).join(''):assetFile('~ ^/client-assets/'+version+'/(bundle\\.(?:js|wasm)(?:\\.bin)?)$','$1');
   const routes=queueRoutes+`
     location = / {
         if (-f /var/www/florrclone-maintenance/enabled) { return 503; }
@@ -56,22 +106,8 @@ function configure(base,{release,assetHost,downloadQueue=false,entryProxy}) {
         add_header Cache-Control "no-store" always;
     }
 
-    # Public client files only; pinned to the paired release, never player data.
-    location ~ ^/client-assets/${version}/(bundle\\.(?:js|wasm)(?:\\.bin)?)$ {
-        ${downloadQueue?'auth_request /__download_authorize;':''}
-        if ($request_method = OPTIONS) { return 204; }
-        alias ${release}/$1;
-        default_type application/octet-stream;
-        types { application/wasm wasm; application/javascript js; }
-        gzip off;
-        sendfile on;
-        etag on;
-        add_header Access-Control-Allow-Origin "*" always;
-        add_header Access-Control-Allow-Headers "X-Download-Ticket" always;
-        add_header Access-Control-Allow-Methods "GET, OPTIONS" always;
-        add_header Cross-Origin-Resource-Policy "cross-origin" always;
-        add_header Cache-Control "public, max-age=31536000, immutable";
-    }
+    # The release pins the client files. Identical bytes share a cache address.
+    ${assets}
     location ~ ^/(bundle\\.(?:js|wasm)(?:\\.bin)?)$ {
         if (-f /var/www/florrclone-maintenance/enabled) { return 503; }
         add_header Cache-Control "no-store" always;
@@ -107,4 +143,4 @@ ProtectHome=true
 WantedBy=multi-user.target
 `;
 }
-module.exports={configure,entryClientHeader,downloadQueueUnit};
+module.exports={configure,entryClientHeader,downloadQueueUnit,readAssetHashes,cacheAssetPath,assetNames};

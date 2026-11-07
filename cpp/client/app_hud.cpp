@@ -438,8 +438,10 @@ void App::drawSquadHud(Canvas& canvas, double time) {
     double centreY = hudBottom + 78.0 * kScale;
     TextStyle codeStyle=label;
     codeStyle.align=Align::Left;codeStyle.size=12;
-    const auto code=squad.id.rfind("squad_",0)==0?squad.id.substr(6):squad.id;
-    text(canvas,"组队码："+code+"  /squad-code 代码加入",barX,hudBottom+18,codeStyle);
+    if (!squad.joinCode.empty()) {
+        text(canvas, "组队码：" + squad.joinCode + "  /squad-code 代码加入",
+             barX, hudBottom + 18, codeStyle);
+    }
 
     const Vec2 eye = net_.view().self().position;
     bool wearsSplitter = false;

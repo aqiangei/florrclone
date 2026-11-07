@@ -535,16 +535,6 @@ void App::drawLogin(Canvas& canvas, double time) {
     text(canvas, registering_ ? ui::tr(ui::Msg::Register) : ui::tr(ui::Msg::Login), centreX,
          layout.headingY, heading);
 
-    TextStyle migrationHint;
-    migrationHint.size = 16;
-    migrationHint.align = Align::Centre;
-    text(canvas, ui::trEnZh("Previous site: http://154.219.105.161:8088/",
-                              "旧站：http://154.219.105.161:8088/"),
-         centreX, layout.headingY - 60.0, migrationHint);
-    text(canvas, ui::trEnZh("Please log in with your previous username and password.",
-                              "请使用之前的账号和密码登录，无需重新注册。"),
-         centreX, layout.headingY - 36.0, migrationHint);
-
     const int serverField = registering_ ? 3 : 2;
     // The four fields share one caret, so only the focused one is handed it:
     // the bar and the highlight are drawn where editing puts them. The form

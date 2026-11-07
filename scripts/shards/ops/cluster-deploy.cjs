@@ -166,7 +166,7 @@ function create(config,manifest,connections){
           const configFile=path.join(local,'nginx-'+id+'.conf');
           const queueFile=path.join(local,'download-queue-'+id+'.service');
           fs.writeFileSync(configFile,configure(fs.readFileSync(path.join(__dirname,'nginx-game.conf'),'utf8'),
-            {release:config.release,assetHost,downloadQueue:true}));
+            {release:config.release,assetHost,downloadQueue:true,assetHashes:manifest.files}));
           fs.writeFileSync(queueFile,downloadQueueUnit(config.release,assetHost));
           remote.upload(configFile,'/etc/nginx/conf.d/florrclone.conf');
           remote.upload(queueFile,'/etc/systemd/system/florr-download-queue.service');

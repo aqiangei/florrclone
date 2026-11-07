@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include "server/systems/movement.h"
+#include "server/workers.h"
 #include "server_harness.h"
 #include "test_data.h"
 
@@ -1294,6 +1295,49 @@ TEST(a_mob_and_a_loose_petal_are_eased_apart_by_mass) {
     still.step(30);
     CHECK_NEAR(still.positionOf(boulder).x, 5040.0, 1e-9);
     CHECK_NEAR(still.positionOf(slab).x, 4990.0, 1e-4);
+}
+
+TEST(a_planted_meteor_blocks_heavy_mobs_even_when_a_step_would_cross_it) {
+    ServerWorkers workers(2);
+    for (bool threaded : {false, true}) {
+        Fixture fx;
+        if (threaded) {
+            fx.movement.workers = &workers;
+            fx.movement.workerLimit = workers.count();
+            for (int i = 0; i < 256; ++i)
+                fx.spawnMob({6000.0 + (i % 16) * 160.0, 6000.0 + (i / 16) * 160.0}, 20.0, 1.0);
+        }
+        const Vec2 centre{3000, 3000};
+        const Entity meteor = fx.spawnLoose(centre, 150.0);
+        fx.world.add<PlantedMeteor>(meteor);
+        const Entity mob = fx.spawnMob({2200, 3000}, 60.0, 1e9);
+        const auto charge = [&] {
+            fx.world.get<Motion>(mob).velocity = {2000, 0};
+            fx.step(1, 1.0);
+        };
+
+        charge();
+        CHECK_NEAR(fx.positionOf(mob).x, centre.x - 210.0, 0.01);
+        CHECK_NEAR(fx.positionOf(meteor).x, centre.x, 1e-9);
+        CHECK_NEAR(fx.positionOf(meteor).y, centre.y, 1e-9);
+
+        fx.world.get<Transform>(mob).position = {2200, 3000};
+        fx.world.get<Motion>(mob).velocity = {};
+        fx.world.get<Knockback>(mob).impulse = {2000, 0};
+        fx.step(1, 1.0);
+        CHECK_NEAR(fx.positionOf(mob).x, centre.x - 210.0, 0.01);
+
+        // A meteor planted over a moving mob ejects it on its current side.
+        fx.world.get<Transform>(mob).position = {3060, 3000};
+        fx.world.get<Motion>(mob).velocity = {};
+        fx.step();
+        CHECK_NEAR(fx.positionOf(mob).x, centre.x + 210.0, 0.01);
+
+        fx.world.add<Dead>(meteor);
+        fx.world.get<Transform>(mob).position = {2200, 3000};
+        charge();
+        CHECK(fx.positionOf(mob).x > centre.x + 210.0);
+    }
 }
 
 TEST(an_npc_never_gives_way_to_a_loose_petal_and_two_slabs_split_evenly) {

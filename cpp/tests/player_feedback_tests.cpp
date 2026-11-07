@@ -467,9 +467,31 @@ TEST(feedback_bubble_speed_pea_bursts_cannot_accumulate_unbounded_mob_push){
     combat.applyKnockback(w,mob,{1,0},2000);
     CHECK_NEAR(w.get<Knockback>(mob).impulse.length(),1000,1e-8);
 }
-TEST(feedback_wild_mob_size_shrinks_without_reducing_knockback_resistance){
-    const auto& c=testsupport::shippedContent();World w;SpawnSystem spawn;Terrain terrain;Rng rng{452};
-    const auto index=c.mobIndex("soldier_ant");const auto stats=c.mobStats(index,Rarity::Super);
-    const auto mob=spawn.spawnMob(w,terrain,c,index,Rarity::Super,{2000,2000},Realm::Overworld,0,rng);CHECK(mob!=NULL_ENTITY);
-    if(mob!=NULL_ENTITY){CHECK_NEAR(w.get<Body>(mob).radius,stats.radius*.75,1e-7);CHECK_NEAR(w.get<Body>(mob).mass,stats.mass,1e-8);}
+TEST(feedback_wild_mob_size_scales_all_tiers_to_the_previous_eternal_limit) {
+    const auto& content = testsupport::shippedContent();
+    World world;
+    SpawnSystem spawner;
+    Terrain terrain;
+    const auto mobIndex = content.mobIndex("cactus"); // Includes a random size roll.
+    const double previousEternal = content.mobStats(mobIndex, Rarity::Unique).radius * 0.75;
+    const double previousHyper = content.mobStats(mobIndex, Rarity::Apex).radius * 0.75;
+    double previousRadius = 0.0;
+    for (int tier = 0; tier < kLadderRarityCount; ++tier) {
+        const auto rarity = clampRarity(tier);
+        const auto stats = content.mobStats(mobIndex, rarity);
+        Rng rng{452}; // Compare tiers using the same size roll.
+        const auto mob = spawner.spawnMob(world, terrain, content, mobIndex, rarity,
+                                          {2000, 2000}, Realm::Overworld, 0, rng);
+        CHECK(mob != NULL_ENTITY);
+        if (mob == NULL_ENTITY) continue;
+        const auto& body = world.get<Body>(mob);
+        const double roll = world.get<MobType>(mob).sizeJitter;
+        CHECK_NEAR(body.radius, stats.radius * roll * 0.75 * previousEternal / previousHyper, 1e-7);
+        CHECK(body.radius > previousRadius);
+        if (rarity == Rarity::Apex) CHECK_NEAR(body.radius, previousEternal * roll, 1e-7);
+        CHECK_NEAR(body.mass, stats.mass, 1e-8);
+        CHECK_NEAR(world.get<Health>(mob).max, stats.health, 1e-7);
+        CHECK_NEAR(world.get<ContactDamage>(mob).amount, stats.damage * mobContactScale(rarity), 1e-7);
+        previousRadius = body.radius;
+    }
 }

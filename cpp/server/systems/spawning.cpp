@@ -14,6 +14,12 @@
 namespace flix {
 namespace {
 
+constexpr double kFixtureBodyScale = 0.75;
+// One multiplier across the rarity ladder, so a Hyper's body matches the
+// previous Eternal of the same species and size roll.
+constexpr double kWildMobBodyScale = kFixtureBodyScale *
+    kMobSizeScale[rarityIndex(Rarity::Unique)] / kMobSizeScale[rarityIndex(Rarity::Apex)];
+
 /// Mobs that are never put to sleep and never recycled: they stay live
 /// entities wherever they stand, however long nobody looks at them.
 ///
@@ -706,7 +712,8 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
     const double jitter = rollSizeJitter(config, rarity, rng);
     // Wild animals shrink visually and physically, without lowering mass and
     // making the same projectile throw them further. Pets/NPCs use other paths.
-    const double radius = stats.radius * jitter * 0.75;
+    const double bodyScale = config.neverAmbient ? kFixtureBodyScale : kWildMobBodyScale;
+    const double radius = stats.radius * jitter * bodyScale;
 
     // A mob meets walls as a point, so any open spot will do; resolveCircle
     // is for the callers -- a nest, a script, a summon -- that hand over a
@@ -901,7 +908,7 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
         // Admit the whole animal once its head was admitted. Cutting this
         // loop at the cap leaves bosses with a partial body (or just a head).
         // The remaining beads may exceed the cap by one animal.
-        const double bodyRadius = bodyStats.radius * 0.75;
+        const double bodyRadius = bodyStats.radius * kWildMobBodyScale;
         const double spacing = config.segmentSpacing(leaderRadius, bodyRadius);
         leaderRadius = bodyRadius;
         at = at + back * spacing;
@@ -2311,9 +2318,11 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
                                       : rollSpawnRarity(zone.difficulty, luck, rng));
     if (rarityIndex(rarity) > rarityIndex(Rarity::Super)) rarity = Rarity::Super;
     if (fixedSuper) rarity = managedTier;
-    // A prestige twin's band grows what the plain band would, a tier up --
-    // and still never past super (shared/game/prestige.h).
-    if (zone.prestige) rarity = prestigeRarity(rarity);
+    if (zone.prestige) {
+        // Authored fixed spawns keep their configured promotion. Natural
+        // bands limit the promotion from the top ordinary tier.
+        rarity = forcedTier >= 0 ? prestigeRarity(rarity) : rollPrestigeAmbientRarity(rarity, rng);
+    }
     std::uint16_t type = roster == &zone ? chooseZoneMobType(content, zone, at, rarity, rng)
                                         : rollResolvedRows(content, roster->resolved, rarity, rng);
     if (type == kInvalidIndex) return false;

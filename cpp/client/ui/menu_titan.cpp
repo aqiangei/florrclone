@@ -10,6 +10,7 @@
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
 #include "shared/game/config.h"
+#include "shared/game/hyper_petal_techniques.h"
 #include "shared/game/npc.h"
 
 namespace flix {
@@ -295,6 +296,16 @@ bool TitanPanel::render(MenuContext& ctx) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
             if(!hyper_ && i==0 && knownPetal(stagedPetal_) && content().petal(stagedPetal_).id=="fragment"){drawSlotLine(canvas,line,eternalFragment_?"15个超级碎片 → 1个永久永恒碎片":"15个超级碎片 → 1把永恒限时锤（1小时）");continue;}
+            if (hyper_ && i == 0 && knownPetal(stagedPetal_)) {
+                const auto& id = content().petal(stagedPetal_).id;
+                if (const auto* technique = hyperTechniqueInfo(id, outputTier)) {
+                    line.line2Y = line.lineY;
+                    drawSlotLine(canvas, line, language() == Language::Zh ? technique->chinese
+                                                                          : technique->english,
+                                 rarityColor(outputTier), true);
+                    continue;
+                }
+            }
             drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需10个永恒碎片；限时锤不能参与争夺。","锤耗10返9，其他耗5返4；两处独立，总计最多5份。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:!eternalFragment_?std::array<const char*,3>{"15个超级碎片 → 1把永恒限时锤（1小时）","限时锤不能用于超凡争夺，不返还碎片。","可持有多把，每把独立计时1小时，离线计时。"}[i]:kLines[i]);
         }
     } else {

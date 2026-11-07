@@ -1,4 +1,5 @@
 #include "client/ui/menus.h"
+#include "shared/game/hyper_petal_techniques.h"
 #include "client/ui/content_i18n.h"
 #include "client/ui/text_select.h"
 #include "client/ease.h"
@@ -385,12 +386,12 @@ struct LoadoutLayout {
 /// 1920 -- and below 1 only where the viewport is narrower than the bar
 /// itself, which is a window far taller than it is wide. Without it the row
 /// simply runs off both edges.
-double loadoutFitScale(const LoadoutMetrics& metrics, double boxWidth, double scale) {
-    const int cols = kLoadoutBarPrimary;
+double loadoutFitScale(const LoadoutMetrics& metrics, double boxWidth, double scale,
+                       int primaryCols, int secondaryCols) {
     const double primaryRowW =
-        (cols * metrics.primarySize + (cols - 1) * metrics.primaryGap) * scale;
+        (primaryCols * metrics.primarySize + (primaryCols - 1) * metrics.primaryGap) * scale;
     const double secondaryRowW =
-        (cols * metrics.secondarySize + (cols - 1) * metrics.secondaryGap +
+        (secondaryCols * metrics.secondarySize + (secondaryCols - 1) * metrics.secondaryGap +
          (metrics.secondaryPicker ? metrics.secondaryGap + metrics.secondarySize : 0.0)) *
         scale;
     const double widest = std::max(primaryRowW, secondaryRowW);
@@ -398,20 +399,19 @@ double loadoutFitScale(const LoadoutMetrics& metrics, double boxWidth, double sc
     return boxWidth / widest;
 }
 
-LoadoutLayout layoutLoadout(Rect box, const LoadoutMetrics& metrics, double scale) {
+LoadoutLayout layoutLoadout(Rect box, const LoadoutMetrics& metrics, double scale,
+                            int primaryCols, int secondaryCols) {
     const double primarySize = metrics.primarySize * scale;
     const double secondarySize = metrics.secondarySize * scale;
     const double primaryGap = metrics.primaryGap * scale;
     const double secondaryGap = metrics.secondaryGap * scale;
     const double primaryMargin = metrics.primaryMargin * scale;
     const double secondaryMargin = metrics.secondaryMargin * scale;
-    const int cols = kLoadoutBarPrimary;
-
-    const double primaryRowW = cols * primarySize + (cols - 1) * primaryGap;
+    const double primaryRowW = primaryCols * primarySize + (primaryCols - 1) * primaryGap;
     // The secondary row's width counts the trash where there is one, which is
     // part of why the two rows do not share a start x; the other part is that
     // its slots are smaller. Both rows are centred in the box either way.
-    const double secondaryRowW = cols * secondarySize + (cols - 1) * secondaryGap +
+    const double secondaryRowW = secondaryCols * secondarySize + (secondaryCols - 1) * secondaryGap +
                                  (metrics.secondaryPicker ? secondaryGap + secondarySize : 0.0);
     const double primaryStartX = box.x + (box.w - primaryRowW) * 0.5;
     const double secondaryStartX = box.x + (box.w - secondaryRowW) * 0.5;
@@ -421,37 +421,40 @@ LoadoutLayout layoutLoadout(Rect box, const LoadoutMetrics& metrics, double scal
     const double primaryY = secondaryY - secondaryMargin - primaryMargin - primarySize;
 
     LoadoutLayout out;
-    for (int i = 0; i < cols; ++i) {
+    for (int i = 0; i < primaryCols; ++i) {
         out.slots[static_cast<std::size_t>(i)] = {primaryStartX + i * (primarySize + primaryGap),
                                                   primaryY, primarySize, primarySize};
-        out.slots[static_cast<std::size_t>(cols + i)] = {
+    }
+    for (int i = 0; i < secondaryCols; ++i) {
+        out.slots[static_cast<std::size_t>(kLoadoutBarPrimary + i)] = {
             secondaryStartX + i * (secondarySize + secondaryGap), secondaryY, secondarySize,
             secondarySize};
     }
-    out.trash = {secondaryStartX + cols * (secondarySize + secondaryGap), secondaryY,
+    out.trash = {secondaryStartX + secondaryCols * (secondarySize + secondaryGap), secondaryY,
                  secondarySize, secondarySize};
     return out;
 }
 
 } // namespace
 
-double inGameLoadoutBarHeight(bool classic, double viewWidth) {
+double inGameLoadoutBarHeight(bool classic, double viewWidth, int slots) {
     // The primary row's top, measured from the bottom edge: everything
     // layoutLoadout stacks between the two, at the in-game scale -- and at
     // whatever that scale had to give back to fit a narrow viewport, so this
     // stays the height of the bar actually drawn.
     const LoadoutMetrics& metrics = loadoutMetrics(classic);
     const double scale =
-        metrics.inGameScale * loadoutFitScale(metrics, viewWidth, metrics.inGameScale);
+        metrics.inGameScale * loadoutFitScale(metrics, viewWidth, metrics.inGameScale, slots, slots);
     return metrics.bottomPad + (metrics.secondaryMargin + metrics.secondarySize +
                                 metrics.secondaryMargin + metrics.primaryMargin +
                                 metrics.primarySize) * scale;
 }
 
-double inGameLoadoutBarLeft(bool classic, double viewWidth) {
+double inGameLoadoutBarLeft(bool classic, double viewWidth, int slots) {
     const LoadoutMetrics& metrics = loadoutMetrics(classic);
-    const double scale = metrics.inGameScale * loadoutFitScale(metrics, viewWidth, metrics.inGameScale);
-    const auto bar = layoutLoadout({0, 0, viewWidth, 0}, metrics, scale);
+    const double scale = metrics.inGameScale *
+        loadoutFitScale(metrics, viewWidth, metrics.inGameScale, slots, slots);
+    const auto bar = layoutLoadout({0, 0, viewWidth, 0}, metrics, scale, slots, slots);
     return std::min(bar.slots.front().x, bar.slots[kLoadoutBarPrimary].x);
 }
 
@@ -621,10 +624,10 @@ void endLayer(Canvas& frame, Canvas& layer, const LayerBox& box, double alpha) {
 /// Advances the secondary selection to the next non-empty slot in `step`'s
 /// direction, or -1 when the whole row is empty. Takes the loadout the bar is
 /// SHOWING, which for a few frames after an edit is not the profile's.
-int cycleSecondary(const std::vector<Profile::Slot>& loadout, int current, int step) {
+int cycleSecondary(const std::vector<Profile::Slot>& loadout, int current, int step, int slots) {
     int cur = current < 0 ? -1 : current;
-    for (int i = 0; i < kLoadoutBarPrimary; ++i) {
-        cur = (cur + step + kLoadoutBarPrimary) % kLoadoutBarPrimary;
+    for (int i = 0; i < slots; ++i) {
+        cur = (cur + step + slots) % slots;
         const auto at = static_cast<std::size_t>(kLoadoutBarPrimary + cur);
         if (at < loadout.size() && !loadout[at].empty()) return cur;
     }
@@ -1627,6 +1630,9 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     // Whether K or L (or mobile R long-press) is down this frame; see
     // presetBankShown_. Kept on loadoutPresetBank_ for the input pass.
     const int presetBank = inGame_ ? presetBankShown_ : -1;
+    const bool secondaryHidden = presetBank >= 0;
+    const int visibleSlots = profile.skills.loadoutSlots();
+    const int secondaryCols = secondaryHidden ? kLoadoutPresetsPerBank : visibleSlots;
     presetBankShown_ = -1;
     loadoutPresetBank_ = presetBank;
     // A local edit is shown at once and dropped the moment the server agrees
@@ -1686,15 +1692,21 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     // ask for -- three quarters for the classic shape, full size for the
     // modern one.
     const LoadoutMetrics& metrics = loadoutMetrics(settings_.classicLoadoutBar);
+    const double titleWidth = std::min(kTitleLoadoutWidth, static_cast<double>(canvas.width()));
     const Rect box = inGame_
         ? Rect{0.0, 0.0, static_cast<double>(canvas.width()),
                static_cast<double>(canvas.height())}
-        : Rect{(canvas.width() - kTitleLoadoutWidth) * 0.5,
-               canvas.height() * 0.5 + kTitleLoadoutDrop, kTitleLoadoutWidth,
+        : Rect{(canvas.width() - titleWidth) * 0.5,
+               canvas.height() * 0.5 + kTitleLoadoutDrop, titleWidth,
                kTitleLoadoutHeight};
     const double natural = inGame_ ? metrics.inGameScale : 1.0;
-    const double scale = natural * loadoutFitScale(metrics, box.w, natural);
-    const LoadoutLayout layout = layoutLoadout(box, metrics, scale);
+    const double scale = natural * loadoutFitScale(metrics, box.w, natural, visibleSlots, secondaryCols);
+    const LoadoutLayout layout = layoutLoadout(box, metrics, scale, visibleSlots, secondaryCols);
+    if (drag_.source == DragState::Source::LoadoutSlot && drag_.slot % kLoadoutBarPrimary >= visibleSlots)
+        drag_.clear();
+    if (loadoutPressSlot_ >= 0 && layout.slots[static_cast<std::size_t>(loadoutPressSlot_)].w == 0)
+        loadoutPressSlot_ = -1;
+    if (selectedSecondary_ >= visibleSlots) selectedSecondary_ = -1;
 
     // T and the number keys were recorded by handleKeys, which has no
     // network client. Changing away from the classic bar clears its legacy
@@ -1708,7 +1720,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     if (pendingCycle_ != 0) {
         // A backward legacy cycle with no selection starts at the first slot.
         const int step = (pendingCycle_ < 0 && selectedSecondary_ < 0) ? 1 : pendingCycle_;
-        selectedSecondary_ = cycleSecondary(shown, selectedSecondary_, step);
+        selectedSecondary_ = cycleSecondary(shown, selectedSecondary_, step, visibleSlots);
         lastSelectTime_ = timeSeconds;
         pendingCycle_ = 0;
     }
@@ -1717,7 +1729,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         if (selectedSecondary_ >= 0) {
             const int slot = kLoadoutBarPrimary + selectedSecondary_;
             if (slot < owned) clearLoadoutSlot(net, timeSeconds, slot);
-            selectedSecondary_ = cycleSecondary(shown, selectedSecondary_, 1);
+            selectedSecondary_ = cycleSecondary(shown, selectedSecondary_, 1, visibleSlots);
             lastSelectTime_ = timeSeconds;
         }
     }
@@ -1728,11 +1740,11 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         // advances the selection; otherwise it swaps with the slot below.
         const int secondary =
             kLoadoutBarPrimary + (selectedSecondary_ >= 0 ? selectedSecondary_ : primary);
-        if (primary < owned && secondary < owned) {
+        if (primary < visibleSlots && primary < owned && secondary < owned) {
             swapLoadoutSlots(net, timeSeconds, primary, secondary);
         }
         if (selectedSecondary_ >= 0) {
-            selectedSecondary_ = cycleSecondary(shown, selectedSecondary_, 1);
+            selectedSecondary_ = cycleSecondary(shown, selectedSecondary_, 1, visibleSlots);
             lastSelectTime_ = timeSeconds;
         }
     }
@@ -1781,7 +1793,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         // `was.w` is zero on the bar's first frame up -- there is no previous
         // layout to have moved from, and the tile pass below seats the tile in
         // its slot anyway.
-        if (!tile.live || i == heldSlot || !(was.w > 0)) continue;
+        if (!tile.live || i == heldSlot || !(was.w > 0) || !(now.w > 0)) continue;
         if (was.x == now.x && was.y == now.y && was.w == now.w) continue;
         const double ratio = now.w / was.w;
         tile.cx = now.x + now.w * 0.5 + (tile.cx - (was.x + was.w * 0.5)) * ratio;
@@ -1797,12 +1809,12 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     const Vec2 mouse{window.mouseX(), window.mouseY()};
     int hovered = -1;
     for (int i = 0; i < kLoadoutBarSlots; ++i) {
-        if (insideInclusive(layout.slots[static_cast<std::size_t>(i)], mouse)) hovered = i;
+        const Rect& slot = layout.slots[static_cast<std::size_t>(i)];
+        if (slot.w > 0 && insideInclusive(slot, mouse)) hovered = i;
     }
     // While a preset row is up the second row's petals are hidden under the
     // saved-loadout tiles. Those tiles stay hittable so a finger (or click)
     // can load one; they are just not petal drag sources (see grabbable).
-    const bool secondaryHidden = presetBank >= 0;
     if (metrics.secondaryPicker && hovered < 0 && insideInclusive(layout.trash, mouse)) {
         hovered = kLoadoutTrashSlot;
     }
@@ -1813,7 +1825,8 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     for (int i = 0; i < kLoadoutBarSlots; ++i) {
         const auto at = static_cast<std::size_t>(i);
         loadoutGrabbable_[at] =
-            i < owned && !(secondaryHidden && i >= kLoadoutBarPrimary);
+            i < owned && i % kLoadoutBarPrimary < visibleSlots &&
+            !(secondaryHidden && i >= kLoadoutBarPrimary);
     }
 
     canvas.save();
@@ -1840,6 +1853,10 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     for (int i = 0; i < kLoadoutBarSlots; ++i) {
         const auto at = static_cast<std::size_t>(i);
         LoadoutTileAnim& tile = loadoutTiles_[at];
+        if (i % kLoadoutBarPrimary >= visibleSlots) {
+            tile = {};
+            continue;
+        }
         const Profile::Slot slot = i < owned ? shown[at] : Profile::Slot{};
         const bool sameAsBefore = before[at].live && before[at].petalIndex == slot.petalIndex &&
                                   before[at].rarity == slot.rarity;
@@ -1980,8 +1997,8 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             extent.w = right - extent.x;
             extent.h = bottom - extent.y;
         };
-        for (const Rect& slot : layout.slots) take(slot);
-        for (int i = 0; i < kLoadoutBarPrimary; ++i) {
+        for (const Rect& slot : layout.slots) if (slot.w > 0) take(slot);
+        for (int i = 0; i < visibleSlots; ++i) {
             const Vec2 at = captionAt(i);
             take({at.x - kLoadoutCapReachX, at.y - kLoadoutCapReachY, kLoadoutCapReachX * 2,
                   kLoadoutCapReachY * 2});
@@ -2030,6 +2047,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
 
     for (int i = 0; i < kLoadoutBarSlots; ++i) {
         const Rect slot = layout.slots[static_cast<std::size_t>(i)];
+        if (slot.w <= 0) continue;
         if (secondaryHidden && i >= kLoadoutBarPrimary) {
             // The preset the number under this tile loads with the held key.
             // The one the flower is wearing right now is lit, as a slot under
@@ -2080,9 +2098,6 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
                           : slotReloadProgress(net, entry.slot);
         tile.health = slotHealthFraction(net, entry.slot);
         tile.counter = slotCounterLabel(net, entry.slot);
-        if(entry.slot%kLoadoutActiveSlots>=profile.skills.loadoutSlots()) {
-            tile.greyed=true;tile.badge=language()==Language::Zh?"锁定":"Locked";
-        }
         if (inGame_ && entry.slot < kLoadoutActiveSlots) {
             const double left = net.view().self().slotReloadRemainingMillis[static_cast<std::size_t>(entry.slot)];
             if (left > 0) tile.counter = std::to_string(static_cast<int>(std::ceil(left / 1000.0))) + "s";
@@ -2118,16 +2133,31 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
         const double dialScale = touch ? std::max(1.0, window.devicePixelRatio() *
             window.renderScale() / std::max(.01, window.uiScale())) : 1.0;
         const double dialWidth = 104 * dialScale, dialHeight = 44 * dialScale;
-        const Rect lastSecondary = layout.slots.back();
-        double x = lastSecondary.right() + 8.0;
-        double y = firstSecondary.y;
-        if (x + dialWidth > window.width() - 8) {
-            x = firstSecondary.x - dialWidth - 40;
-            if (x < 8) { x = std::max(8.0, window.width() * .5 - dialWidth*.5); y = layout.slots.front().y - dialHeight - 6; }
+        const Rect lastSecondary = layout.slots[kLoadoutBarPrimary + secondaryCols - 1];
+        const double secondaryRight = metrics.secondaryPicker && !secondaryHidden
+            ? layout.trash.right() : lastSecondary.right();
+        const double rowRight = touch
+            ? std::max(secondaryRight, layout.slots[visibleSlots - 1].right()) : secondaryRight;
+        constexpr double gap = 8.0;
+        const double bottomY = std::max(gap, window.height() - dialHeight - gap);
+        Rect dial{rowRight + gap, std::clamp(firstSecondary.y, gap, bottomY), dialWidth, dialHeight};
+        const bool hitsTouchControl = touch && std::any_of(touchHitBounds_.begin(), touchHitBounds_.end(),
+            [&](Rect control) { return control.w > 0 && dial.intersects(control); });
+        if (dial.right() > window.width() - gap || hitsTouchControl) {
+            // Stay next to the equipment. On narrow screens only the touch
+            // controls actually under the dial can push it up.
+            dial.x = std::max(gap, (window.width() - dialWidth) * 0.5);
+            double clearAbove = layout.slots.front().y;
+            if (touch) {
+                for (Rect control : touchHitBounds_) {
+                    if (control.w > 0 && control.x < dial.right() + gap && control.right() > dial.x - gap)
+                        clearAbove = std::min(clearAbove, control.y);
+                }
+            }
+            dial.y = std::clamp(clearAbove - dialHeight - gap, gap, bottomY);
         }
-        y = std::max(8.0, std::min(y, window.height() - dialHeight - 8));
-        rotationDial_ = {x, y, dialWidth, dialHeight};
-        canvas.save();canvas.translate(x,y);canvas.scale(dialScale,dialScale);
+        rotationDial_ = dial;
+        canvas.save();canvas.translate(dial.x,dial.y);canvas.scale(dialScale,dialScale);
         drawLoadoutSlot(canvas, {0,0,104,44}, 0x355C4Fu,
             rotationDial_.contains(mouse) && !panelRect_.contains(mouse));
         const double cx=52, cy=21;
@@ -2157,14 +2187,17 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     const bool touchTip = loadoutTouchInspect_.touch(window,timeSeconds,[&](Vec2 point){
         if(panelRect_.w>0 && panelRect_.contains(point))return -1;
         for(int i=0;i<std::min(owned,kLoadoutBarSlots);++i)
-            if(!(secondaryHidden&&i>=kLoadoutBarPrimary) && !shown[static_cast<std::size_t>(i)].empty() &&
+            if(i%kLoadoutBarPrimary<visibleSlots && !(secondaryHidden&&i>=kLoadoutBarPrimary) &&
+               !shown[static_cast<std::size_t>(i)].empty() &&
                insideInclusive(loadoutRects_[static_cast<std::size_t>(i)],point))return i;
         return -1;
     });
     if(touchTip && drag_.source==DragState::Source::LoadoutSlot)drag_.clear();
     const int tipIndex=touchTip?loadoutTouchInspect_.target:hovered;
-    const bool showTip = touchTip || (tipSlot &&
-        (!window.pointerIsTouch() && loadoutTooltipDelay.update(hovered,timeSeconds,pointerDown)));
+    const bool showTip = tipIndex >= 0 && tipIndex < owned &&
+        tipIndex % kLoadoutBarPrimary < visibleSlots &&
+        (touchTip || (tipSlot && !window.pointerIsTouch() &&
+         loadoutTooltipDelay.update(hovered,timeSeconds,pointerDown)));
     if (showTip) {
         const Profile::Slot& slot = shown[static_cast<std::size_t>(tipIndex)];
         const double reloadScale =
@@ -2213,6 +2246,8 @@ void MenuSystem::expectLoadout(const NetClient& net, double timeSeconds) {
 void MenuSystem::swapLoadoutSlots(NetClient& net, double timeSeconds, int a, int b) {
     const int owned = static_cast<int>(net.profile().loadout.size());
     if (a < 0 || b < 0 || a >= owned || b >= owned || a == b) return;
+    const int visibleSlots = net.profile().skills.loadoutSlots();
+    if (a % kLoadoutBarPrimary >= visibleSlots || b % kLoadoutBarPrimary >= visibleSlots) return;
     expectLoadout(net, timeSeconds);
     std::swap(expectedLoadout_[static_cast<std::size_t>(a)],
               expectedLoadout_[static_cast<std::size_t>(b)]);
@@ -2223,7 +2258,7 @@ void MenuSystem::swapLoadoutRows(NetClient& net, double timeSeconds) {
     const int owned = static_cast<int>(net.profile().loadout.size());
     if (owned < kLoadoutBarSlots) return;
     expectLoadout(net, timeSeconds);
-    for (int i = 0; i < kLoadoutBarPrimary; ++i) {
+    for (int i = 0; i < net.profile().skills.loadoutSlots(); ++i) {
         if (expectedLoadout_[static_cast<std::size_t>(kLoadoutBarPrimary + i)].empty()) continue;
         std::swap(expectedLoadout_[static_cast<std::size_t>(i)],
                   expectedLoadout_[static_cast<std::size_t>(kLoadoutBarPrimary + i)]);
@@ -2289,12 +2324,21 @@ void MenuSystem::clickLoadoutSlot(NetClient& net, double timeSeconds, int slot) 
 }
 
 void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeSeconds) {
-    if (rotationDial_.w > 0 && rotationDial_.contains({window.mouseX(),window.mouseY()}) &&
-        window.mousePressed(MouseButton::Left) && !drag_.active() &&
-        !panelRect_.contains({window.mouseX(),window.mouseY()})) {
-        settings_.rotationStep = std::clamp(settings_.rotationStep +
-            (window.mouseX() < rotationDial_.x + rotationDial_.w*.5 ? -1 : 1), 1, 4);
-        return;
+    if (rotationDial_.w > 0 && !drag_.active()) {
+        const auto adjustRotation = [&](Vec2 point) {
+            if (!rotationDial_.contains(point) || panelRect_.contains(point)) return false;
+            const int step = point.x < rotationDial_.x + rotationDial_.w * 0.5 ? -1 : 1;
+            settings_.rotationStep = std::clamp(settings_.rotationStep + step, 1, 4);
+            return true;
+        };
+        for (const auto& event : window.touchEvents()) {
+            if (event.phase == TouchPhase::Began && adjustRotation({event.point.x, event.point.y}))
+                return;
+        }
+        // A touch already adjusted the dial directly, even while another
+        // contact owns the mirrored mouse pointer.
+        if (!window.pointerIsTouch() && window.mousePressed(MouseButton::Left) &&
+            adjustRotation({window.mouseX(), window.mouseY()})) return;
     }
     // The bar's own view of the loadout, not the profile's: a petal picked up
     // one frame after a swap was sent must be the one the player can SEE in
@@ -3420,7 +3464,7 @@ bool MenuSystem::capturesMouse(Vec2 mouse) const {
     // The trash, gaps and caption strip still fall through and fire an attack.
     for (int i = 0; i < kLoadoutBarSlots; ++i) {
         const auto at = static_cast<std::size_t>(i);
-        if (!insideInclusive(loadoutRects_[at], mouse)) continue;
+        if (loadoutRects_[at].w <= 0 || !insideInclusive(loadoutRects_[at], mouse)) continue;
         if (loadoutGrabbable_[at]) return true;
         if (loadoutPresetBank_ >= 0 && i >= kLoadoutBarPrimary) return true;
     }
@@ -3431,7 +3475,7 @@ bool MenuSystem::capturesMouse(Vec2 mouse) const {
 }
 
 double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry) {
-    bool goggles = false;
+    double gogglesScale = 0.0;
     // Per petal, the shared rule: the server bounds the viewport this client
     // may report by the very same figure, so the two cannot disagree about
     // how much world is on screen.
@@ -3442,10 +3486,15 @@ double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry
         // Resolved, as the server resolves it when it bounds the viewport.
         const EquippedPetal slot = profile.equipped(registry, static_cast<int>(i));
         if (slot.empty()) continue;
-        goggles = goggles || registry.petal(slot.configIndex).id == "paranormal_goggles";
-        zoom = std::min(zoom, petalCameraZoom(registry, slot.configIndex, slot.rarity));
+        if (registry.petal(slot.configIndex).id == "paranormal_goggles") {
+            const auto* technique = hyperTechniqueInfo("paranormal_goggles", slot.rarity,
+                                                       slot.reloadRarity != slot.rarity);
+            const double scale = hyperAmount(technique, HyperTechnique::GhostSight, 1.25);
+            gogglesScale = gogglesScale > 0.0 ? std::min(gogglesScale, scale) : scale;
+        }
+        zoom = std::min(zoom, equippedCameraZoom(registry, slot));
     }
-    return zoom * (goggles ? 1.25 : 1.0);
+    return zoom * (gogglesScale > 0.0 ? gogglesScale : 1.0);
 }
 
 } // namespace flix

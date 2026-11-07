@@ -357,7 +357,8 @@ private:
     /// Here rather than in combat because the loadout is what decides whether
     /// a flower has any, and this system is the one holding the loadout.
     /// Combat SPENDS what this banks -- see ArmorStackState.
-    void tickArmorStacks(World& world, Entity player, const Aggregate& aggregate, double dt);
+    void tickArmorStacks(World& world, const ContentRegistry& registry, Entity player,
+                         const Aggregate& aggregate, double dt);
     void applyPassiveHeal(World& world, Entity player, const Aggregate& aggregate,
                           double nowMillis, double dt);
     /// Resize the flower's mana pool to what the bar now grants and run this
@@ -467,7 +468,7 @@ private:
     /// which is the flower for a spawn and the petal itself thereafter.
     void runBehaviour(World& world, Entity player, Entity petal, const PetalConfig& config,
                       const PetalStats& stats, Rarity rarity, Vec2 at, PetalTrigger trigger,
-                      double nowMillis);
+                      double nowMillis, bool copiedFromOtherTier = false);
     /// Remember a petal that just broke, so its break effect can run once the
     /// player's own columns are no longer held open by the slot pass.
     void queueBreakBehaviour(World& world, const ContentRegistry& registry, Entity petal);
@@ -485,7 +486,7 @@ private:
     /// One strike. `damage` is the petal's own stat, already up the rarity
     /// ladder; `rarity` is the tier it came from, which is what puts the
     /// fallback on that same ladder for a petal whose `damage` is 0.
-    void strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity, int bounces = -1);
+    void strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity, int bounces = -1, double reachScale = 1.0);
     /// The strike's visual half: one event carrying the bolts' endpoints. The
     /// damage half is a field, and a field has nothing on the wire the client
     /// could draw a strike from.
@@ -520,7 +521,8 @@ private:
                          std::vector<Entity>& out);
     /// Raise the first corpse in `realm` within reach of a yggdrasil. Returns
     /// whether one was raised, which is what spends the petal.
-    bool revivePlayerNear(World& world, Entity reviver, Realm realm, Vec2 at, double nowMillis);
+    bool revivePlayerNear(World& world, Entity reviver, Realm realm, Vec2 at, double nowMillis,
+                          bool extraReach);
     /// The field laid, or NULL_ENTITY when it would be nothing.
     Entity emitGroundEffect(World& world, Entity player, Vec2 at, GroundEffectKind kind,
                             double radius, double damagePerSecond, double slowFactor,
@@ -542,7 +544,7 @@ private:
     /// Where a loose petal of `radius` is put down: behind the flower's
     /// heading, clear of its body, and outside the walls.
     Vec2 loosePetalRestPoint(World& world, Entity player, const Transform& owner,
-                             double radius) const;
+                             double radius, double placementScale = 1.0) const;
     /// Put the egg in slot `hatchedBy` back on its reload, if it still hatches
     /// `mobIndex` and is not already reloading. `reloadScale` is the owner's
     /// Reload talent and golden leaves: the slot state and loadout arrive here as references
@@ -614,6 +616,7 @@ private:
         std::uint16_t configIndex = kNoPetal;
         Rarity rarity = Rarity::Common;
         Vec2 at;
+        bool mimicked = false;
     };
 
     World* bound_ = nullptr;

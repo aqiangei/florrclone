@@ -1,0 +1,39 @@
+#pragma once
+
+#include "shared/game/config.h"
+#include "shared/game/hyper_petal_techniques.h"
+
+namespace flix {
+
+struct HyperPetalTimers {
+    double wardReadyAtMillis = 0.0;
+    double monsteraReadyAtMillis = 0.0;
+    double leafReadyAtMillis = 0.0;
+};
+
+inline bool hyperDefending(const World& world, Entity entity) {
+    const auto* input = world.tryGet<PlayerInput>(entity);
+    return input && input->current.defending() && !input->current.attacking();
+}
+
+inline const HyperTechniqueInfo* wornHyperTechnique(const World& world, const ContentRegistry& registry,
+                                                    Entity owner, std::string_view id) {
+    const auto* loadout = world.tryGet<Loadout>(owner);
+    if (!loadout || !world.has<PlayerTag>(owner)) return nullptr;
+    const auto* tree = world.tryGet<PlayerSkillTree>(owner);
+    const int active = tree ? tree->skills.loadoutSlots() : kLoadoutActiveSlots;
+    const auto index = registry.petalIndex(std::string(id));
+    if (index == kInvalidIndex) return nullptr;
+    for (int i = 0; i < active; ++i) {
+        if (loadout->slots[static_cast<std::size_t>(i)].rarity != Rarity::Apex) continue;
+        const auto slot = equippedPetal(registry, *loadout, i);
+        if (slot.configIndex == index && slot.reloadRarity == Rarity::Apex) {
+            return hyperTechniqueInfo(id, Rarity::Apex);
+        }
+    }
+    return nullptr;
+}
+
+} // namespace flix
+
+FLIX_COMPONENT(flix::HyperPetalTimers);

@@ -3,6 +3,7 @@
 #include "server/systems/combat.h"
 #include "shared/game/domino.h"
 #include "server/systems/flower_mobs.h"
+#include "server/hyper_petal_loadout.h"
 
 #include <algorithm>
 #include <array>
@@ -69,6 +70,14 @@ TeamInfo teamOf(const World& world, Entity e) {
         current = ownerOf(world, current);
     }
     return {};
+}
+
+bool peacefulPlayerSide(const World& world, Entity entity, Entity player) {
+    const auto side = teamOf(world, entity);
+    if (!side.known || side.team != Team::Players || side.friendlyFire) return false;
+    const auto* visuals = world.tryGet<PlayerVisuals>(player);
+    return !visuals || !(visuals->corrupted || visuals->equippedCorruption ||
+                        visuals->nearbyCorruption);
 }
 
 /// Whether a flower has been turned hostile to every other flower.
@@ -569,7 +578,10 @@ Entity CombatSystem::ricochetTarget(World& world, Entity petal, double nowMillis
     };
     if (valid(flight.target)) return flight.target;
     Entity best = NULL_ENTITY;
-    double nearest = 180.0 * 180.0;
+    const bool longRicochet = hyperTechnique("icosahedron", instance->rarity, instance->mimicked) ==
+                             HyperTechnique::LongRicochet;
+    const double reach = 180.0 * (longRicochet ? 1.15 : 1.0);
+    double nearest = reach * reach;
     Query<MobTag, Transform, Body> mobs{world};
     mobs.each([&](Entity mob, MobTag&, Transform& target, Body&) {
         const double gap = distanceSq(target.position, at->position);
@@ -769,6 +781,9 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         if (modifiers != nullptr && modifiers->sharesDamage && struckAt != nullptr &&
             squad != nullptr) {
             const Realm realm = struckAt->realm;
+            const auto* focus = hyperDefending(world, victim)
+                ? wornHyperTechnique(world, content(), victim, "mysterious_relic") : nullptr;
+            const double radius = hyperAmount(focus, HyperTechnique::WideRelic, 0.0);
             relicScratch_.clear();
             for (const SquadBody& member : *squad) {
                 const Entity body = member.body;
@@ -780,6 +795,7 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
                     at->realm != realm) {
                     continue;
                 }
+                if (radius > 0.0 && distanceSq(struckAt->position, at->position) > radius * radius) continue;
                 if (canHit(world, body, source, nowMillis)) relicScratch_.push_back(body);
             }
             if (!relicScratch_.empty()) {
@@ -865,7 +881,18 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     if (armorBlunts(kind) && !sharingColonyHit_) {
         const double armor = effectiveArmor(world, victim, nowMillis);
         if (armor != 0.0) amount = std::max(0.0, amount - armor);
-        if (auto* boneArmor = world.tryGet<Armor>(victim); boneArmor && boneArmor->halvesOnHit) boneArmor->amount *= 0.5;
+        if (auto* boneArmor = world.tryGet<Armor>(victim); boneArmor && boneArmor->halvesOnHit) {
+            double remaining = 0.5;
+            if (kind == DamageKind::Recoil && world.has<MobTag>(source) && !world.has<Pet>(source) &&
+                !world.has<MobRingPetal>(source)) {
+                const auto* bone = world.tryGet<PetalInstance>(victim);
+                if (bone && hyperTechnique("bone", bone->rarity, bone->mimicked) == HyperTechnique::BoneGuard) {
+                    const auto* input = world.tryGet<PlayerInput>(bone->owner);
+                    if (input && input->current.defending()) remaining = 0.55;
+                }
+            }
+            boneArmor->amount *= remaining;
+        }
     }
 
     const bool directPlayerHit = isDirectHit(kind) && world.has<PlayerTag>(victim);
@@ -923,6 +950,42 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         return result;
     }
 
+    if (directPlayerHit && kind == DamageKind::Direct && world.has<MobTag>(source) &&
+        !world.has<Pet>(source) && !world.has<MobRingPetal>(source) &&
+        hyperDefending(world, victim)) {
+        // The ward sees only damage left after root armor and existing shields.
+        // Its cooldown belongs to the flower and survives loadout swaps.
+        const auto* loadout = world.tryGet<Loadout>(victim);
+        if (loadout) {
+            const auto& registry = content();
+            const auto nazar = registry.petalIndex("nazar_amulet");
+            const auto cotton = registry.petalIndex("magic_cotton");
+            const double maxHealth = world.get<Health>(victim).max;
+            bool cottonReady = false;
+            bool wardReady = false;
+            for (const auto petal : loadout->spawned) {
+                auto* instance = world.tryGet<PetalInstance>(petal);
+                if (!instance || instance->rarity != Rarity::Apex || instance->mimicked ||
+                    instance->slot >= kLoadoutActiveSlots || world.has<Dead>(petal)) continue;
+                if (instance->configIndex == cotton) cottonReady = true;
+                if (instance->configIndex == nazar) wardReady = true;
+            }
+            const auto* timers = world.tryGet<HyperPetalTimers>(victim);
+            if (wardReady && amount >= maxHealth * 0.30 &&
+                (!timers || nowMillis >= timers->wardReadyAtMillis)) {
+                world.ensure<HyperPetalTimers>(victim).wardReadyAtMillis = nowMillis + 30000.0;
+                amount *= 1.0 - hyperAmount(hyperTechniqueInfo("nazar_amulet", Rarity::Apex),
+                                            HyperTechnique::NazarWard, 0.0);
+            } else if (cottonReady) {
+                if (auto* mana = world.tryGet<ManaPool>(victim); mana && mana->max > 0.0 &&
+                    mana->canAfford(mana->max * 0.10)) {
+                    mana->current -= mana->max * 0.10;
+                    amount *= 1.0 - hyperAmount(hyperTechniqueInfo("magic_cotton", Rarity::Apex),
+                                                HyperTechnique::ManaCotton, 0.0);
+                }
+            }
+        }
+    }
     if (directPlayerHit) {
         const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(victim);
         const double durationMillis = modifiers ? modifiers->spongeDamageDurationMillis : 0.0;
@@ -1662,6 +1725,10 @@ void CombatSystem::applyPoison(World& world, Entity victim, Entity source, doubl
         perSecond *= 1.0 + tree->skills.poisonBonus();
         if(tree->skills.concentratedPoison()){perSecond*=1.2;durationMillis/=1.2;}
     }
+    if (world.has<MobTag>(source) && !world.has<Pet>(source) && hyperDefending(world, victim)) {
+        durationMillis *= hyperAmount(wornHyperTechnique(world, content(), victim, "lotus"),
+                                      HyperTechnique::GuardLotus);
+    }
     const double untilMillis = nowMillis + durationMillis;
     Afflictions& afflictions = world.ensure<Afflictions>(victim);
 
@@ -1747,8 +1814,12 @@ void CombatSystem::slowFlower(World& world, Entity victim, double factor,
         std::max(afflictions.webbedUntilMillis, nowMillis + durationMillis);
 }
 
+void CombatSystem::applyArmorShred(World& world, Entity victim, double amount, double nowMillis) {
+    applyArmorShred(world, victim, amount, nowMillis, 1.0);
+}
+
 void CombatSystem::applyArmorShred(World& world, Entity victim, double amount,
-                                   double nowMillis) {
+                                   double nowMillis, double durationScale) {
     if (!std::isfinite(amount) || amount <= 0.0) return;
     // A status lands on the ANIMAL, and a shared chain is one animal: a bur
     // that stripped only the tail it touched would strip armour nothing reads,
@@ -1769,7 +1840,7 @@ void CombatSystem::applyArmorShred(World& world, Entity victim, double amount,
     if (nowMillis >= afflictions.armorShredUntilMillis) afflictions.armorShred = 0.0;
     afflictions.armorShred = std::max(afflictions.armorShred, amount);
     afflictions.armorShredUntilMillis =
-        std::max(afflictions.armorShredUntilMillis, nowMillis + kArmorShredMillis);
+        std::max(afflictions.armorShredUntilMillis, nowMillis + kArmorShredMillis * durationScale);
 }
 
 void CombatSystem::applyNoHeal(World& world, Entity victim, double durationMillis,
@@ -1967,7 +2038,7 @@ void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
     gatherContact(world, content);
     gatherPetals(world, content, nowMillis);
     fileShots(world);
-    resolveMelee(world, grid, nowMillis);
+    resolveMelee(world, grid, content, nowMillis);
 }
 
 void CombatSystem::tickMobLightning(World& world, const SpatialGrid& grid,
@@ -2517,7 +2588,8 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
     });
 }
 
-void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double nowMillis) {
+void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
+                                double nowMillis) {
     for (const MeleeSource& source : melee_) {
         if (!world.isAlive(source.attacker) || world.has<Dead>(source.attacker)) continue;
 
@@ -2528,8 +2600,11 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
         // would reach for every one of them.
         const Entity sourcePlayer = creditedPlayer(world, source.attacker);
         const double sourceHalf = squareMobHalfExtent(world, source.attacker);
+        // Two peaceful player-side entities cannot damage each other.
+        // Skip whole cells of allied shots around a crowded boss.
         queryBodies(grid, source.realm, source.position, source.radius + kBroadphasePad,
-                    candidates_, sourcePlayer);
+                    candidates_, sourcePlayer,
+                    !filedShots_.empty() && peacefulPlayerSide(world, source.attacker, sourcePlayer));
         bool ricochetHit = false;
         for (const Entity victim : candidates_) {
             if (ricochetHit) break;
@@ -2736,7 +2811,13 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // body hurts another here (see above), so a mob, a seat on its
             // ring or a hostile NPC is every collision there is. A petal, a
             // shot, a field or a shock goes past it whole.
-            if (mobTouchesPlayer) swing *= collisionDamageTakenScale(world, victim);
+            if (mobTouchesPlayer) {
+                swing *= collisionDamageTakenScale(world, victim);
+                if (source.isMobBody && !source.isMobRing && !source.isPet && hyperDefending(world, victim)) {
+                    swing *= hyperAmount(wornHyperTechnique(world, registry, victim, "disc"),
+                                         HyperTechnique::GuardDisc);
+                }
+            }
             const auto beforeHitEvents = events_ ? events_->events().size() : 0;
             DamageResult hit =
                 applyDamage(world, victim, source.attacker, swing, nowMillis, source.hitKind);
@@ -2780,20 +2861,38 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, double no
             // and inside its not-invulnerable branch, so a refused hit lands
             // none of them: it credits the ledger and nothing else.
             if (landed && !hit.killed) {
+                const bool wild = world.has<MobTag>(victim) && !world.has<Pet>(victim);
+                const auto* petal = wild ? world.tryGet<PetalInstance>(source.attacker) : nullptr;
+                const auto* technique = petal && petal->slot < kLoadoutActiveSlots ?
+                    hyperTechniqueInfo(registry.petal(petal->configIndex).id, petal->rarity, petal->mimicked) : nullptr;
+                const bool guarding = technique && hyperDefending(world, source.owner);
                 if (source.isPetal) {
-                    applyKnockback(world, victim, offset, source.knockback);
+                    const double shove = guarding ? hyperAmount(technique, HyperTechnique::WildShove) : 1.0;
+                    applyKnockback(world, victim, offset, source.knockback * shove);
+                } else if (wild && source.isPlayerBody) {
+                    const auto* input = world.tryGet<PlayerInput>(source.attacker);
+                    if (input && input->current.attacking() && !input->current.defending()) {
+                        const double shove = hyperAmount(wornHyperTechnique(world, registry, source.attacker, "cutter"),
+                                                         HyperTechnique::CutterShove, 0.0);
+                        if (shove > 0.0) applyKnockback(world, victim, offset, shove);
+                    }
                 }
-                applyPoison(world, victim, source.attacker, source.poisonPerSecond,
-                            source.poisonDurationMillis, nowMillis);
-                applySlow(world, victim, source.slowFactor, source.slowDurationMillis,
+                const double poisonWindow = guarding ? hyperAmount(technique, HyperTechnique::WildPoisonWindow) : 1.0;
+                applyPoison(world, victim, source.attacker, source.poisonPerSecond / poisonWindow,
+                            source.poisonDurationMillis * poisonWindow, nowMillis);
+                applySlow(world, victim, source.slowFactor,
+                          source.slowDurationMillis * hyperAmount(technique, HyperTechnique::WildSlow),
                           source.rarity, nowMillis);
-                applyNoHeal(world, victim, source.noHealDurationMillis, nowMillis);
+                applyNoHeal(world, victim,
+                            source.noHealDurationMillis * hyperAmount(technique, HyperTechnique::WildNoHeal),
+                            nowMillis);
                 // A rider like the other two, and for the same reason it has to
                 // be: armour can absorb a bur's own damage whole, and a strip
                 // that only landed when the damage did would be a petal that
                 // cannot counter the one thing it exists to counter. `landed`
                 // covers that -- a swing of nothing is still a swing.
-                applyArmorShred(world, victim, source.armorReduction, nowMillis);
+                applyArmorShred(world, victim, source.armorReduction, nowMillis,
+                                hyperAmount(technique, HyperTechnique::WildShred));
             }
 
             // Fang: the flower drinks a fraction of what the hit actually took
@@ -3368,10 +3467,7 @@ void CombatSystem::fileShots(World& world) {
         // Resolved now, once, rather than per pair: nothing in a combat phase
         // destroys an entity, so the answer cannot change before it is read.
         const Entity player = creditedPlayer(world, e);
-        const auto* visuals = world.tryGet<PlayerVisuals>(player);
-        const auto side = teamOf(world, e);
-        const bool peaceful = side.known && side.team == Team::Players && !side.friendlyFire &&
-            (!visuals || !(visuals->corrupted || visuals->equippedCorruption || visuals->nearbyCorruption));
+        const bool peaceful = peacefulPlayerSide(world, e, player);
         filedShots_.push_back({e, player, transform.position, body.radius, peaceful});
 
         // A position no query can reach is not filed, as the main grid files

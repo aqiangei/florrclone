@@ -8536,7 +8536,7 @@
     "description": "大幅降低单次受到的伤害。",
     "color": "#90EE90",
     "count": 1,
-    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"-11.5 -11.5 23 23\"><path d=\"M10 0L5 8.66L-5 8.66L-10 0L-5-8.66L5-8.66Z\" fill=\"#ff94c9\" stroke=\"#cf78a3\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M4 0L1.236 3.804L-3.236 2.351L-3.236-2.351L1.236-3.804Z\" fill=\"#cf78a3\" stroke=\"#cf78a3\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"32\" height=\"32\" viewBox=\"-16 -16 32 32\"><circle r=\"13\" fill=\"#2537bd\" stroke=\"#182584\" stroke-width=\"2.5\"/><circle r=\"8.8\" fill=\"#fffdf3\"/><circle r=\"6\" fill=\"#80d2ff\"/><circle r=\"3.4\" fill=\"#1b214a\"/><circle cx=\"-1.05\" cy=\"-1.2\" r=\"0.85\" fill=\"#d8f2ff\"/></svg>",
     "noPhysics": false,
     "florrclonePort": true,
     "invulnerable": true,

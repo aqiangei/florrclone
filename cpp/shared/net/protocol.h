@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 102; // Titan forge result includes the actual output count.
+inline constexpr std::uint16_t kProtocolVersion = 104; // Daily streak includes the actual reward already credited.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -282,7 +282,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< for a revoked session. The client still handles
                         ///< it, and the id keeps its place so that the ones
                         ///< after it keep theirs.
-    DailyStreak,        ///< u16 streak, u8 newDay, u16 starsAwarded,
+    DailyStreak,        ///< u16 streak, u8 newDay, u16 todayReward,
                         ///< i64 nextClaimAtMillis, i64 streakExpiresAtMillis.
                         ///< Sent once per authentication, after Profile, so the
                         ///< stars it awarded are already in the profile beside it.
@@ -312,7 +312,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< member. (Version 45.)
     GuildInviteReceived, ///< str guildName, str fromUsername, str displayName.
                         ///< `guildName` is the tag. (Version 45.)
-    SquadUpdate,        ///< u8 inSquad, str squadId, u8 isPublic, u8 memberCount,
+    SquadUpdate,        ///< u8 inSquad, str squadId, str joinCode, u8 isPublic, u8 memberCount,
                         ///< { str account, str name, u32 netId, u8 flags }*.
                         ///< `inSquad` 0 is the TypeScript build's
                         ///< `squadUpdate null` and carries nothing after its

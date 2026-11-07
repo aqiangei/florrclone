@@ -7,6 +7,7 @@ const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const node='/opt/florrclone/runtime/bin/node',gate='/var/www/florrclone-maintenance/enabled';
 async function main(file,stable){
   const {config}=load(file);
+  const {configure,entryClientHeader,readAssetHashes}=require('./client-assets.cjs');
   const gameRole=config.singleFallbackTarget||"one";assert(["one","two"].includes(gameRole));
   const currentCandidate=stable===config.release||stable===config.singleFallbackRelease;
   assert(currentCandidate||stable==='/opt/florrclone/releases/cpp-20261105-council20-94');
@@ -35,6 +36,9 @@ async function main(file,stable){
       assert.equal(r.ssh('readlink -f /opt/florrclone/current').trim(),config.release);
       r.ssh('test -f '+gate+' && mkdir /var/lib/florrclone/deploy.lock && printf %s '+q(token)+' > /var/lib/florrclone/deploy.lock/owner');locked.push(id);
     }
+    // Check candidate bytes while the authority and games are still running.
+    // The protocol-94 fallback predates the hashed asset contract.
+    const assetHashes=currentCandidate ? readAssetHashes(command=>remotes[gameRole].ssh(command),stable) : undefined;
     console.error('[restore] stopping both games, preserving latest authority');
     for(const r of Object.values(remotes)){
       r.ssh('systemctl stop florrclone');
@@ -95,9 +99,12 @@ async function main(file,stable){
       let ready=false;for(let i=0;i<15;++i){try{assert(JSON.parse(r.ssh('curl -fsS http://127.0.0.1:8789/health')).ok);ready=true;break;}catch{await new Promise(resolve=>setTimeout(resolve,1000));}}
       assert(ready,'Fallback download queue unavailable');
     }
-    const {configure,entryClientHeader}=require('./client-assets.cjs');
     const singleNginx=path.join(local,'nginx-single-assets.conf');
-    fs.writeFileSync(singleNginx,configure(fs.readFileSync(path.join(__dirname,'nginx-game.conf'),'utf8'),{release:stable,assetHost:config.targets[gameRole].host,downloadQueue:queueEnabled,entryProxy:gameRole==='two'?config.targets.one.host:undefined}));
+    fs.writeFileSync(singleNginx,configure(fs.readFileSync(path.join(__dirname,'nginx-game.conf'),'utf8'),{
+      release:stable,assetHost:config.targets[gameRole].host,downloadQueue:queueEnabled,
+      entryProxy:gameRole==='two'?config.targets.one.host:undefined,
+      assetHashes,
+    }));
     r.upload(singleNginx,'/etc/nginx/conf.d/florrclone.conf');
     r.ssh('nginx -t && systemctl reload nginx');
     const announcer=require('../../deploy-announcement.cjs'),admin=announcer.readConfig(config.adminFiles.one);

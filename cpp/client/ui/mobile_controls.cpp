@@ -133,6 +133,18 @@ double MobileControls::stickHitRadius() const {
     return placed_ ? kStickHitRadius * scale_ : 0.0;
 }
 
+std::array<Rect, 4> MobileControls::hitBounds() const {
+    if (!placed_) return {};
+    const auto bounds = [](Vec2 centre, double radius) {
+        return Rect{centre.x - radius, centre.y - radius, 2 * radius, 2 * radius};
+    };
+    Rect stick = bounds(stickCentre_, stickHitRadius());
+    stick.h = stickApproachBottom() - stick.y;
+    return {stick, bounds(swapCentre_, kSwapRadius * kButtonHitSlack * scale_),
+            bounds(retractCentre_, kRetractRadius * kButtonHitSlack * scale_),
+            bounds(attackCentre_, kAttackRadius * kButtonHitSlack * scale_)};
+}
+
 bool MobileControls::hits(double x, double y) const {
     if (!placed_) return false;
     const double stickR = kStickHitRadius * scale_;

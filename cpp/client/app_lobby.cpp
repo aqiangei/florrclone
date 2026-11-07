@@ -32,6 +32,7 @@
 #include "client/ui/i18n.h"
 #include "client/ui/draw.h"
 #include "client/ui/text_input.h"
+#include "shared/game/daily_streak.h"
 #include "shared/game/prestige.h"
 #include "shared/game/constants.h"
 
@@ -140,6 +141,14 @@ constexpr double kJoinTimeoutSeconds = 10.0;
 constexpr std::uint32_t kStreakPanel = 0x66FFFFu;
 /// How long its star wobbles after a fresh claim.
 constexpr double kStreakPulseSeconds = 3.0;
+
+Rect streakCard(double width, bool expanded) {
+    return {width - 236.0, 16.0, 220.0, expanded ? 246.0 : 150.0};
+}
+
+Rect streakClaimButton(const Rect& card) {
+    return {card.x + 12.0, card.y + 208.0, card.w - 24.0, 25.0};
+}
 
 /// "17h 34m" / "4m 12s" / "9s", as the streak widget formats a countdown.
 std::string formatDuration(std::int64_t millis) {
@@ -281,15 +290,27 @@ void App::updateLobby() {
     // otherwise a button stays lit after a click that went somewhere else.
     if (window_.mouseReleased(MouseButton::Left)) pressedControl_.clear();
 
+    const auto& streak = net_.dailyStreak();
+    if (!streak.known) streakDetailsOpen_ = false;
+    if (streak.known && window_.mousePressed(MouseButton::Left)) {
+        const Rect card = streakCard(window_.width(), streakDetailsOpen_);
+        if (card.contains(mouse)) {
+            pressedControl_.clear();
+            if (streakDetailsOpen_ && streakClaimButton(card).contains(mouse) &&
+                wallClockMillis() >= streak.nextClaimAtMillis) {
+                net_.requestDailyLoginClaim();
+                streakSeenAt_ = -1;
+            } else if (streakCard(window_.width(), false).contains(mouse)) {
+                streakDetailsOpen_ = !streakDetailsOpen_;
+            }
+            return;
+        }
+        streakDetailsOpen_ = false;
+    }
+
     // A click that landed on a panel or on the icon strip was for the menus,
     // and must not also start a game behind them.
     if (!menus_.capturesMouse(mouse)) {
-        const Rect dailyCard{window_.width() - 236.0, 16.0, 220.0, 150.0};
-        if (window_.mousePressed(MouseButton::Left) && dailyCard.contains(mouse) && net_.dailyStreak().known) {
-            net_.requestDailyLoginClaim();
-            streakSeenAt_ = -1;
-            return;
-        }
         if (window_.mousePressed(MouseButton::Left)) {
             pressedControl_.clear();
             // Every title-screen control is hit inclusive on all four edges:
@@ -1036,10 +1057,8 @@ void App::drawDailyStreak(Canvas& canvas, double time) {
     const DailyStreak& streak = net_.dailyStreak();
     if (!streak.known) return;
 
-    constexpr double kWidth = 220.0;
-    constexpr double kHeight = 150.0;
     constexpr double kBorder = 4.0;
-    const Rect card{canvas.width() - kWidth - 16.0, 16.0, kWidth, kHeight};
+    const Rect card = streakCard(canvas.width(), streakDetailsOpen_);
 
     // Border and body as two filled rounded rects rather than a stroke: that is
     // how the reference draws it, and a centred stroke would round differently.
@@ -1057,7 +1076,12 @@ void App::drawDailyStreak(Canvas& canvas, double time) {
 
     // The streak runs 1..5 and then starts the cycle again; the star shows
     // where in that cycle today's reward sits, not the streak's raw length.
-    const int cycleDay = streak.streak > 0 ? ((streak.streak - 1) % 5) + 1 : 0;
+    const std::int64_t now = wallClockMillis();
+    const bool zh = language() == Language::Zh;
+    const bool claimed = now < streak.nextClaimAtMillis;
+    const bool continues = now < streak.streakExpiresAtMillis;
+    const int day = claimed ? streak.streak : continues ? streak.streak + 1 : 1;
+    const int cycleDay = day > 0 ? dailyStreakCycleDay(day) : 0;
     const double starX = card.x + card.w * 0.5;
     const double starY = card.y + 40.0;
     const std::uint32_t fill =
@@ -1087,9 +1111,6 @@ void App::drawDailyStreak(Canvas& canvas, double time) {
         text(canvas, std::to_string(cycleDay), starX, starY + 1.0, number);
     }
 
-    const std::int64_t now = wallClockMillis();
-    const bool claimed = now < streak.nextClaimAtMillis;
-
     TextStyle status;
     status.size = 13.0;
     status.align = Align::Centre;
@@ -1106,9 +1127,37 @@ void App::drawDailyStreak(Canvas& canvas, double time) {
     text(canvas,
          claimed ? ((language() == Language::Zh ? "下次领取：" : "Next: ") + formatDuration(streak.nextClaimAtMillis - now)) : (language() == Language::Zh ? "现在可领取" : "Next: now"),
          card.x + 12.0, card.y + 100.0, countdown);
-    text(canvas, (language() == Language::Zh ? "今日奖励：" : "Today's reward: ") +
-         std::to_string(std::max(1, cycleDay)) + (language() == Language::Zh ? " 星 · 点击领取/刷新" : " stars · click to claim/refresh"),
+    const int todayReward = claimed && streak.todayReward > 0 ? streak.todayReward : dailyStreakReward(day);
+    text(canvas, (zh ? "今日 " : "Today ") + std::to_string(todayReward) +
+         (zh ? (streakDetailsOpen_ ? " 星 · 收起签到" : " 星 · 查看签到") :
+               (streakDetailsOpen_ ? " stars · close" : " stars · view streak")),
          card.x + 12.0, card.y + 120.0, countdown);
+    if (!streakDetailsOpen_) return;
+
+    const double center = card.x + card.w * 0.5;
+    TextStyle detail = countdown;
+    detail.align = Align::Centre;
+    text(canvas, zh ? "连续签到奖励（星）" : "Consecutive rewards (stars)", center, card.y + 146.0, detail);
+    for (int i = 1; i <= static_cast<int>(kDailyStreakRewards.size()); ++i) {
+        detail.fill = i == cycleDay ? 0xFFF28Au : kPaper;
+        detail.size = i == cycleDay ? 16.0 : 13.0;
+        text(canvas, std::to_string(dailyStreakReward(i)), card.x + 30.0 + (i - 1) * 40.0, card.y + 165.0, detail);
+    }
+    detail = countdown;
+    detail.align = Align::Centre;
+    text(canvas, zh ? "第 5 天后循环，漏签从第 1 天开始" : "Repeats after day 5. Miss a day to reset.",
+         center, card.y + 190.0, detail);
+    if (claimed) {
+        const int next = dailyStreakReward(cycleDay + 1);
+        text(canvas, (zh ? "下次奖励 " : "Next reward: ") + std::to_string(next) +
+             (zh ? " 星 · 北京时间 08:00 刷新" : " stars · resets 00:00 UTC"),
+             center, card.y + 215.0, detail);
+    } else {
+        const Rect button = streakClaimButton(card);
+        setFill(canvas, shade(kStreakPanel, 0.66));
+        canvas.fillRect(button.x, button.y, button.w, button.h);
+        text(canvas, zh ? "领取今日奖励" : "Claim today's reward", center, button.y + 6.0, detail);
+    }
 }
 
 } // namespace flix

@@ -1,4 +1,5 @@
 #include "server/systems/loot.h"
+#include "server/workers.h"
 
 #include <algorithm>
 #include <fstream>
@@ -462,8 +463,7 @@ void LootSystem::run(World& world, const SpatialGrid& grid, const ContentRegistr
 }
 
 void LootSystem::maintainDrops(double dt, CommandBuffer& commands) {
-    expired_.clear();
-    drops_->each([&](Entity e, DropTag&, Transform& transform, Lifetime& lifetime) {
+    const auto expires = [&](Transform& transform, Lifetime& lifetime) {
         // Nothing resolves the +-50 spawn scatter -- the reference does not
         // either, by design -- so this push is the only way a drop that landed
         // inside a rock, a wall or water ever becomes reachable again. Pickup
@@ -479,12 +479,37 @@ void LootSystem::maintainDrops(double dt, CommandBuffer& commands) {
         // not save.
         // No terrain -- a harness driving the system on its own -- means no
         // realm rectangle to be outside of, so the drop only ever times out.
-        if (lifetime.remainingSeconds <= 0.0 ||
-            (terrain != nullptr && terrain->outside(transform.position, transform.realm))) {
-            expired_.push_back(e);
+        return lifetime.remainingSeconds <= 0.0 ||
+               (terrain != nullptr && terrain->outside(transform.position, transform.realm));
+    };
+    if (!workers || !workers->count() || !workerLimit || !terrain || drops_->count() < 256) {
+        drops_->each([&](Entity e, DropTag&, Transform& transform, Lifetime& lifetime) {
+            if (expires(transform, lifetime)) commands.destroy(e);
+        });
+        return;
+    }
+
+    constexpr std::size_t batchSize = 64;
+    maintenanceBatches_.clear();
+    drops_->chunks([&](std::size_t size, const Entity* entities, DropTag*, Transform* transforms,
+                       Lifetime* lifetimes) {
+        for (std::size_t i = 0; i < size; i += batchSize) {
+            maintenanceBatches_.push_back({entities + i, transforms + i, lifetimes + i,
+                                           std::min(batchSize, size - i)});
         }
     });
-    for (const Entity e : expired_) commands.destroy(e);
+    expired_.resize(maintenanceBatches_.size() * batchSize);
+    workers->run(maintenanceBatches_.size(), workerLimit, [&](std::size_t index, unsigned) {
+        const auto& batch = maintenanceBatches_[index];
+        Entity* results = expired_.data() + index * batchSize;
+        for (std::size_t i = 0; i < batchSize; ++i) {
+            results[i] = i < batch.size && expires(batch.transforms[i], batch.lifetimes[i])
+                ? batch.entities[i] : NULL_ENTITY;
+        }
+    });
+    for (const Entity e : expired_) {
+        if (e != NULL_ENTITY) commands.destroy(e);
+    }
 }
 
 void LootSystem::collectPickups(World& world, const SpatialGrid& grid, CommandBuffer& commands,
@@ -561,6 +586,14 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
     fresh_.clear();
     corpses_->collect(corpseList_);
     if (corpseList_.empty()) return;
+    // All drops from a death stay in the corpse's realm. Busy farming maps
+    // should not rebuild the stack index for every other map on each kill.
+    std::array<bool, kMaxRealms> deathRealms{};
+    for (const Entity corpse : corpseList_) {
+        if (const auto* at = world.tryGet<Transform>(corpse)) {
+            deathRealms[realmIndex(at->realm)] = true;
+        }
+    }
     // Merge nearby unclaimed stacks only. Once anybody has collected a
     // share, the remaining players keep that exact original entitlement.
     // Search only nearby stacks of the same item and realm, instead of
@@ -576,6 +609,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
     };
     Query<DropTag, DropItem, Transform> stackQuery{world};
     stackQuery.each([&](Entity e, DropTag&, DropItem& item, Transform& at) {
+        if (!deathRealms[realmIndex(at.realm)]) return;
         const auto* life = world.tryGet<Lifetime>(e);
         if (!item.singleCopy && !item.humansOnly && item.pickedUpBy.empty() &&
             life && life->remainingSeconds > 0) indexStack(e,item,at);
@@ -727,11 +761,19 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 hyperEternalPool.push_back(entry.petalIndex);
                 hyperSuperWeights.push_back(hyperSuperChance(entry.rates));
             }
-        std::vector<int> bonuses;int maxBonus=1;
+        struct ClaimantRolls {
+            int trials;
+            int orbTier;
+        };
+        std::vector<ClaimantRolls> claimantRolls;
+        claimantRolls.reserve(baseEligible.size());
+        int maxBonus=1;
         for(const auto claimant:baseEligible) {
             const int bonus=bonusMultiplier
                 ? clamp(bonusMultiplier(claimant),1,3) : 1;
-            bonuses.push_back(bonus);maxBonus=std::max(maxBonus,bonus);
+            const int orbTier = visibleGarbage ? kRarityCount : wornOrbTier(world,content,claimant,magicOrb);
+            claimantRolls.push_back({bonusLootTrialsForRarity(mobRarity,bonus),orbTier});
+            maxBonus=std::max(maxBonus,bonus);
         }
         const int baseTrials=baseLootTrialsForRarity(mobRarity);
         const auto eternalChances=hyperEternalChances(hyperSuperWeights,kHyperEternalDropBudget/baseTrials);
@@ -741,11 +783,11 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         for (int trial=0;trial<trials;++trial) {
             eligible_.clear();eligibleOrbs_.clear();bool anyOrb=false;
             for(std::size_t i=0;i<baseEligible.size();++i) {
-                const int claimantTrials=bonusLootTrialsForRarity(mobRarity,bonuses[i]);
-                if(trial>=claimantTrials)continue;
+                const auto& claimant=claimantRolls[i];
+                if(trial>=claimant.trials)continue;
                 eligible_.push_back(baseEligible[i]);
-                const int tier=visibleGarbage?kRarityCount:wornOrbTier(world,content,baseEligible[i],magicOrb);
-                eligibleOrbs_.push_back(tier);anyOrb=anyOrb||tier!=kRarityCount;
+                eligibleOrbs_.push_back(claimant.orbTier);
+                anyOrb=anyOrb||claimant.orbTier!=kRarityCount;
             }
             // One shared budget for the entire corpse, never a budget per drop row.
             std::size_t eternalPick=hyperEternalPool.size();

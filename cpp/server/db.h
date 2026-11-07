@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -197,11 +199,11 @@ struct Account {
 
 /// What one authentication's daily-login award came to.
 ///
-/// The rule is the browser build's: the first login of each UTC day pays
-/// `((streak - 1) % 5) + 1` stars, a missed day resets the streak to 1, and the
-/// two timestamps are what the title screen's streak card counts down to.
+/// The first login of each UTC day pays the current five-day reward. A missed
+/// day resets the streak. The timestamps drive the streak card's countdown.
 struct DailyStreakResult {
     int starsAwarded = 0;
+    int todayReward = 0;
     int streak = 0;
     /// True when THIS call is the one that claimed today.
     bool newDay = false;
@@ -275,23 +277,25 @@ public:
         T* find(const std::string& key) {
             auto it = byKey_.find(key);
             if (it == byKey_.end()) return nullptr;
-            it->second.cached = false;
+            auto& row = it->second;
+            row.cached = false;
             if(tracking_)touched_.insert(key);
-            return &it->second.value;
+            return &row.mutableValue();
         }
         const T* find(const std::string& key) const {
             auto it = byKey_.find(key);
-            return it == byKey_.end() ? nullptr : &it->second.value;
+            return it == byKey_.end() ? nullptr : it->second.value.get();
         }
         T& insert(const std::string& key) {
             if(tracking_)touched_.insert(key);
             auto it = byKey_.find(key);
             if (it == byKey_.end()) {
                 order_.push_back(key);
+                orderChanged_ = true;
                 it = byKey_.try_emplace(key).first;
             }
             it->second.cached = false;
-            return it->second.value;
+            return it->second.mutableValue();
         }
         /// The row as compact JSON, re-serialised with `toJson` only when it
         /// was handed out mutably since the last call. `key` must exist.
@@ -299,7 +303,7 @@ public:
         const std::string& text(const std::string& key, const ToJson& toJson) const {
             const Row& row = byKey_.find(key)->second;
             if (!row.cached) {
-                row.text = toJson(row.value).dump(0);
+                row.text = toJson(*row.value).dump(0);
                 row.cached = true;
             }
             return row.text;
@@ -316,6 +320,7 @@ public:
             row.committed.clear();
             byKey_.erase(it);
             byKey_.emplace(to, std::move(row));
+            orderChanged_ = true;
             for (std::string& key : order_) {
                 if (key == from) { key = to; break; }
             }
@@ -323,6 +328,7 @@ public:
         }
         bool erase(const std::string& key) {
             if (byKey_.erase(key) == 0) return false;
+            orderChanged_ = true;
             if(tracking_)touched_.insert(key);
             for (std::size_t i = 0; i < order_.size(); ++i) {
                 if (order_[i] == key) { order_.erase(order_.begin() + static_cast<long>(i)); break; }
@@ -331,6 +337,60 @@ public:
         }
         const std::vector<std::string>& keys() const { return order_; }
         std::size_t size() const { return byKey_.size(); }
+        // The live value keeps its address across edits. The first accessor
+        // to reach a pending snapshot freezes the old value under a per-row
+        // lock, then the worker can encode it without touching live state.
+        class SnapshotValue {
+        public:
+            explicit SnapshotValue(std::shared_ptr<const T> live) : live_(std::move(live)) {}
+
+            void freezeBeforeEdit() {
+                std::lock_guard lock(mutex_);
+                if (!live_) return;
+                frozen_.emplace(*live_);
+                live_.reset();
+            }
+            T take() {
+                std::lock_guard lock(mutex_);
+                if (!live_) return std::move(*frozen_);
+                T value = *live_;
+                live_.reset();
+                return value;
+            }
+
+        private:
+            std::mutex mutex_;
+            std::shared_ptr<const T> live_;
+            std::optional<T> frozen_;
+        };
+        struct SnapshotRow {
+            std::string key;
+            std::shared_ptr<SnapshotValue> value;
+            std::optional<std::string> cachedText;
+        };
+        using RowChanges = std::vector<SnapshotRow>;
+        void trackSnapshotRows() {
+            tracking_ = true;
+            orderChanged_ = true;
+            touched_.insert(order_.begin(), order_.end());
+        }
+        const std::set<std::string>& touchedKeys() const { return touched_; }
+        void takeSnapshotChanges(RowChanges& changes, std::optional<std::vector<std::string>>& order) {
+            if (orderChanged_) order = order_;
+            orderChanged_ = false;
+            changes.reserve(touched_.size());
+            for (const auto& key : touched_) {
+                const auto it = byKey_.find(key);
+                if (it == byKey_.end()) changes.push_back({key, {}, std::nullopt});
+                else if (it->second.cached) changes.push_back({key, {}, it->second.text});
+                else {
+                    auto value = std::make_shared<SnapshotValue>(it->second.value);
+                    it->second.pending = value;
+                    changes.push_back({key, std::move(value), std::nullopt});
+                }
+            }
+            touched_.clear();
+        }
         void clear() { order_.clear(); byKey_.clear(); touched_.clear();tracking_=false; }
         void acceptLoadedState() {
             tracking_=true;
@@ -360,15 +420,23 @@ public:
 
     private:
         struct Row {
-            T value{};
+            std::shared_ptr<T> value = std::make_shared<T>();
+            std::weak_ptr<SnapshotValue> pending;
             mutable std::string text;
             mutable bool cached = false;
             std::string committed;
+
+            T& mutableValue() {
+                if (auto snapshot = pending.lock()) snapshot->freezeBeforeEdit();
+                pending.reset();
+                return *value;
+            }
         };
         std::vector<std::string> order_;
         std::unordered_map<std::string, Row> byKey_;
         mutable std::set<std::string> touched_;
         bool tracking_=false;
+        bool orderChanged_ = false;
     };
 
     /// Wall-clock source, in Unix milliseconds. Overridable so a test can age
@@ -385,7 +453,7 @@ public:
     /// petal pickup.
     static constexpr std::int64_t kMinWriteIntervalMillis = 2000;
 
-    Database() = default;
+    Database();
     ~Database();
 
     Database(const Database&) = delete;
@@ -425,6 +493,11 @@ public:
     /// anything went wrong, and leaves the database dirty so the change is
     /// retried rather than lost.
     bool save();
+    bool enableBackgroundSave(std::string& errorOut);
+    bool backgroundSaveEnabled() const { return snapshotWriter_ != nullptr; }
+    void requestBackgroundSave();
+    void pollBackgroundSave();
+    bool finishBackgroundSave();
 
     /// The per-tick pump. Writes only when something changed and the rate
     /// limit allows it; because dirty state is only cleared by a successful
@@ -691,7 +764,11 @@ public:
     /// for `notifications`, which is stored as an ARRAY, the shape the browser
     /// build gave it: one coercing read would replace the whole feed with
     /// `{}`. Returns a null Json when the table is absent.
-    const Json& storedTable(const std::string& key) const { return otherTop_[key]; }
+    const Json& storedTable(const std::string& key) const {
+        static const Json missing;
+        const auto* value = otherTop_.find(key);
+        return value ? *value : missing;
+    }
 
     /// Whether the next save writes table `key` from text it already holds
     /// rather than dumping it again: false once rawTable or rawArrayTable has
@@ -746,7 +823,7 @@ private:
 
     /// Top-level keys we do not model -- codes, notifications, guilds,
     /// apiKeys, customSkins -- held as raw JSON and written back untouched.
-    Json otherTop_ = Json::object();
+    Table<Json> otherTop_;
     /// Each of those tables as last serialised, on Table's terms: whatever
     /// hands one out mutably (rawTable, rawArrayTable, the salt) drops it.
     mutable std::unordered_map<std::string, std::string> otherTopText_;
@@ -773,6 +850,12 @@ private:
     void acknowledgeDelta(const Json& delta);
     bool flushDelta();
     bool commitUncertain_ = false;
+    struct SnapshotWriter;
+    std::unique_ptr<SnapshotWriter> snapshotWriter_;
+    std::set<std::string> snapshotHyperHolders_;
+    void queueSnapshot(bool finalSave = false);
+    void collectSnapshotResult(bool wait);
+    bool saveBackgroundNow(bool finalSave = false);
 };
 
 // -- one row as JSON ---------------------------------------------------------

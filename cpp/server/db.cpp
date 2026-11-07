@@ -1,4 +1,5 @@
 #include "server/db.h"
+#include "shared/game/daily_streak.h"
 #include "server/hyper_history.h"
 
 #include <algorithm>
@@ -10,6 +11,14 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
+
+#if defined(__EMSCRIPTEN_PTHREADS__) || (defined(__unix__) && !defined(__EMSCRIPTEN__))
+#define FLIX_BACKGROUND_SAVE
+#include <condition_variable>
+#include <fcntl.h>
+#include <mutex>
+#include <thread>
+#endif
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -545,6 +554,236 @@ int PlayerRecord::mazeTalentPoints() const {
 // Database: lifecycle and persistence
 // ---------------------------------------------------------------------------
 
+#ifdef FLIX_BACKGROUND_SAVE
+namespace {
+enum class SnapshotOutcome { Failed, Saved, Uncertain };
+
+#ifdef __EMSCRIPTEN__
+// Runs on the persistence pthread. NODEFS and libc output can proxy to the
+// main thread, which may be waiting for this write during a graceful stop.
+EM_JS(int, flix_write_snapshot, (const char* file, const char* text, std::size_t size), {
+    const fs = require("node:fs");
+    const path = UTF8ToString(file);
+    let temp, fd, dir, renamed = false;
+    try {
+        dir = fs.openSync(require("node:path").dirname(path), "r");
+        temp = path + ".save-" + require("node:crypto").randomUUID();
+        fd = fs.openSync(temp, "wx", 0o600);
+        const bytes = Buffer.from(HEAPU8.subarray(text, text + size));
+        fs.writeFileSync(fd, bytes);
+        if (fs.fstatSync(fd).size !== size) throw new Error("short write");
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+        fd = undefined;
+        fs.renameSync(temp, path);
+        renamed = true;
+        fs.fsyncSync(dir);
+        return 1;
+    } catch (error) {
+        try { fs.writeSync(2, "[persist-worker] " + error.message + "\n"); } catch (_) {}
+        return renamed ? 2 : 0;
+    } finally {
+        if (fd !== undefined) try { fs.closeSync(fd); } catch (_) {}
+        if (dir !== undefined) try { fs.closeSync(dir); } catch (_) {}
+        if (temp && !renamed) try { fs.unlinkSync(temp); } catch (_) {}
+    }
+});
+#endif
+
+SnapshotOutcome writeSnapshot(const std::string& path, const std::string& text) {
+#ifdef __EMSCRIPTEN__
+    return static_cast<SnapshotOutcome>(flix_write_snapshot(path.c_str(), text.data(), text.size()));
+#else
+    const auto slash = path.find_last_of('/');
+    const auto directory = slash == std::string::npos ? "." : path.substr(0, slash + 1);
+    const int dir = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY);
+    if (dir < 0) return SnapshotOutcome::Failed;
+    std::string temp = path + ".save-XXXXXX";
+    const int fd = ::mkstemp(temp.data());
+    if (fd < 0) {
+        ::close(dir);
+        return SnapshotOutcome::Failed;
+    }
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        const auto written = ::write(fd, text.data() + offset, text.size() - offset);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) break;
+        offset += static_cast<std::size_t>(written);
+    }
+    const bool flushed = offset == text.size() && ::fsync(fd) == 0;
+    const bool closed = ::close(fd) == 0;
+    SnapshotOutcome outcome = SnapshotOutcome::Failed;
+    if (flushed && closed && ::rename(temp.c_str(), path.c_str()) == 0)
+        outcome = ::fsync(dir) == 0 ? SnapshotOutcome::Saved : SnapshotOutcome::Uncertain;
+    else
+        ::unlink(temp.c_str());
+    ::close(dir);
+    return outcome;
+#endif
+}
+} // namespace
+
+struct Database::SnapshotWriter {
+    template<class Row>
+    struct Changes {
+        typename Table<Row>::RowChanges rows;
+        std::optional<std::vector<std::string>> order;
+    };
+    struct Job {
+        Changes<Account> users;
+        Changes<PlayerRecord> players;
+        Changes<Session> sessions;
+        Changes<Json> globals;
+        std::vector<std::string> topOrder;
+        std::uint64_t generation = 0;
+        bool finalSave = false;
+    };
+    struct Result {
+        SnapshotOutcome outcome;
+        std::uint64_t generation;
+        std::size_t bytes, accounts, players;
+        double millis;
+        std::string sha;
+    };
+    struct Rows {
+        std::unordered_map<std::string, std::string> text;
+        std::vector<std::string> order;
+
+        template<class Row, class Encode>
+        void apply(Changes<Row>& changes, const Encode& encode) {
+            for (auto& row : changes.rows) {
+                if (row.cachedText)
+                    text.insert_or_assign(std::move(row.key), std::move(*row.cachedText));
+                else if (row.value)
+                    text.insert_or_assign(std::move(row.key), encode(row.value->take()));
+                else
+                    text.erase(row.key);
+            }
+            // Return row ownership before the file is assembled or written.
+            changes.rows.clear();
+            if (changes.order) order = std::move(*changes.order);
+        }
+        void appendTo(std::string& output) const {
+            char separator = '{';
+            for (const auto& key : order) {
+                output += separator;
+                separator = ',';
+                output += jsonEscape(key);
+                output += ':';
+                output += text.at(key);
+            }
+            if (order.empty()) output += '{';
+            output += '}';
+        }
+    };
+
+    explicit SnapshotWriter(const std::string& path)
+        : path(path), thread([this] { run(); }) {}
+    ~SnapshotWriter() {
+        {
+            std::lock_guard lock(mutex);
+            stopping = true;
+        }
+        ready.notify_one();
+        thread.join();
+    }
+
+    void submit(Job job) {
+        {
+            std::lock_guard lock(mutex);
+            busy = true;
+            pending = std::move(job);
+        }
+        ready.notify_one();
+    }
+    bool writing() {
+        std::lock_guard lock(mutex);
+        return busy;
+    }
+    std::optional<Result> takeResult(bool wait) {
+        std::unique_lock lock(mutex);
+        if (wait) finished.wait(lock, [this] { return !busy; });
+        return std::exchange(result, std::nullopt);
+    }
+
+    bool requested = false;
+    std::chrono::steady_clock::time_point retryAt{};
+    std::optional<Result> latest;
+
+private:
+    void run() {
+        for (;;) {
+            Job job;
+            {
+                std::unique_lock lock(mutex);
+                ready.wait(lock, [this] { return stopping || pending.has_value(); });
+                if (!pending) return;
+                job = std::move(*pending);
+                pending.reset();
+            }
+            auto done = write(job);
+            {
+                std::lock_guard lock(mutex);
+                result = std::move(done);
+                busy = false;
+            }
+            finished.notify_one();
+        }
+    }
+    Result write(Job& job) {
+        const auto started = std::chrono::steady_clock::now();
+        users.apply(job.users, [](const Account& row) { return accountToJson(row).dump(0); });
+        players.apply(job.players, [](const PlayerRecord& row) { return playerToJson(row).dump(0); });
+        sessions.apply(job.sessions, [](const Session& row) { return sessionToJson(row).dump(0); });
+        globals.apply(job.globals, [](const Json& row) { return row.dump(0); });
+        std::string output;
+        output.reserve(lastBytes);
+        const auto add = [&](const std::string& key, const auto& append) {
+            output += output.empty() ? '{' : ',';
+            output += jsonEscape(key);
+            output += ':';
+            append();
+        };
+        const auto table = [&](const std::string& key, const Rows& rows) {
+            add(key, [&] { rows.appendTo(output); });
+        };
+        bool wroteUsers = false, wrotePlayers = false, wroteSessions = false;
+        for (const auto& key : job.topOrder) {
+            if (key == "players") { table(key, players); wrotePlayers = true; }
+            else if (key == "users") { table(key, users); wroteUsers = true; }
+            else if (key == "sessions") { table(key, sessions); wroteSessions = true; }
+            else add(key, [&] { output += globals.text.at(key); });
+        }
+        if (!wrotePlayers) table("players", players);
+        if (!wroteUsers) table("users", users);
+        if (!wroteSessions && !sessions.order.empty()) table("sessions", sessions);
+        output += '}';
+        lastBytes = output.size();
+        const auto outcome = writeSnapshot(path, output);
+        const std::string sha = outcome == SnapshotOutcome::Saved && job.finalSave
+            ? crypto::sha256Hex(output) : "";
+        const double millis = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started).count();
+        return {outcome, job.generation, lastBytes, users.order.size(), players.order.size(), millis, sha};
+    }
+
+    std::string path;
+    std::size_t lastBytes = 0;
+    Rows users, players, sessions, globals;
+    std::mutex mutex;
+    std::condition_variable ready, finished;
+    std::optional<Job> pending;
+    std::optional<Result> result;
+    bool busy = false, stopping = false;
+    std::thread thread;
+};
+#else
+struct Database::SnapshotWriter {};
+#endif
+
+Database::Database() = default;
+
 Database::~Database() {
     // The rate limit means the last change of a session is usually still in
     // memory when the process is asked to stop. Flushing here is what turns
@@ -555,13 +794,15 @@ Database::~Database() {
 }
 
 void Database::reset() {
+    snapshotWriter_.reset();
+    snapshotHyperHolders_.clear();
     users_.clear();
     players_.clear();
     sessions_.clear();
     usersByLowerName_.clear();
     usersById_.clear();
     usersByCreator_.clear();
-    otherTop_ = Json::object();
+    otherTop_.clear();
     otherTopText_.clear();
     topKeyOrder_.clear();
     lastSaveBytes_ = 0;
@@ -718,7 +959,7 @@ bool Database::applyAuthoritativeDelta(const Json& delta,bool allowUnrelatedChan
     }
     for(const auto& row:delta["globals"].members()) {
         if(std::find(topKeyOrder_.begin(),topKeyOrder_.end(),row.first)==topKeyOrder_.end())topKeyOrder_.push_back(row.first);
-        otherTop_[row.first]=row.second;otherTopText_.erase(row.first);
+        otherTop_.insert(row.first)=row.second;otherTopText_.erase(row.first);
     }
     acknowledgeDelta(normalized);return true;
 }
@@ -766,7 +1007,7 @@ bool Database::parseRoot(Json& root, std::string& errorOut) {
                 row = Json();
             }
         } else {
-            otherTop_[key] = std::move(value);
+            otherTop_.insert(key) = std::move(value);
         }
         value = Json();
     }
@@ -774,9 +1015,9 @@ bool Database::parseRoot(Json& root, std::string& errorOut) {
 }
 
 Json& Database::rawArrayTable(const std::string& key) {
-    if(authoritative())touchedTop_.insert(key);
+    if (authoritative()) touchedTop_.insert(key);
     otherTopText_.erase(key);
-    Json& table = otherTop_[key];
+    Json& table = otherTop_.insert(key);
     if (!table.isArray()) table = Json::array();
     if (std::find(topKeyOrder_.begin(), topKeyOrder_.end(), key) == topKeyOrder_.end()) {
         topKeyOrder_.push_back(key);
@@ -785,9 +1026,9 @@ Json& Database::rawArrayTable(const std::string& key) {
 }
 
 Json& Database::rawTable(const std::string& key) {
-    if(authoritative())touchedTop_.insert(key);
+    if (authoritative()) touchedTop_.insert(key);
     otherTopText_.erase(key);
-    Json& table = otherTop_[key];
+    Json& table = otherTop_.insert(key);
     if (!table.isObject()) table = Json::object();
     if (std::find(topKeyOrder_.begin(), topKeyOrder_.end(), key) == topKeyOrder_.end()) {
         topKeyOrder_.push_back(key);
@@ -799,7 +1040,7 @@ std::vector<std::string> Database::storedTableNames() const {
     std::vector<std::string> names;
     for (const std::string& key : otherTop_.keys()) {
         if (key == "ipSalt") continue;
-        const Json& table = otherTop_[key];
+        const Json& table = storedTable(key);
         if (table.isObject() || table.isArray()) names.push_back(key);
     }
     return names;
@@ -834,7 +1075,7 @@ Json Database::toJson() const {
         if (key == "players") { root["players"] = players; wrotePlayers = true; }
         else if (key == "users") { root["users"] = users; wroteUsers = true; }
         else if (key == "sessions") { root["sessions"] = sessions; wroteSessions = true; }
-        else { root[key] = otherTop_[key]; }
+        else { root[key] = storedTable(key); }
     }
     if (!wrotePlayers) root["players"] = players;
     if (!wroteUsers) root["users"] = users;
@@ -881,7 +1122,7 @@ std::string Database::serialise() const {
         else {
             auto it = otherTopText_.find(name);
             if (it == otherTopText_.end()) {
-                it = otherTopText_.emplace(name, otherTop_[name].dump(0)).first;
+                it = otherTopText_.emplace(name, storedTable(name).dump(0)).first;
             }
             key(name);
             out += it->second;
@@ -899,9 +1140,9 @@ Json Database::collectDelta() {
     delta["users"]=users_.delta(accountToJson);delta["players"]=players_.delta(playerToJson);
     delta["sessions"]=sessions_.delta(sessionToJson);delta["globals"]=Json::object();
     for(auto it=touchedTop_.begin();it!=touchedTop_.end();) {
-        const auto text=otherTop_[*it].dump();
+        const auto text=storedTable(*it).dump();
         if(committedTop_.count(*it)&&committedTop_[*it]==text){it=touchedTop_.erase(it);continue;}
-        delta["globals"][*it]=otherTop_[*it];++it;
+        delta["globals"][*it]=storedTable(*it);++it;
     }
     return delta;
 }
@@ -918,7 +1159,7 @@ void Database::acknowledgeDelta(const Json& delta) {
     sessions_.acknowledge(delta["sessions"],sessionToJson);
     for(const auto& entry:delta["globals"].members()) {
         committedTop_[entry.first]=entry.second.dump();
-        if(otherTop_[entry.first].dump()==committedTop_[entry.first])touchedTop_.erase(entry.first);
+        if(storedTable(entry.first).dump()==committedTop_[entry.first])touchedTop_.erase(entry.first);
         else touchedTop_.insert(entry.first);
     }
 }
@@ -945,11 +1186,141 @@ bool Database::flushDelta() {
     return true;
 }
 
+bool Database::enableBackgroundSave(std::string& errorOut) {
+#ifdef FLIX_BACKGROUND_SAVE
+    if (snapshotWriter_ || authoritative() || loadFailed_ || path_.empty()) {
+        errorOut = "background save requires a loaded independent database";
+        return false;
+    }
+    snapshotWriter_ = std::make_unique<SnapshotWriter>(path_);
+    users_.trackSnapshotRows();
+    players_.trackSnapshotRows();
+    sessions_.trackSnapshotRows();
+    otherTop_.trackSnapshotRows();
+    queueSnapshot();
+    return true;
+#else
+    errorOut = "background save requires a threaded server";
+    return false;
+#endif
+}
+
+void Database::queueSnapshot(bool finalSave) {
+#ifdef FLIX_BACKGROUND_SAVE
+    const auto started = std::chrono::steady_clock::now();
+    // A checkpoint preserves the legacy observation times for holders of
+    // Hyper items, without inspecting every offline inventory on each tick.
+    auto inspect = snapshotHyperHolders_;
+    inspect.insert(players_.touchedKeys().begin(), players_.touchedKeys().end());
+    const double observedAt = static_cast<double>(nowMillis());
+    for (const auto& id : inspect) {
+        const auto* record = std::as_const(players_).find(id);
+        if (record) {
+            const auto holdings = currentHyperHoldings(*record, observedAt);
+            if (std::any_of(holdings.begin(), holdings.end(), [](const auto& entry) { return entry.second > 0; })) {
+                rememberHyperHoldings(*players_.find(id), observedAt);
+                snapshotHyperHolders_.insert(id);
+                continue;
+            }
+        }
+        snapshotHyperHolders_.erase(id);
+    }
+    SnapshotWriter::Job job;
+    job.topOrder = topKeyOrder_;
+    job.generation = ++mutationGeneration_;
+    job.finalSave = finalSave;
+    users_.takeSnapshotChanges(job.users.rows, job.users.order);
+    players_.takeSnapshotChanges(job.players.rows, job.players.order);
+    sessions_.takeSnapshotChanges(job.sessions.rows, job.sessions.order);
+    otherTop_.takeSnapshotChanges(job.globals.rows, job.globals.order);
+    dirty_ = true;
+    snapshotWriter_->requested = false;
+    const auto generation = job.generation;
+    const auto rows = job.users.rows.size() + job.players.rows.size() +
+                      job.sessions.rows.size() + job.globals.rows.size();
+    snapshotWriter_->submit(std::move(job));
+    const double millis = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started).count();
+    std::printf("[persist-handoff] generation=%llu rows=%zu ms=%.1f\n",
+                static_cast<unsigned long long>(generation), rows, millis);
+#else
+    (void)finalSave;
+#endif
+}
+
+void Database::requestBackgroundSave() {
+#ifdef FLIX_BACKGROUND_SAVE
+    if (snapshotWriter_) snapshotWriter_->requested = true;
+#endif
+}
+
+void Database::collectSnapshotResult(bool wait) {
+#ifdef FLIX_BACKGROUND_SAVE
+    auto result = snapshotWriter_->takeResult(wait);
+    if (!result) return;
+    auto& writer = *snapshotWriter_;
+    if (result->outcome == SnapshotOutcome::Saved) {
+        committedGeneration_ = result->generation;
+        dirty_ = mutationGeneration_ != committedGeneration_;
+        writer.retryAt = {};
+        std::printf("[persist-worker] saved generation=%llu bytes=%zu ms=%.1f\n",
+                    static_cast<unsigned long long>(result->generation), result->bytes, result->millis);
+    } else {
+        commitUncertain_ = result->outcome == SnapshotOutcome::Uncertain;
+        dirty_ = true;
+        writer.requested = true;
+        writer.retryAt = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        std::fprintf(stderr, "[persist-worker] %s generation=%llu ms=%.1f\n",
+                     commitUncertain_ ? "rename durability unconfirmed" : "write failed",
+                     static_cast<unsigned long long>(result->generation), result->millis);
+    }
+    writer.latest = std::move(result);
+#else
+    (void)wait;
+#endif
+}
+
+void Database::pollBackgroundSave() {
+#ifdef FLIX_BACKGROUND_SAVE
+    if (!snapshotWriter_ || snapshotWriter_->writing()) return;
+    collectSnapshotResult(false);
+    if (!commitUncertain_ && snapshotWriter_->requested &&
+        std::chrono::steady_clock::now() >= snapshotWriter_->retryAt) queueSnapshot();
+#endif
+}
+
+bool Database::saveBackgroundNow(bool finalSave) {
+#ifdef FLIX_BACKGROUND_SAVE
+    collectSnapshotResult(true);
+    if (commitUncertain_) return false;
+    queueSnapshot(finalSave);
+    collectSnapshotResult(true);
+    return !dirty_ && !commitUncertain_;
+#else
+    (void)finalSave;
+    return false;
+#endif
+}
+
+bool Database::finishBackgroundSave() {
+#ifdef FLIX_BACKGROUND_SAVE
+    if (!snapshotWriter_ || !saveBackgroundNow(true)) return false;
+    const auto& result = *snapshotWriter_->latest;
+    std::printf("[persist-shutdown] generation=%llu accounts=%zu players=%zu bytes=%zu sha256=%s\n",
+                static_cast<unsigned long long>(result.generation), result.accounts, result.players,
+                result.bytes, result.sha.c_str());
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool Database::save() {
     // The whole point of the flag. The in-memory database is the empty
     // default when a load fails, and writing that out turns a file an operator
     // can still repair into total, permanent account loss.
     if (loadFailed_ || commitUncertain_ || (!authoritative() && path_.empty())) return false;
+    if (backgroundSaveEnabled()) return saveBackgroundNow();
     if(deltaSink_&&commitPending())return flushDelta();
 
     // A mutable Table::find invalidates that player's cached JSON. Inspect
@@ -1325,11 +1696,11 @@ std::string Database::newUserId() {
 }
 
 std::string Database::serverSecret() {
-    std::string salt = otherTop_["ipSalt"].asString();
+    std::string salt = storedTable("ipSalt").asString();
     if (salt.empty()) {
         salt = crypto::secureRandom().hex(16);
-        otherTop_["ipSalt"] = Json(salt);
-        if(authoritative())touchedTop_.insert("ipSalt");
+        otherTop_.insert("ipSalt") = Json(salt);
+        if (authoritative()) touchedTop_.insert("ipSalt");
         otherTopText_.erase("ipSalt");
         if (std::find(topKeyOrder_.begin(), topKeyOrder_.end(), "ipSalt") == topKeyOrder_.end()) {
             topKeyOrder_.push_back("ipSalt");
@@ -1778,14 +2149,19 @@ DailyStreakResult Database::processDailyStreak(const std::string& userId) {
         // Exactly one day ago continues the run; anything else -- a gap, a
         // first login, or an unreadable date -- starts a new one.
         result.streak = (last && *last == today - 1) ? record.dailyStreak + 1 : 1;
-        result.starsAwarded = ((result.streak - 1) % 5) + 1;
+        result.starsAwarded = dailyStreakReward(result.streak);
         record.dailyStreak = result.streak;
         record.lastStreakDate = todayText;
+        record.extra["lastStreakReward"] = result.starsAwarded;
         record.stars += result.starsAwarded;
         result.newDay = true;
         markDirty();
     }
 
+    // An old save can already have a claim from the 1–5 star schedule.
+    // Report that actual amount until the first claim under the new schedule.
+    result.todayReward = std::as_const(record.extra)["lastStreakReward"].asInt(
+        dailyStreakCycleDay(result.streak));
     result.nextClaimAtMillis = todayMillis + kMillisPerDay;
     result.streakExpiresAtMillis = todayMillis + 2 * kMillisPerDay;
     return result;

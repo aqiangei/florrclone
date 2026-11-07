@@ -97,9 +97,10 @@ void SpatialGrid::insert(Entity e, Realm realm, Vec2 position, double radius) {
     if (!std::isfinite(radius) || radius < 0.0) radius = 0.0;
 
     const std::uint32_t idx = entityIndex(e);
-    if (idx >= stamp_.size()) {
+    auto& stamp = defaultScratch_.stamp;
+    if (idx >= stamp.size()) {
         // Grown here rather than in query(), so the read path never allocates.
-        stamp_.resize(std::max<std::size_t>(static_cast<std::size_t>(idx) + 1, stamp_.size() * 2), 0);
+        stamp.resize(std::max<std::size_t>(static_cast<std::size_t>(idx) + 1, stamp.size() * 2), 0);
     }
 
     Layer& target = layer(realm);
@@ -121,9 +122,14 @@ void SpatialGrid::insert(Entity e, Realm realm, Vec2 position, double radius) {
 }
 
 void SpatialGrid::query(Realm realm, Vec2 center, double radius, std::vector<Entity>& out) const {
+    query(realm, center, radius, out, defaultScratch_);
+}
+
+void SpatialGrid::query(Realm realm, Vec2 center, double radius, std::vector<Entity>& out,
+                        QueryScratch& scratch) const {
     if (!std::isfinite(radius) || radius < 0.0) radius = 0.0;
     queryRect(realm, Vec2{center.x - radius, center.y - radius},
-              Vec2{center.x + radius, center.y + radius}, out);
+              Vec2{center.x + radius, center.y + radius}, out, scratch);
 }
 
 void SpatialGrid::queryRect(Realm realm, const Rect& area, std::vector<Entity>& out) const {
@@ -131,6 +137,11 @@ void SpatialGrid::queryRect(Realm realm, const Rect& area, std::vector<Entity>& 
 }
 
 void SpatialGrid::queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out) const {
+    queryRect(realm, min, max, out, defaultScratch_);
+}
+
+void SpatialGrid::queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out,
+                            QueryScratch& scratch) const {
     out.clear();
     if (!std::isfinite(min.x) || !std::isfinite(min.y) || !std::isfinite(max.x) || !std::isfinite(max.y)) {
         return;
@@ -138,9 +149,11 @@ void SpatialGrid::queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>
     if (min.x > max.x) std::swap(min.x, max.x);
     if (min.y > max.y) std::swap(min.y, max.y);
 
-    if (++queryEpoch_ == 0) {
-        std::fill(stamp_.begin(), stamp_.end(), 0);
-        queryEpoch_ = 1;
+    if (scratch.stamp.size() < defaultScratch_.stamp.size())
+        scratch.stamp.resize(defaultScratch_.stamp.size(), 0);
+    if (++scratch.epoch == 0) {
+        std::fill(scratch.stamp.begin(), scratch.stamp.end(), 0);
+        scratch.epoch = 1;
     }
 
     const Layer& source = layer(realm);
@@ -154,10 +167,8 @@ void SpatialGrid::queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>
             if (source.bucketEpoch[b] != epoch_) continue;   // last tick's contents
             for (const Entity e : source.buckets[b]) {
                 const std::uint32_t idx = entityIndex(e);
-                if (idx < stamp_.size()) {
-                    if (stamp_[idx] == queryEpoch_) continue;   // another of its cells
-                    stamp_[idx] = queryEpoch_;
-                }
+                if (scratch.stamp[idx] == scratch.epoch) continue; // another of its cells
+                scratch.stamp[idx] = scratch.epoch;
                 out.push_back(e);
             }
         }

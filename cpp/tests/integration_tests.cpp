@@ -4,6 +4,7 @@
 #include "client/interpolation.h"
 #include "server/db.h"
 #include "server/game_server.h"
+#include "server/systems/combat.h"
 #include "server/systems/mob_ai.h"
 #include "server/systems/petals.h"
 #include "server_harness.h"
@@ -866,9 +867,9 @@ TEST(a_camera_petal_lets_its_wearer_claim_the_world_it_draws) {
     if (body == NULL_ENTITY) return;
     const auto claimed = [&] { return world.get<PlayerLocation>(body).viewport; };
 
-    // Nothing worn that zooms out: held to the flat allowance.
-    CHECK(claimed().x <= 2600.0);
-    CHECK(claimed().y <= 2600.0);
+    const auto manualViewport = Vec2{kViewportWidth, kViewportHeight} / kMinimumUserCameraZoom;
+    CHECK(claimed().x <= manualViewport.x * 1.02);
+    CHECK(claimed().y <= manualViewport.y * 1.02);
 
     std::uint32_t sequence = 0;
     const auto report = [&](Vec2 viewport) {
@@ -888,16 +889,36 @@ TEST(a_camera_petal_lets_its_wearer_claim_the_world_it_draws) {
     CHECK_NEAR(claimed().x, drawn.x, 1e-6);
     CHECK_NEAR(claimed().y, drawn.y, 1e-6);
 
-    // But not more than it pays for, however much the client asks.
-    report({60000.0, 60000.0});
-    CHECK(claimed().x < drawn.x * 1.05);
-    CHECK(claimed().y < drawn.y * 1.05);
+    // A saturated axis requests the ceiling. It is still bounded by what
+    // the current petal and allowed manual zoom grant.
+    report({65535.0, 65535.0});
+    const Vec2 eternalLimit = claimed();
+    CHECK(eternalLimit.x >= manualViewport.x * 10.0);
+    CHECK(eternalLimit.x < manualViewport.x * 10.2);
+    CHECK(eternalLimit.y < manualViewport.y * 10.2);
 
-    // Taken off, the next packet is held to the flat allowance again.
+    world.get<Loadout>(body).slots[0].rarity = Rarity::Apex;
+    const Vec2 hyperDrawn{kViewportWidth * 11.0, kViewportHeight * 11.0};
+    report(hyperDrawn);
+    CHECK_NEAR(claimed().x, hyperDrawn.x, 1e-6);
+    CHECK_NEAR(claimed().y, hyperDrawn.y, 1e-6);
+    report({65535.0, 65535.0});
+    CHECK_NEAR(claimed().x / eternalLimit.x, 1.1, 1e-6);
+    CHECK_NEAR(claimed().y / eternalLimit.y, 1.1, 1e-6);
+
+    const auto mimic = content().petalIndex("mimic");
+    CHECK(mimic != kInvalidIndex);
+    world.get<Loadout>(body).slots[0].rarity = Rarity::Unique;
+    world.get<Loadout>(body).slots[1] = LoadoutSlot{mimic, Rarity::Apex, 0.0, false};
+    report({65535.0, 65535.0});
+    CHECK_NEAR(claimed().x, eternalLimit.x, 1e-6);
+    CHECK_NEAR(claimed().y, eternalLimit.y, 1e-6);
+
     world.get<Loadout>(body).slots[0] = LoadoutSlot{};
-    report(drawn);
-    CHECK(claimed().x <= 2600.0);
-    CHECK(claimed().y <= 2600.0);
+    world.get<Loadout>(body).slots[1] = LoadoutSlot{};
+    report({65535.0, 65535.0});
+    CHECK(claimed().x <= manualViewport.x * 1.02);
+    CHECK(claimed().y <= manualViewport.y * 1.02);
 }
 
 TEST(a_player_who_leaves_to_the_menu_keeps_their_account) {
@@ -1686,11 +1707,8 @@ TEST(a_dandelion_sheds_a_seed_through_the_real_server_loop) {
 }
 
 TEST(a_loadout_edit_keeps_the_xp_earned_since_the_last_save) {
-    // A kill pays the live body; the account record only catches up on the
-    // 30-second autosave. A number-key petal swap re-applies the account to
-    // the body, and that used to re-seed XP from the record as well: the HUD
-    // showed the new level for a few frames, then fell back to the saved one,
-    // and the next save wrote the rewound figure over the XP for good.
+    // Combat pays the live body. Its new TP must be available alongside the
+    // next HUD snapshot, before a loadout edit or an autosave can intervene.
     Harness h("loadout-keeps-xp");
     if (!h.ready) { CHECK(false); return; }
 
@@ -1710,13 +1728,22 @@ TEST(a_loadout_edit_keeps_the_xp_earned_since_the_last_save) {
     CHECK(body != NULL_ENTITY);
     if (body == NULL_ENTITY) return;
 
-    // Earned on the body, the way a kill pays it. The record still says zero.
     const double earned = xpForNextLevel(1) + xpForNextLevel(2);
     const int level = levelFromTotalXp(earned).level;
     CHECK_EQ(level, 3);
-    world.get<PlayerProgress>(body).totalXp = earned;
-    world.get<PlayerProgress>(body).level = level;
-    CHECK(h.stepUntil({&client}, [&] { return client.view().self().totalXp == earned; }));
+    const int initialPoints = client.profile().talentPoints();
+    const int cost = skillTierCost(SkillId::Loadout, 0);
+    CHECK(initialPoints < cost);
+    CHECK(CombatSystem::grantXp(world, body, earned));
+    CHECK(h.stepUntil({&client}, [&] { return client.view().self().totalXp == earned; }, 10));
+    CHECK_EQ(client.profile().level, level);
+    CHECK_EQ(client.profile().talentPoints(), initialPoints + 4);
+
+    client.requestUpgradeSkill(SkillId::Loadout, 0);
+    CHECK(h.stepUntil({&client}, [&] {
+        return client.profile().skills.level(SkillId::Loadout) == 0;
+    }, 10));
+    CHECK_EQ(client.profile().talentPoints(), initialPoints + 4 - cost);
 
     // Both edit paths: the number-key swap and a drag onto the bar.
     client.swapLoadoutSlots(0, kLoadoutActiveSlots);

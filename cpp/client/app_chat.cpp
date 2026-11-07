@@ -1012,14 +1012,15 @@ Rect App::titleChatBox(int viewWidth, int viewHeight) {
     if (touchControlsVisible() && mobile_.stickHitRadius() > 0.0) {
         constexpr double kGap = 12.0;
         const bool classic = menus_.settings().classicLoadoutBar;
-        const double left = inGameLoadoutBarLeft(classic, viewWidth);
+        const int slots = net_.profile().skills.loadoutSlots();
+        const double left = inGameLoadoutBarLeft(classic, viewWidth, slots);
         const double available = left - field.x - kGap;
         if (available >= 120.0) {
             field.w = std::min(field.w, available);
         } else {
             // In portrait the bar uses nearly the whole width. Put the input
             // above its first slot rather than under it.
-            field.y = std::min(field.y, viewHeight - inGameLoadoutBarHeight(classic, viewWidth) -
+            field.y = std::min(field.y, viewHeight - inGameLoadoutBarHeight(classic, viewWidth, slots) -
                                        field.h - kGap);
             field.w = std::clamp(viewWidth - field.x - kGap, 0.0, field.w);
         }

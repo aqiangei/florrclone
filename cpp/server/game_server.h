@@ -135,6 +135,7 @@ struct ServerConfig {
     /// this is the one a harness can set before the first tick.
     int botCount = 0;
     bool loadShedding = false;
+    bool backgroundSave = false;
     /// The `/admin db` key to use as is, instead of the one in the key file
     /// beside the database. Empty means the file. Only the offline page sets
     /// it: its server is a browser tab with no file anybody can open, and a
@@ -654,11 +655,11 @@ private:
 
     /// The roster as this client should see it. A null squad is the browser's
     /// `squadUpdate null` and carries nothing after its flag.
-    void sendSquadUpdate(net::Connection&, const Squad*);
+    void sendSquadUpdate(net::Connection&, Squad*);
     /// Sends the roster to every human in it. Called after every membership,
     /// leadership or visibility change -- and after a member spawns or
     /// despawns, because the wire ids in it belong to bodies.
-    void broadcastSquadUpdate(const Squad&);
+    void broadcastSquadUpdate(Squad&);
     /// The squad's own notice, on its channel with no author, to every human
     /// member.
     void sendSquadSystem(const Squad&, const std::string& text);
@@ -961,7 +962,7 @@ private:
     /// database_.save() behind a fresh look at which bosses stand, so the
     /// boss clocks reach the disk exactly as they are. Every save goes
     /// through here: the periodic one and persistAll.
-    void saveDatabase();
+    bool saveDatabase(bool periodic = false, bool stopping = false);
 
     // --- the sacrifice (server/sacrifice.cpp) -------------------------------
     /// Puts one Apex Sacrifice on the ground somewhere in Hel whenever its
@@ -1091,6 +1092,8 @@ private:
     /// on leave, on death, and periodically -- a crash must not cost a session
     /// of progress.
     void persistPlayer(const Session&);
+    /// Makes live XP available to talent purchases and the next profile delta.
+    void bankExperience();
     /// Writes the account's stats, tree and loadout onto a body that already
     /// exists. Deliberately NOT a spawn: it must not heal, protect or reload
     /// anything, because it also runs on every loadout edit and talent
@@ -1515,6 +1518,7 @@ private:
     /// realm an entity is in is the index into this.
     WorldMaps worldMaps_;
     SpatialGrid grid_;
+    SpatialGrid mobTargetGrid_;
     SpatialGrid pickupGrid_;
     Rng rng_;
     /// The bots' OWN stream, separate from the world's.
@@ -1593,6 +1597,7 @@ private:
     std::unordered_map<std::string, CachedSkinLook> skinLooks_;
 
     NetIdAllocator netIds_;
+    std::unique_ptr<ServerWorkers> workers_;
     std::unique_ptr<ParallelSnapshots> parallelSnapshots_;
     std::vector<ParallelSnapshots::Job> snapshotJobs_;
     EventQueue events_;
@@ -1757,6 +1762,13 @@ private:
     double debugTickMaxMillis_ = 0;
     int debugTickSamples_ = 0;
     double nextDebugStatsMillis_ = 0;
+
+    void recordTickCadence(double nowMillis, double lagMillis, double workMillis);
+    double tickCadenceStartMillis_ = 0;
+    double tickCadenceMaxWorkMillis_ = 0;
+    double tickCadenceMaxLagMillis_ = 0;
+    unsigned tickCadenceSamples_ = 0;
+    unsigned tickCadenceOverBudget_ = 0;
 
     /// Where the current tick's time went: tick() stamps the end of each of
     /// its phases here. A tick past kSlowTickLogMillis turns the stamps into

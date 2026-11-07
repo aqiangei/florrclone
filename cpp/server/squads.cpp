@@ -69,7 +69,7 @@ std::string SquadRoster::joinPublic(const std::string& squadId, SquadMemberId wh
 }
 
 const Squad* SquadRoster::findByCode(const std::string& code) const {
-    if (code.size() != 3) return nullptr;
+    if (code.size() != 3 || code.find_first_not_of("0123456789") != std::string::npos) return nullptr;
     for (const auto& [id, squad] : squads_) {
         if (squad.code == code) return &squad;
     }

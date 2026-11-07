@@ -225,13 +225,47 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
     return e;
 }
 
+Vec2 NpcSystem::clearAssemblerPosition(const Terrain& terrain, const ContentRegistry& content,
+                                       const Site& site) {
+    // Its service and physical collider are deliberately different sizes.
+    // Leave room for the displayed machine after the terrain moves the anchor.
+    const auto visualRadius = [&](std::uint16_t index, Rarity tier) {
+        const auto& config = content.mob(index);
+        return content.mobStats(index, tier).radius *
+               (config.visualScale > 0.0 ? config.visualScale : 1.0);
+    };
+    const double radius = visualRadius(site.mobIndex, site.rarity);
+    const Vec2 preferred = terrain.resolveCircle(site.position, kMobWallRadius, site.realm);
+    const auto clear = [&](Vec2 candidate) {
+        if (terrain.resolveWall(candidate, kMobWallRadius, site.realm).collided) return false;
+        bool overlaps = false;
+        npcs_->each([&](Entity, NpcTag&, Npc& npc, Transform& at) {
+            if (overlaps || npc.service != NpcService::Assembler || at.realm != site.realm) return;
+            const double separation = radius + visualRadius(npc.configIndex, npc.rarity) + 24.0;
+            overlaps = distanceSq(candidate, at.position) < separation * separation;
+        });
+        return !overlaps;
+    };
+    if (clear(preferred)) return preferred;
+    for (int ring = 1; ring <= 32; ++ring) {
+        for (int direction = 0; direction < 24; ++direction) {
+            const Vec2 candidate = preferred + Vec2::fromAngle(kTau * direction / 24, ring * 128.0);
+            if (clear(candidate)) return candidate;
+        }
+    }
+    return preferred;
+}
+
 void NpcSystem::placeMissing(World& world, const Terrain& terrain, const ContentRegistry& content,
                              double nowMillis) {
+    bind(world);
     for (Site& site : sites_) {
         if (site.entity != NULL_ENTITY && world.isAlive(site.entity) && world.has<NpcTag>(site.entity)) {
             continue;
         }
         if (site.roams) site.position = pickRoamingSpot(terrain, content, site);
+        if (content.mob(site.mobIndex).npc.service == NpcService::Assembler)
+            site.position = clearAssemblerPosition(terrain, content, site);
         site.entity = spawnNpc(world, terrain, content, site.mobIndex, site.rarity, site.position,
                                site.realm, nowMillis);
     }

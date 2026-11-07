@@ -135,7 +135,8 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
         const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot = -1, double triangleBonus = 0.0);
 
 std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rarity,
-                                           const SkillSet& skills, double reloadScale, int slot = -1, double triangleBonus = 0.0);
+                                           const SkillSet& skills, double reloadScale, int slot = -1,
+                                           double triangleBonus = 0.0, bool showHyperTechnique = true);
 
 /// The 200 ms the browser waits before a tooltip appears, and the mouse-down
 /// that cancels it. One per hoverable grid; `update` is called every frame
