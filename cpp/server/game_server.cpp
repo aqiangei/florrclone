@@ -616,6 +616,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     grid_.sizeToRealms(*terrain_);
     mobTargetGrid_.sizeToRealms(*terrain_);
     pickupGrid_.sizeToRealms(*terrain_);
+    dropSnapshotGrid_.sizeToRealms(*terrain_);
 
     movement_ = std::make_unique<MovementSystem>();
     // The AI caches queries against one world and wanders from its own
@@ -1848,6 +1849,16 @@ void GameServer::replicate(double nowMillis) {
         job.frame = frame;
     }
     snapshotJobs_.resize(count);
+    // Reuse one view of the final drop positions, including items just
+    // awarded this tick. It stays read-only until the worker batch finishes.
+    if (count > 1) {
+        dropSnapshotGrid_.clear();
+        Query<DropTag, NetId, Replicated, Transform>{world_}.each(
+            [&](Entity e, DropTag&, NetId&, Replicated&, Transform& at) {
+                dropSnapshotGrid_.insert(e, at.realm, at.position);
+            });
+        for (auto& job : snapshotJobs_) job.frame.dropGrid = &dropSnapshotGrid_;
+    }
     // No ECS, session, event or socket mutation until all readers finish.
     parallelSnapshots_->build(world_, snapshotJobs_);
     for (auto& job : snapshotJobs_) {

@@ -2175,6 +2175,8 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
     const PlayerInput* input = world.tryGet<PlayerInput>(player);
     const bool attacking = input != nullptr && input->current.attacking();
     const bool defending = input && input->current.defending() && !attacking;
+    const bool aimedAttack = attacking && !input->current.defending() && input->current.aimDistance > 0;
+    const double aimAngle = aimedAttack ? input->current.aimAngle : 0.0;
     const bool moving = input && input->current.moveStrength > 0.0;
     // Grown with the body the way the ring's rest radius is, so the leash
     // leaves the same reach past the flower's edge at any size.
@@ -2288,8 +2290,11 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
             // slot centre -- and gardn authors the same figure as a flat
             // `clump_radius` of 10.
             const Body* body = world.tryGet<Body>(petal);
-            const double spread = defending ? hyperAmount(technique, HyperTechnique::GuardSpread)
+            double spread = defending ? hyperAmount(technique, HyperTechnique::GuardSpread)
                 : attacking ? hyperAmount(technique, HyperTechnique::AttackSpread) : 1.0;
+            if (aimedAttack && std::abs(angleDelta(angle, aimAngle)) <= kPi / 4.0) {
+                spread *= hyperAmount(technique, HyperTechnique::StingerFocus);
+            }
             const double spacing = (body ? body->radius : 0.0) * config.clumpSpacing * spread;
             // gardn's grains: their first one points along the ring's clump
             // heading, the same bearing for every clump on the ring, which
@@ -3557,8 +3562,9 @@ void PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double d
         if (events_ && !points.empty()) events_->lightning(at,240.0 * reachScale,realm,points,true,player);
         return;
     }
-    emitDamageBurst(world, player, at, kLightningRadius, base * scale, true);
-    reportLightning(world, player, at, kLightningRadius);
+    const double radius = kLightningRadius * reachScale;
+    emitDamageBurst(world, player, at, radius, base * scale, true);
+    reportLightning(world, player, at, radius);
 }
 
 void PetalSystem::reportLightning(World& world, Entity player, Vec2 at, double radius) {
@@ -3897,7 +3903,10 @@ void PetalSystem::dischargeCapacitors(World& world, const ContentRegistry& regis
         instance->contactMillis = 0.0;
         const auto* modifiers = world.tryGet<PlayerModifiers>(player);
         const double setScale = modifiers && computerPartCount(modifiers->computerParts[rarityIndex(rarity)]) >= 3 ? 1.12 : 1.0;
-        strikeLightning(world, player, at, charge * petalStrengthScale(rarity) * setScale, rarity);
+        const auto* technique = hyperTechniqueInfo("capacitor", rarity, instance->mimicked);
+        const double reach = !touching && charge < kCapacitorMaxCharge - 1e-6 &&
+            hyperDefending(world, player) ? hyperAmount(technique, HyperTechnique::CapacitorRelease) : 1.0;
+        strikeLightning(world, player, at, charge * petalStrengthScale(rarity) * setScale, rarity, -1, reach);
     }
 }
 

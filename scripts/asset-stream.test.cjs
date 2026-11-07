@@ -8,7 +8,10 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../cpp/client/web/asset_stream.js'), 'utf8');
 const streamAsset = vm.runInNewContext(source + '\nresumableAssetBody', {
-  AbortController, ReadableStream, clearTimeout, setTimeout,
+  AbortController, ReadableStream, URL, clearTimeout, setTimeout,
+});
+const parallelAsset = vm.runInNewContext(source + '\nparallelMirrorAsset', {
+  AbortController, Blob, ReadableStream, Response, URL, clearTimeout, setTimeout,
 });
 const headers = {'Content-Length': '6', 'ETag': '"asset"'};
 
@@ -70,4 +73,73 @@ test('a missing strong validator falls back to a full retry by the caller', asyn
   await assert.rejects(stream(brokenResponse({'Content-Length': '6'}), {
     reopen: async () => assert.fail('resumed without an ETag'),
   }), /connection lost/);
+});
+
+test('an interrupted digest-pinned asset continues from another host with a different ETag', async () => {
+  const path = '/client-assets/sha256-' + 'a'.repeat(64) + '/bundle.wasm.bin';
+  const initial = brokenResponse();
+  Object.defineProperty(initial, 'url', {value: 'http://mirror.example'+path});
+  const continued = new Response('def', {status: 206, headers: {
+    'Content-Range': 'bytes 3-5/6', ETag: '"origin-etag"',
+  }});
+  Object.defineProperty(continued, 'url', {value: 'http://origin.example'+path});
+  assert.equal(await stream(initial, {reopen: async offset => {
+    assert.equal(offset, 3);
+    return continued;
+  }}), 'abcdef');
+});
+
+test('a different digest cannot be resumed even if its ETag and length match', async () => {
+  const digestUrl = digit => 'http://origin.example/client-assets/sha256-' + digit.repeat(64) + '/bundle.wasm.bin';
+  const initial = brokenResponse();
+  Object.defineProperty(initial, 'url', {value: digestUrl('a')});
+  const changed = new Response('def', {status: 206, headers: {
+    'Content-Range': 'bytes 3-5/6', ETag: '"asset"',
+  }});
+  Object.defineProperty(changed, 'url', {value: digestUrl('b')});
+  await assert.rejects(stream(initial, {reopen: async () => changed}), /changed or the server refused/);
+});
+
+test('mirror parts are combined in order and only the interrupted suffix goes to the origin', async () => {
+  const path = '/client-assets/sha256-' + 'a'.repeat(64) + '/bundle.wasm.bin';
+  const mirror = 'http://mirror.example' + path, origin = 'http://origin.example' + path;
+  const bytes = 'abcdefghijklmnop';
+  const requests = [];
+  const progress = [];
+  const result = await parallelAsset(async (url, {headers}) => {
+    const base = url.split('?')[0];
+    requests.push([base, headers.Range]);
+    const [, first, last] = /^bytes=(\d+)-(\d+)$/.exec(headers.Range);
+    const start = Number(first), end = Number(last);
+    let body = bytes.slice(start, end + 1);
+    if (base === mirror && start === 4) {
+      body = new ReadableStream({
+        start(out) {
+          out.enqueue(Buffer.from('ef'));
+          setTimeout(() => out.error(new Error('connection lost')), 4);
+        },
+      });
+    }
+    if (start === 0 && end === 3) await new Promise(resolve => setTimeout(resolve, 20));
+    const response = new Response(body, {status: 206, headers: {
+      'Content-Length': String(end - start + 1),
+      'Content-Range': `bytes ${start}-${end}/${bytes.length}`,
+    }});
+    Object.defineProperty(response, 'url', {value: url});
+    return response;
+  }, {mirror, origin, path, wait: async () => {}, reconnecting() {},
+      progress: received => progress.push(received)});
+  assert.equal(await result.text(), bytes);
+  assert.deepEqual(requests.filter(([url]) => url === origin), [[origin, 'bytes=6-7']]);
+  assert.equal(progress.at(-1), bytes.length);
+  assert(progress.every((value, index) => index === 0 || value >= progress[index - 1]));
+});
+
+test('a mirror without a valid range is rejected for the normal serial fallback', async () => {
+  const path = '/client-assets/sha256-' + 'a'.repeat(64) + '/bundle.wasm.bin';
+  await assert.rejects(parallelAsset(async () => {
+    const response = new Response('not a range');
+    Object.defineProperty(response, 'url', {value: 'http://mirror.example' + path});
+    return response;
+  }, {mirror: 'http://mirror.example' + path, origin: path, path}), /requested asset range/);
 });

@@ -22,6 +22,8 @@ enum class HyperTechnique {
     TameOrbit, WideArc, WideBlast, WideMagicEye, WideMonstera, WideRadiation,
     WideRelic, WildNoHeal, WildPoisonWindow, WildShove, WildShred, WildSlow,
     YuccaEmergency,
+    CapacitorRelease, CornCover, FangRecovery, JellyWake, PlankIntercept, RockBrace,
+    SaltRetort, SawbladeNotch, StingerFocus, TomatoRipening,
 };
 
 struct HyperTechniqueInfo {
@@ -93,9 +95,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"cactus", HyperTechnique::GuardOrbit,
      "Defending holds this petal 10 units closer to the flower.",
      "防御时，本花瓣的环位向花朵收拢 10 单位。", -10},
-    {"capacitor", HyperTechnique::IdleOrbit,
-     "Keeping the ring neutral holds this petal 10 units closer to the flower.",
-     "未攻防时，本花瓣的环位向花朵收拢 10 单位。", -10},
+    {"capacitor", HyperTechnique::CapacitorRelease,
+     "Defending when contact ends early spreads the stored discharge 15% farther. A fully charged discharge is unchanged.",
+     "防御时，提前脱离接触释放的未满电闪电范围扩大 15%，满电放电沿用原范围。", 1.15},
     {"card", HyperTechnique::GuardOrbit,
      "Defending holds the card 8 units closer to the flower.",
      "防御时，扑克牌的环位向内收拢 8 单位。", -8},
@@ -129,9 +131,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"coral", HyperTechnique::IdleOrbit,
      "Keeping the ring neutral holds this petal 9 units farther out.",
      "未攻防时，本花瓣的环位向外延伸 9 单位。", 9},
-    {"corn", HyperTechnique::GuardOrbit,
-     "Defending holds this petal 15 units farther out.",
-     "防御时，本花瓣的环位向外延伸 15 单位。", 15},
+    {"corn", HyperTechnique::CornCover,
+     "While defending, Corn itself takes 18% less physical damage from wild mob projectiles.",
+     "防御时，玉米自身受到野怪弹幕的物理伤害降低 18%。", 0.82},
     {"corruption", HyperTechnique::Existing,
      "Hyper Corruption retains its PvP aura. Bandage can still work.",
      "超凡腐化保留 PvP 光环，绷带仍可生效。", 0},
@@ -177,9 +179,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"electric_web", HyperTechnique::RapidWeb,
      "Thrown electric webs deploy in 0.28 seconds.",
      "投掷电网时，布网时间缩短到 0.28 秒。", 0.0},
-    {"fang", HyperTechnique::GuardOrbit,
-     "Defending holds this petal 9 units closer to the flower.",
-     "防御时，本花瓣的环位向花朵收拢 9 单位。", -9},
+    {"fang", HyperTechnique::FangRecovery,
+     "While defending below 40% health, bites on wild mobs heal 15% more, with the extra healing capped at 2% max health per bite.",
+     "生命低于 40% 且防御时，咬中野怪的吸血提高 15%，每次额外回复最多为自身最大生命的 2%。", 0.15},
     {"faster", HyperTechnique::FastOrbit,
      "Attacking improves the petal’s existing spin bonus by 10%.",
      "攻击时，加速花瓣原有的转速加成提高 10%。", 1.1},
@@ -219,9 +221,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"javascript", HyperTechnique::AttackOrbit,
      "Attacking holds this petal 14 units farther out.",
      "攻击时，本花瓣的环位向外延伸 14 单位。", 14},
-    {"jelly", HyperTechnique::GuardOrbit,
-     "Defending places the knockback petal 17 units farther out.",
-     "防御时，水母的击退花瓣在环上向外延伸 17 单位。", 17},
+    {"jelly", HyperTechnique::JellyWake,
+     "While defending, Jelly slows a wild mob by up to 15% for 0.4 seconds if it survives and is not already slowed.",
+     "防御时，水母让撞到它后仍存活、且未被减速的野怪减速最多 15%，持续 0.4 秒。", 0.85},
     {"laser", HyperTechnique::AttackOrbit,
      "Attacking holds this petal 16 units farther out.",
      "攻击时，本花瓣的环位向外延伸 16 单位。", 16},
@@ -330,9 +332,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"pincer", HyperTechnique::WildSlow,
      "Slow lasts 15% longer against wild mobs.",
      "对野怪施加的减速延长 15%。", 1.15},
-    {"plank", HyperTechnique::GuardOrbit,
-     "Defending holds this petal 14 units farther out.",
-     "防御时，本花瓣的环位向外延伸 14 单位。", 14},
+    {"plank", HyperTechnique::PlankIntercept,
+     "Defending raises Plank’s multiplier against wild physical projectiles from 20× to 22×.",
+     "防御时，木板对野怪物理弹幕的伤害倍率由 20 倍提高到 22 倍。", 1.10},
     {"poker_chip", HyperTechnique::GuardOrbit,
      "Defending holds this petal 6 units closer to the flower.",
      "防御时，本花瓣的环位向花朵收拢 6 单位。", -6},
@@ -351,9 +353,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"rice", HyperTechnique::AttackOrbit,
      "Attacking holds this petal 7 units farther out.",
      "攻击时，本花瓣的环位向外延伸 7 单位。", 7},
-    {"rock", HyperTechnique::GuardOrbit,
-     "Defending holds this petal 16 units closer to the flower.",
-     "防御时，本花瓣的环位向花朵收拢 16 单位。", -16},
+    {"rock", HyperTechnique::RockBrace,
+     "While defending, Rock loses 15% less durability to recoil from hitting wild mobs.",
+     "防御时，石头接触野怪造成的耐久反伤降低 15%。", 0.85},
     {"root", HyperTechnique::RootRecovery,
      "The first armor layer builds 20% faster while defending with no layers.",
      "防御且没有护甲层时，根的首层护甲积攒速度提高 20%。", 1.2},
@@ -366,15 +368,15 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"ruby", HyperTechnique::GuardOrbit,
      "Defending holds this petal 7 units closer to the flower.",
      "防御时，本花瓣的环位向花朵收拢 7 单位。", -7},
-    {"salt", HyperTechnique::GuardOrbit,
-     "Defending holds this petal 10 units closer to the flower.",
-     "防御时，本花瓣的环位向花朵收拢 10 单位。", -10},
+    {"salt", HyperTechnique::SaltRetort,
+     "Defending reflects 10% more damage back to same-tier or stronger wild mobs on direct hits.",
+     "防御时，受到同阶或更高阶野怪的直接伤害，返还的伤害提高 10%。", 1.10},
     {"sand", HyperTechnique::GuardSpread,
      "Defending spreads this clump 20% wider.",
      "防御时，沙粒簇间距扩大 20%。", 1.2},
-    {"sawblade", HyperTechnique::AttackOrbit,
-     "Attacking holds the original sawblade 9 units farther out.",
-     "攻击时，原件锯片的环位向外延伸 9 单位。", 9},
+    {"sawblade", HyperTechnique::SawbladeNotch,
+     "While defending, a real Sawblade can cut 5% of a wild mob’s armor for 0.7 seconds if it is not already shredded.",
+     "防御时，原件锯片能削去尚未破甲的野怪 5% 护甲，持续 0.7 秒。", 0.05},
     {"shell", HyperTechnique::ReserveShield,
      "Saves the shell until its shield is gone or half a refill would fit.",
      "护盾耗尽，或剩余容量达到单次护盾量的一半时，才消耗贝壳。", 0.0},
@@ -399,9 +401,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"starfish", HyperTechnique::StarfishWindow,
      "Recovery starts below 80% health instead of 75%.",
      "海星的恢复阈值从 75% 提高到 80%。", 0.8},
-    {"stinger", HyperTechnique::AttackOrbit,
-     "Attacking holds this petal 12 units farther out.",
-     "攻击时，本花瓣的环位向外延伸 12 单位。", 12},
+    {"stinger", HyperTechnique::StingerFocus,
+     "While attacking, the cluster tightens by 20% when its slot passes within 45° of your aim.",
+     "攻击时，刺针簇转过瞄准方向的 45° 范围内时，簇间距收紧 20%。", 0.8},
     {"talisman_of_evasion", HyperTechnique::GuardOrbit,
      "Defending holds this petal 8 units closer to the flower.",
      "防御时，本花瓣的环位向花朵收拢 8 单位。", -8},
@@ -411,9 +413,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"timed_mjolnir", HyperTechnique::Material,
      "The temporary hammer is an Eternal item with its own timer.",
      "限时锤属于永恒，使用独立计时。", 0},
-    {"tomato", HyperTechnique::MovingOrbit,
-     "Moving holds this petal 7 units closer to the flower.",
-     "移动时，本花瓣的环位向花朵收拢 7 单位。", -7},
+    {"tomato", HyperTechnique::TomatoRipening,
+     "Once it has been out for 5 seconds, Tomato ripens one step ahead against wild mobs, with the same maximum.",
+     "上场满 5 秒后，番茄对野怪提前获得一档成熟伤害，成熟上限相同。", 1000},
     {"totem", HyperTechnique::LongTotem,
      "The recovery earned by a kill lasts 11 seconds.",
      "击杀触发的图腾恢复持续 11 秒。", 11000},
@@ -526,6 +528,25 @@ inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
         case HyperTechnique::FastMecha:
         case HyperTechnique::LongShip:
             return chinese ? "换个开火距离，观察弹道何时到达。" : "Fire from a different distance and watch when the shot arrives.";
+        case HyperTechnique::RockBrace:
+            return chinese ? "让石头替你迎接撞来的野怪。" : "Let the rock meet a charging mob.";
+        case HyperTechnique::CornCover:
+        case HyperTechnique::PlankIntercept:
+            return chinese ? "弹幕来时先收环，试着用这一格挡住它。" : "Pull the ring in and put this slot between you and an incoming shot.";
+        case HyperTechnique::StingerFocus:
+            return chinese ? "盯紧瞄准线，等针尖转到你想打的方向。" : "Watch your aim line and wait for the needles to come around.";
+        case HyperTechnique::FangRecovery:
+            return chinese ? "生命告急时，留意贴身咬中的那一口。" : "When health is low, watch what one close bite gives back.";
+        case HyperTechnique::JellyWake:
+            return chinese ? "被它弹开后，野怪会慢一拍。" : "After the shove, watch the mob’s next step.";
+        case HyperTechnique::SawbladeNotch:
+            return chinese ? "等带甲的野怪贴上来，再顺着锯痕进攻。" : "Let an armored mob approach, then follow the cut.";
+        case HyperTechnique::SaltRetort:
+            return chinese ? "对手越危险，越值得收环等它先出手。" : "Against a dangerous mob, brace and let it strike first.";
+        case HyperTechnique::CapacitorRelease:
+            return chinese ? "电未蓄满便拉开距离，看看火花能跳多远。" : "Break contact before the charge fills and watch how far the sparks go.";
+        case HyperTechnique::TomatoRipening:
+            return chinese ? "先把果实护在环上，等它变熟再靠近野怪。" : "Keep the fruit on the ring a little longer before fighting.";
         default:
             return chinese ? "先看它原有的用途，再试一次最适合它的时机。" : "Try it at the moment that best suits its original role.";
     }

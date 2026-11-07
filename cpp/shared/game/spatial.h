@@ -90,6 +90,10 @@ public:
     void queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out) const;
     void queryRect(Realm realm, const Rect& area, std::vector<Entity>& out) const;
 
+    /// For grids populated only with point inserts (radius zero). Each entry
+    /// has one bucket, so concurrent readers need no shared deduplication.
+    void queryPointBuckets(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out) const;
+
     /// Entities inserted since the last clear, across every realm. An entity
     /// spanning several cells counts once.
     std::size_t size() const { return inserted_; }
@@ -117,6 +121,8 @@ private:
     static constexpr int kMaxAxisCells = 512;
 
     static int cellIndex(double offset, double invCellSize, int axisCells);
+    void queryBuckets(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out,
+                      QueryScratch* scratch) const;
 
     /// One realm's buckets.
     struct Layer {

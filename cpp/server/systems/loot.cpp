@@ -529,15 +529,47 @@ void LootSystem::collectPickups(World& world, const SpatialGrid& grid, CommandBu
 
 void LootSystem::collectFresh(World& world, CommandBuffer& commands, EventQueue& events) {
     if (fresh_.empty()) return;
+    // Small batches are cheaper to walk directly. For a burst, index once
+    // and let each player visit only the drops in their realm and reach.
+    const bool indexed = fresh_.size() > 32 && collectors_->count() > 1;
+    const auto key = [](const FreshPosition& drop) {
+        return std::pair{drop.realm, drop.position.x};
+    };
+    if (indexed) {
+        freshPositions_.clear();
+        for (std::size_t i = 0; i < fresh_.size(); ++i) {
+            const Transform& at = world.get<Transform>(fresh_[i]);
+            freshPositions_.push_back({at.realm, at.position, i});
+        }
+        std::sort(freshPositions_.begin(), freshPositions_.end(),
+                  [&](const FreshPosition& a, const FreshPosition& b) { return key(a) < key(b); });
+    }
     collectors_->each([&](Entity player, PlayerTag&, Transform& transform, PlayerModifiers& mods) {
         const Health* health = world.tryGet<Health>(player);
         if (health != nullptr && !health->alive()) return;
 
         const double reach = pickupReach(world, player, mods);
-        for (const Entity candidate : fresh_) {
+        const auto collect = [&](Entity candidate) {
             tryCollect(world, player, transform.position, transform.realm, reach * reach,
                        candidate, commands, events);
+        };
+        if (!indexed) {
+            for (Entity candidate : fresh_) collect(candidate);
+            return;
         }
+        const auto left = std::pair{transform.realm, transform.position.x - reach};
+        const auto right = std::pair{transform.realm, transform.position.x + reach};
+        auto first = std::lower_bound(freshPositions_.begin(), freshPositions_.end(), left,
+            [&](const FreshPosition& drop, const auto& bound) { return key(drop) < bound; });
+        freshMatches_.clear();
+        for (; first != freshPositions_.end() && key(*first) <= right; ++first) {
+            if (std::abs(first->position.y - transform.position.y) <= reach) {
+                freshMatches_.push_back(first->order);
+            }
+        }
+        // Keep the pickup and event order of the original player-first walk.
+        std::sort(freshMatches_.begin(), freshMatches_.end());
+        for (std::size_t i : freshMatches_) collect(fresh_[i]);
     });
 }
 
@@ -599,36 +631,41 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
     // Search only nearby stacks of the same item and realm, instead of
     // scanning every drop in the world for every individual loot roll.
     using StackKey = std::tuple<unsigned, std::uint16_t, int, int, int>;
-    using StackEntry = std::pair<std::size_t, Entity>;
+    struct StackEntry {
+        std::size_t order;
+        Entity entity;
+        bool fresh;
+    };
     std::map<StackKey, std::vector<StackEntry>> stackable;
     std::size_t stackOrder = 0;
-    const auto indexStack = [&](Entity e, const DropItem& item, const Transform& at) {
+    const auto indexStack = [&](Entity e, const DropItem& item, const Transform& at, bool fresh) {
         stackable[{static_cast<unsigned>(at.realm),item.configIndex,rarityIndex(item.rarity),
             static_cast<int>(std::floor(at.position.x/150.0)),
-            static_cast<int>(std::floor(at.position.y/150.0))}].push_back({stackOrder++,e});
+            static_cast<int>(std::floor(at.position.y/150.0))}].push_back({stackOrder++, e, fresh});
     };
     Query<DropTag, DropItem, Transform> stackQuery{world};
     stackQuery.each([&](Entity e, DropTag&, DropItem& item, Transform& at) {
         if (!deathRealms[realmIndex(at.realm)]) return;
         const auto* life = world.tryGet<Lifetime>(e);
         if (!item.singleCopy && !item.humansOnly && item.pickedUpBy.empty() &&
-            life && life->remainingSeconds > 0) indexStack(e,item,at);
+            life && life->remainingSeconds > 0) indexStack(e, item, at, false);
     });
     bool hyperKill=false,hyperEternalRoll=false;
     const auto stackDrop = [&](std::uint16_t petal, Rarity rarity, Vec2 at, Realm realm,
                                const std::vector<Entity>& eligible) {
         rarity=payoutDropRarity(rarity,hyperKill?Rarity::Apex:Rarity::Common);
         if(hyperKill&&rarity==Rarity::Unique&&!hyperEternalRoll)return;
-        Entity merge = NULL_ENTITY;
+        if (petal == kNoPetal) return;
+        StackEntry* merge = nullptr;
         std::size_t first = stackOrder;
         const int cellX=static_cast<int>(std::floor(at.x/150.0));
         const int cellY=static_cast<int>(std::floor(at.y/150.0));
         for(int dx=-1;dx<=1;++dx)for(int dy=-1;dy<=1;++dy) {
           const auto bucket=stackable.find({static_cast<unsigned>(realm),petal,rarityIndex(rarity),cellX+dx,cellY+dy});
           if(bucket==stackable.end())continue;
-          for (const auto& entry : bucket->second) {
-            if(entry.first>=first)continue;
-            const Entity e=entry.second;
+          for (auto& entry : bucket->second) {
+            if (entry.order >= first) break;
+            const Entity e = entry.entity;
             auto& item = world.get<DropItem>(e);
             const auto& position = world.get<Transform>(e);
             if (item.configIndex != petal || item.rarity != rarity || position.realm != realm ||
@@ -640,21 +677,27 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 if (!claimed(item.eligible, player, account ? account->connection : 0)) same = false;
             }
             if (!same) continue;
-            merge=e;first=entry.first;
+            merge = &entry;
+            first = entry.order;
+            break;
           }
         }
         // Preserve the old first-match ordering even across cell boundaries.
-        if(merge!=NULL_ENTITY) {
-            const Entity e=merge;
+        if (merge != nullptr) {
+            const Entity e = merge->entity;
             auto& item=world.get<DropItem>(e);
             ++item.quantity;
             world.get<Lifetime>(e).remainingSeconds =
                 kDropLifetimeByRarity[static_cast<std::size_t>(rarityIndex(rarity))];
-            if (std::find(fresh_.begin(), fresh_.end(), e) == fresh_.end()) fresh_.push_back(e);
+            if (!merge->fresh) {
+                fresh_.push_back(e);
+                merge->fresh = true;
+            }
             return;
         }
         const Entity e = spawnDrop(world, petal, rarity, at, realm, eligible);
-        if (e != NULL_ENTITY) { fresh_.push_back(e); indexStack(e,world.get<DropItem>(e),world.get<Transform>(e)); }
+        fresh_.push_back(e);
+        indexStack(e, world.get<DropItem>(e), world.get<Transform>(e), true);
     };
     // Once for the tick, not once per corpse: the conversion below asks for it
     // on every drop of every kill.

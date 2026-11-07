@@ -5,6 +5,7 @@
 
 #include "server/systems/petals.h"
 #include "shared/game/constants.h"
+#include "shared/game/spatial.h"
 
 namespace flix {
 
@@ -340,8 +341,9 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     const PlayerAccount* viewerAccount = world.tryGet<PlayerAccount>(viewer);
     const net::ConnectionId viewerOwner =
         viewerAccount != nullptr ? viewerAccount->connection : 0;
-    Query<NetId, Replicated, Transform> replicated{world};
-    replicated.each([&](Entity e, NetId& id, Replicated&, Transform& transform) {
+    const auto gather = [&](Entity e, const NetId& id, const Transform& transform) {
+        // Cull before looking up claim and ghost components. Only in-view
+        // drops can consume a viewer's snapshot budget.
         if (e != viewer && transform.realm != realm) return;
         if (e != viewer && outsideView(transform.position) && !exempt(e)) return;
         if (world.has<GhostTag>(e)) {
@@ -366,7 +368,25 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             (drop && !outsideNearBox(transform.position, 0.0) ? -1.0 / (1.0 + distanceSq)
                                                              : distanceSq);
         candidates_.push_back({e, id.value, selectionKey});
+    };
+
+    Query<NetId, Replicated, Transform> replicated{world};
+    const Vec2 corner{reachX, reachY};
+    const Vec2 min = centre - corner;
+    const Vec2 max = centre + corner;
+    const bool exemptDrop = frame.alwaysVisible &&
+        std::any_of(frame.alwaysVisible->begin(), frame.alwaysVisible->end(),
+                    [&](Entity e) { return world.has<DropTag>(e); });
+    const bool indexedDrops = frame.dropGrid && !exemptDrop && !world.has<DropTag>(viewer) &&
+        std::isfinite(min.x) && std::isfinite(min.y) && std::isfinite(max.x) && std::isfinite(max.y);
+    if (indexedDrops) replicated.without<DropTag>();
+    replicated.each([&](Entity e, NetId& id, Replicated&, Transform& transform) {
+        gather(e, id, transform);
     });
+    if (indexedDrops) {
+        frame.dropGrid->queryPointBuckets(realm, min, max, nearbyDrops_);
+        for (Entity e : nearbyDrops_) gather(e, world.get<NetId>(e), world.get<Transform>(e));
+    }
 
     if (candidates_.size() > maxEntities) {
         // After the observer and visible loot, nearest wins.
@@ -374,7 +394,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                          candidates_.begin() + static_cast<std::ptrdiff_t>(maxEntities),
                          candidates_.end(),
                          [](const Candidate& a, const Candidate& b) {
-                             return a.selectionKey < b.selectionKey;
+                             if (a.selectionKey != b.selectionKey) return a.selectionKey < b.selectionKey;
+                             return a.netId < b.netId;
                          });
         candidates_.resize(maxEntities);
     }

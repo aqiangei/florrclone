@@ -50,3 +50,16 @@ test('the stable route still checks queue tickets and allows Range requests',()=
   }
   assert(configure(base,{release,assetHost}).includes('alias '+release+'/$1;'));
 });
+
+test('direct mode advertises immutable assets and a separately pinned compressed WASM mirror',()=>{
+  const assetMirror='http://mirror.example:8088';
+  const opts={release,assetHost,assetPort:10000,assetMirror,assetHashes:hashes};
+  const config=configure(base,opts);
+  const reply=JSON.parse(config.match(/return 200 '(\{"ok":true,"ticket":"direct-download".*?\})';/)[1]);
+  assert.equal(reply.assetBase,'http://example.com:10000/client-assets/cpp-first/');
+  for(const name of assetNames)assert.equal(reply.assets[name],cacheAssetPath(name,hashes));
+  assert.equal(reply.wasmMirror,assetMirror+cacheAssetPath('bundle.wasm.bin',hashes));
+  assert.throws(()=>configure(base,{...opts,downloadQueue:true}));
+  assert.throws(()=>configure(base,{...opts,assetMirror:'http://mirror.example/extra'}));
+  assert.throws(()=>configure(base,{...opts,assetHashes:undefined}));
+});

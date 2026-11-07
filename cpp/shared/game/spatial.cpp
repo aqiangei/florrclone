@@ -142,6 +142,15 @@ void SpatialGrid::queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>
 
 void SpatialGrid::queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out,
                             QueryScratch& scratch) const {
+    queryBuckets(realm, min, max, out, &scratch);
+}
+
+void SpatialGrid::queryPointBuckets(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out) const {
+    queryBuckets(realm, min, max, out, nullptr);
+}
+
+void SpatialGrid::queryBuckets(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>& out,
+                               QueryScratch* scratch) const {
     out.clear();
     if (!std::isfinite(min.x) || !std::isfinite(min.y) || !std::isfinite(max.x) || !std::isfinite(max.y)) {
         return;
@@ -149,11 +158,13 @@ void SpatialGrid::queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>
     if (min.x > max.x) std::swap(min.x, max.x);
     if (min.y > max.y) std::swap(min.y, max.y);
 
-    if (scratch.stamp.size() < defaultScratch_.stamp.size())
-        scratch.stamp.resize(defaultScratch_.stamp.size(), 0);
-    if (++scratch.epoch == 0) {
-        std::fill(scratch.stamp.begin(), scratch.stamp.end(), 0);
-        scratch.epoch = 1;
+    if (scratch) {
+        if (scratch->stamp.size() < defaultScratch_.stamp.size())
+            scratch->stamp.resize(defaultScratch_.stamp.size(), 0);
+        if (++scratch->epoch == 0) {
+            std::fill(scratch->stamp.begin(), scratch->stamp.end(), 0);
+            scratch->epoch = 1;
+        }
     }
 
     const Layer& source = layer(realm);
@@ -166,9 +177,11 @@ void SpatialGrid::queryRect(Realm realm, Vec2 min, Vec2 max, std::vector<Entity>
             const std::size_t b = source.bucketAt(cx, cy);
             if (source.bucketEpoch[b] != epoch_) continue;   // last tick's contents
             for (const Entity e : source.buckets[b]) {
-                const std::uint32_t idx = entityIndex(e);
-                if (scratch.stamp[idx] == scratch.epoch) continue; // another of its cells
-                scratch.stamp[idx] = scratch.epoch;
+                if (scratch) {
+                    const std::uint32_t idx = entityIndex(e);
+                    if (scratch->stamp[idx] == scratch->epoch) continue; // another of its cells
+                    scratch->stamp[idx] = scratch->epoch;
+                }
                 out.push_back(e);
             }
         }

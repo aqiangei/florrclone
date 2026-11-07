@@ -62,7 +62,7 @@ function preserveMaintenanceBonus(){
   fs.writeFileSync(path.join(local,'maintenance-bonus.json'),JSON.stringify(result,null,2));
   return result;
 }
-function nginxFor(version, downloadQueue = process.env.FLORR_DOWNLOAD_QUEUE === '1', assetHashes) {
+function nginxFor(version, downloadQueue = process.env.FLORR_DOWNLOAD_QUEUE === '1', assetHashes, assetMirror) {
   let base = fs.readFileSync(path.join(__dirname, 'shards/ops/nginx-game.conf'), 'utf8');
   if (fresh) {
     base = base.replaceAll('8088 default_server', '10000')
@@ -72,11 +72,12 @@ function nginxFor(version, downloadQueue = process.env.FLORR_DOWNLOAD_QUEUE === 
   return clientAssets.configure(base, {
     release: version,
     assetHost: process.env.FLORR_CLIENT_ASSET_HOST,
+    assetPort: publicPort,
     downloadQueue,
     entryProxy: process.env.FLORR_ENTRY_PROXY_IP,
     assetHashes,
-  }).replaceAll(':8088/client-assets/', ':' + publicPort + '/client-assets/')
-    .replaceAll('/var/www/florrclone-maintenance/', maintenance + '/');
+    assetMirror,
+  }).replaceAll('/var/www/florrclone-maintenance/', maintenance + '/');
 }
 function installNginx(localFile, backupFile) {
   const staging = remote + '/nginx-next.conf';
@@ -123,10 +124,28 @@ async function main(){
     const backgroundSave=dir=>ssh('test -f '+q(dir+'/server.background-save')+' && echo enabled || true').trim()==='enabled';
     const retiringBackgroundSave=backgroundSave(old), candidateBackgroundSave=backgroundSave(release);
     let assetHashes;
+    const assetMirror=process.env.FLORR_CLIENT_ASSET_MIRROR;
     if(process.env.FLORR_CLIENT_ASSET_HOST){
       for(const file of ['index.html',...clientAssets.assetNames])
         ssh('runuser -u www-data -- test -r '+q(release+'/'+file));
       assetHashes=clientAssets.readAssetHashes(ssh,release);
+    }
+    if(assetMirror){
+      assert(assetHashes && process.env.FLORR_DOWNLOAD_QUEUE==='0','Mirror requires direct, versioned downloads');
+      const url=clientAssets.mirrorAssetUrl(assetMirror,assetHashes);
+      const digest=assetHashes['bundle.wasm.bin'];
+      const check=`(async()=>{const r=await fetch(${JSON.stringify(url)},{redirect:'error',signal:AbortSignal.timeout(60000)});
+        if(r.status!==200 || r.headers.get('access-control-allow-origin')!=='*' ||
+            (r.headers.get('content-encoding')||'identity')!=='identity')throw Error('Mirror HTTP/CORS check failed');
+        const size=Number(r.headers.get('content-length'));
+        const hash=require('node:crypto').createHash('sha256');for await(const chunk of r.body)hash.update(chunk);
+        if(hash.digest('hex')!==${JSON.stringify(digest)})throw Error('Mirror WASM SHA256 differs from candidate');
+        const range=await fetch(${JSON.stringify(url)},{redirect:'error',headers:{Range:'bytes=0-0'},signal:AbortSignal.timeout(10000)});
+        if(range.status!==206 || range.headers.get('access-control-allow-origin')!=='*' ||
+            range.headers.get('content-range')!=='bytes 0-0/'+size || (await range.arrayBuffer()).byteLength!==1)
+          throw Error('Mirror does not serve valid byte ranges');
+        console.log('PASS public mirror WASM SHA256');})().catch(e=>{console.error(e.message);process.exitCode=1});`;
+      console.log(ssh('/opt/florrclone/runtime/bin/node -e '+q(check)));
     }
     ssh('curl -fsS '+q(backend+'/api/health'));
     ssh('install -d -m 700 '+q(remote));
@@ -367,7 +386,7 @@ async function main(){
     }
     if(process.env.FLORR_CLIENT_ASSET_HOST){
       const nginx=path.join(local,'nginx-client-assets.conf');
-      fs.writeFileSync(nginx, nginxFor(release,undefined,assetHashes));
+      fs.writeFileSync(nginx, nginxFor(release,undefined,assetHashes,assetMirror));
       installNginx(nginx, remote+'/nginx-before.conf');
       const assetRoot='http://127.0.0.1:'+publicPort+'/client-assets/'+release.split('/').pop()+'/';
       const cachePaths=Object.fromEntries(clientAssets.assetNames.map(file=>

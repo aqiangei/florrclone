@@ -422,6 +422,7 @@
   const recoveryToken=new URLSearchParams(location.search).get('_flix_recover');
   const ui=window.flixLoading;
   let downloadTicket='',downloadBase='',queueHeartbeat=null,compileWatchdog=null;
+  let directAssets=null,wasmMirror='';
   let admission=null;
   const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const completedDownloads=new Set();
@@ -441,7 +442,7 @@
   const releaseDownload=()=>{
     clearInterval(queueHeartbeat);queueHeartbeat=null;
     if(downloadTicket){const ticket=downloadTicket;downloadTicket='';
-      networkFetch('/download-queue/release?ticket='+encodeURIComponent(ticket),{method:'POST',keepalive:true}).catch(()=>{});
+      if(ticket!=='direct-download')networkFetch('/download-queue/release?ticket='+encodeURIComponent(ticket),{method:'POST',keepalive:true}).catch(()=>{});
     }
   };
   window.addEventListener('pagehide',event=>{if(!event.persisted)releaseDownload();});
@@ -466,13 +467,18 @@
       }
       downloadBase=row.assetBase;
       clearInterval(queueHeartbeat);
-      queueHeartbeat=setInterval(()=>queueCall('status?ticket='+encodeURIComponent(downloadTicket)).catch(()=>{}),5000);
-      ui.phase('正在下载游戏资源','已轮到你，资源下载完成后会自动进入。');
+      if(row.ticket==='direct-download'){
+        directAssets=row.assets;
+        wasmMirror=row.wasmMirror;
+      }else{
+        queueHeartbeat=setInterval(()=>queueCall('status?ticket='+encodeURIComponent(downloadTicket)).catch(()=>{}),5000);
+      }
+      ui.phase('正在下载游戏资源','资源下载完成后会自动进入。');
     })().finally(()=>{admission=null;});
     return admission;
   };
   const resourceUrl=name=>{
-    const source=downloadBase?downloadBase+name:name;
+    const source=directAssets?.[name] || (downloadBase?downloadBase+name:name);
     if(!recoveryToken)return source;
     const url=new URL(source,location.href);
     url.searchParams.set('_flix_recover',recoveryToken);
@@ -492,14 +498,14 @@
     if(admission)await admission;
     const ticket=downloadTicket;
     const headers={};
-    if(ticket)headers['X-Download-Ticket']=ticket;
+    if(ticket&&ticket!=='direct-download')headers['X-Download-Ticket']=ticket;
     if(offset)headers.Range='bytes='+offset+'-';
     // The versioned route redirects to an immutable URL keyed by the file
     // bytes. Normal requests can reuse that URL across deployments.
     const cache=offset?'no-store':(retry||recoveryToken)?'reload':downloadBase?'default':'no-cache';
     const options={cache,signal,headers};
     let response=await networkFetch(url,options);
-    if(response.status===403&&ticket){
+    if(response.status===403&&ticket&&ticket!=='direct-download'){
       await response.body?.cancel().catch(()=>{});
       if(ticket===downloadTicket){
         const row=await queueCall('status?ticket='+encodeURIComponent(ticket));
@@ -516,13 +522,35 @@
   const load=async(name,contentType,consumeStream)=>{
     for(let attempt=0;attempt<2;attempt++){
       const controller=new AbortController();let timer;
-      const arm=()=>{clearTimeout(timer);timer=setTimeout(()=>controller.abort(),25000);};
       try {
-        arm();
         let packed=canInflate;
         let url=resourceUrl(name+(packed?'.bin':''));
-        let response=await assetResponse(url,controller.signal,0,attempt>0);
-        if(packed&&(response.status===404||response.status===410)){
+        let useMirror=attempt===0&&!recoveryToken&&packed&&name==='bundle.wasm'&&wasmMirror&&directAssets?.['bundle.wasm.bin'];
+        timer=setTimeout(()=>controller.abort(),useMirror?6000:25000);
+        let response;
+        if(useMirror){
+          const cached=await networkFetch(url,{cache:'only-if-cached',mode:'same-origin',signal:controller.signal}).catch(()=>null);
+          if(cached?.status===200&&immutableAssetPath(cached)===url){
+            response=cached;
+            useMirror=false;
+          }
+        }
+        if(useMirror && !gameArguments.includes('--low-memory')){
+          clearTimeout(timer);
+          const bytes=await parallelMirrorAsset(networkFetch,{
+            mirror:wasmMirror,origin:url,path:directAssets['bundle.wasm.bin'],wait,
+            progress:(received,expected)=>{if(!quiet())ui.download(received,expected,false);},
+            reconnecting:()=>{if(!quiet())ui.phase('正在续传游戏资源','连接中断，正在从已下载的位置继续。');}
+          });
+          downloadCompleted(name);
+          if(!quiet())ui.phase('正在解压游戏资源','下载完成，正在处理本地资源。');
+          return new Response(bytes.stream().pipeThrough(new DecompressionStream('deflate-raw')),
+            {headers:{'Content-Type':contentType}});
+        }
+        response??=await assetResponse(useMirror?wasmMirror:url,controller.signal,0,attempt>0);
+        if(useMirror&&immutableAssetPath(response)!==directAssets['bundle.wasm.bin'])
+          throw Error('Mirror returned a different asset');
+        if(!useMirror&&packed&&(response.status===404||response.status===410)){
           await response.body?.cancel().catch(()=>{});
           packed=false;
           url=resourceUrl(name);

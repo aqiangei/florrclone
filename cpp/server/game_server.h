@@ -1520,6 +1520,7 @@ private:
     SpatialGrid grid_;
     SpatialGrid mobTargetGrid_;
     SpatialGrid pickupGrid_;
+    SpatialGrid dropSnapshotGrid_;
     Rng rng_;
     /// The bots' OWN stream, separate from the world's.
     ///

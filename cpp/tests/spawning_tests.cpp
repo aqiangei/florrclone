@@ -2102,6 +2102,28 @@ TEST(a_sacrifice_is_turned_away_by_low_ground_by_no_ground_and_by_a_standing_ape
     CHECK_EQ(animalsOfRarity(world.sim.world, Rarity::Apex).size(), std::size_t(1));
 }
 
+TEST(hel_centipede_weight_is_raised_in_every_mixed_hel_band) {
+    const auto& maps = shippedMaps();
+    bool found = false;
+    const auto realm = maps.realmOfId("hel", found);
+    CHECK(found);
+    const auto* map = maps.forRealm(realm);
+    if (!found || !map) return;
+    std::size_t bands = 0;
+    for (const auto& element : map->elements()) {
+        if (!element.isSpawnBand()) continue;
+        for (const auto& row : element.mobDistribution) {
+            if (row.name != "hel_centipede") continue;
+            ++bands;
+            CHECK_NEAR(row.weight, 0.3, 1e-9);
+            double total = 0.0;
+            for (const auto& entry : element.mobDistribution) total += entry.weight;
+            CHECK_NEAR(row.weight / total, 0.3 / 5.3, 1e-9);
+        }
+    }
+    CHECK_EQ(bands, 7u);
+}
+
 TEST(hel_has_open_band_ground_to_lay_a_sacrifice_on) {
     // Where the server puts Hel's sacrifice down: inside Hel's band, on open
     // ground -- with the real tiles, so a wall is a wall.
@@ -4244,11 +4266,8 @@ TEST(a_drop_is_collectable_on_the_tick_it_was_created_in) {
 }
 
 TEST(a_fresh_drop_is_not_taken_from_another_map) {
-    // The fresh pass walks this tick's drops directly rather than through the
-    // broadphase, which files every drop under its realm -- so the realm is
-    // tryCollect's own test to make. Without it, a contributor standing at
-    // the corpse's coordinates on ANOTHER map (one who changed map on the
-    // tick of the kill) took its copy from there.
+    // A contributor who changed maps on the tick of the kill must not
+    // collect their share from the same coordinates on another map.
     const std::uint16_t starfish = shipped().mobIndex("starfish");
     const auto killOnce = [&](Realm flowerRealm, std::size_t& pickups, std::size_t& left) {
         World world;
@@ -4259,12 +4278,19 @@ TEST(a_fresh_drop_is_not_taken_from_another_map) {
         Rng rng(23);
         const Entity player = makePlayer(world, kCentre, 500.0, 1);
         world.get<Transform>(player).realm = flowerRealm;
+        const Entity distant = makePlayer(world, kCentre + Vec2{18000, 0}, 0.0, 2);
         // Uncommon, so the corpse leaves every row it has: something to take.
         makeCorpse(world, starfish, Rarity::Uncommon, kCentre, player, {player});
+        // Force the large-batch pickup path with separated, distant stacks.
+        for (int i = 1; i <= 40; ++i) {
+            makeCorpse(world, starfish, Rarity::Uncommon, kCentre + Vec2{i * 300.0, 2000},
+                       distant, {distant});
+        }
         loot.run(world, grid, shipped(), rng, 0.0, net::kTickSeconds, commands, events);
         commands.flush();
         pickups = loot.pickups().size();
         left = liveDrops(world).size();
+        CHECK(left >= 40);
     };
 
     std::size_t pickups = 0;

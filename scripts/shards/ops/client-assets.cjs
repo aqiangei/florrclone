@@ -24,9 +24,18 @@ function cacheAssetPath(name,assetHashes) {
   return '/client-assets/sha256-'+hash+'/'+name;
 }
 
-function configure(base,{release,assetHost,downloadQueue=false,entryProxy,assetHashes}) {
+function mirrorAssetUrl(origin, assetHashes) {
+  const url=new URL(origin);
+  assert(['http:','https:'].includes(url.protocol) && /^[a-zA-Z0-9.-]+$/.test(url.hostname) &&
+    !url.username && !url.password && url.pathname==='/' && !url.search && !url.hash,
+    'Client asset mirror must be an HTTP origin');
+  return url.origin+cacheAssetPath('bundle.wasm.bin',assetHashes);
+}
+
+function configure(base,{release,assetHost,assetPort=8088,downloadQueue=false,entryProxy,assetHashes,assetMirror}) {
   assert.match(release,releasePattern);
   assert.match(assetHost,/^[a-zA-Z0-9.-]+$/);
+  assert(Number.isInteger(assetPort) && assetPort>0 && assetPort<=65535);
   if(entryProxy){
     assert.match(entryProxy,/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/);
     assert.equal(require('node:net').isIP(entryProxy),4);
@@ -35,7 +44,11 @@ function configure(base,{release,assetHost,downloadQueue=false,entryProxy,assetH
     base=base.replace(listen,listen+'\n    set_real_ip_from '+entryProxy+';\n    real_ip_header X-Florr-Client-IP;');
   }
   const version=release.split('/').pop();
-  const assetBase='http://'+assetHost+':8088/client-assets/'+version+'/';
+  const assetBase='http://'+assetHost+':'+assetPort+'/client-assets/'+version+'/';
+  if(assetMirror)assert(!downloadQueue && assetHashes,'Asset mirror requires verified direct downloads');
+  const directReply={ok:true,ticket:'direct-download',state:'ready',ahead:0,active:0,assetBase};
+  if(assetHashes)directReply.assets=Object.fromEntries(assetNames.map(name=>[name,cacheAssetPath(name,assetHashes)]));
+  if(assetMirror)directReply.wasmMirror=mirrorAssetUrl(assetMirror,assetHashes);
   const queueRoutes=downloadQueue?`
     location ^~ /download-queue/ {
         if (-f /var/www/florrclone-maintenance/enabled) { return 503; }
@@ -58,7 +71,7 @@ function configure(base,{release,assetHost,downloadQueue=false,entryProxy,assetH
         if (-f /var/www/florrclone-maintenance/enabled) { return 503; }
         default_type application/json;
         add_header Cache-Control "no-store" always;
-        return 200 '{"ok":true,"ticket":"direct-download","state":"ready","ahead":0,"active":0,"assetBase":"${assetBase}"}';
+        return 200 '${JSON.stringify(directReply)}';
     }
 `;
   const accessHeaders=`
@@ -115,7 +128,7 @@ function configure(base,{release,assetHost,downloadQueue=false,entryProxy,assetH
         add_header Access-Control-Allow-Headers "X-Download-Ticket" always;
         add_header Access-Control-Allow-Methods "GET, OPTIONS" always;
         add_header Cross-Origin-Resource-Policy "cross-origin" always;
-        return 302 http://${assetHost}:8088/client-assets/${version}/$1;
+        return 302 ${assetBase}$1;
     }
 `;
   assert(base.includes('    location / {'));
@@ -143,4 +156,4 @@ ProtectHome=true
 WantedBy=multi-user.target
 `;
 }
-module.exports={configure,entryClientHeader,downloadQueueUnit,readAssetHashes,cacheAssetPath,assetNames};
+module.exports={configure,entryClientHeader,downloadQueueUnit,readAssetHashes,cacheAssetPath,assetNames,mirrorAssetUrl};

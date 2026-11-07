@@ -264,12 +264,7 @@ private:
     void bind(World& world);
     void collectPickups(World& world, const SpatialGrid& grid, CommandBuffer& commands,
                         EventQueue& events);
-    /// The drops awardDeaths has just made, swept without the broadphase.
-    ///
-    /// The grid this system is handed was built before it ran, so a drop born
-    /// this tick is not in it. The reference has no broadphase here at all --
-    /// it re-walks the live item list per player, inside the same pipeline step
-    /// that killed the mob -- so its loot is taken on the tick it spawns.
+    /// New and enlarged stacks can be picked up on the tick they are awarded.
     void collectFresh(World& world, CommandBuffer& commands, EventQueue& events);
     /// One flower against one drop: the shared body of both pickup passes.
     /// `playerRealm` is the flower's map, which the drop must be on too.
@@ -309,6 +304,13 @@ private:
     std::vector<DropMaintenanceBatch> maintenanceBatches_;
     std::vector<Entity> expired_;
     std::vector<Entity> fresh_;
+    struct FreshPosition {
+        Realm realm;
+        Vec2 position;
+        std::size_t order;
+    };
+    std::vector<FreshPosition> freshPositions_;
+    std::vector<std::size_t> freshMatches_;
     std::vector<Entity> corpseList_;
     std::vector<Bounty::Share> ranked_;
     std::vector<Entity> eligible_;

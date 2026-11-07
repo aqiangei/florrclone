@@ -726,6 +726,13 @@ constexpr ChangelogEntry kChangelog[] = {
       "天赋点随战斗升级同步，地狱蜘蛛移动时会迈步。",
       "客户端资源按文件内容缓存，更新时复用未变化的文件。",
       "下载中断可续传，启动失败可重新获取资源。"}},
+    {"2026年11月7日 · 下载与玩法追加更新",
+     {"一服与二服同步更新，各服存档独立。",
+      "客户端支持从静态镜像分段下载。中断的分段可以回到源站继续。",
+      "大量掉落时，快照和拾取只处理相关区域。掉落数量和拾取归属按原规则结算。",
+      "追加十种超凡花瓣专属效果，详情可查看对应的神秘提示。",
+      "更新日志与通知的滚轮方向与背包一致。",
+      "地狱七个混刷区提高地狱蜈蚣的出现概率。"}},
 
 };
 
@@ -906,12 +913,8 @@ bool ChangelogPanel::render(MenuContext& ctx) {
     const Rect track{panel.right() - kScrollbarWidth - 5.0, panel.y + kHeaderHeight,
                      kScrollbarWidth, panel.h - kHeaderHeight - 5.0};
 
-    // The wheel is INVERTED here: in the reference a notch DOWN walks the list
-    // back toward the newest entry. Odd, deliberate there, kept here.
-    if (panel.contains(mouse)) scroll_.offset += ctx.wheel() * kWheelStep;
-    // A finger is NOT inverted: the text follows it, whichever way the wheel
-    // goes. Everything under the heading but the thumb's track, which a finger
-    // drags the other way.
+    if (panel.contains(mouse)) scroll_.offset -= ctx.wheel() * kWheelStep;
+    // Let the list follow the finger throughout the body, outside the thumb track.
     const Rect body{panel.x, panel.y + kHeaderHeight, track.x - panel.x, panel.h - kHeaderHeight};
     scroll_.offset -= touchScroll(ctx.window, body, scrollable);
 

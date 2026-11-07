@@ -27,6 +27,7 @@
 
 namespace flix {
 
+class SpatialGrid;
 
 /// Allocates the ids entities are known by on the wire.
 ///
@@ -312,6 +313,8 @@ public:
         std::optional<Vec2> viewport;
         Entity splitOther = NULL_ENTITY;
         bool loadShedding = false;
+        /// Current DropTag centres, shared read-only by snapshot workers.
+        const SpatialGrid* dropGrid = nullptr;
     };
 
     /// Appends a complete Snapshot payload (message id included) to `out`.
@@ -385,6 +388,7 @@ private:
     };
 
     std::vector<Candidate> candidates_;
+    std::vector<Entity> nearbyDrops_;
     std::vector<std::uint32_t> removals_;
 };
 
