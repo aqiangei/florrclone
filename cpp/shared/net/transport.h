@@ -74,6 +74,9 @@ public:
     /// on behalf of a client that has stopped reading.
     std::size_t pendingBytes() const { return outbound_.size() - outboundSent_; }
 
+    /// Includes bytes held by the WebSocket or WebTransport backend.
+    std::size_t outboundBacklog() const { return pendingBytes() + transportBuffered(); }
+
     /// Marks the connection for close once its queued bytes have drained.
     void closeGracefully() { closing_ = true; }
     bool closing() const { return closing_; }

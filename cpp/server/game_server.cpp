@@ -128,6 +128,7 @@ constexpr double kDeltaSmoothing = 0.1;
 /// healthy tick is a few milliseconds, and one this long is a visible hitch.
 constexpr double kSlowTickLogMillis = net::kTickMillis * 3.0;
 constexpr double kTickCadenceLogMillis = 10000.0;
+constexpr std::size_t kSnapshotBacklogLimit = 64 * 1024;
 
 /// The batch a craft consumes.
 constexpr int kCraftBatch = 5;
@@ -1823,6 +1824,10 @@ void GameServer::replicate(double nowMillis) {
         if (!session.playing()) continue;
         net::Connection* connection = listener_.find(session.connection);
         if (!connection) continue;
+        // Let reliable messages and earlier snapshots drain before building
+        // another delta. ClientView still describes the last queued snapshot
+        // so the next one can carry all state changes since then.
+        if (connection->outboundBacklog() >= kSnapshotBacklogLimit) continue;
 
         if (count == snapshotJobs_.size()) snapshotJobs_.emplace_back();
         auto& job = snapshotJobs_[count++];
