@@ -54,7 +54,10 @@ test('two real WASM games share one account and forbid simultaneous ownership',a
   }
   try{
     const bootstrap=path.join(home,'seed.json');
-    const seed=process.env.SHARD_PRODUCTION_COPY?JSON.parse(fs.readFileSync(process.env.SHARD_PRODUCTION_COPY,'utf8')):{users:{},players:{}};
+    const seed=process.env.SHARD_PRODUCTION_COPY?JSON.parse(fs.readFileSync(process.env.SHARD_PRODUCTION_COPY,'utf8')):{
+      users:{legacyfixture:{id:'legacyfixture',guest:true}},
+      players:{legacyfixture:{inventory:{common:{petal_rose:3}}}},
+    };
     if(process.env.SHARD_PRODUCTION_COPY) {
       // Isolated load rehearsal only: exclude copied users from synthetic poll
       // eligibility and remove their polls/forge state in this temporary copy.
@@ -82,6 +85,12 @@ test('two real WASM games share one account and forbid simultaneous ownership',a
       await ready(child,`http://127.0.0.1:${ports[node]}/api/health`);
       const directory=await (await fetch(`http://127.0.0.1:${ports[node]}/api/shards`)).json();
       assert.equal(directory.current,node);assert.equal(directory.choices.length,2);assert(!JSON.stringify(directory).includes(keys[node]));
+    }
+    if(!process.env.SHARD_PRODUCTION_COPY) {
+      const state=inspector.call({op:'snapshot'}).state;
+      assert.equal(state.globals.councilLegacyActivity.version,1);
+      assert.deepEqual(state.accounts.legacyfixture.record,seed.players.legacyfixture,
+        'game startup preserves the original offline record');
     }
     const one=await connect('one');
     const registered=await authenticate(one,wire.ClientMessage.Register,'sharedplayer','test-password-123');
@@ -215,6 +224,12 @@ test('two real WASM games share one account and forbid simultaneous ownership',a
       assert(messages[i].some(m=>m[0]===4),'world join accepted');
       assert(messages[i].some(m=>m[0]===5&&m.includes(Buffer.from(names[i]))),'own player in snapshots: '+JSON.stringify(messages[i].map(m=>({type:m[0],bytes:m.length,text:m.toString().match(/[A-Za-z]{5,}/g)?.slice(0,8)}))));
       assert(!messages[i].some(m=>m[0]===5&&m.includes(Buffer.from(names[1-i]))),'other shard player absent');
+    }
+    const savedWorlds=inspector.call({op:'snapshot'}).state.globals.shardWorlds;
+    for(const node of ['one','two']) {
+      assert(Object.values(savedWorlds?.[node]?.bossClocks||{}).some(
+        clock=>Number.isFinite(clock.uniqueReadyAt)&&Number.isFinite(clock.apexReadyAt)),
+      'live boss clocks persisted for '+node);
     }
     // Reproduce real play, then transfer the same account between stale world
     // caches. Lobby-only round trips never exercised the activity save path.

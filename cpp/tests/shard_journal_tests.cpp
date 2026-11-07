@@ -61,10 +61,15 @@ TEST(shard_journal_recovers_fence_and_discards_only_incomplete_tail) {
         CHECK(journal.open(initialState(),recovered,error));
         Authority authority(recovered,Authority::DeltaJournal{},[&](const Json& d){return journal.append(d);});
         CHECK(authority.apply({"one","boot"},acquire())["ok"].asBool());
+        Json world;
+        world["op"]="checkpoint_batch";world["requestId"]="world";world["writes"]=Json::array();
+        world["world"]["bossClocks"]["garden"]["uniqueReadyAt"]=123;
+        CHECK(authority.apply({"one","boot"},world)["ok"].asBool());
     }
     {std::ofstream out(base+".journal",std::ios::app);out<<"{incomplete";}
     {
         JournalStore journal(base);Json recovered;CHECK(journal.open(initialState(),recovered,error));
+        CHECK_EQ(recovered["globals"]["shardWorlds"]["one"]["bossClocks"]["garden"]["uniqueReadyAt"].asInt(),123);
         Authority authority(recovered,Authority::DeltaJournal{},[&](const Json& d){return journal.append(d);});
         CHECK(authority.apply({"one","boot"},acquire())["replayed"].asBool());
         CHECK(!authority.apply({"two","other"},acquire("steal"))["ok"].asBool());

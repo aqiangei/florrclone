@@ -91,7 +91,11 @@ public:
     bool healthy() const {std::lock_guard<std::mutex> lock(mutex_);return !poisoned_;}
 
     static bool recoverDelta(Json& state,const Json& delta) {
-        if(delta["schema"].asInt()!=1||!counter(delta["sequence"])||
+        const auto& worldPatch=delta["worldPatch"];
+        if(delta["schema"].asDouble()!=(worldPatch.isNull()?1:2)||
+           (!worldPatch.isNull()&&(!worldPatch.isObject()||worldPatch.size()!=1||
+               !identifier(worldPatch.members().begin()->first)||!validWorldPatch(worldPatch.members().begin()->second)))||
+           !counter(delta["sequence"])||
            delta["sequence"].asDouble()!=state["sequence"].asDouble()+1||
            !delta["accounts"].isObject()||!delta["requests"].isObject()||delta["requests"].size()!=1||
            !counter(delta["globalRevision"]))return false;
@@ -117,6 +121,7 @@ public:
         for(const auto& kv:delta["receipts"].members())acknowledge(state,kv.first,kv.second.asDouble());
         if(global)state["globals"]=delta["globals"];
         if(patch)applyPatch(state["globals"],delta["globalPatch"]);
+        for(const auto& world:worldPatch.members()) applyWorldPatch(state["globals"],world.first,world.second);
         state["sequence"]=delta["sequence"];state["globalRevision"]=delta["globalRevision"];
         return true;
     }
@@ -190,13 +195,23 @@ public:
         if(!prepare&&logical["op"].asString()=="coordinated_patch")return failure("trusted_planner_required");
         Json translated;
         const bool patchMode=logical["op"].asString()=="global_patch";
+        const bool checkpoint=logical["op"].asString()=="checkpoint_batch";
+        const auto& world=logical["world"];
+        const bool worldWrite=!world.isNull();
+        if(worldWrite&&(!validWorldPatch(world)||node.role!=Role::Game||(!patchMode&&!checkpoint)))
+            return failure("bad_world_patch");
         if(patchMode){
-            if(!validPatch(logical["patch"])||!logical["writes"].isArray()||!logical["globals"].isNull())return failure("bad_global_patch");
+            if(!validPatch(logical["patch"])||!logical["writes"].isArray()||!logical["globals"].isNull()||
+               logical["patch"]["globals"].contains("shardWorlds"))return failure("bad_global_patch");
             translated=logical;translated["op"]="global_commit";
             translated["globals"]=deltaMode_?patchBase(state_["globals"],logical["patch"],logical["writes"]):state_["globals"];
             applyPatch(translated["globals"],logical["patch"]);
         }
         const Json& command=patchMode?translated:logical;
+        if(!patchMode&&command["op"].asString()=="global_commit"&&
+           canonical(command["globals"]["shardWorlds"]).dump()!=
+               canonical(static_cast<const Json&>(state_)["globals"]["shardWorlds"]).dump())
+            return failure("bad_world_patch");
         Json next;
         if(deltaMode_) {
             next=Json::object();next["schema"]=1;next["sequence"]=state_["sequence"];
@@ -233,6 +248,14 @@ public:
         } else reply=execute(next,node,command);
         if(!reply["ok"].asBool())return reply;
         if(patchMode&&deltaMode_){next.erase("globals");next["globalPatch"]=logical["patch"];}
+        if(worldWrite) {
+            if(deltaMode_) {
+                // An older coordinator must fail recovery rather than skip a world write.
+                next["schema"]=2;
+                next["worldPatch"][node.shard]=world;
+            }
+            else applyWorldPatch(next["globals"],node.shard,world);
+        }
         if(!increment(next["sequence"]))return failure("counter_exhausted");
         reply["sequence"]=next["sequence"];
         Json saved=Json::object();saved["digest"]=digest;saved["result"]=reply;
@@ -248,6 +271,22 @@ public:
         return reply;
     }
 private:
+    static bool validWorldPatch(const Json& patch) {
+        if(!patch.isObject()||patch.size()==0) return false;
+        for(const auto& row:patch.members()) {
+            if((row.first!="bossClocks"&&row.first!="sacrificeSpawn")||
+               (!row.second.isNull()&&!row.second.isObject())) return false;
+        }
+        return true;
+    }
+    static void applyWorldPatch(Json& globals,const std::string& shard,const Json& patch) {
+        auto& world=globals["shardWorlds"][shard];
+        if(!world.isObject()) world=Json::object();
+        for(const auto& row:patch.members()) {
+            if(row.second.isNull()) world.erase(row.first);
+            else world[row.first]=row.second;
+        }
+    }
     static Json readGlobals(const Json& state,const Json& query) {
         if(!query["keys"].isObject())return failure("bad_global_query");
         Json reply=success();reply["globalRevision"]=state["globalRevision"];reply["patch"]=Json::object();
@@ -360,7 +399,8 @@ private:
         const auto op=req["op"].asString();
         if(op=="checkpoint_batch"){
             const auto& writes=req["writes"];std::set<std::string> seen;
-            if(!writes.isArray()||writes.size()==0||writes.size()>1024||!req["globals"].isNull())return failure("bad_transaction");
+            if(!writes.isArray()||(writes.size()==0&&req["world"].isNull())||writes.size()>1024||
+               !req["globals"].isNull())return failure("bad_transaction");
             for(std::size_t i=0;i<writes.size();++i){
                 const auto id=writes[i]["account"].asString();
                 if(!identifier(id)||!seen.insert(id).second||!writes[i]["record"].isObject()||writes[i]["create"].asBool())return failure("bad_transaction");

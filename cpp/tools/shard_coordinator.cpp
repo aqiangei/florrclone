@@ -72,6 +72,20 @@ int main(int argc,char** argv) {
         }
         return reply;
     };
+    // Migrate once in the coordinator. A game loading the resulting snapshot
+    // has no lease on its offline records and cannot rewrite them at startup.
+    if(council.database().storedTable("councilLegacyActivity")["version"].asInt()!=1) {
+        Json request=Json::object();request["op"]="initialize_legacy_activity";request["requestId"]="council-v1";
+        const auto reply=apply(Node{"startup","migration",Role::Supervisor},request,[&](const Json& current){
+            Json plan=Json::object();plan["op"]="global_patch";plan["writes"]=Json::array();
+            plan["globalRevision"]=current["globalRevision"];
+            plan["patch"]["globals"]["councilLegacyActivity"]=council::legacyActivitySnapshot(council.database());
+            return plan;
+        });
+        if(!reply["ok"].asBool()) {
+            std::cerr<<"coordinator activity migration failed\n";return 1;
+        }
+    }
     Presence presence;
     std::string line;
     while(std::getline(std::cin,line)) {
@@ -84,7 +98,10 @@ int main(int argc,char** argv) {
         if(!identifier(node.shard)||!identifier(node.boot))output["result"]=failure("bad_node");
         else if(input["request"]["op"].asString()=="snapshot") {
             if(!authority.healthy())output["result"]=failure("authority_frozen");
-            else {auto reply=success();reply["state"]=authority.snapshot();output["result"]=std::move(reply);}
+            else {
+                auto reply=success();reply["worldCheckpointVersion"]=1;
+                reply["state"]=authority.snapshot();output["result"]=std::move(reply);
+            }
         } else if(input["request"]["op"].asString()=="presence") {
             const auto now=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             const auto& request=input["request"];

@@ -51,7 +51,7 @@ public:
             const auto payload=envelope["payload"].asString();
             const auto delta=Json::parseOrNull(payload);
             if(!envelope["payload"].isString()||envelope["sha256"].asString()!=crypto::sha256Hex(payload)||
-               delta["schema"].asInt()!=1||!counter(delta["sequence"])||
+               (delta["schema"].asDouble()!=1&&delta["schema"].asDouble()!=2)||!counter(delta["sequence"])||
                (previousRecord>=0&&delta["sequence"].asDouble()!=previousRecord+1)){
                 error="journal checksum or sequence invalid";return false;
             }

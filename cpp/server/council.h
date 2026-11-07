@@ -7,8 +7,7 @@
 
 namespace flix::council {
 inline constexpr std::size_t kProposalRankLimit = 20;
-inline bool initializeLegacyActivity(Database& db) {
-    if(db.storedTable("councilLegacyActivity")["version"].asInt()==1) return true;
+inline Json legacyActivitySnapshot(const Database& db) {
     Json table=Json::object();table["version"]=1;table["at"]=static_cast<double>(db.nowMillis());table["accounts"]=Json::object();
     for(const auto& id:db.playerIds()) {
         const auto* a=db.findUserById(id);const auto* p=db.findProgress(id);
@@ -17,8 +16,12 @@ inline bool initializeLegacyActivity(Database& db) {
         Json row=Json::object();row["level"]=level;
         row["seconds"]=9.0*(level-1.0)*(level-1.0);table["accounts"][id]=row;
     }
+    return table;
+}
+inline bool initializeLegacyActivity(Database& db) {
+    if(db.storedTable("councilLegacyActivity")["version"].asInt()==1) return true;
     const Json previous=db.storedTable("councilLegacyActivity");
-    db.rawTable("councilLegacyActivity")=table;db.markDirty();
+    db.rawTable("councilLegacyActivity")=legacyActivitySnapshot(db);db.markDirty();
     if(db.save()) return true;
     db.rawTable("councilLegacyActivity")=previous.isObject()?previous:Json::object();db.markDirty();return false;
 }

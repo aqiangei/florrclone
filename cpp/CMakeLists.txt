@@ -270,6 +270,10 @@ endif()
 
 add_executable(flowrix_server server/main.cpp)
 target_link_libraries(flowrix_server PRIVATE flix_server)
+if(UNIX AND NOT EMSCRIPTEN)
+  add_executable(shard_coordinator EXCLUDE_FROM_ALL tools/shard_coordinator.cpp)
+  target_link_libraries(shard_coordinator PRIVATE flix_server)
+endif()
 
 # --- client ------------------------------------------------------------------
 add_library(flix_client STATIC

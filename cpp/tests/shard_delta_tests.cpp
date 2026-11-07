@@ -32,6 +32,51 @@ TEST(shard_checkpoint_batch_is_atomic_and_omits_unchanged_global_payload){
  CHECK_EQ(f.disk["globalRevision"].asInt(),0);CHECK_EQ(f.disk["accounts"]["alice"]["record"]["xp"].asInt(),50);
  CHECK_EQ(f.disk["globals"]["legacyFlorrcloneRoot"]["preserved"].asString().size(),4u*1024u*1024u);
 }
+TEST(shard_world_checkpoints_do_not_compete_with_shared_account_updates){
+ F f;const auto lease=f.a.apply(one,login("alice",1));
+ auto local=request("checkpoint_batch",2);local["writes"]=Json::array();
+ local["world"]["bossClocks"]["garden"]=100;
+ local["writes"].push(write("alice",lease,25));
+ auto other=request("checkpoint_batch",1);other["writes"]=Json::array();
+ other["world"]["bossClocks"]["garden"]=200;
+ auto shared=request("global_patch",2);shared["globalRevision"]=0;shared["writes"]=Json::array();
+ shared["patch"]["sessions"]["new-token"]["userId"]="bob";
+ shared["world"]["sacrificeSpawn"]["jungle"]=300;
+
+ auto replay=f.disk;
+ f.fail=true;CHECK_EQ(f.a.apply(one,local)["error"].asString(),"save_failed");
+ CHECK_EQ(f.disk["sequence"].asInt(),1);
+ f.fail=false;
+ CHECK(f.a.apply(one,local)["ok"].asBool());
+ CHECK_EQ(f.last["schema"].asInt(),2);
+ CHECK(f.last["globalPatch"].isNull());
+ CHECK(Authority::recoverDelta(replay,f.last));
+ CHECK(f.a.apply(two,other)["ok"].asBool());
+ CHECK(Authority::recoverDelta(replay,f.last));
+ CHECK_EQ(f.disk["globalRevision"].asInt(),0);
+ CHECK(f.a.apply(two,shared)["ok"].asBool());
+ CHECK(Authority::recoverDelta(replay,f.last));
+ CHECK(canonical(replay).dump()==canonical(f.disk).dump());
+ CHECK_EQ(f.disk["accounts"]["alice"]["record"]["xp"].asInt(),25);
+ CHECK_EQ(f.disk["globals"]["shardWorlds"]["one"]["bossClocks"]["garden"].asInt(),100);
+ CHECK_EQ(f.disk["globals"]["shardWorlds"]["two"]["bossClocks"]["garden"].asInt(),200);
+ CHECK_EQ(f.disk["globals"]["shardWorlds"]["two"]["sacrificeSpawn"]["jungle"].asInt(),300);
+ CHECK_EQ(f.disk["globalRevision"].asInt(),1);
+ CHECK(f.a.apply(two,shared)["replayed"].asBool());
+ CHECK_EQ(f.disk["sequence"].asInt(),4);
+
+ auto invalid=request("checkpoint_batch",3);invalid["writes"]=Json::array();
+ invalid["world"]["two"]["bossClocks"]["garden"]=900;
+ CHECK_EQ(f.a.apply(one,invalid)["error"].asString(),"bad_world_patch");
+ invalid["world"]=Json::object();invalid["world"]["bossClocks"]=Json();
+ invalid["writes"].push(write("alice",lease,200));
+ CHECK_EQ(f.a.apply(one,invalid)["error"].asString(),"account_conflict");
+ CHECK_EQ(f.disk["globals"]["shardWorlds"]["one"]["bossClocks"]["garden"].asInt(),100);
+ invalid["writes"]=Json::array();
+ CHECK(f.a.apply(one,invalid)["ok"].asBool());
+ CHECK(!f.disk["globals"]["shardWorlds"]["one"].contains("bossClocks"));
+ CHECK_EQ(f.disk["globals"]["shardWorlds"]["two"]["bossClocks"]["garden"].asInt(),200);
+}
 TEST(shard_global_patch_preserves_unrelated_tables_and_replays_incremental_state){
  F f;auto lease=f.a.apply(one,login("alice",1));auto tx=request("global_patch",2);tx["globalRevision"]=0;
  tx["writes"]=Json::array();tx["writes"].push(write("alice",lease,99));

@@ -19,7 +19,7 @@ const sequence=new RequestSequence();
 const leases=new Map();
 const authJobs=new Map(),reserved=new Map();
 let quiescing=false;
-let mutationTail=Promise.resolve(),mutationCount=0,releaseJob=null,releaseDesired=[];
+let mutationTail=Promise.resolve(),mutationCount=0,releaseJob=null,releaseDesired=new Set();
 function mutate(run){
   ++mutationCount;
   const job=mutationTail.then(run);
@@ -43,7 +43,11 @@ function pollAuthJob(input,run){
   }
   return job.result||{pending:true};
 }
-function readState(reply){if(!reply||!reply.ok||!reply.state)throw Error('authority snapshot unavailable');return reply.state;}
+function readState(reply){
+  if(!reply||!reply.ok||!reply.state)throw Error('authority snapshot unavailable');
+  if(reply.worldCheckpointVersion!==1)throw Error('authority world checkpoint version mismatch');
+  return reply.state;
+}
 function database(s=state){
   const out=clone(s.globals);delete out.shardWorlds;
   const world=s.globals.shardWorlds?.[config.node]||{};
@@ -72,9 +76,15 @@ function buildWrites(delta){
   }
   return writes;
 }
-function accepted(reply,writes,patch){
+function accepted(reply,{writes,patch,global,world}){
   if(!object(reply.epochs)||!object(reply.revisions))throw Error('invalid commit acknowledgement');
-  if(patch){applyPatch(patch);state.globalRevision=reply.globalRevision;}
+  if(global){applyPatch(patch);state.globalRevision=reply.globalRevision;}
+  if(world){
+    const local=((state.globals.shardWorlds??={})[config.node]??={});
+    for(const [key,value]of Object.entries(world)){
+      if(value===null)delete local[key];else local[key]=clone(value);
+    }
+  }
   state.sequence=reply.sequence;
   for(const write of writes){
     const lease={epoch:reply.epochs[write.account],revision:reply.revisions[write.account]};
@@ -84,14 +94,12 @@ function accepted(reply,writes,patch){
 }
 function patchFor(delta){
   const patch={users:clone(delta.users||{}),sessions:clone(delta.sessions||{}),globals:{}};
+  const world={};
   for(const [key,value]of Object.entries(delta.globals||{})) {
     if(key==='shardWorlds')throw Error('private world namespace');
-    if(worldTables.has(key)) {
-      const worlds=patch.globals.shardWorlds||clone(state.globals.shardWorlds||{});worlds[config.node]??={};worlds[config.node][key]=clone(value);
-      patch.globals.shardWorlds=worlds;
-    } else patch.globals[key]=clone(value);
+    (worldTables.has(key)?world:patch.globals)[key]=clone(value);
   }
-  return patch;
+  return {patch,world:Object.keys(world).length?world:null};
 }
 function selected(patch){
   const out={users:{},sessions:{},globals:{}};
@@ -106,12 +114,16 @@ function applyPatch(patch){
   }
 }
 function commitPlan(delta){
-  const writes=buildWrites(delta),patch=patchFor(delta);
+  const writes=buildWrites(delta),{patch,world}=patchFor(delta);
   const global=Object.values(patch).some(rows=>Object.keys(rows).length);
-  return {writes,patch,global,original:global?selected(patch):null};
+  return {writes,patch,world,global,original:global?selected(patch):null};
 }
-function commitCommand(plan){return request(plan.global?'global_patch':'checkpoint_batch',plan.global?
-  {writes:plan.writes,globalRevision:state.globalRevision,patch:plan.patch}:{writes:plan.writes});}
+function commitCommand(plan){
+  const fields={writes:plan.writes};
+  if(plan.world)fields.world=plan.world;
+  if(!plan.global)return request('checkpoint_batch',fields);
+  return request('global_patch',{...fields,globalRevision:state.globalRevision,patch:plan.patch});
+}
 function refreshCommand(plan){return {op:'read_globals',keys:Object.fromEntries(Object.entries(plan.patch).map(([table,rows])=>[table,Object.keys(rows)]))};}
 function rebase(plan,current){
   if(!current?.ok||!object(current.patch))throw Error('global conflict refresh unavailable');
@@ -137,10 +149,10 @@ function commitSync(delta){
   let dispatched=false;
   try{
     const plan=commitPlan(delta);
-    if(!plan.global&&!plan.writes.length)return 'committed';
+    if(!plan.global&&!plan.writes.length&&!plan.world)return 'committed';
     for(let attempt=0;attempt<3;++attempt){
       dispatched=true;const reply=callSync(commitCommand(plan));
-      if(reply.ok){accepted(reply,plan.writes,plan.global?plan.patch:null);return 'committed';}
+      if(reply.ok){accepted(reply,plan);return 'committed';}
       dispatched=false;
       if(reply.error!=='global_conflict')return outcome(reply);
       rebase(plan,sync.call(refreshCommand(plan)));
@@ -153,10 +165,10 @@ async function commitAsync(delta){
   let dispatched=false;
   try{
     const plan=commitPlan(delta);
-    if(!plan.global&&!plan.writes.length)return 'committed';
+    if(!plan.global&&!plan.writes.length&&!plan.world)return 'committed';
     for(let attempt=0;attempt<3;++attempt){
       dispatched=true;const reply=await callAsync(commitCommand(plan));
-      if(reply.ok){accepted(reply,plan.writes,plan.global?plan.patch:null);return 'committed';}
+      if(reply.ok){accepted(reply,plan);return 'committed';}
       dispatched=false;
       if(reply.error!=='global_conflict')return outcome(reply);
       rebase(plan,await asyncRpc.call(refreshCommand(plan)));
@@ -281,15 +293,18 @@ module.exports={
         const counts=JSON.stringify({active:input.active,reserved:[...reserved.keys()],leases:[...leases.keys()],pending:!!releaseJob});
         if(counts!==module.exports.lastReleaseTrace){console.error('[release_trace]',counts);module.exports.lastReleaseTrace=counts;}
       }
-      releaseDesired=[...new Set(input.active||[])];
+      releaseDesired=new Set(input.active||[]);
       if(releaseJob) {
         if(!releaseJob.result)return {pending:true};
         const result=releaseJob.result;releaseJob=null;return result;
       }
+      // The active list belongs to this poll. A queued release must never sweep
+      // leases created, renewed, or reserved after the game supplied that list.
+      const candidates=[...leases].filter(([account])=>!releaseDesired.has(account)&&!reserved.has(account));
       const job=releaseJob={result:null};
       mutate(async()=>{
-        const active=new Set(releaseDesired);
-        for(const [account,lease]of leases)if(!active.has(account)&&!reserved.has(account)) {
+        for(const [account,lease]of candidates) {
+          if(leases.get(account)!==lease||releaseDesired.has(account)||reserved.has(account))continue;
           const reply=await callAsync(request('release',{account,...lease,record:state.accounts[account].record}));
           if(!reply?.ok){outcome(reply);return reply;}
           leases.delete(account);Object.assign(state.accounts[account],{phase:'offline',shard:'',boot:'',epoch:reply.epoch,revision:reply.revision});

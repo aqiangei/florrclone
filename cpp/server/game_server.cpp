@@ -731,7 +731,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // from whenever the first player happens to arrive.
     npcs_->placeMissing(world_, *terrain_, content(), clockMillis_);
     if(config_.authorityDeltaCommit) {
-        if(!database_.save()){errorOut="initial authority save failed";return false;}
+        if(database_.dirty()&&!database_.save()){errorOut="initial authority save failed";return false;}
         if(!database_.setDeltaSink(config_.authorityDeltaCommit)){errorOut="authority delta adapter initialization failed";return false;}
     }
     if (config_.backgroundSave && !database_.enableBackgroundSave(errorOut)) return false;
