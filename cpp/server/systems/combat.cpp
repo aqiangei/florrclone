@@ -445,7 +445,7 @@ void stealLife(World& world, Entity player, double amount, double nowMillis) {
 
 struct CombatSystem::Queries {
     explicit Queries(World& world)
-        : afflicted(world), auras(world), contact(world), strikers(world), petals(world),
+        : afflicted(world), auras(world), contact(world), meleeTargets(world), strikers(world), petals(world),
           projectiles(world), filedShots(world), fields(world), cooldowns(world),
           auraCooldowns(world), colony(world) {
         // A dead flower projects nothing, which is the same guard the
@@ -476,6 +476,7 @@ struct CombatSystem::Queries {
     /// riders all come out of the petal config, and reading it once beats
     /// mirroring six numbers onto every petal entity every tick.
     Query<ContactDamage, Transform, Body> contact;
+    Query<Transform, Body> meleeTargets;
     /// Mobs that might shock at range. Every mob is walked and the config
     /// decides -- the same trade gatherAuras makes with loadouts: one config
     /// read per mob per tick beats keeping a second copy of the spec honest
@@ -2115,6 +2116,7 @@ void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
     // swings, so the ring neither hits it again nor is credited for it.
     gatherAuras(world, content);
     resolveAuras(world, grid, nowMillis);
+    gatherMeleeTargets(world);
     gatherContact(world, content);
     gatherPetals(world, content, nowMillis);
     fileShots(world);
@@ -2500,8 +2502,21 @@ void CombatSystem::resolveAuras(World& world, const SpatialGrid& grid, double no
     }
 }
 
+void CombatSystem::gatherMeleeTargets(World& world) {
+    std::fill(meleeTargets_.begin(), meleeTargets_.end(), MeleeTarget{});
+    queries_->meleeTargets.each([&](Entity entity, Transform&, Body& body) {
+        const std::size_t slot = entityIndex(entity);
+        if (slot >= meleeTargets_.size()) meleeTargets_.resize(slot + 1);
+        meleeTargets_[slot] = {
+            entity, body.radius, squareMobHalfExtent(world, entity),
+            world.has<LoosePetal>(entity), world.has<PetalInstance>(entity),
+            world.has<PlayerTag>(entity), world.has<MobTag>(entity),
+            world.has<Pet>(entity), world.has<NpcTag>(entity),
+        };
+    });
+}
+
 void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
-    std::fill(hostileContactBodies_.begin(), hostileContactBodies_.end(), NULL_ENTITY);
     queries_->contact.each([&](Entity e, ContactDamage& contact, Transform& transform, Body& body) {
         MeleeSource source;
         source.attacker = e;
@@ -2520,11 +2535,7 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
         if (source.isMobBody && !source.isPet && !source.isPlayerBody && !world.has<ProjectileTag>(e)) {
             const auto* side = world.tryGet<Faction>(e);
             source.isHostileBody = !side || side->team == Team::Hostiles;
-            if (source.isHostileBody) {
-                const std::size_t slot = entityIndex(e);
-                if (slot >= hostileContactBodies_.size()) hostileContactBodies_.resize(slot + 1, NULL_ENTITY);
-                hostileContactBodies_[slot] = e;
-            }
+            if (source.isHostileBody) meleeTargets_[entityIndex(e)].hostileBody = true;
         }
         source.givesWay = source.isMobBody && !anchoredAgainstKnockback(world, content, e);
         // A seed of a mob's ring is a piece of that mob's body, so it hits
@@ -2703,12 +2714,12 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
         for (const Entity victim : candidates_) {
             if (ricochetHit) break;
             if (victim == source.attacker) continue;
-            // Wild hostile bodies cannot hurt, bump or discharge into each
-            // other. Their side stays fixed for the contact phase.
-            if (source.isHostileBody) {
-                const auto slot = entityIndex(victim);
-                if (slot < hostileContactBodies_.size() && hostileContactBodies_[slot] == victim) continue;
-            }
+            const auto slot = entityIndex(victim);
+            if (slot >= meleeTargets_.size()) continue;
+            const MeleeTarget& targetBody = meleeTargets_[slot];
+            if (targetBody.entity != victim) continue;
+            // Wild hostile bodies cannot hurt, bump or discharge into each other.
+            if (source.isHostileBody && targetBody.hostileBody) continue;
             // A shot is judged off the filing table before anything is looked
             // up, because a cloud of them is most of what a body standing in
             // one finds. Both tests are the ones below, reached sooner: nothing
@@ -2720,10 +2731,6 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 const double reach = source.radius + shot->radius;
                 if ((shot->position - source.position).lengthSq() > reach * reach) continue;
             }
-            const Transform* transform = world.tryGet<Transform>(victim);
-            const Body* body = world.tryGet<Body>(victim);
-            if (transform == nullptr || body == nullptr) continue;
-
             // A petal only ever bleeds inside its OWN hit block, below. The
             // reference has no mob-vs-petal collision at all, so letting a mob
             // body melee the ring as well would charge the exchange twice.
@@ -2735,35 +2742,33 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // swings pay no recoil (see below): a mob's body bites it instead,
             // at the mob's contact damage and on the mob's own contact
             // interval. That is the only thing that ever wears one down.
-            const bool looseVictim = world.has<LoosePetal>(victim);
-            if (!source.isPetal && world.has<PetalInstance>(victim) &&
-                !(looseVictim && (source.isMobBody || source.isMobRing || source.isNpcBody))) {
+            if (!source.isPetal && targetBody.petal &&
+                !(targetBody.loosePetal && (source.isMobBody || source.isMobRing || source.isNpcBody))) {
                 continue;
             }
 
             // The moon is a hazard to mobs, not a duelling weapon: a flower
             // walking into one is shoved by the movement pass and nothing else.
-            if (source.isLoose && world.has<PlayerTag>(victim)) continue;
+            if (source.isLoose && targetBody.player) continue;
+            const Transform* transform = world.tryGet<Transform>(victim);
+            if (transform == nullptr) continue;
 
-            if (source.isPetal && world.has<PlayerTag>(victim)) {
+            if (source.isPetal && targetBody.player) {
                 // Flower vs flower is a wholly separate collision in the
                 // reference -- applyPvpDamage() has exactly one caller, and it
                 // is the petal loop -- with its own gate, its own throttle and
                 // its own cost to the petal.
-                resolvePetalPvp(world, source, victim, transform->position, body->radius,
+                resolvePetalPvp(world, source, victim, transform->position, targetBody.radius,
                                 nowMillis);
                 continue;
             }
-            // A flower's body never hurts another flower, whatever side the
-            // two are on: resolvePlayerMobContact walks the ENEMY grid, so
-            // another flower is not a candidate for it in the first place.
-            if (source.isPlayerBody && world.has<PlayerTag>(victim)) continue;
+            // A flower body cannot hit another flower, including in PvP.
+            if (source.isPlayerBody && targetBody.player) continue;
 
             // A pet and a wild mob meet in the separation kernel's contact
             // list, which is built with the same gap the kernel keeps between
             // bodies rather than at exact circle overlap.
-            const bool petPair = source.isMobBody && world.has<MobTag>(victim) &&
-                                 source.isPet != world.has<Pet>(victim);
+            const bool petPair = source.isMobBody && targetBody.mob && source.isPet != targetBody.pet;
 
             // A flower and an NPC meet flush, never overlapping: the flower
             // was put back out against the NPC's skin before this pass ran,
@@ -2772,20 +2777,19 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // A mob and a loose petal get the slack too: the movement pass
             // eases them apart, and a pair that has stopped pressing settles
             // against each other's skin rather than inside it.
-            const bool flushPair = (source.isNpcBody && world.has<PlayerTag>(victim)) ||
-                                   (source.isPlayerBody && world.has<NpcTag>(victim)) ||
-                                   (source.isPet && world.has<NpcTag>(victim)) ||
-                                   (looseVictim && !source.isPetal) || source.isLoose;
+            const bool flushPair = (source.isNpcBody && targetBody.player) ||
+                                   ((source.isPlayerBody || source.isPet) && targetBody.npc) ||
+                                   (targetBody.loosePetal && !source.isPetal) || source.isLoose;
 
             const Vec2 offset = transform->position - source.position;
-            const double reach = source.radius + body->radius +
+            const double reach = source.radius + targetBody.radius +
                                  (petPair ? kMobCollisionBuffer : 0.0) +
                                  (flushPair ? kNpcTouchSlack : 0.0);
-            const double targetHalf=squareMobHalfExtent(world,victim);
+            const double targetHalf = targetBody.squareHalf;
             if(sourceHalf>0 || targetHalf>0) {
                 const auto* sourceAt=world.tryGet<Transform>(source.attacker);
                 if(shapedBodyContact(source.position,source.radius,sourceHalf,sourceAt?sourceAt->angle:0,
-                    transform->position,body->radius,targetHalf,transform->angle,
+                    transform->position,targetBody.radius,targetHalf,transform->angle,
                     (petPair?kMobCollisionBuffer:0)+(flushPair?kNpcTouchSlack:0)).depth<0) continue;
             } else if (offset.lengthSq() > reach * reach) continue;
 
@@ -2802,7 +2806,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // NPC's body bumps exactly as its mob's does.
             const bool mobTouchesPlayer = (source.isMobBody || source.isMobRing ||
                                            source.isNpcBody) &&
-                                          world.has<PlayerTag>(victim) &&
+                                          targetBody.player &&
                                           !world.has<Dead>(victim) &&
                                           world.has<Health>(victim) &&
                                           canDamage(world, source.attacker, victim);
@@ -2823,7 +2827,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                     mobContactedPlayers_.push_back(victim);
                     if (!source.suppressPlayerShove) {
                         bounceOffMob(world, terrain, victim, source.attacker, source.givesWay, offset,
-                                     source.radius + body->radius - offset.length());
+                                     source.radius + targetBody.radius - offset.length());
                     }
                 }
                 // Every mob touching the flower recoils, the one-bump rule
@@ -2832,7 +2836,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 if (source.gardnRecoil) recoilOffFlower(world, source.attacker, victim, offset);
                 if (source.yieldsToFlower) {
                     yieldToFlower(world, terrain, source.attacker, victim, offset,
-                                  source.radius + body->radius - offset.length());
+                                  source.radius + targetBody.radius - offset.length());
                 }
                 if (!firstBump) continue;
                 if (source.glitchInfecting) markGlitched(world, victim);

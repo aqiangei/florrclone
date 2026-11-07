@@ -626,6 +626,7 @@ private:
     /// mark a mob Dead, which relocates the row the gather is walking.
     void gatherAuras(World& world, const ContentRegistry& content);
     void resolveAuras(World& world, const SpatialGrid& grid, double nowMillis);
+    void gatherMeleeTargets(World& world);
     void gatherContact(World& world, const ContentRegistry& content);
     /// One pass of lightning at RANGE: which mobs are charged and have somebody
     /// in reach, and the strikes they throw. Runs in the world phase, after
@@ -827,7 +828,21 @@ private:
     static constexpr std::uint32_t kNoShotSlot = 0xFFFFFFFFu;
     std::vector<std::uint32_t> shotSlot_;
 
-    std::vector<Entity> hostileContactBodies_;
+    // Only body geometry and roles that stay fixed during contact. Positions,
+    // health and status still come from the world in hit order.
+    struct MeleeTarget {
+        Entity entity = NULL_ENTITY;
+        double radius = 0.0;
+        double squareHalf = 0.0;
+        bool loosePetal = false;
+        bool petal = false;
+        bool player = false;
+        bool mob = false;
+        bool pet = false;
+        bool npc = false;
+        bool hostileBody = false;
+    };
+    std::vector<MeleeTarget> meleeTargets_;
 
     /// A strike's own broadphase answer and the two lists it builds from it.
     /// Separate from candidates_ because a contact strike is thrown from INSIDE
