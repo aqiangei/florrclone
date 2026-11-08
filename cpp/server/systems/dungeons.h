@@ -75,6 +75,8 @@ public:
     bool inWave(const World& world, Entity player) const;
     bool waveExterior(const World& world, Entity player, Realm& realm) const;
     std::function<void(Entity, const std::string&)> waveNotice;
+    std::function<void(Entity, const std::string&)> waveSummary;
+    std::function<int(Entity, std::uint64_t)> waveAward;
     std::function<void(Entity)> waveRevived;
 
     /// True when `realm` is one of the dungeon copies.
@@ -121,20 +123,27 @@ private:
         Entity player = NULL_ENTITY;
         Realm returnRealm = Realm::Overworld;
         Vec2 returnAt;
+        std::uint64_t starsEarned = 0;
+        bool foughtRound = false;
     };
     struct WaveRoom {
         Realm realm = Realm::Overworld;
         std::string code;
         std::vector<WaveMember> members;
         std::vector<Entity> enemies;
-        int round = 0;
+        std::uint64_t round = 0;
+        std::uint64_t cleared = 0;
+        int roundSize = 0;
+        int queued = 0;
         double readyAtMillis = 0.0;
-        double endsAtMillis = 0.0;
+        double nextBatchMillis = 0.0;
+        double lastProgressMillis = 0.0;
     } wave_;
     void runWave(World& world, const Terrain& terrain, const ContentRegistry& content,
                  SpawnSystem& spawning, Rng& rng, double nowMillis, CommandBuffer& commands);
     void leaveWave(World& world, const WaveMember& member);
     void closeWave(World& world, CommandBuffer& commands, const std::string& text);
+    void summarizeWave(const WaveMember& member, const std::string& reason) const;
 
     bool indexed_ = false;
     std::vector<Instance> instances_;

@@ -54,7 +54,6 @@ constexpr double kListWidth = 290.0;
 constexpr double kListRow = 26.0;
 constexpr double kChipHeight = 24.0;
 constexpr double kToolbarHeight = 38.0;
-constexpr double kScrollbarWidth = 10.0;
 constexpr double kListWheelStep = 60.0;
 constexpr double kPreviewWidth = 240.0;
 constexpr double kBootRow = 60.0;
@@ -540,15 +539,14 @@ void filesTab(MenuContext& ctx, State& s, std::vector<Hit>& regions, Rect body) 
         s.list.contentHeight = count * kListRow + 8.0 + formH;
         s.list.viewHeight = listView.h;
         if (listView.contains(mouse)) s.list.offset -= ctx.wheel() * kListWheelStep;
-        s.list.offset -= touchScroll(window, listView, s.list.maxOffset() > 0);
-        s.list.offset = clamp(s.list.offset, 0.0, s.list.maxOffset());
+        ctx.scrollbarOwnsPointer |= updateListScroll(window, listView, s.list);
 
         canvas.save();
         clipCanvas(canvas, listView);
         double rowY = listView.y + 4.0 - s.list.offset;
         if (s.naming) {
             // A new file's name, typed in place at the head of the list.
-            const Rect create{listView.right() - 4.0 - 58.0, rowY + 1.0, 58.0, kListRow - 2.0};
+            const Rect create{listScrollContent(listView, s.list).right() - 4.0 - 58.0, rowY + 1.0, 58.0, kListRow - 2.0};
             nameRect = Rect{listView.x + 6.0, rowY, create.x - 6.0 - (listView.x + 6.0), kListRow};
             inputField(canvas, nameRect, s.newName, "name.js", s.newField.focused, now, &s.newField);
             ChipStyle go = kGoChip;
@@ -557,7 +555,7 @@ void filesTab(MenuContext& ctx, State& s, std::vector<Hit>& regions, Rect body) 
             addRegion(clipTo(create, listView), Act::CreateFile);
             rowY += formH;
         }
-        const double rowW = listView.w - 8.0 - kScrollbarWidth;
+        const double rowW = listScrollContent(listView, s.list).w - 8.0;
         for (int i = 0; i < count; ++i, rowY += kListRow) {
             const Rect row{listView.x + 4.0, rowY, rowW, kListRow - 2.0};
             if (row.bottom() < listView.y || row.y > listView.bottom()) continue;
@@ -585,8 +583,7 @@ void filesTab(MenuContext& ctx, State& s, std::vector<Hit>& regions, Rect body) 
                  rowY + 18.0, label(13.0, kMutedInk, Align::Centre));
         }
         canvas.restore();
-        scrollbar(canvas, Rect{listView.x, listView.y + 4.0, listView.w - 2.0, listView.h - 13.0},
-                  s.list.contentHeight, s.list.offset, kAssetsSkin.accent, 8.0);
+        drawListScrollbar(canvas, listView, s.list, kAssetsSkin.accent);
     }
     {
         const Rect make{left.x, left.bottom() - kChipHeight, 92.0, kChipHeight};
@@ -767,14 +764,13 @@ void bootTab(MenuContext& ctx, State& s, std::vector<Hit>& regions, Rect body) {
     s.bootList.contentHeight = static_cast<double>(options.size()) * kBootRow + 4.0;
     s.bootList.viewHeight = listView.h;
     if (listView.contains(mouse)) s.bootList.offset -= ctx.wheel() * kListWheelStep;
-    s.bootList.offset -= touchScroll(ctx.window, listView, s.bootList.maxOffset() > 0);
-    s.bootList.offset = clamp(s.bootList.offset, 0.0, s.bootList.maxOffset());
+    ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, listView, s.bootList);
 
     canvas.save();
     clipCanvas(canvas, listView);
     double rowY = listView.y - s.bootList.offset;
     for (const Option& option : options) {
-        const Rect row{listView.x, rowY, listView.w - kScrollbarWidth - 4.0, kBootRow - 6.0};
+        const Rect row{listView.x, rowY, listScrollContent(listView, s.bootList).w - 4.0, kBootRow - 6.0};
         rowY += kBootRow;
         if (row.bottom() < listView.y || row.y > listView.bottom()) continue;
         fillRound(canvas, row, 6.0, kPaper, option.chosen ? 0.22 : 0.08);
@@ -821,8 +817,7 @@ void bootTab(MenuContext& ctx, State& s, std::vector<Hit>& regions, Rect body) {
              label(12.0, option.stale ? kDirtyInk : kMutedInk));
     }
     canvas.restore();
-    scrollbar(canvas, Rect{listView.x, listView.y, listView.w, listView.h - 5.0},
-              s.bootList.contentHeight, s.bootList.offset, kAssetsSkin.accent, 8.0);
+    drawListScrollbar(canvas, listView, s.bootList, kAssetsSkin.accent);
 
     const double by = body.bottom() - bottomH * 0.5;
     const Rect reload{x, by - 14.0, 116.0, 28.0};

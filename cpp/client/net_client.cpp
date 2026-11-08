@@ -308,6 +308,7 @@ void NetClient::forgetAccount() {
     chatBackfilled_ = false;
     whisperPartner_.clear();
     dailyStreak_ = DailyStreak{};
+    waveResultNotice_.lines = {};
     accountQQ.clear();
     accountQQPending = false;
     accountQQSaved = false;
@@ -2206,9 +2207,6 @@ void NetClient::handleChatHistory(ByteReader& reader) {
 }
 
 void NetClient::handleNotice(ByteReader& reader) {
-    // The reference has no toast layer: a server notice is a System line in
-    // the transcript and nothing else, whatever its severity. The one banner
-    // this client raises is for the Admin channel (handleChat), not for these.
     const auto severity = static_cast<net::NoticeSeverity>(reader.u8());
     std::string text = reader.str();
     if (!reader.ok()) return;
@@ -2217,6 +2215,16 @@ void NetClient::handleNotice(ByteReader& reader) {
     // JoinAccepted the server gives one (GameServer::handleJoin) -- and the
     // loading screen has to come down to the lobby, where this line is shown.
     if (severity == net::NoticeSeverity::Bad) joinPending_ = false;
+    if (severity == net::NoticeSeverity::WaveResult) {
+        std::size_t start = 0;
+        for (auto& line : waveResultNotice_.lines) {
+            const std::size_t end = text.find('\n', start);
+            line = text.substr(start, end == std::string::npos ? end : end - start);
+            start = end == std::string::npos ? text.size() : end + 1;
+        }
+        ++waveResultNotice_.sequence;
+        std::replace(text.begin(), text.end(), '\n', ' ');
+    }
     addSystemMessage(text);
 }
 

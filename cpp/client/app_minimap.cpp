@@ -552,8 +552,7 @@ bool App::scrollOnlineRoster() {
     if (onlineRosterBox_.w <= 0) return false;
     const Vec2 mouse{window_.mouseX(), window_.mouseY()};
     if (!onlineRosterBox_.contains(mouse) || menus_.capturesMouse(mouse)) return false;
-    onlineRosterScroll_ =
-        std::max(0.0, onlineRosterScroll_ - window_.wheelDelta() * kRosterWheelStep);
+    onlineRosterScroll_.offset -= window_.wheelDelta() * kRosterWheelStep;
     return true;
 }
 
@@ -561,7 +560,10 @@ void App::drawOnlineRoster(Canvas& canvas) {
     onlineRosterBox_ = {};
     const auto& roster = net_.onlineRoster();
     // Nothing to show until the first push; keeps the corner clean on connect.
-    if (roster.empty() && !net_.haveSession()) return;
+    if (roster.empty() && !net_.haveSession()) {
+        onlineRosterScroll_ = {};
+        return;
+    }
 
     const double x = canvas.width() - kRosterWidth - kMinimapPadding;
     const double y = kMinimapPadding + kMinimapSize + kRosterGap;
@@ -594,15 +596,19 @@ void App::drawOnlineRoster(Canvas& canvas) {
 
     const double listTop = y + kRosterHeader;
     const double listH = std::max(0.0, boxH - kRosterHeader - 4.0);
-    const double contentH = static_cast<double>(roster.size()) * kRosterRow;
-    const double maxScroll = std::max(0.0, contentH - listH);
     const Rect listBox{x + 1.0, listTop, kRosterWidth - 2.0, listH};
-    onlineRosterScroll_ = clamp(onlineRosterScroll_ -
-        ui::touchScroll(window_, listBox, maxScroll > 0.0), 0.0, maxScroll);
+    onlineRosterScroll_.viewHeight = listH;
+    onlineRosterScroll_.contentHeight = static_cast<double>(roster.size()) * kRosterRow;
+    const Vec2 mouse{window_.mouseX(), window_.mouseY()};
+    if (!menus_.capturesMouse(mouse) || onlineRosterScroll_.thumbGrab)
+        ui::updateListScroll(window_, listBox, onlineRosterScroll_);
+    else
+        onlineRosterScroll_.offset = clamp(onlineRosterScroll_.offset, 0.0, onlineRosterScroll_.maxOffset());
+    const Rect rows = ui::listScrollContent(listBox, onlineRosterScroll_);
 
     canvas.beginPath();
-    canvas.rect(static_cast<float>(x + 1.0), static_cast<float>(listTop),
-                static_cast<float>(kRosterWidth - 2.0), static_cast<float>(listH));
+    canvas.rect(static_cast<float>(rows.x), static_cast<float>(rows.y),
+                static_cast<float>(rows.w), static_cast<float>(rows.h));
     canvas.clip();
 
     TextStyle rowStyle;
@@ -612,14 +618,14 @@ void App::drawOnlineRoster(Canvas& canvas) {
     rowStyle.baseline = Baseline::Middle;
 
     // Only paint rows that intersect the clip — cheap with dozens of players.
-    const int first = static_cast<int>(onlineRosterScroll_ / kRosterRow);
+    const int first = static_cast<int>(onlineRosterScroll_.offset / kRosterRow);
     const int last = static_cast<int>(
-        std::ceil((onlineRosterScroll_ + listH) / kRosterRow));
+        std::ceil((onlineRosterScroll_.offset + listH) / kRosterRow));
     const int n = static_cast<int>(roster.size());
     for (int i = std::max(0, first); i < std::min(n, last); ++i) {
         const auto& entry = roster[static_cast<std::size_t>(i)];
         const double cy =
-            listTop + (static_cast<double>(i) + 0.5) * kRosterRow - onlineRosterScroll_;
+            listTop + (static_cast<double>(i) + 0.5) * kRosterRow - onlineRosterScroll_.offset;
         std::string line = entry.name + "  Lv" + std::to_string(entry.level);
         if (!entry.guild.empty()) line += "  [" + entry.guild + "]";
         if (!entry.location.empty()) line += "  " + entry.location;
@@ -628,20 +634,17 @@ void App::drawOnlineRoster(Canvas& canvas) {
             line += tr(Msg::LobbyParen);
         }
         const double badgeWidth=entry.shard?42.0:0.0;
-        text(canvas, ellipsize(line, rowStyle.size, kRosterWidth - 16.0-badgeWidth), x + 8.0, cy, rowStyle);
+        text(canvas, ellipsize(line, rowStyle.size, rows.w - 14.0 - badgeWidth), x + 8.0, cy, rowStyle);
         if(entry.shard) {
             TextStyle badge=rowStyle;badge.align=Align::Right;
             badge.fill=entry.shard==1?0xA8DBFFu:0xE4BEFFu;
             const bool zh=ui::language()==ui::Language::Zh;
-            text(canvas,entry.shard==1?(zh?"一服":"S1"):(zh?"二服":"S2"),x+kRosterWidth-8,cy,badge);
+            text(canvas,entry.shard==1?(zh?"一服":"S1"):(zh?"二服":"S2"),rows.right() - 7.0, cy, badge);
         }
     }
     canvas.restore();
 
-    if (contentH > listH + 0.5) {
-        scrollbar(canvas, Rect{x, listTop, kRosterWidth - 2.0, listH}, contentH,
-                  onlineRosterScroll_, 0xFFD700u, 4.0);
-    }
+    ui::drawListScrollbar(canvas, listBox, onlineRosterScroll_, 0xFFD700u);
 }
 
 // ---------------------------------------------------------------------------

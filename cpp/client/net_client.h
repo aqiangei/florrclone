@@ -486,6 +486,11 @@ struct AdminDashboardState {
     std::uint32_t resultSeq = 0;
 };
 
+struct WaveResultNotice {
+    std::array<std::string, 3> lines;
+    std::uint32_t sequence = 0;
+};
+
 /// The last announcement an admin made, as it arrived live on the Admin
 /// channel. The line itself is in the transcript too, under the Admin tab;
 /// this is what the HUD raises its banner from.
@@ -824,6 +829,7 @@ public:
     /// this account's own.
     bool controllingFlower() const { return adminDashboard_.control.active; }
     const AdminAnnouncement& adminAnnouncement() const { return adminAnnouncement_; }
+    const WaveResultNotice& waveResultNotice() const { return waveResultNotice_; }
 
     // -- state -------------------------------------------------------------
     WorldView& view() { return view_; }
@@ -1277,6 +1283,7 @@ private:
     AdminDbState adminDb_;
     AdminDashboardState adminDashboard_;
     AdminAnnouncement adminAnnouncement_;
+    WaveResultNotice waveResultNotice_;
 
     /// The last ten round trips and their mean. Ten is the reference's window.
     static constexpr std::size_t kPingSamples = 10;

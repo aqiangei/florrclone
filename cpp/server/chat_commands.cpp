@@ -976,7 +976,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         std::string help = "Available commands:\n";
         help += "/mark-return - Mark传送后返回原处；H需等待30秒（死亡或返回菜单解除）<br/>";
         help += "/hyper-abandon [编号] - 主动放弃1份超凡，不返还材料（需要确认）<br/>";
-        help += "/wave start / join 房号 / leave - 四人波次挑战<br/>";
+        help += "/wave start / join 房号 / leave - 四人无限波次挑战，参与并通关每波可获星星<br/>";
         help += "/dps / /dps reset - \u67e5\u770b\u6216\u6e05\u7a7a\u4e2a\u4eba\u6728\u6869\u4f24\u5bb3\u7edf\u8ba1<br/>";
         help += "/biome - Show the most populated biome <br/>";
         help += "/boss-timers - Show each biome's unique/apex cooldown <br/>";

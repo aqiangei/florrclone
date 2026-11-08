@@ -57,7 +57,6 @@ constexpr double kTreeRow = 24.0;
 constexpr double kIndent = 16.0;
 constexpr double kDocHeader = 40.0;
 constexpr double kWheelStep = 60.0;
-constexpr double kScrollbarWidth = 8.0;
 /// How long the search box waits after the last keystroke before it asks.
 constexpr double kSearchDebounce = 0.3;
 /// How long a destructive button stays armed for its second click.
@@ -787,12 +786,11 @@ bool AdminDbPanel::render(MenuContext& ctx) {
         s.list.contentHeight = rowCount * kListRow + 8.0;
         s.list.viewHeight = listView.h;
         if (listView.contains(mouse)) s.list.offset -= ctx.wheel() * kWheelStep;
-        s.list.offset -= touchScroll(ctx.window, listView, s.list.maxOffset() > 0);
-        s.list.offset = clamp(s.list.offset, 0.0, s.list.maxOffset());
+        ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, listView, s.list);
 
         canvas.save();
         clipCanvas(canvas, listView);
-        const double rowW = listView.w - 8.0 - kScrollbarWidth;
+        const double rowW = listScrollContent(listView, s.list).w - 8.0;
         double y = listView.y + 4.0 - s.list.offset;
         for (int i = 0; i < rowCount; ++i, y += kListRow) {
             const Rect row{listView.x + 4.0, y, rowW, kListRow - 4.0};
@@ -871,8 +869,7 @@ bool AdminDbPanel::render(MenuContext& ctx) {
                  label(13.0, kPaper, Align::Centre));
         }
         canvas.restore();
-        scrollbar(canvas, Rect{listView.x, listView.y + 4.0, listView.w - 2.0, listView.h - 13.0},
-                  s.list.contentHeight, s.list.offset, kAdminDbSkin.accent, kScrollbarWidth);
+        drawListScrollbar(canvas, listView, s.list, kAdminDbSkin.accent);
     }
 
     // -- the right column: the open document ---------------------------------
@@ -989,12 +986,11 @@ bool AdminDbPanel::render(MenuContext& ctx) {
             s.tree.contentHeight = static_cast<double>(rows.size()) * kTreeRow + 8.0;
             s.tree.viewHeight = treeView.h;
             if (treeView.contains(mouse)) s.tree.offset -= ctx.wheel() * kWheelStep;
-            s.tree.offset -= touchScroll(ctx.window, treeView, s.tree.maxOffset() > 0);
-            s.tree.offset = clamp(s.tree.offset, 0.0, s.tree.maxOffset());
+            ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, treeView, s.tree);
 
             canvas.save();
             clipCanvas(canvas, treeView);
-            const double rowRight = treeView.right() - kScrollbarWidth - 6.0;
+            const double rowRight = listScrollContent(treeView, s.tree).right() - 6.0;
             double y = treeView.y + 4.0 - s.tree.offset;
             for (std::size_t i = 0; i < rows.size(); ++i, y += kTreeRow) {
                 const TreeRow& row = rows[i];
@@ -1111,9 +1107,7 @@ bool AdminDbPanel::render(MenuContext& ctx) {
                 regions.insert(regions.end(), buttons.begin(), buttons.end());
             }
             canvas.restore();
-            scrollbar(canvas,
-                      Rect{treeView.x, treeView.y + 4.0, treeView.w - 2.0, treeView.h - 13.0},
-                      s.tree.contentHeight, s.tree.offset, kAdminDbSkin.accent, kScrollbarWidth);
+            drawListScrollbar(canvas, treeView, s.tree, kAdminDbSkin.accent);
         }
     }
 

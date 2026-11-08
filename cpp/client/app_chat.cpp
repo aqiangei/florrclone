@@ -1160,7 +1160,7 @@ void App::drawChat(Canvas& canvas, double time) {
         panel = {field.x, panelTop + tabsSpace, field.w,
                  std::max(0.0, panelBottom - panelTop - tabsSpace)};
     }
-    const Rect column{panel.x + kChatTextInset, panel.y, panel.w - kChatTextInset * 2, panel.h};
+    Rect column{panel.x + kChatTextInset, panel.y, panel.w - kChatTextInset * 2, panel.h};
     // The transcript, the strip over it while it is up, and the line under
     // it, as one box. A press outside it closes the chat, and a press inside
     // must not -- selecting a message and picking a channel are both done
@@ -1189,6 +1189,7 @@ void App::drawChat(Canvas& canvas, double time) {
     // keys read: Escape, a completion and a filter with no matches all put the
     // transcript back until the next keystroke, as the reference's do.
     const bool suggesting = chatOpen_ && chatSuggestion_ >= 0;
+    if (!chatOpen_ || suggesting) chatScrollbar_.thumbGrab.reset();
     if (suggesting) {
         const std::vector<const ChatCommand*> matches = matchChatCommands(chatDraft_, net_.isSkinAdmin());
         if (!matches.empty()) {
@@ -1260,6 +1261,44 @@ void App::drawChat(Canvas& canvas, double time) {
             return tab < 0 || ((shown >> tab) & 1u) != 0;
         };
 
+        const double span = newestBaseline - oldestBaseline;
+        Rect body = panel;
+        bool draggingBar = false;
+        if (chatOpen_) {
+            // The thumb needs the whole history's height. Measure it only
+            // when the transcript, its channel filter or the wrap width changes.
+            const auto measure = [&](double width) {
+                double height = 0.0;
+                for (const ChatLine& line : net_.chat()) {
+                    if (passes(line)) height += messageHeight(layoutChatMessage(chatLineTokens(line), width));
+                }
+                return height;
+            };
+            if (chatHeightSequence_ != net_.chatSequence() || chatMeasuredCount_ != net_.chat().size() ||
+                chatMeasuredWidth_ != column.w || chatMeasuredChannels_ != shown) {
+                chatHeightSequence_ = net_.chatSequence();
+                chatMeasuredCount_ = net_.chat().size();
+                chatMeasuredWidth_ = column.w;
+                chatMeasuredChannels_ = shown;
+                chatMeasuredHeight_ = measure(column.w);
+                chatMeasuredNarrowHeight_.reset();
+            }
+            chatScrollbar_.viewHeight = std::max(0.0, span + kChatLineHeight);
+            chatScrollbar_.contentHeight = chatMeasuredHeight_;
+            if (chatScrollbar_.maxOffset() > 0.0) {
+                column.w = std::max(1.0, column.w - ui::kListScrollbarGutter);
+                if (!chatMeasuredNarrowHeight_) chatMeasuredNarrowHeight_ = measure(column.w);
+                chatScrollbar_.contentHeight = *chatMeasuredNarrowHeight_;
+                const double maxScroll = chatScrollbar_.maxOffset();
+                body = ui::listScrollContent(panel, chatScrollbar_);
+                chatScrollbar_.offset = maxScroll - chatScroll_;
+                draggingBar = ui::updateListScroll(window_, panel, chatScrollbar_, false);
+                chatScroll_ = maxScroll - chatScrollbar_.offset;
+            } else {
+                chatScrollbar_.thumbGrab.reset();
+            }
+        }
+
         // How many lines landed since the last frame. A transcript resting at
         // the bottom simply shows them; one the reader has scrolled back
         // through has to be held still against them, below.
@@ -1292,7 +1331,6 @@ void App::drawChat(Canvas& canvas, double time) {
         };
         // The lines that arrived are laid out whether or not they are in view:
         // their height is what the offset has to move by.
-        const double span = newestBaseline - oldestBaseline;
         layoutBack(span + kChatLineHeight * 2 + chatScroll_, chatScroll_ > 0 ? arrived : 0);
 
         // A line landing while the reader is parked up the transcript must not
@@ -1300,7 +1338,7 @@ void App::drawChat(Canvas& canvas, double time) {
         // BOTTOM, so everything above it moves up by its height -- and the
         // offset is counted off that bottom, so growing it by the same amount
         // leaves the view exactly where it was.
-        if (chatScroll_ > 0 && arrivedContent > 0) {
+        if (!draggingBar && chatScroll_ > 0 && arrivedContent > 0) {
             chatScroll_ += arrivedContent;
             layoutBack(span + kChatLineHeight * 2 + chatScroll_, 0);
         }
@@ -1314,15 +1352,15 @@ void App::drawChat(Canvas& canvas, double time) {
         // A transcript with more than it can show is one a finger can drag --
         // see scrollChat. One that fits keeps its press immediate, so a finger
         // aimed across the corner still swings.
-        if (slack > 0 || chatScroll_ > 0) ui::TouchScrollRegions::instance().record(panel);
+        if (slack > 0 || chatScroll_ > 0) ui::TouchScrollRegions::instance().record(body);
 
         if (!newestFirst.empty()) {
             const double above = ascent(kChatTextSize);
             const double below = -descent(kChatTextSize);
             canvas.save();
             canvas.beginPath();
-            canvas.rect(static_cast<float>(panel.x), static_cast<float>(panel.y),
-                        static_cast<float>(panel.w), static_cast<float>(panel.h));
+            canvas.rect(static_cast<float>(body.x), static_cast<float>(body.y),
+                        static_cast<float>(body.w), static_cast<float>(body.h));
             canvas.clip();
             // The baseline of the message's LAST row; its others stack above.
             double baseline = newestBaseline + chatScroll_;
@@ -1400,6 +1438,10 @@ void App::drawChat(Canvas& canvas, double time) {
                 if (baseline + below < panel.y) break;
             }
             canvas.restore();
+        }
+        if (chatOpen_) {
+            chatScrollbar_.offset = chatScrollbar_.maxOffset() - chatScroll_;
+            ui::drawListScrollbar(canvas, panel, chatScrollbar_, 0xA7B9CAu);
         }
     }
 

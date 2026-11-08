@@ -10,6 +10,7 @@
 
 #include "client/ui/text.h"
 #include "client/ui/text_select.h"
+#include "client/ui/touch_scroll.h"
 
 namespace flix::ui {
 
@@ -530,6 +531,77 @@ std::string ellipsize(const std::string& text, double size, double width) {
         out.erase(utf8Prev(out, out.size()));
     }
     return out + "...";
+}
+
+namespace {
+
+Rect listTrack(Rect view) {
+    return {view.right() - 13.0, view.y + 3.0, 9.0, std::max(0.0, view.h - 6.0)};
+}
+
+Rect listThumb(Rect track, const Scroller& scroll) {
+    const double minimum = std::min(22.0, track.h * 0.65);
+    const double height = std::max(minimum, track.h * scroll.viewHeight / scroll.contentHeight);
+    const double travel = track.h - height;
+    const double progress = clamp(scroll.offset / scroll.maxOffset(), 0.0, 1.0);
+    return {track.x, track.y + travel * progress, track.w, height};
+}
+
+} // namespace
+
+Rect listScrollContent(Rect view, const Scroller& scroll) {
+    if (scroll.maxOffset() > 0.0) view.w = std::max(0.0, view.w - kListScrollbarGutter);
+    return view;
+}
+
+bool updateListScroll(const Window& window, Rect view, Scroller& scroll, bool panContent) {
+    scroll.offset = clamp(scroll.offset, 0.0, scroll.maxOffset());
+    const bool wasDragging = scroll.thumbGrab.has_value();
+    const Rect track = listTrack(view);
+    if (scroll.maxOffset() <= 0.0 || track.h <= 0.0) {
+        scroll.thumbGrab.reset();
+        return wasDragging;
+    }
+
+    // The gutter owns a direct pointer drag. Everything else is the normal
+    // content gesture, whose scroll direction is the opposite of the thumb.
+    const Rect body = listScrollContent(view, scroll);
+    const Rect gutter{body.right(), view.y, view.right() - body.right(), view.h};
+    const Vec2 pointer{window.mouseX(), window.mouseY()};
+    if (panContent) scroll.offset -= touchScroll(window, body, true);
+    if (window.mousePressed(MouseButton::Left) && gutter.contains(pointer)) {
+        const Rect thumb = listThumb(track, scroll);
+        scroll.thumbGrab = pointer.y >= thumb.y && pointer.y <= thumb.bottom()
+                              ? pointer.y - thumb.y : thumb.h * 0.5;
+    }
+
+    if (scroll.thumbGrab) {
+        const Rect thumb = listThumb(track, scroll);
+        const double travel = track.h - thumb.h;
+        if (travel > 0.0) {
+            scroll.offset = (pointer.y - track.y - *scroll.thumbGrab) / travel * scroll.maxOffset();
+        }
+    }
+    const bool ownsPointer = scroll.thumbGrab.has_value();
+    if (!window.mouseDown(MouseButton::Left)) scroll.thumbGrab.reset();
+    scroll.offset = clamp(scroll.offset, 0.0, scroll.maxOffset());
+    return ownsPointer;
+}
+
+void drawListScrollbar(Canvas& canvas, Rect view, const Scroller& scroll, std::uint32_t accent) {
+    const Rect track = listTrack(view);
+    if (scroll.maxOffset() <= 0.0 || track.h <= 0.0) return;
+    const Rect thumb = listThumb(track, scroll);
+    const auto paint = [&](Rect rect, std::uint32_t colour, double alpha) {
+        setFill(canvas, colour, alpha);
+        canvas.beginPath();
+        canvas.roundRect(static_cast<float>(rect.x), static_cast<float>(rect.y),
+                         static_cast<float>(rect.w), static_cast<float>(rect.h), 4.5f);
+        canvas.fill();
+    };
+    paint(track, kInk, 0.27);
+    paint(thumb, accent, 1.0);
+    paint(thumb, kPaper, scroll.thumbGrab ? 0.92 : 0.74);
 }
 
 } // namespace flix::ui

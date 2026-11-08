@@ -537,12 +537,11 @@ public:
     /// before use, so a caller may hand over a point in a wall and still get a
     /// mob standing somewhere legal.
     ///
-    /// A boss placed this way announces itself like any other, which is what
-    /// makes "every boss is announced" a property of the system rather than of
-    /// each caller.
+    /// Wave bosses use their room's schedule and announcements.
+    enum class MobSpawnScope { World, Wave };
     Entity spawnMob(World& world, const Terrain& terrain, const ContentRegistry& content,
                     std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
-                    double nowMillis, Rng& rng);
+                    double nowMillis, Rng& rng, MobSpawnScope scope = MobSpawnScope::World);
 
     /// What came of a sacrifice. Anything but Summoned placed nothing and
     /// spent nothing: the petal stays on its flower's bar.
@@ -965,7 +964,8 @@ private:
     Entity spawnMobAt(World& world, const Terrain& terrain, const ContentRegistry& content,
                       std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                       double nowMillis, Rng& rng, int depth, std::uint16_t zone,
-                      std::optional<double> facing = std::nullopt, bool clockGated = true);
+                      std::optional<double> facing = std::nullopt, bool clockGated = true,
+                      bool announce = true);
 
     /// Lays a centipede's body out behind its head, each segment linked to the
     /// one in front. Driven from spawnMobAt so that every path to a head --

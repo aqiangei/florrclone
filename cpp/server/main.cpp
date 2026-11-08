@@ -202,9 +202,9 @@ EM_JS(void, flix_catch_stop_signals, (), {
 EM_JS(int, flix_stop_signalled, (), { return Module.flixStopSignal ? 1 : 0; });
 
 /// Has bytes landing on any socket run flix_server_wake, so what arrived is
-/// answered at once rather than at the main loop's next pass. That loop is a
-/// 60 Hz timer under Node, and waiting it out was up to 17 ms of every round
-/// trip -- a ping, a login, a craft. Once per turn of the event loop however
+/// answered at once rather than at the main loop's next pass. Waiting for
+/// that pass used to add up to 17 ms of every round trip -- a ping, a login,
+/// a craft. Once per turn of the event loop however
 /// many sockets spoke in it: setImmediate runs after Node has dispatched all
 /// the I/O it found, which is also what keeps the wake outside any callback
 /// that is itself inside the module. Off again with 0.
@@ -222,9 +222,31 @@ EM_JS(void, flix_wake_on_arrival, (int on), {
         });
     };
 });
+
+EM_JS(void, flix_start_loop, (), {
+    const run = () => {
+        const delay = _flix_server_step();
+        setTimeout(run, Math.max(1, Math.ceil(delay)));
+    };
+    setTimeout(run, 1);
+});
 #endif
 
 } // namespace
+
+#ifdef __EMSCRIPTEN__
+extern "C" EMSCRIPTEN_KEEPALIVE double flix_server_step() {
+    auto* running = g_wasmServer;
+    if (flix_stop_signalled()) running->stop();
+    if (running->step()) return running->nextStepDelayMillis();
+    flix_wake_on_arrival(0);
+    g_wasmServer = nullptr;
+    running->shutdown();
+    const int code = reportExit(running->exitCode());
+    EM_ASM({ process.exit($0); }, code);
+    return 0;
+}
+#endif
 
 #ifdef __EMSCRIPTEN__
 // Trusted host adapter, selected by the operator, never by a game packet.
@@ -398,42 +420,7 @@ int main(int argc, char** argv) {
     flix_catch_stop_signals();
     g_wasmServer = server;
     flix_wake_on_arrival(1);
-    emscripten_set_main_loop_arg(
-        [](void* handle) {
-            auto* running = static_cast<flix::GameServer*>(handle);
-            // A signal becomes the stop() onSignal makes natively, here on the
-            // loop's own turn; the step below then returns false and the
-            // shutdown is the ordinary one, exit code 0 included. A scheduled
-            // restart reaches the same place having set its own code first.
-            if (flix_stop_signalled()) running->stop();
-            if (running->step()) return;
-            flix_wake_on_arrival(0);
-            g_wasmServer = nullptr;
-            running->shutdown();
-            emscripten_cancel_main_loop();
-            const int code = reportExit(running->exitCode());
-            // Node's own exit is this process's exit, reached directly for
-            // either code. Cancelling the loop only lets Node run out of work,
-            // and that is right for neither: a Node that runs out of work exits
-            // 0 -- the one code a restart may not leave behind, because 0 is
-            // what tells systemd's on-failure policy, or pm2 with 0 in its
-            // stop_exit_codes, to leave the server down -- and nothing promises
-            // that it runs out promptly once the listener has closed. After a
-            // signal that matters, because the listeners above mean the signal
-            // no longer ends the process by itself. It is reached directly
-            // rather than through emscripten_force_exit(): with EXIT_RUNTIME
-            // off that call still exits with the right code, but warns on the
-            // way out that it cannot shut the runtime down, and a line reading
-            // "cannot actually shut down" in the log of every restart is a
-            // false alarm an operator would have to learn to ignore. Nothing is
-            // left to tear down in any case -- shutdown() above has already
-            // flushed every account and the database.
-            EM_ASM({ process.exit($0); }, code);
-        },
-        server,
-        // 0 lets the runtime pick; on Node that is a timer well above the
-        // 30Hz the simulation ticks at, and step() ticks only when one is due.
-        0, 0);
+    flix_start_loop();
     return 0;
 #else
     flix::GameServer server;

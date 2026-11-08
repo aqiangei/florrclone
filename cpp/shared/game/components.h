@@ -36,6 +36,7 @@ namespace flix {
 
 struct PlayerTag {};
 struct WavePlayer {};
+struct WaveEnemy {};
 struct MobTag {};
 struct GhostTag {};
 struct PetalTag {};
@@ -1621,6 +1622,7 @@ struct Replicated {
 // Component registration. Global scope, once per type.
 FLIX_COMPONENT(flix::PlayerTag);
 FLIX_COMPONENT(flix::WavePlayer);
+FLIX_COMPONENT(flix::WaveEnemy);
 FLIX_COMPONENT(flix::MobTag);
 FLIX_COMPONENT(flix::GhostTag);
 FLIX_COMPONENT(flix::PetalTag);

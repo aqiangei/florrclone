@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <limits>
 
 #include "server/loot_eligibility.h"
 #include "server/systems/combat.h"
@@ -214,10 +215,12 @@ void DungeonSystem::release(World& world, Instance& instance, CommandBuffer& com
 
 namespace {
 constexpr int kWaveMaxPlayers = 4;
-constexpr int kWaveRounds = 5;
 constexpr double kWaveLobbyMillis = 15000.0;
 constexpr double kWaveBreakMillis = 3500.0;
-constexpr double kWaveTimeLimitMillis = 600000.0;
+constexpr double kWaveStallMillis = 180000.0;
+constexpr double kWaveBatchMillis = 650.0;
+constexpr int kWaveBatchSize = 12;
+constexpr double kWaveMaxEnemyRadius = 92.0;
 }
 
 bool DungeonSystem::inWave(const World& world, Entity player) const {
@@ -245,6 +248,7 @@ std::string DungeonSystem::waveCommand(World& world, const Terrain& terrain, Ent
             if (it->player != player) continue;
             leaveWave(world, *it);
             if (inWave(world, player)) return "当前状态暂时无法离开 Wave。";
+            summarizeWave(*it, "主动退出");
             wave_.members.erase(it);
             return "已离开 Wave。";
         }
@@ -272,7 +276,7 @@ std::string DungeonSystem::waveCommand(World& world, const Terrain& terrain, Ent
         wave_.realm = realm;
         wave_.code = std::to_string(100000u + rng.below(900000u));
         wave_.readyAtMillis = nowMillis + kWaveLobbyMillis;
-        wave_.endsAtMillis = nowMillis + kWaveTimeLimitMillis;
+        wave_.enemies.reserve(60);
     }
     world.add<WavePlayer>(player);
     wave_.members.push_back(member);
@@ -283,7 +287,7 @@ std::string DungeonSystem::waveCommand(World& world, const Terrain& terrain, Ent
         if (start) wave_ = {};
         return "当前状态暂时无法进入 Wave。";
     }
-    return "已进入 Wave 房 " + wave_.code + "，开房后 15 秒开始，最多四人。";
+    return "已进入 Wave 房 " + wave_.code + "，开房后 15 秒开始，最多四人。参与并通关的每一波都累加星星。";
 }
 
 void DungeonSystem::leaveWave(World& world, const WaveMember& member) {
@@ -293,9 +297,14 @@ void DungeonSystem::leaveWave(World& world, const WaveMember& member) {
         world.remove<WavePlayer>(member.player);
 }
 
+void DungeonSystem::summarizeWave(const WaveMember& member, const std::string& reason) const {
+    if (waveSummary) waveSummary(member.player, "Wave 结算\n通关 " + std::to_string(wave_.cleared) +
+        " 波 · 本局 +" + std::to_string(member.starsEarned) + " 星星\n" + reason);
+}
+
 void DungeonSystem::closeWave(World& world, CommandBuffer& commands, const std::string& text) {
     for (const auto& member : wave_.members) {
-        if (waveNotice) waveNotice(member.player, text);
+        summarizeWave(member, text);
         if (auto* pads = world.tryGet<TeleporterState>(member.player)) pads->markHoldUntilMillis = 0.0;
         leaveWave(world, member);
     }
@@ -315,58 +324,153 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
         return true;
     }), wave_.members.end());
 
-    if (wave_.members.empty() || nowMillis >= wave_.endsAtMillis ||
-        std::none_of(wave_.members.begin(), wave_.members.end(),
-            [&](const auto& member) { return isStanding(world, member.player); })) {
-        closeWave(world, commands, "Wave 挑战结束。");
+    if (wave_.members.empty()) {
+        closeWave(world, commands, "队伍已结束挑战");
         return;
     }
-    if (std::any_of(wave_.enemies.begin(), wave_.enemies.end(),
-                   [&](Entity e) { return isStanding(world, e); })) return;
-    if (!wave_.enemies.empty()) {
-        wave_.enemies.clear();
-        if (wave_.round == kWaveRounds) {
-            closeWave(world, commands, "Wave 五波全部通过。");
-            return;
+
+    // Combat ran earlier this tick and the reaper has not removed the ledgers.
+    const auto stillStanding = std::remove_if(wave_.enemies.begin(), wave_.enemies.end(), [&](Entity e) {
+        if (isStanding(world, e)) return false;
+        wave_.lastProgressMillis = nowMillis;
+        const auto* bounty = world.tryGet<Bounty>(e);
+        const auto* health = world.tryGet<Health>(e);
+        if (bounty && health) {
+            for (auto& member : wave_.members) {
+                for (const auto& share : bounty->contributors) {
+                    if (share.player == member.player && share.damage >= health->max * 0.01)
+                        member.foughtRound = true;
+                }
+            }
         }
+        return true;
+    });
+    wave_.enemies.erase(stillStanding, wave_.enemies.end());
+
+    if (wave_.round != wave_.cleared && wave_.queued == wave_.roundSize && wave_.enemies.empty()) {
+        wave_.cleared = wave_.round;
         wave_.readyAtMillis = nowMillis + kWaveBreakMillis;
+        for (auto& member : wave_.members) {
+            if (waveAward && member.foughtRound)
+                member.starsEarned += waveAward(member.player, wave_.cleared);
+            member.foughtRound = false;
+        }
     }
-    if (nowMillis < wave_.readyAtMillis) return;
+    if (std::none_of(wave_.members.begin(), wave_.members.end(),
+            [&](const auto& member) { return isStanding(world, member.player); })) {
+        closeWave(world, commands, "队伍已倒下");
+        return;
+    }
+    if (wave_.round != 0 && nowMillis - wave_.lastProgressMillis >= kWaveStallMillis) {
+        closeWave(world, commands, "连续 3 分钟未推进");
+        return;
+    }
 
-    ++wave_.round;
-    const auto& map = *worldMaps->forRealm(wave_.realm);
-    const Vec2 centre = map.defaultSpawn(rng, terrain);
-    for (const auto& member : wave_.members) {
-        if (!isStanding(world, member.player) && waveRevived) {
-            waveRevived(member.player);
-            moveToRealm(member.player, wave_.realm, centre);
+    const int players = static_cast<int>(wave_.members.size());
+    const Vec2 extent = terrain.realmExtent(wave_.realm);
+    const Vec2 centre = extent * 0.5;
+    if (wave_.round == wave_.cleared) {
+        if (nowMillis < wave_.readyAtMillis) return;
+        if (wave_.round != std::numeric_limits<std::uint64_t>::max()) ++wave_.round;
+        wave_.roundSize = 30 + (players - 1) * 8 +
+                          7 * static_cast<int>(std::min<std::uint64_t>(wave_.round - 1, 12));
+        wave_.queued = 0;
+        wave_.lastProgressMillis = nowMillis;
+        wave_.nextBatchMillis = nowMillis;
+        for (const auto& member : wave_.members) {
+            if (!isStanding(world, member.player) && waveRevived) {
+                waveRevived(member.player);
+                moveToRealm(member.player, wave_.realm, centre);
+            }
+            if (waveNotice) waveNotice(member.player, "Wave 第 " + std::to_string(wave_.round) +
+                " 波 · " + std::to_string(wave_.roundSize) + " 只" +
+                (wave_.round % 5 == 0 ? " · 超凡首领波" : ""));
         }
     }
 
-    constexpr const char* roster[] = {"bee", "ladybug", "beetle", "hornet"};
+    const int liveLimit = 36 + (players - 1) * 8;
+    if (wave_.queued == wave_.roundSize || nowMillis < wave_.nextBatchMillis ||
+        static_cast<int>(wave_.enemies.size()) >= liveLimit ||
+        spawning.census().mobs >= spawning.mobCap) return;
+    wave_.nextBatchMillis = nowMillis + kWaveBatchMillis;
+
+    constexpr const char* roster[] = {"beetle", "hornet", "crab", "wasp", "mantis", "mummy_beetle"};
     constexpr Rarity tiers[] = {Rarity::Rare, Rarity::Epic, Rarity::Legendary, Rarity::Mythic, Rarity::Ultra};
-    const int players = static_cast<int>(wave_.members.size());
-    const bool bosses = wave_.round == kWaveRounds;
-    const int count = bosses ? std::min(3, players) : 2 + wave_.round + players * 2;
-    const double startAngle = rng.angle();
-    for (int i = 0; i < count; ++i) {
-        const auto type = content.mobIndex(bosses ? "beetle" : roster[(i + wave_.round) % 4]);
-        if (type == kInvalidIndex) continue;
-        const Vec2 at = centre + Vec2::fromAngle(startAngle + kTau * i / count, bosses ? 850.0 : 620.0);
-        const Entity enemy = spawning.spawnMob(world, terrain, content, type,
-            bosses ? Rarity::Super : tiers[wave_.round - 1], at, wave_.realm, nowMillis, rng);
-        if (enemy == NULL_ENTITY) continue;
-        world.remove<Bounty>(enemy);
+    const auto tier = tiers[std::min<std::uint64_t>(wave_.round - 1, 4)];
+    const double healthScale = 1.12 + 0.09 * static_cast<double>(
+        std::min<std::uint64_t>(wave_.round - 1, 24));
+    const double span = std::min(extent.x, extent.y);
+
+    for (int batch = 0; batch < kWaveBatchSize && wave_.queued < wave_.roundSize &&
+         static_cast<int>(wave_.enemies.size()) < liveLimit &&
+         spawning.census().mobs < spawning.mobCap; ++batch) {
+        const int slot = wave_.queued;
+        const bool hyper = wave_.round % 5 == 0 && slot == 0;
+        const bool elite = (wave_.round % 5 == 0 && slot < players + 3) ||
+                           (wave_.round >= 8 && slot % (wave_.round >= 20 ? 4 : 8) == 0);
+        const Rarity rarity = hyper ? Rarity::Apex : (elite ? Rarity::Super : tier);
+        const auto type = content.mobIndex(hyper ? "beetle" :
+            roster[(wave_.round % std::size(roster) + slot) % std::size(roster)]);
+        if (type == kInvalidIndex) break;
+        const auto& config = content.mob(type);
+        const double radius = std::min(kWaveMaxEnemyRadius,
+                                       content.mobStats(type, rarity).radius * config.maxRandomSize());
+        // Stagger three rings of candidate points. Random attempts in a
+        // narrow ring can stall even while several spawn lanes are empty.
+        constexpr int lanes = 3, sectors = 32, positions = lanes * sectors;
+        const int first = static_cast<int>(rng.below(positions));
+        const double heading = kTau * (wave_.round % sectors) / (sectors * sectors);
+        std::optional<Vec2> position;
+        for (int attempt = 0; attempt < positions; ++attempt) {
+            const int index = (first + attempt) % positions;
+            const int lane = index % lanes;
+            const double angle = heading + kTau * (index / lanes + lane * 0.5) / sectors;
+            const Vec2 at = centre + Vec2::fromAngle(angle, span * (0.27 + lane * 0.06));
+            if (terrain.resolveWall(at, radius, wave_.realm).collided) continue;
+            const auto tooClose = [&](Entity other, double gap) {
+                const auto* transform = world.tryGet<Transform>(other);
+                const auto* body = world.tryGet<Body>(other);
+                if (!transform || !body || transform->realm != wave_.realm) return false;
+                const double reach = radius + body->radius + gap;
+                return distanceSq(transform->position, at) < reach * reach;
+            };
+            if (std::any_of(wave_.members.begin(), wave_.members.end(),
+                            [&](const auto& member) { return tooClose(member.player, 150.0); }) ||
+                std::any_of(wave_.enemies.begin(), wave_.enemies.end(),
+                            [&](Entity e) { return tooClose(e, 20.0); })) continue;
+            position = at;
+            break;
+        }
+        if (!position) break;
+        const Entity enemy = spawning.spawnMob(world, terrain, content, type, rarity, *position,
+                                                wave_.realm, nowMillis, rng,
+                                                SpawnSystem::MobSpawnScope::Wave);
+        if (enemy == NULL_ENTITY) break;
+        // Keep the standard hit ledger to check participation in this wave.
+        world.get<Bounty>(enemy).xp = 0.0;
+        world.add<WaveEnemy>(enemy);
         world.add<KeepAwake>(enemy);
+        // High tiers keep their combat stats. Bound their footprints so the
+        // next pack fits around the ring instead of sitting on existing mobs.
+        auto& body = world.get<Body>(enemy);
+        if (body.radius > kWaveMaxEnemyRadius) {
+            const double scale = kWaveMaxEnemyRadius / body.radius;
+            body.radius = kWaveMaxEnemyRadius;
+            body.mass *= scale * scale;
+        }
+        auto& health = world.get<Health>(enemy);
+        if (hyper) {
+            // Use the Hyper beetle's tier and behaviour, with a room-scaled
+            // health pool and contact damage for a party of up to four.
+            const double strength = 2.0 + 0.5 * static_cast<double>(
+                std::min<std::uint64_t>(wave_.round / 5 - 1, 8));
+            health.max = content.mobStats(type, Rarity::Super).health * strength;
+            world.get<ContactDamage>(enemy).amount = content.mobStats(type, Rarity::Unique).damage;
+        }
+        health.max *= healthScale;
+        health.current = health.max;
         wave_.enemies.push_back(enemy);
-    }
-    if (wave_.enemies.empty()) {
-        closeWave(world, commands, "Wave 生成失败，本局结束。");
-        return;
-    }
-    for (const auto& member : wave_.members) {
-        if (waveNotice) waveNotice(member.player, "Wave 第 " + std::to_string(wave_.round) +
-            " / 5 波" + (bosses ? "，首领来了。" : "，清掉这一波进入下一轮。"));
+        ++wave_.queued;
     }
 }
 

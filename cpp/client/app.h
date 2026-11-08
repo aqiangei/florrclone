@@ -301,6 +301,7 @@ private:
     /// after it arrives (kAnnouncementSeconds, app_hud.cpp). The game's HUD and
     /// the title screen both raise it: an announcement is for everyone signed in.
     void drawAdminAnnouncement(Canvas&, double clearOf = 0.0);
+    void drawWaveResult(Canvas&);
     /// The nearest NPC in view offering a service whose skin is within
     /// kNpcServiceReach of `self` -- its service None when there is none.
     /// What turns the craft key into the oracle's or the trader's panel while
@@ -703,8 +704,15 @@ private:
     /// How far the transcript is scrolled back, in pixels off its bottom. Zero
     /// is the resting state: newest line just above the input slot.
     double chatScroll_ = 0;
+    ui::Scroller chatScrollbar_;
+    std::uint64_t chatHeightSequence_ = 0;
+    std::size_t chatMeasuredCount_ = 0;
+    double chatMeasuredWidth_ = 0.0;
+    double chatMeasuredHeight_ = 0.0;
+    std::optional<double> chatMeasuredNarrowHeight_;
+    std::uint8_t chatMeasuredChannels_ = 0;
     /// Online roster under the minimap: scroll offset and last painted box.
-    double onlineRosterScroll_ = 0;
+    ui::Scroller onlineRosterScroll_;
     Rect onlineRosterBox_{};
     /// ALT press toggles exact numbers / spawn bands / rarity glow (default off).
     /// Minimap other players + names stay always on; unrelated to this flag.
@@ -776,6 +784,8 @@ private:
     /// app's clock. See drawAdminAnnouncement.
     std::uint32_t announcementSeen_ = 0;
     double announcementShownAt_ = -1.0;
+    std::uint32_t waveResultSeen_ = 0;
+    double waveResultShownAt_ = -1.0;
 
 
     /// The minimap's baked static layer and the map it was baked for, once

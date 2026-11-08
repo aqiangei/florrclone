@@ -171,6 +171,7 @@ public:
     /// left waiting out the 60 Hz timer that drives step(). Does nothing once
     /// the server has stopped.
     void serviceArrivals();
+    double nextStepDelayMillis() const;
 
     /// Flushes every playing account and the database, then drops the
     /// listener. run() does this on the way out; the emscripten build calls it

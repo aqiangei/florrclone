@@ -244,11 +244,19 @@ struct Scroller {
     double offset = 0;
     double contentHeight = 0;
     double viewHeight = 0;
+    std::optional<double> thumbGrab;
 
     double maxOffset() const {
         const double slack = contentHeight - viewHeight;
         return slack > 0 ? slack : 0;
     }
 };
+
+inline constexpr double kListScrollbarGutter = 20.0;
+Rect listScrollContent(Rect view, const Scroller&);
+/// Apply touch panning and thumb input. Returns true while the thumb owns
+/// the press, including its release, so that release cannot click a row.
+bool updateListScroll(const Window&, Rect view, Scroller&, bool panContent = true);
+void drawListScrollbar(Canvas&, Rect view, const Scroller&, std::uint32_t accent);
 
 } // namespace flix::ui

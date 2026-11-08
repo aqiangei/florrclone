@@ -2130,6 +2130,26 @@ const PlayerRecord* Database::findProgress(const std::string& userId) const {
     return players_.find(userId);
 }
 
+int Database::awardWaveStars(const std::string& userId) {
+    constexpr int kStarsPerWave = 7500;
+    constexpr int kDailyCap = 150000;
+    const std::int64_t today = nowMillis() / 86400000;
+    PlayerRecord& record = progress(userId);
+    const Json& prior = std::as_const(record.extra)["waveStars"];
+    const auto lastDay = static_cast<std::int64_t>(prior["day"].asDouble(-1.0));
+    if (lastDay > today) return 0;
+    const int earned = lastDay == today ? std::max(0, prior["earned"].asInt()) : 0;
+    if (earned >= kDailyCap) return 0;
+
+    const int award = std::min(kStarsPerWave, kDailyCap - earned);
+    auto& ledger = record.extra["waveStars"];
+    ledger["day"] = static_cast<double>(today);
+    ledger["earned"] = earned + award;
+    record.stars += award;
+    markDirty();
+    return award;
+}
+
 DailyStreakResult Database::processDailyStreak(const std::string& userId) {
     constexpr std::int64_t kMillisPerDay = 86400000;
     PlayerRecord& record = progress(userId);

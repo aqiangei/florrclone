@@ -651,6 +651,47 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
     return lastBarY + kBarHeight + kTierDrop - descent(kTierSize);
 }
 
+void App::drawWaveResult(Canvas& canvas) {
+    const auto& result = net_.waveResultNotice();
+    if (result.lines.front().empty()) return;
+    if (result.sequence != waveResultSeen_) {
+        waveResultSeen_ = result.sequence;
+        waveResultShownAt_ = timeSeconds_;
+    }
+    const double age = timeSeconds_ - waveResultShownAt_;
+    if (age >= 8.0) return;
+    const double width = std::min(360.0, canvas.width() - 24.0);
+    if (width <= 0.0) return;
+    const double x = canvas.width() * 0.5;
+    const double top = std::min(80.0, canvas.height() * 0.14);
+
+    canvas.save();
+    canvas.setGlobalAlpha(static_cast<float>(clamp(std::min(age / 0.18, (8.0 - age) / 0.45), 0.0, 1.0)));
+    canvas.beginPath();
+    canvas.roundRect(static_cast<float>(x - width * 0.5), static_cast<float>(top),
+                     static_cast<float>(width), 106.0f, 10.0f);
+    setFill(canvas, 0x242019, 0.97);
+    canvas.fill();
+    setStroke(canvas, 0xD6AF54, 0.95);
+    canvas.setLineWidth(2.0f);
+    canvas.stroke();
+
+    TextStyle style;
+    style.align = Align::Centre;
+    style.baseline = Baseline::Middle;
+    style.size = 17.0;
+    style.fill = 0xF4D486;
+    text(canvas, result.lines[0], x, top + 22.0, style);
+    style.size = std::min(22.0, 22.0 * (width - 20.0) /
+                                      std::max(1.0, measure(result.lines[1], 22.0)));
+    style.fill = 0xFFFFFF;
+    text(canvas, result.lines[1], x, top + 53.0, style);
+    style.size = 14.0;
+    style.fill = 0xD9C7A6;
+    text(canvas, result.lines[2], x, top + 82.0, style);
+    canvas.restore();
+}
+
 void App::drawAdminAnnouncement(Canvas& canvas, double clearOf) {
     const AdminAnnouncement& announcement = net_.adminAnnouncement();
     // Timed on this clock, from the frame a new one is first seen: the

@@ -2991,6 +2991,7 @@ MenuSystem::PanelLayer MenuSystem::panelLayer(MenuId id, bool inGame) {
 void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
                                  const SpriteCache& sprites, const WorldRenderer& renderer,
                                  double timeSeconds, double dt) {
+    scrollbarOwnsPointer_ = false;
     if (drawn_ == MenuId::None) return;
     MenuContext ctx{canvas,    window,      net, sprites,    renderer, settings_,
                     drag_,     timeSeconds, dt,  panelRect_, false};
@@ -3064,6 +3065,7 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
     // Latched before the closing-card check below: the Log Out button closes
     // its own panel on the same click, so the request would never survive to
     // be read if it were picked up after that early return.
+    scrollbarOwnsPointer_ = ctx.scrollbarOwnsPointer;
     if (ctx.logoutRequested) logoutRequested_ = true;
     if (ctx.adminGrantRequested) adminGrantRequested_ = true;
 
@@ -3103,6 +3105,7 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     wantsText_ = false;
     dungeonEntryRect_ = Rect{};
     panelRect_ = Rect{};
+    scrollbarOwnsPointer_ = false;
     // Taken back every frame and claimed again by whatever still holds the
     // keyboard this frame: a closed editor must not keep Ctrl+S from the
     // browser. See Window::setClaimedShortcuts.
@@ -3439,6 +3442,7 @@ void MenuSystem::renderStripOnly(Canvas& canvas, Window& window, double timeSeco
     wantsText_ = false;
     dungeonEntryRect_ = Rect{};
     panelRect_ = Rect{};
+    scrollbarOwnsPointer_ = false;
     window.setClaimedShortcuts({});
     loadoutHovered_ = -1;
     loadoutGrabbable_.fill(false);
@@ -3473,6 +3477,7 @@ double MenuSystem::stripRight() const {
 }
 
 bool MenuSystem::capturesMouse(Vec2 mouse) const {
+    if (scrollbarOwnsPointer_) return true;
     if(rotationDial_.w>0 && rotationDial_.contains(mouse))return true;
     if(dungeonEntryRect_.w>0 && dungeonEntryRect_.contains(mouse))return true;
     if (panelRect_.w > 0 && panelRect_.contains(mouse)) return true;

@@ -470,11 +470,12 @@ struct MenuContext {
     /// App ALT latch: tooltips show exact figures while on.
     bool altMode = false;
     ShardSelection* shardSelection = nullptr;
+    bool scrollbarOwnsPointer = false;
 
     Vec2 mouse() const { return {window.mouseX(), window.mouseY()}; }
     bool over(Rect r) const { return r.contains(mouse()); }
-    bool pressed() const { return window.mousePressed(MouseButton::Left); }
-    bool released() const { return window.mouseReleased(MouseButton::Left); }
+    bool pressed() const { return !scrollbarOwnsPointer && window.mousePressed(MouseButton::Left); }
+    bool released() const { return !scrollbarOwnsPointer && window.mouseReleased(MouseButton::Left); }
     /// A click that both began and ended inside `r`. Press-and-release is what
     /// separates a click from the end of a drag that happens to land here.
     bool clicked(Rect r) const { return released() && over(r); }
@@ -2029,6 +2030,7 @@ private:
     double expectedLoadoutUntil_ = 0;
 
     Rect panelRect_{};
+    bool scrollbarOwnsPointer_ = false;
 
     /// See setNearbyNpc().
     NpcService nearbyNpc_ = NpcService::None;

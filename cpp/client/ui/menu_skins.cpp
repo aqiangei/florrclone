@@ -96,7 +96,6 @@ constexpr double kColumnGap = 16.0;
 /// One shape row's pitch, and the card behind it.
 constexpr double kRowPitch = 28.0;
 constexpr double kRowCard = kRowPitch - 4.0;
-constexpr double kScrollbarWidth = 10.0;
 /// The Text tab's input cap, in bytes. Derived from the format rather than
 /// picked: a paste over the cap is trimmed to fit, and trimmed mid-line it
 /// stops parsing. The longest line the vocabulary can produce is a 16-point
@@ -774,7 +773,7 @@ void Studio::drawShapeList(Canvas& canvas, Rect view) {
     shapeScroll.contentHeight = static_cast<double>(shapes.size()) * kRowPitch + 8.0;
     shapeScroll.viewHeight = view.h;
     if (window && !confirming) {
-        shapeScroll.offset -= touchScroll(*window, view, shapeScroll.maxOffset() > 0);
+        updateListScroll(*window, view, shapeScroll);
     }
     shapeScroll.offset = clamp(shapeScroll.offset, 0.0, shapeScroll.maxOffset());
 
@@ -783,8 +782,7 @@ void Studio::drawShapeList(Canvas& canvas, Rect view) {
     const Rect outerClip = regionClip;
     regionClip = view;
 
-    const bool scrolls = shapeScroll.contentHeight > view.h;
-    const double rowW = view.w - 12.0 - (scrolls ? kScrollbarWidth + 2.0 : 0.0);
+    const double rowW = listScrollContent(view, shapeScroll).w - 12.0;
     double ry = view.y + 4.0 - shapeScroll.offset;
     for (std::size_t i = 0; i < shapes.size(); ++i) {
         const Shape& s = shapes[i];
@@ -831,8 +829,7 @@ void Studio::drawShapeList(Canvas& canvas, Rect view) {
     canvas.restore();
     regionClip = outerClip;
 
-    scrollbar(canvas, {view.x + 2, view.y + 5, view.w - 7, view.h - 10},
-              shapeScroll.contentHeight, shapeScroll.offset, kAccentPurple, kScrollbarWidth);
+    drawListScrollbar(canvas, view, shapeScroll, kAccentPurple);
 }
 
 void Studio::drawProps(Canvas& canvas, Rect r) {
@@ -1023,8 +1020,6 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
     constexpr int cols = 4;
     constexpr double kGap = 10.0;
     constexpr double kCardH = 208.0;
-    const double cardW = (view.w - (cols - 1) * kGap - kScrollbarWidth - 4.0) / cols;
-    const double preview = cardW - 30.0;
 
     std::vector<const CustomSkin*> sorted;
     sorted.reserve(skins.size());
@@ -1040,9 +1035,11 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
     browseScroll.contentHeight = rows * (kCardH + kGap) - kGap;
     browseScroll.viewHeight = view.h;
     if (window && !confirming) {
-        browseScroll.offset -= touchScroll(*window, view, browseScroll.maxOffset() > 0);
+        updateListScroll(*window, view, browseScroll);
     }
     browseScroll.offset = clamp(browseScroll.offset, 0.0, browseScroll.maxOffset());
+    const double cardW = (listScrollContent(view, browseScroll).w - (cols - 1) * kGap - 4.0) / cols;
+    const double preview = cardW - 30.0;
 
     canvas.save();
     clipRect(canvas, view);
@@ -1103,8 +1100,7 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
     canvas.restore();
     regionClip = outerClip;
 
-    scrollbar(canvas, {view.x, view.y, view.w, view.h - 5.0}, browseScroll.contentHeight,
-              browseScroll.offset, kAccentPurple, kScrollbarWidth);
+    drawListScrollbar(canvas, view, browseScroll, kAccentPurple);
 }
 
 void Studio::drawConfirm(Canvas& canvas, Vec2 mouse) {
@@ -1649,6 +1645,8 @@ void SkinsPanel::reset() {
     state.nameField.blur();
     state.textField.dragging = false;
     state.dragging = false;
+    state.shapeScroll.thumbGrab.reset();
+    state.browseScroll.thumbGrab.reset();
     state.confirming = false;
     state.regions.clear();
     state.hovering = false;
@@ -1668,8 +1666,10 @@ bool SkinsPanel::render(MenuContext& ctx) {
     // Input runs first and against the previous frame's regions: the panel's
     // handlers fire between renders, and every button, tab, swatch and stepper
     // acts on PRESS rather than release.
+    ctx.scrollbarOwnsPointer |= state.shapeScroll.thumbGrab || state.browseScroll.thumbGrab;
     if (!state.handleInput(ctx)) return false;
     state.draw(ctx);
+    ctx.scrollbarOwnsPointer |= state.shapeScroll.thumbGrab || state.browseScroll.thumbGrab;
     return true;
 }
 

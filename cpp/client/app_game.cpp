@@ -307,6 +307,10 @@ void App::sendInputFrame(double dt) {
     // Panels consume presses, but persistent inverted combat remains active.
     const bool desktopCombat = !chatOpen_ && !menuOpen && !textDrag &&
                                !menus_.capturesMouse(pointer) &&
+                               !onlineRosterScroll_.thumbGrab &&
+                               !(onlineRosterScroll_.maxOffset() > 0.0 &&
+                                 onlineRosterBox_.contains(pointer) &&
+                                 pointer.x >= onlineRosterBox_.right() - ui::kListScrollbarGutter - 1.0) &&
                                !tutorial_.capturesMouse(pointer);
     if (desktopCombat) {
         if (window_.mouseDown(MouseButton::Left) ||

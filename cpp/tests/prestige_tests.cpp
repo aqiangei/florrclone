@@ -16,6 +16,8 @@
 #include "test_data.h"
 
 #include <filesystem>
+#include <limits>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -929,9 +931,45 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
         return !world.has<WavePlayer>(guestBody) && guest.view().realm() == origin;
     }));
     CHECK(world.has<WavePlayer>(hostBody));
+    CHECK(h.stepUntil({&guest}, [&] { return guest.waveResultNotice().sequence > 0; }));
+    CHECK(guest.waveResultNotice().lines[1].find("本局 +0 星星") != std::string::npos);
+
+    const double initialStars = host.profile().stars;
+    double total = initialStars;
+    constexpr int wavesPerRun = 5;
+    for (int run = 0; run < 4; ++run) {
+        if (run > 0) {
+            host.sendChat("/wave start");
+            CHECK(h.stepUntil({&host, &guest}, [&] { return world.has<WavePlayer>(hostBody); }));
+        }
+        world.get<Health>(hostBody).invulnerableUntilMillis = std::numeric_limits<double>::infinity();
+        h.clock += 15000.0;
+        bool sawHyper = false;
+        for (int wave = 1; wave <= wavesPerRun; ++wave) {
+            total += 7500.0;
+            CHECK(h.stepUntil({&host, &guest}, [&] {
+                for (const Entity enemy : Query<WaveEnemy>{world}.collect()) {
+                    if (!isStanding(world, enemy)) continue;
+                    if (world.get<MobType>(enemy).rarity == Rarity::Apex) sawHyper = true;
+                    world.get<Bounty>(enemy).credit(hostBody, world.get<Health>(enemy).max);
+                    world.add<Dead>(enemy);
+                }
+                return host.profile().stars >= total;
+            }, 850));
+            CHECK_NEAR(host.profile().stars, total, 1e-9);
+        }
+        CHECK(sawHyper);
+        const auto noticeBefore = host.waveResultNotice().sequence;
+        host.sendChat("/wave leave");
+        CHECK(h.stepUntil({&host, &guest}, [&] {
+            return host.waveResultNotice().sequence > noticeBefore && host.view().realm() == origin;
+        }));
+        CHECK(host.waveResultNotice().lines[1] == "通关 5 波 · 本局 +37500 星星");
+    }
+    CHECK_NEAR(host.profile().stars, initialStars + 150000.0, 1e-9);
 }
 
-TEST(wave_room_is_capped_revives_at_the_next_wave_and_pays_no_bounties) {
+TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     World world;
     Terrain terrain;
     WorldMaps maps;
@@ -981,27 +1019,161 @@ TEST(wave_room_is_capped_revives_at_the_next_wave_and_pays_no_bounties) {
     CHECK(!dungeon.inWave(world, members[4]));
     CHECK(!CombatSystem::canDamage(world, members[0], members[1]));
 
-    for (int round = 1; round <= 5; ++round) {
-        const double now = 16000.0 + (round - 1) * 3600.0;
-        tick(now);
-        const auto mobs = Query<MobTag>{world}.collect();
-        CHECK_EQ(mobs.size(), static_cast<std::size_t>(round == 5 ? 3 : 10 + round));
-        if (round == 2) CHECK(isStanding(world, members[1]));
-        for (const Entity mob : mobs) {
-            CHECK(!world.has<Bounty>(mob));
-            CHECK(CombatSystem::canDamage(world, members[0], mob));
-            if (round == 5) CHECK(world.get<MobType>(mob).rarity == Rarity::Super);
-            world.destroy(mob);
+    int hostAwards = 0;
+    int guestAwards = 0;
+    std::map<Entity, std::string> summaries;
+    dungeon.waveAward = [&](Entity player, std::uint64_t round) {
+        if (player == members[3]) {
+            CHECK_EQ(round, std::uint64_t(1));
+            ++guestAwards;
+            return 7500;
         }
-        if (round == 1) {
-            world.get<Health>(members[1]).current = 0.0;
-            world.add<Dead>(members[1]);
+        CHECK(player == members[0]);
+        ++hostAwards;
+        CHECK_EQ(round, static_cast<std::uint64_t>(hostAwards));
+        return round <= 20 ? 7500 : 0;
+    };
+    dungeon.waveSummary = [&](Entity player, const std::string& text) { summaries[player] = text; };
+    const Realm realm = world.get<Transform>(members[0]).realm;
+    spawner.mobCap = 0;
+    spawner.restoreBossClock("wave", 1000000.0, 1000000.0);
+    spawner.run(world, terrain, content, {{world.get<Transform>(members[0]).position, realm}},
+                rng, 0.0, 0.0, commands);
+    commands.flush();
+    CHECK(spawner.bossCooldownLeft(Rarity::Apex, realm, 16000.0) > 0.0);
+    CHECK_EQ(spawner.census().mobs, 0);
+    tick(16000.0);
+    CHECK(Query<WaveEnemy>{world}.collect().empty());
+    CHECK(dungeon.inWave(world, members[0]));
+    spawner.mobCap = kMaxLiveMobs;
+
+    int peakLive = 0;
+    int total = 0;
+    for (int round = 1; round <= 21; ++round) {
+        // A successful session can pass the old ten-minute limit.
+        double now = 16100.0 + (round - 1) * 32000.0;
+        const int expected = 54 + 7 * std::min(round - 1, 12);
+        int seen = 0, elites = 0, hypers = 0;
+        bool firstBatch = true;
+        for (int batch = 0; batch < 20 && seen < expected; ++batch, now += 650.0) {
+            tick(now);
+            const auto mobs = Query<WaveEnemy>{world}.collect();
+            if (firstBatch) {
+                CHECK_EQ(mobs.size(), std::size_t(12));
+                if (round == 2) CHECK(isStanding(world, members[1]));
+                firstBatch = false;
+            }
+            CHECK(mobs.size() <= 60);
+            peakLive = std::max(peakLive, static_cast<int>(mobs.size()));
+            for (std::size_t i = 0; i < mobs.size(); ++i) {
+                const Entity mob = mobs[i];
+                const auto& at = world.get<Transform>(mob);
+                const auto& hp = world.get<Health>(mob);
+                const auto& body = world.get<Body>(mob);
+                const auto& type = world.get<MobType>(mob);
+                CHECK(at.realm == realm);
+                CHECK(!terrain.resolveWall(at.position, body.radius, realm).collided);
+                CHECK_EQ(world.get<Bounty>(mob).xp, 0.0);
+                CHECK(CombatSystem::canDamage(world, members[0], mob));
+                CHECK(body.radius <= 92.0);
+                if (round == 1)
+                    CHECK_NEAR(hp.max, content.mobStats(type.configIndex, type.rarity).health * 1.12, 1e-6);
+                if (type.rarity == Rarity::Apex) {
+                    CHECK_EQ(type.configIndex, content.mobIndex("beetle"));
+                    CHECK(hp.max > content.mobStats(type.configIndex, Rarity::Super).health * 2.0);
+                    CHECK(hp.max < content.mobStats(type.configIndex, Rarity::Apex).health);
+                }
+                if (round == 1 || round == 21) {
+                    for (std::size_t j = 0; j < i; ++j) {
+                        CHECK(distance(at.position, world.get<Transform>(mobs[j]).position) >=
+                              body.radius + world.get<Body>(mobs[j]).radius);
+                    }
+                    for (int j = 0; j < 4; ++j) {
+                        CHECK(distance(at.position, world.get<Transform>(members[j]).position) >=
+                              body.radius + world.get<Body>(members[j]).radius + 150.0);
+                    }
+                }
+                if (round == 21)
+                    CHECK(hp.max > content.mobStats(type.configIndex, type.rarity).health * 2.0);
+            }
+
+            // Let monsters fill the room before clearing them, including the
+            // reinforcement cap once the wave has more than 60 in reserve.
+            if (mobs.size() < static_cast<std::size_t>(std::min(60, expected - seen))) continue;
+            for (const Entity mob : mobs) {
+                const double hp = world.get<Health>(mob).max;
+                world.get<Bounty>(mob).credit(members[0], hp);
+                world.get<Bounty>(mob).credit(members[2], hp * 0.005); // Below participation floor.
+                if (round == 1) world.get<Bounty>(mob).credit(members[3], hp * 0.01);
+                elites += world.get<MobType>(mob).rarity == Rarity::Super;
+                hypers += world.get<MobType>(mob).rarity == Rarity::Apex;
+                world.add<Dead>(mob);
+            }
+            seen += static_cast<int>(mobs.size());
+            if (round == 1) {
+                world.get<Health>(members[1]).current = 0.0;
+                world.add<Dead>(members[1]);
+            }
+            tick(now + 50.0);
+            for (const Entity mob : mobs) world.destroy(mob);
         }
-        tick(now + 50.0);
+        CHECK_EQ(seen, expected);
+        CHECK_EQ(hypers, round % 5 == 0 ? 1 : 0);
+        if (round == 5) CHECK_EQ(elites, 6);
+        if (round == 21) CHECK(elites > 10);
+        total += seen;
+        CHECK(dungeon.inWave(world, members[0]));
     }
+    CHECK_EQ(peakLive, 60);
+    CHECK_EQ(hostAwards, 21);
+    CHECK_EQ(guestAwards, 1);
+    CHECK(spawner.bossSpawns.empty());
+    CHECK(summaries.empty());
+    std::printf("[wave] %d enemies in 21 waves, peak %d, paid each of the first 20 clears\n", total, peakLive);
+
+    dungeon.waveCommand(world, terrain, members[0], "leave", rng, 670000.0);
+    CHECK(summaries[members[0]].find("通关 21 波 · 本局 +150000 星星") != std::string::npos);
+    tick(673000.0);
+    tick(854000.0);
+    CHECK(summaries[members[1]].find("连续 3 分钟未推进") != std::string::npos);
     for (const Entity e : members) {
         CHECK(world.get<Transform>(e).realm == Realm::Overworld);
         CHECK(!world.has<WavePlayer>(e));
     }
+    CHECK(Query<WaveEnemy>{world}.collect().empty());
     CHECK(CombatSystem::canDamage(world, members[0], members[1]));
+}
+
+namespace {
+std::int64_t waveStarClock = 0;
+std::int64_t waveStarNow() { return waveStarClock; }
+}
+
+TEST(wave_stars_accumulate_per_wave_to_the_daily_cap_across_reloads) {
+    const std::string dir = tempDir("flix-wave-stars-" + std::to_string(::getpid()));
+    const std::string path = dir + "/inventory.json";
+    std::string error;
+    Database db;
+    CHECK(db.load(path, error));
+    waveStarClock = 100 * 86400000ll;
+    db.setClock(waveStarNow);
+    auto& legacy = db.progress("wave-account");
+    legacy.stars = 1500.0;
+    legacy.extra["waveStars"]["day"] = 100;
+    legacy.extra["waveStars"]["earned"] = 1500;
+    for (int wave = 0; wave < 19; ++wave)
+        CHECK_EQ(db.awardWaveStars("wave-account"), 7500);
+    CHECK_NEAR(db.progress("wave-account").stars, 144000.0, 1e-9);
+    CHECK(db.save());
+
+    Database restarted;
+    CHECK(restarted.load(path, error));
+    restarted.setClock(waveStarNow);
+    CHECK_EQ(restarted.awardWaveStars("wave-account"), 6000);
+    CHECK_EQ(restarted.awardWaveStars("wave-account"), 0);
+    CHECK_NEAR(restarted.progress("wave-account").stars, 150000.0, 1e-9);
+    CHECK_EQ(restarted.awardWaveStars("other-account"), 7500);
+    waveStarClock += 86400000ll;
+    CHECK_EQ(restarted.awardWaveStars("wave-account"), 7500);
+    CHECK_NEAR(restarted.progress("wave-account").stars, 157500.0, 1e-9);
 }

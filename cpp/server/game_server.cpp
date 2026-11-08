@@ -712,6 +712,28 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
                 sendNotice(*connection, net::NoticeSeverity::Info, text);
         }
     };
+    dungeons_->waveSummary = [this](Entity entity, const std::string& text) {
+        if (const Session* session = sessionForEntity(entity)) {
+            if (auto* connection = listener_.find(session->connection))
+                sendNotice(*connection, net::NoticeSeverity::WaveResult, text);
+        }
+    };
+    dungeons_->waveAward = [this](Entity entity, std::uint64_t cleared) {
+        auto* session = sessionForEntity(entity);
+        if (!session || !session->authenticated() || session->entity != entity) return 0;
+        auto* live = world_.tryGet<PlayerProgress>(entity);
+        const int stars = database_.awardWaveStars(session->userId);
+        if (stars <= 0) return 0;
+        if (live) {
+            live->stars += stars;
+            database_.progress(session->userId).stars = live->stars;
+        }
+        session->profileDue = true;
+        if (auto* connection = listener_.find(session->connection))
+            sendNotice(*connection, net::NoticeSeverity::Good,
+                "Wave 第 " + std::to_string(cleared) + " 波通关 · +" + std::to_string(stars) + " 星星");
+        return stars;
+    };
     dungeons_->waveRevived = [this](Entity entity) {
         auto& health = world_.get<Health>(entity);
         health.current = health.max;
@@ -1225,6 +1247,11 @@ void GameServer::serviceArrivals() {
     listener_.flush();
 }
 
+double GameServer::nextStepDelayMillis() const {
+    // The Node timer may poll for maintenance between simulation ticks.
+    return std::clamp(nextTickMillis_ - monotonicMillis(), 0.0, 1000.0 / 60.0);
+}
+
 std::size_t GameServer::playerCount() const {
     std::size_t n = 0;
     for (const auto& entry : sessions_) {
@@ -1636,7 +1663,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
         grid_.insert(e, transform.realm, transform.position, body.radius);
     });
     markTickPhase("regrid");
-    combat_->runWorldPhase(world_, grid_, content(), nowMillis, dt);
+    combat_->runWorldPhase(world_, grid_, content(), nowMillis, dt, true);
     // A summoning shot -- the spaceship's -- is only SEEN landing by combat;
     // the summon is the ring's, made once combat has stopped walking the world.
     petals_->landShots(world_, content(), combat_->shotLandings(), terrain_.get());
@@ -4649,7 +4676,7 @@ void GameServer::bankKills() {
     // Connections already credited for the corpse in hand; see the loop.
     std::vector<net::ConnectionId> paidAccounts;
     for (const CombatSystem::DeathRecord& death : combat_->deaths()) {
-        if (death.wasPlayer) continue;
+        if (death.wasPlayer || world_.has<WaveEnemy>(death.entity)) continue;
         const MobType* type = world_.tryGet<MobType>(death.entity);
         if (type == nullptr) continue;
 

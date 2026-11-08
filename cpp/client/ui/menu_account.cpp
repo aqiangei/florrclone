@@ -466,6 +466,7 @@ double AccountPanel::preferredWidth() { return kWidth; }
 double AccountPanel::preferredHeight() { return kHeight; }
 
 void AccountPanel::reset() {
+    scroll_.thumbGrab.reset();
     // Typed passwords and names do not outlive the card, and neither does what
     // the last attempt was told: reopening it is not a request to be shown a
     // stale refusal. A request still out stays pending -- its answer is due,
@@ -548,10 +549,21 @@ bool AccountPanel::render(MenuContext& ctx) {
     }
     if (st.focused >= 0) ctx.wantsText = true;
 
+    const double contentTop = panel.y + kHeaderHeight + kPad + 10.0;
+    const double contentBottom = panel.bottom() - kPad;
+    const double viewHeight = std::max(0.0, contentBottom - contentTop);
+
+    const Rect view{panel.x, contentTop, panel.w, viewHeight};
+    scroll_.viewHeight = view.h;
+    scroll_.contentHeight = st.contentHeight;
+    if (panel.contains(mouse)) scroll_.offset -= ctx.wheel() * kWheelStep;
+    ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, view, scroll_);
+    const Rect body = listScrollContent(view, scroll_);
+
     // --- card ---------------------------------------------------------------
     panelCard(canvas, panel, kAccountSkin);
     const double contentX = panel.x + kPad;
-    const double contentW = panel.w - kPad * 2;
+    const double contentW = panel.w - kPad - kListScrollbarGutter;
     text(canvas, menuTitle(MenuId::Account), contentX, panel.y + kPad + kHeaderHeight * 0.5,
          bodyStyle(20.0, kPaper));
 
@@ -562,25 +574,13 @@ bool AccountPanel::render(MenuContext& ctx) {
     ui::panelClose(canvas, closeRect, closeHovered);
     if (closeHovered && ctx.released()) keepOpen = false;
 
-    const double contentTop = panel.y + kHeaderHeight + kPad + 10.0;
-    const double contentBottom = panel.bottom() - kPad;
-    const double viewHeight = std::max(0.0, contentBottom - contentTop);
-
-    scroll_.viewHeight = viewHeight;
-    scroll_.contentHeight = st.contentHeight;
-    if (inPanel) scroll_.offset -= static_cast<double>(ctx.wheel()) * kWheelStep;
-    scroll_.offset -= touchScroll(ctx.window, Rect{panel.x, contentTop, panel.w, viewHeight},
-                                  scroll_.maxOffset() > 0);
-    scroll_.offset = clamp(scroll_.offset, 0.0, scroll_.maxOffset());
-
     canvas.save();
     canvas.beginPath();
-    canvas.rect(static_cast<float>(panel.x), static_cast<float>(contentTop),
-                static_cast<float>(panel.w), static_cast<float>(viewHeight));
+    canvas.rect(static_cast<float>(body.x), static_cast<float>(body.y),
+                static_cast<float>(body.w), static_cast<float>(body.h));
     canvas.clip();
 
-    Painter p{ctx, st, contentX, contentW,
-              inPanel && mouse.y >= contentTop && mouse.y <= contentBottom,
+    Painter p{ctx, st, contentX, contentW, body.contains(mouse) && !ctx.scrollbarOwnsPointer,
               contentTop - scroll_.offset, false};
     const double contentStart = p.cy;
 
@@ -693,8 +693,9 @@ bool AccountPanel::render(MenuContext& ctx) {
                    kGuestBadge);
     }
 
-    st.contentHeight = p.cy - contentStart;
+    st.contentHeight = scroll_.contentHeight = p.cy - contentStart;
     canvas.restore();
+    drawListScrollbar(canvas, view, scroll_, kAccountSkin.accent);
 
     // A click on the card that no widget took drops the caret, the way
     // clicking off a field does everywhere else. Unlike the settings card, a

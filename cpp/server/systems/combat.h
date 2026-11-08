@@ -246,7 +246,8 @@ public:
 
     /// Resolves post-movement projectiles/ground fields and closes the tick.
     void runWorldPhase(World& world, const SpatialGrid& grid,
-                       const ContentRegistry& content, double nowMillis, double dt);
+                       const ContentRegistry& content, double nowMillis, double dt,
+                       bool bodyGridOnly = false);
 
     /// The single damage path. Returns what actually landed.
     ///
@@ -603,6 +604,10 @@ private:
         double mass = 1;
         double speed = 0;
         Realm realm = Realm::Overworld;
+        Vec2 flown;
+        Vec2 axis;
+        double flownLength = 0;
+        bool wildOnly = false;
     };
 
     /// One body a shot is overlapping this tick, resolved BEFORE any damage is
@@ -618,6 +623,28 @@ private:
         double distanceSquared = 0;
         /// The point on the shot's path closest to the victim.
         Vec2 at;
+    };
+
+    struct ShotCandidate {
+        ShotImpact impact;
+        bool testLive = false;
+    };
+    struct ShotTarget {
+        Entity entity = NULL_ENTITY;
+        Vec2 position;
+        double radius = 0, angle = 0, squareHalf = 0;
+        bool wild = false;
+        bool movesOnImpact = false;
+    };
+    struct ShotPlan {
+        std::size_t begin = 0, end = 0;
+        unsigned lane = 0;
+        bool ready = false;
+    };
+    struct ShotScratch {
+        SpatialGrid::QueryScratch grid;
+        std::vector<Entity> candidates;
+        std::vector<ShotCandidate> planned;
     };
 
     struct PoisonTick {
@@ -692,7 +719,16 @@ private:
     void resolvePetalPvp(World& world, const MeleeSource& source, Entity victim,
                          Vec2 victimPosition, double victimRadius, double nowMillis);
     void tickProjectiles(World& world, const SpatialGrid& grid, const ContentRegistry& content,
-                         double nowMillis, double dt);
+                         double nowMillis, double dt, bool bodyGridOnly);
+    static std::optional<ShotImpact> sweepShotTarget(const ShotSource& shot,
+                                                    const ShotTarget& target);
+    static std::optional<ShotImpact> sweepLiveShotTarget(const World& world,
+                                                        const ShotSource& shot, Entity victim);
+    void collectShotCandidates(const World& world, const SpatialGrid& grid, const ShotSource& shot,
+                               bool wildOnly, bool bodyGridOnly, bool frozen,
+                               std::vector<Entity>& entities, std::vector<ShotCandidate>& hits,
+                               SpatialGrid::QueryScratch* scratch = nullptr) const;
+    void prepareShotImpacts(World& world, const SpatialGrid& grid, bool bodyGridOnly);
 
     /// Files every projectile in the shot index, and resolves the flower each
     /// one is answerable to. Run at the top of both phases, at the same points the
@@ -702,9 +738,6 @@ private:
     /// `e`'s entry if it is a projectile fileShots() filed this phase.
     const FiledShot* filedShot(Entity e) const;
     bool isFiledShot(Entity e) const { return filedShot(e) != nullptr; }
-    /// The flower a filed shot is answerable to, or NULL_ENTITY for a shot
-    /// with none (a wild mob's) and for anything that is not a filed shot.
-    Entity filedShotPlayer(Entity e) const;
     /// Every body a pass that may hit a PROJECTILE has to consider: the main
     /// broadphase's candidates plus combat's own shots. The passes that only
     /// ever want flowers or mobs query the main grid directly and never pay
@@ -803,6 +836,10 @@ private:
     std::vector<FieldSource> fields_;
     std::vector<ShotSource> shots_;
     std::vector<ShotImpact> impacts_;
+    std::vector<ShotCandidate> liveShotCandidates_;
+    std::vector<ShotTarget> shotTargets_;
+    std::vector<ShotPlan> shotPlans_;
+    std::vector<ShotScratch> shotScratch_;
     std::vector<PoisonTick> poison_;
     std::vector<PoisonTick> spongeTicks_;
 

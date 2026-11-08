@@ -551,6 +551,7 @@ void SettingsPanel::reset() {
     // it. The offset is zeroed on a tab change, which is where the browser
     // zeroes it too.
     rebinding_ = -1;
+    scroll_.thumbGrab.reset();
     PanelState& st = panelState();
     st.pressed = WidgetId{};
     st.dragging = -1;
@@ -569,7 +570,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
     if (ctx.released()) st.pressed = WidgetId{};
 
     const double contentX = panel.x + kPad;
-    const double contentW = panel.w - kPad * 2;
+    const double contentW = panel.w - kPad - kListScrollbarGutter;
     const double contentTop = panel.y + kHeaderHeight + kPad + kTabHeight + 10.0;
     const double contentBottom = panel.bottom() - kPad;
     const double viewHeight = std::max(0.0, contentBottom - contentTop);
@@ -601,6 +602,12 @@ bool SettingsPanel::render(MenuContext& ctx) {
         }
     }
     if (st.ipField.focused) ctx.wantsText = true;
+
+    const Rect view{panel.x, contentTop, panel.w, viewHeight};
+    scroll_.viewHeight = view.h;
+    scroll_.contentHeight = st.contentHeight;
+    if (panel.contains(mouse)) scroll_.offset -= ctx.wheel() * kWheelStep;
+    ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, view, scroll_);
 
     // --- card ---------------------------------------------------------------
     panelCard(canvas, panel, kSettingsSkin);
@@ -645,7 +652,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
     // --- tab bar ------------------------------------------------------------
     const std::array<const char*, kTabCount> kTabLabels = {
         {tr(Msg::TabControls), tr(Msg::TabGraphics), tr(Msg::TabAdvanced), tr(Msg::TabCredits)}};
-    const double tabW = (contentW - (kTabCount - 1) * kTabGap) / kTabCount;
+    const double tabW = (panel.w - 2 * kPad - (kTabCount - 1) * kTabGap) / kTabCount;
     const double tabY = panel.y + kHeaderHeight + kPad + 5.0;
     for (int i = 0; i < kTabCount; ++i) {
         const Rect r{contentX + i * (tabW + kTabGap), tabY, tabW, kTabHeight};
@@ -660,34 +667,20 @@ bool SettingsPanel::render(MenuContext& ctx) {
         if (hovered && ctx.released()) {
             st.tab = static_cast<Tab>(i);
             scroll_.offset = 0;
+            scroll_.thumbGrab.reset();
             rebinding_ = -1;
             st.ipField.blur();
         }
     }
 
-    // --- scrolling ----------------------------------------------------------
-    scroll_.viewHeight = viewHeight;
-    scroll_.contentHeight = st.contentHeight;
-    // Only the hovered panel owns this wheel event; chat may be focused outside it.
-    if (panel.contains(mouse))
-        scroll_.offset -= static_cast<double>(ctx.wheel()) * kWheelStep;
-    // A finger is more particular: only the list itself, the band the clip
-    // below spans. A sideways drag still reaches a slider -- see Window's
-    // note on dragging a list.
-    scroll_.offset -= touchScroll(ctx.window, Rect{panel.x, contentTop, panel.w, viewHeight},
-                                  scroll_.maxOffset() > 0);
-    scroll_.offset = clamp(scroll_.offset, 0.0, scroll_.maxOffset());
-
+    const Rect body = listScrollContent(view, scroll_);
     canvas.save();
-    // The clip spans the FULL panel width, not the content column: a label
-    // that overruns the column is cut by the card's edge, not by the padding.
     canvas.beginPath();
-    canvas.rect(static_cast<float>(panel.x), static_cast<float>(contentTop),
-                static_cast<float>(panel.w), static_cast<float>(viewHeight));
+    canvas.rect(static_cast<float>(body.x), static_cast<float>(body.y),
+                static_cast<float>(body.w), static_cast<float>(body.h));
     canvas.clip();
 
-    Painter p{ctx, st, contentX, contentW,
-              inPanel && mouse.y >= contentTop && mouse.y <= contentBottom,
+    Painter p{ctx, st, contentX, contentW, body.contains(mouse) && !ctx.scrollbarOwnsPointer,
               contentTop - scroll_.offset, false};
     const double contentStart = p.cy;
 
@@ -873,11 +866,12 @@ bool SettingsPanel::render(MenuContext& ctx) {
         }
     }
 
-    st.contentHeight = p.cy - contentStart;
+    st.contentHeight = scroll_.contentHeight = p.cy - contentStart;
     canvas.restore();
     // Touch taps may press and release in the same frame. Let the slider
     // read that frame's position, then drop the drag before the next frame.
     if (!ctx.window.mouseDown(MouseButton::Left)) st.dragging = -1;
+    drawListScrollbar(canvas, view, scroll_, kSettingsSkin.accent);
 
     // --- input the widgets did not take -------------------------------------
     if (!ctx.released() || p.consumed) return keepOpen;

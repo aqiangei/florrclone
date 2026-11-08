@@ -2248,7 +2248,8 @@ void CombatSystem::tickMobLightning(World& world, const SpatialGrid& grid,
 }
 
 void CombatSystem::runWorldPhase(World& world, const SpatialGrid& grid,
-                                 const ContentRegistry& content, double nowMillis, double dt) {
+                                 const ContentRegistry& content, double nowMillis, double dt,
+                                 bool bodyGridOnly) {
     // Refiled after movement for the reason the server rebuilds its main grid
     // there: the shots have flown, and the mobs' own shots were fired, since
     // the contact phase filed them.
@@ -2263,7 +2264,7 @@ void CombatSystem::runWorldPhase(World& world, const SpatialGrid& grid,
     // carries. The other trigger -- a firefly's touch -- fires in the contact
     // phase above, where the collision it needs is resolved.
     tickMobLightning(world, grid, content, nowMillis);
-    tickProjectiles(world, grid, content, nowMillis, dt);
+    tickProjectiles(world, grid, content, nowMillis, dt, bodyGridOnly);
     tickGroundEffects(world, grid, content, nowMillis, dt);
     // Last, so a bubble that went down to poison, a petal or a shot this tick
     // -- in any phase -- pops all the same.
@@ -3574,19 +3575,136 @@ void CombatSystem::resolvePetalPvp(World& world, const MeleeSource& source, Enti
     }
 }
 
+std::optional<CombatSystem::ShotImpact> CombatSystem::sweepShotTarget(
+        const ShotSource& shot, const ShotTarget& target) {
+    // Sweep the whole segment. A fast shot can move past a body in one tick.
+    const Vec2 toVictim = target.position - shot.from;
+    Vec2 displacement;
+    if (shot.flownLength > 1e-9) {
+        const double along = clamp(toVictim.x * shot.axis.x + toVictim.y * shot.axis.y,
+                                   0.0, shot.flownLength);
+        displacement = shot.flown * (along / shot.flownLength);
+    }
+    const Vec2 nearest = shot.from + displacement;
+    const Vec2 offset = target.position - nearest;
+    const double distanceSquared = offset.lengthSq();
+    if (target.squareHalf > 0) {
+        if (!segmentTouchesSquare(shot.from, shot.position, target.position, target.squareHalf,
+                                  target.angle, shot.radius)) return std::nullopt;
+    } else {
+        const double reach = shot.radius + target.radius;
+        if (distanceSquared > reach * reach) return std::nullopt;
+    }
+    return ShotImpact{target.entity, offset, distanceSquared, nearest};
+}
+
+std::optional<CombatSystem::ShotImpact> CombatSystem::sweepLiveShotTarget(
+        const World& world, const ShotSource& shot, Entity victim) {
+    const auto* transform = world.tryGet<Transform>(victim);
+    const auto* body = world.tryGet<Body>(victim);
+    if (!transform || !body) return std::nullopt;
+    return sweepShotTarget(shot, {victim, transform->position, body->radius, transform->angle,
+                                 squareMobHalfExtent(world, victim)});
+}
+
+void CombatSystem::collectShotCandidates(const World& world, const SpatialGrid& grid,
+                                        const ShotSource& shot, bool wildOnly, bool bodyGridOnly,
+                                        bool frozen, std::vector<Entity>& entities,
+                                        std::vector<ShotCandidate>& hits,
+                                        SpatialGrid::QueryScratch* scratch) const {
+    const auto* filed = filedShot(shot.entity);
+    const Vec2 midpoint = shot.from + shot.flown * 0.5;
+    queryBodies(grid, shot.realm, midpoint,
+                shot.radius + shot.flownLength * 0.5 + shot.travelled + kBroadphasePad,
+                entities, filed ? filed->player : NULL_ENTITY, filed && filed->peaceful,
+                std::nullopt, scratch, bodyGridOnly);
+
+    for (const Entity victim : entities) {
+        if (victim == shot.entity) continue;
+        if (!frozen) {
+            if (!isShootable(world, victim) || (wildOnly && !isWildMob(world, victim))) continue;
+            if (auto impact = sweepLiveShotTarget(world, shot, victim))
+                hits.push_back({*impact, false});
+            continue;
+        }
+        const auto slot = entityIndex(victim);
+        if (slot >= shotTargets_.size()) continue;
+        const auto& target = shotTargets_[slot];
+        if (target.entity != victim || (wildOnly && !target.wild)) continue;
+        // Spawned mobs carry Knockback. A mob without it can instead be
+        // moved immediately by an earlier projectile. Keep it in order even
+        // if its frozen position would miss, and sweep it live when reached.
+        if (target.movesOnImpact) {
+            hits.push_back({ShotImpact{victim, {}, 0, {}}, true});
+        } else if (auto impact = sweepShotTarget(shot, target)) {
+            hits.push_back({*impact, false});
+        }
+    }
+}
+
+void CombatSystem::prepareShotImpacts(World& world, const SpatialGrid& grid,
+                                     bool bodyGridOnly) {
+    shotPlans_.clear();
+    const unsigned limit = workers ? std::min(workerLimit, workers->count()) : 0;
+    if (!limit || shots_.size() < 128) return;
+
+    std::fill(shotTargets_.begin(), shotTargets_.end(), ShotTarget{});
+    queries_->meleeTargets.each([&](Entity e, Transform& at, Body& body) {
+        if (!isShootable(world, e)) return;
+        const auto slot = entityIndex(e);
+        if (slot >= shotTargets_.size()) shotTargets_.resize(slot + 1);
+        const bool mob = world.has<MobTag>(e);
+        shotTargets_[slot] = {e, at.position, body.radius, at.angle, squareMobHalfExtent(world, e),
+                              mob && !world.has<Pet>(e), mob && !world.has<Knockback>(e)};
+    });
+
+    constexpr std::size_t batchSize = 24;
+    constexpr std::size_t maxPlannedShots = 4096;
+    constexpr std::size_t maxImpactsPerLane = 16 * 1024;
+    shotPlans_.resize(std::min(shots_.size(), maxPlannedShots));
+    shotScratch_.resize(limit + 1);
+    for (auto& scratch : shotScratch_) scratch.planned.clear();
+    workers->run((shotPlans_.size() + batchSize - 1) / batchSize, limit,
+                 [&](std::size_t batch, unsigned lane) {
+        auto& scratch = shotScratch_[lane];
+        const auto end = std::min((batch + 1) * batchSize, shotPlans_.size());
+        for (std::size_t i = batch * batchSize; i < end; ++i) {
+            const auto& shot = shots_[i];
+            const auto* projectile = world.tryGet<Projectile>(shot.entity);
+            if (!projectile || projectile->remainingDistance <= 0 || world.has<Dead>(shot.entity) ||
+                scratch.planned.size() == maxImpactsPerLane) continue;
+            const auto begin = scratch.planned.size();
+            collectShotCandidates(world, grid, shot, shot.wildOnly, bodyGridOnly, true,
+                                  scratch.candidates, scratch.planned, &scratch.grid);
+            if (scratch.planned.size() > maxImpactsPerLane) {
+                scratch.planned.resize(begin);
+                continue;
+            }
+            shotPlans_[i] = {begin, scratch.planned.size(), lane, true};
+        }
+    });
+}
+
 void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
-                                   const ContentRegistry& content, double nowMillis, double dt) {
+                                   const ContentRegistry& content, double nowMillis, double dt,
+                                   bool bodyGridOnly) {
     shots_.clear();
     queries_->projectiles.each([&](Entity e, Projectile& projectile, Transform& transform,
                                    Body& body, Motion& motion) {
         // Movement has already flown the shot this tick, so the budget spent
         // is the distance it just covered -- not one it is about to.
+        const double speed = motion.velocity.length();
+        const Vec2 flown = transform.position - projectile.lastPosition;
+        const double length = flown.length();
+        const Vec2 axis = length > 1e-9 ? flown * (1.0 / length) : Vec2{};
         shots_.push_back({e, transform.position, projectile.lastPosition, body.radius,
-                          motion.velocity.length() * dt, body.mass, motion.velocity.length(),
-                          transform.realm});
+                          speed * dt, body.mass, speed, transform.realm,
+                          flown, axis, length, projectile.wildOnly});
     });
 
-    for (const ShotSource& shot : shots_) {
+    prepareShotImpacts(world, grid, bodyGridOnly);
+    for (std::size_t index = 0; index < shots_.size(); ++index) {
+        const ShotSource& shot = shots_[index];
         if (!world.isAlive(shot.entity) || world.has<Dead>(shot.entity)) continue;
         Projectile* projectile = world.tryGet<Projectile>(shot.entity);
         if (projectile == nullptr) continue;
@@ -3613,58 +3731,26 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                 ? DamageKind::Lightning
                 : DamageKind::Direct;
 
-        // Centred on the segment, so the pad the broadphase already spends on
-        // the tick's travel covers the whole of it rather than only the end.
-        const Vec2 flown = shot.position - shot.from;
-        const double flownLength = flown.length();
-        const Vec2 midpoint = shot.from + flown * 0.5;
-        const FiledShot* filed = filedShot(shot.entity);
-        const Entity shooter = filed ? filed->player : NULL_ENTITY;
-        queryBodies(grid, shot.realm, midpoint,
-                    shot.radius + flownLength * 0.5 + shot.travelled + kBroadphasePad,
-                    candidates_, shooter, filed && filed->peaceful);
+        const auto* plan = index < shotPlans_.size() ? &shotPlans_[index] : nullptr;
+        const bool planned = plan && plan->ready && shot.wildOnly == wildOnly;
+        if (!planned) {
+            liveShotCandidates_.clear();
+            collectShotCandidates(world, grid, shot, wildOnly, bodyGridOnly, false,
+                                  candidates_, liveShotCandidates_);
+        }
+        const auto& candidates = planned ? shotScratch_[plan->lane].planned : liveShotCandidates_;
+        const auto first = planned ? plan->begin : std::size_t{0};
+        const auto last = planned ? plan->end : candidates.size();
 
-        // Gathered whole before a single hit lands. The loop below marks
-        // victims Dead and that relocates their rows, so nothing here may hold
-        // a pointer into the world across an applyDamage().
+        // Geometry is read-only. Check health and relations live, in the
+        // same candidate order, before sorting the hits for this projectile.
         impacts_.clear();
-        for (const Entity victim : candidates_) {
-            if (victim == shot.entity) continue;
-            // Two shots answerable to the same flower never hurt each other --
-            // canDamage() refuses the pair on its very first rule -- and a
-            // flower's own volleys are most of what a dense cloud finds around
-            // each of its shots. Turned away off the filing table, before a
-            // single component lookup, which is what keeps a loadout of gas
-            // from making this pass quadratic in the size of the cloud.
-            if (shooter != NULL_ENTITY && filedShotPlayer(victim) == shooter) continue;
-            if (!world.isAlive(victim)) continue;
-            if (!isShootable(world, victim) || (wildOnly && !isWildMob(world, victim))) continue;
-            const Transform* transform = world.tryGet<Transform>(victim);
-            const Body* body = world.tryGet<Body>(victim);
-            if (transform == nullptr || body == nullptr) continue;
-
-            // Against the SEGMENT the shot just flew, not its endpoint. A
-            // fast shot covers more ground in a tick than its own hit reach is
-            // wide, and an endpoint test would let it step clean over a flower
-            // -- in front of it one tick, behind it the next, never touching.
-            // `offset` stays the vector from the
-            // point of closest approach, which is what the shove below pushes
-            // along and what the nearest-first ordering sorts on.
-            const Vec2 toVictim = transform->position - shot.from;
-            double along = 0.0;
-            if (flownLength > 1e-9) {
-                const Vec2 axis = flown * (1.0 / flownLength);
-                along = clamp(toVictim.x * axis.x + toVictim.y * axis.y, 0.0, flownLength);
-            }
-            const Vec2 nearest = shot.from + (flownLength > 1e-9
-                                                  ? flown * (along / flownLength)
-                                                  : Vec2{});
-            const Vec2 offset = transform->position - nearest;
-            const double reach = shot.radius + body->radius;
-            const double distanceSquared = offset.lengthSq();
-            if(const double half=squareMobHalfExtent(world,victim);half>0) {
-                if(!segmentTouchesSquare(shot.from,shot.position,transform->position,half,transform->angle,shot.radius)) continue;
-            } else if (distanceSquared > reach * reach) continue;
+        for (auto i = first; i < last; ++i) {
+            const auto& candidate = candidates[i];
+            const Entity victim = candidate.impact.victim;
+            const auto impact = candidate.testLive ? sweepLiveShotTarget(world, shot, victim)
+                                                  : std::optional<ShotImpact>{candidate.impact};
+            if (!impact) continue;
             // Above canHit() on purpose: a glitch shot marks the flower it
             // touches whether or not the hit itself is refused, and a
             // flower under respawn protection is not in `impacts_` at all.
@@ -3673,7 +3759,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                 markGlitched(world, victim);
             }
             if (!canHit(world, victim, shot.entity, nowMillis)) continue;
-            impacts_.push_back({victim, offset, distanceSquared, nearest});
+            impacts_.push_back(*impact);
         }
         if (impacts_.empty()) continue;
 
@@ -3717,8 +3803,10 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             const bool victimIsShot = world.has<Projectile>(impact.victim);
             const bool victimIsMob = world.has<MobTag>(impact.victim);
 
-            DamageResult hit =
-                applyDamage(world, impact.victim, shot.entity, damage, nowMillis, hitKind);
+            DamageResult hit = hitKind == DamageKind::Direct
+                ? applyDamageOnce(world, impact.victim, shot.entity, damage, nowMillis, hitKind,
+                                  impact.victim)
+                : applyDamage(world, impact.victim, shot.entity, damage, nowMillis, hitKind);
             // A shot of zero is refused before applyDamage rolls evasion, and
             // its riders below land regardless -- so it is rolled here, as a
             // zero-damage petal's swing is in resolveMelee.
@@ -3760,7 +3848,7 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
                 // ammunition and grows only when the shot itself does -- so a
                 // mob takes that push ALONE. Queueing the flat force as well
                 // would shove it twice for one hit.
-                if (world.has<MobTag>(impact.victim)) {
+                if (victimIsMob) {
                     pushFromImpact(world, impact.victim, impact.offset, shot.mass, shot.speed);
                 } else {
                     applyKnockback(world, impact.victim, impact.offset, stats.knockback);
@@ -3922,11 +4010,6 @@ const CombatSystem::FiledShot* CombatSystem::filedShot(Entity e) const {
     const std::uint32_t slot = shotSlot_[index];
     if (slot == kNoShotSlot || filedShots_[slot].entity != e) return nullptr;
     return &filedShots_[slot];
-}
-
-Entity CombatSystem::filedShotPlayer(Entity e) const {
-    const FiledShot* shot = filedShot(e);
-    return shot != nullptr ? shot->player : NULL_ENTITY;
 }
 
 void CombatSystem::queryBodies(const SpatialGrid& grid, Realm realm, Vec2 center, double radius,

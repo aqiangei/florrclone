@@ -379,9 +379,9 @@ std::vector<std::uint16_t> heldTypes(const Profile& profile, Held held) {
     return types;
 }
 
-/// Wheel and touch scrolling over the list, clamped to what it holds.
-void scrollList(MenuContext& ctx, ui::Scroller& scroll, const SlotCardLayout& layout,
-                double contentHeight, Rect touchView) {
+/// Set the list extents and handle the mouse wheel over the card body.
+void prepareListScroll(MenuContext& ctx, ui::Scroller& scroll, const SlotCardLayout& layout,
+                       double contentHeight) {
     const Vec2 mouse = ctx.mouse();
     scroll.contentHeight = contentHeight;
     scroll.viewHeight = layout.listView.h;
@@ -389,8 +389,6 @@ void scrollList(MenuContext& ctx, ui::Scroller& scroll, const SlotCardLayout& la
     if (layout.panel.contains(mouse) && mouse.y >= layout.listView.y) {
         scroll.offset -= static_cast<double>(ctx.wheel()) * kWheelStep;
     }
-    scroll.offset -= touchScroll(ctx.window, touchView, scroll.maxOffset() > 0 && touchView.h > 0);
-    scroll.offset = clamp(scroll.offset, 0.0, scroll.maxOffset());
 }
 
 /// The list's clip: as wide as its columns, centred, down to the view's
@@ -438,7 +436,9 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
         if (leftBar) touchView.x += hit.w;
         touchView.w -= hit.w;
     }
-    scrollList(ctx, scroll_, layout, contentHeight, touchView);
+    prepareListScroll(ctx, scroll_, layout, contentHeight);
+    scroll_.offset -= touchScroll(ctx.window, touchView, scroll_.maxOffset() > 0 && touchView.h > 0);
+    scroll_.offset = clamp(scroll_.offset, 0.0, scroll_.maxOffset());
 
     if (!scrollable || (!ctx.pressed() && !ctx.window.mouseDown(MouseButton::Left))) {
         thumbGrab_.reset();
@@ -532,9 +532,11 @@ std::optional<SlotTierGrid::Pick> SlotTierGrid::render(
     SlotCardLayout from = layout;
     from.listView.y = layout.panel.y + top;
     from.listView.h = std::max(0.0, layout.panel.bottom() - kListBottomPad - from.listView.y);
-    scrollList(ctx, scroll_, from, contentHeightFor(rows, from.listInsetY), from.listView);
-    const Rect clip = listClip(from, columns);
+    prepareListScroll(ctx, scroll_, from, contentHeightFor(rows, from.listInsetY));
+    ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, from.listView, scroll_);
+    Rect clip = listClip(from, columns);
     const double areaCentre = clip.x + clip.w * 0.5;
+    clip.w = std::min(clip.w, listScrollContent(from.listView, scroll_).right() - clip.x);
 
     canvas.save();
     canvas.beginPath();
@@ -575,7 +577,8 @@ std::optional<SlotTierGrid::Pick> SlotTierGrid::render(
         }
     }
     canvas.restore();
-    return hovered;
+    drawListScrollbar(canvas, from.listView, scroll_, skin.accent);
+    return ctx.scrollbarOwnsPointer ? std::nullopt : hovered;
 }
 
 // ---------------------------------------------------------------------------

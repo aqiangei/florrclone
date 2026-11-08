@@ -443,7 +443,7 @@ void LootSystem::bind(World& world) {
     corpses_.emplace(world);
     // A pet dying is its owner's petal breaking, not a kill, and a corpse that
     // has already paid out must never be walked again.
-    corpses_->without<LootAwarded, Pet>();
+    corpses_->without<LootAwarded, Pet, WaveEnemy>();
 }
 
 void LootSystem::run(World& world, const SpatialGrid& grid, const ContentRegistry& content,

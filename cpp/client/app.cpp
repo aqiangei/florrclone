@@ -1047,6 +1047,7 @@ void App::frame(double dt) {
     // Over the HUD and every panel, as the reference's iris is drawn on top
     // of everything; only a scene change goes over it.
     drawTeleportIris(canvas);
+    drawWaveResult(canvas);
     // Last of all, over every other layer: the wipe is what hides the seam
     // between two scenes, so nothing may paint on top of it.
     drawSceneWipe(canvas);

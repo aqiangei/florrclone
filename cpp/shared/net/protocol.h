@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 106; // Damage leaderboard and Permanent Hyper identity.
+inline constexpr std::uint16_t kProtocolVersion = 107; // Wave result notices.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -559,7 +559,7 @@ enum class ChatChannel : std::uint8_t {
                        ///< for it as well as filing it under its Admin tab.
                        ///< (Version 50.)
 };
-enum class NoticeSeverity : std::uint8_t { Info = 0, Good = 1, Warning = 2, Bad = 3 };
+enum class NoticeSeverity : std::uint8_t { Info = 0, Good = 1, Warning = 2, Bad = 3, WaveResult = 4 };
 
 /// The longest announcement the Admin channel carries, in bytes of the text
 /// as typed. One number for both ends: the server refuses past it, and the

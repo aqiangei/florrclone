@@ -5,6 +5,7 @@
 #include "server/squads.h"
 #include "server/systems/combat.h"
 #include "server/systems/movement.h"
+#include "server/workers.h"
 #include "shared/core/world.h"
 #include "shared/game/components.h"
 #include "shared/game/config.h"
@@ -1710,6 +1711,53 @@ TEST(a_shot_shoves_the_mob_it_hits_along_its_own_momentum) {
     CHECK(after > before);
     CHECK_NEAR(after - before, projectilePush(projectileMass(10.0), 300.0,
                                               a.world.get<Body>(mob).mass), 1e-9);
+}
+
+TEST(parallel_projectile_sweeps_keep_live_shoves_and_hit_order) {
+    struct Trace {
+        std::vector<double> bodies;
+        std::vector<std::pair<std::uint32_t, double>> damageEvents;
+    };
+    const auto replay = [](unsigned workerCount) {
+        Arena a;
+        ServerWorkers workers(workerCount);
+        a.combat.workers = &workers;
+        a.combat.workerLimit = workerCount;
+        const Entity player = a.player({100, 100});
+        std::vector<Entity> victims;
+        for (int i = 0; i < 80; ++i) {
+            const Vec2 at{1000.0 + (i % 10) * 320, 1000.0 + (i / 10) * 320};
+            const Entity mob = a.mob(at, 100);
+            a.world.add<NetId>(mob, NetId{static_cast<std::uint32_t>(i + 1)});
+            if (i % 2 == 0) a.world.add<Knockback>(mob);
+            victims.push_back(mob);
+            const Entity first = spawnShot(a, at - Vec2{20, 0}, {1000, 0}, 10, 500, player, player);
+            a.world.get<Body>(first).mass = 1.0;
+            a.world.get<Projectile>(first).petalConfigIndex = 0;
+            // This shot initially misses. It only hits the mob that took
+            // its first shove immediately instead of banking it for movement.
+            spawnShot(a, at + Vec2{29, 0}, {}, 10, 500, player, player);
+        }
+        a.stepWithServerGrid(0);
+        Trace trace;
+        for (std::size_t i = 0; i < victims.size(); ++i) {
+            const auto mob = victims[i];
+            const auto* kb = a.world.tryGet<Knockback>(mob);
+            CHECK_NEAR(a.health(mob), i % 2 == 0 ? 90 : 80, 1e-9);
+            trace.bodies.push_back(a.health(mob));
+            trace.bodies.push_back(a.world.get<Transform>(mob).position.x);
+            trace.bodies.push_back(kb ? kb->carry.x : 0);
+        }
+        for (const auto& event : a.events.events())
+            if (event.kind == net::EventKind::Damage)
+                trace.damageEvents.emplace_back(event.netId, event.amount);
+        return trace;
+    };
+    const auto serial = replay(0);
+    const auto parallel = replay(7);
+    CHECK_EQ(serial.damageEvents.size(), std::size_t{120});
+    CHECK(serial.bodies == parallel.bodies);
+    CHECK(serial.damageEvents == parallel.damageEvents);
 }
 
 // ---------------------------------------------------------------------------

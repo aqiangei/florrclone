@@ -562,13 +562,14 @@ void spawnMobRingSeeds(World& world, const ContentRegistry& content, Entity mob,
 
 Entity SpawnSystem::spawnMob(World& world, const Terrain& terrain, const ContentRegistry& content,
                              std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
-                             double nowMillis, Rng& rng) {
+                             double nowMillis, Rng& rng, MobSpawnScope scope) {
     // No band owns a mob somebody else asked for -- the arena, the maze, a
     // script, an operator's console -- so it is counted against no band's
     // target and is recycled the old way rather than going back to a record
     // there is no band to hold.
+    const bool worldBoss = scope == MobSpawnScope::World;
     return spawnMobAt(world, terrain, content, mobIndex, rarity, position, realm, nowMillis, rng, 0,
-                      kInvalidIndex);
+                      kInvalidIndex, std::nullopt, worldBoss, worldBoss);
 }
 
 SpawnSystem::Sacrifice SpawnSystem::planSacrifice(World& world, const ContentRegistry& content,
@@ -677,7 +678,7 @@ bool SpawnSystem::randomBandPoint(const Terrain& terrain, Realm realm, Rng& rng,
 Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const ContentRegistry& content,
                                std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                                double nowMillis, Rng& rng, int depth, std::uint16_t zone,
-                               std::optional<double> facing, bool clockGated) {
+                               std::optional<double> facing, bool clockGated, bool announce) {
     if (mobIndex >= content.mobCount()) return NULL_ENTITY;
 
     const MobConfig& config = content.mob(mobIndex);
@@ -880,14 +881,8 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
         }
     }
 
-    // EVERY path that puts a mob in the world comes through here, so this is
-    // the one place a boss can be announced from and there is no way to add a
-    // spawn path that quietly produces one in silence.
-    //
-    // Roots only. A nest's escorts and a centipede's segments carry their
-    // parent's tier, and announcing those would put a line in chat for every
-    // bead of a super centipede rather than one for the animal.
-    if (depth == 0) announceIfNotable(content, e, mobIndex, rarity, at, realm);
+    // A nest's escorts and a centipede's segments carry their parent's tier.
+    if (depth == 0 && announce) announceIfNotable(content, e, mobIndex, rarity, at, realm);
 
     return e;
 }
@@ -1920,8 +1915,8 @@ void SpawnSystem::noteStandingBosses(World& world, const CommandBuffer& commands
     topBosses_.clear();
     ambient_->each([&](Entity e, MobTag&, Transform& transform, Body&, MobType& type,
                        AmbientMob& ambient) {
-        if(world.has<HoleTether>(e))return;
         if (type.rarity != Rarity::Unique && type.rarity != Rarity::Apex) return;
+        if (world.has<HoleTether>(e) || world.has<WaveEnemy>(e)) return;
         if (!isWorldRealm(transform.realm) || !isWholeAnimal(world, e)) return;
         topBosses_.push_back(TopBoss{biomeKey(transform.realm), type.rarity, ambient.spawnOrder, e});
     });

@@ -84,7 +84,6 @@ constexpr double kAnnounceWidth = 180.0;
 /// How much taller a form's submit button is than the chips around it.
 constexpr double kSubmitExtra = 6.0;
 constexpr double kWheelStep = 60.0;
-constexpr double kScrollbarWidth = 8.0;
 /// How long the player search waits after the last keystroke before it asks.
 constexpr double kSearchDebounce = 0.3;
 /// The longest amount the forms take: six digits, as the console has always
@@ -460,12 +459,11 @@ bool AdminDashboardPanel::render(MenuContext& ctx) {
         s.list.contentHeight = rowCount * kListRow + 8.0;
         s.list.viewHeight = listView.h;
         if (listView.contains(mouse)) s.list.offset -= ctx.wheel() * kWheelStep;
-        s.list.offset -= touchScroll(ctx.window, listView, s.list.maxOffset() > 0);
-        s.list.offset = clamp(s.list.offset, 0.0, s.list.maxOffset());
+        ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, listView, s.list);
 
         canvas.save();
         clipCanvas(canvas, listView);
-        const double rowW = listView.w - 8.0 - kScrollbarWidth;
+        const double rowW = listScrollContent(listView, s.list).w - 8.0;
         double y = listView.y + 4.0 - s.list.offset;
         for (int i = 0; i < rowCount; ++i, y += kListRow) {
             const Rect row{listView.x + 4.0, y, rowW, kListRow - 4.0};
@@ -517,8 +515,7 @@ bool AdminDashboardPanel::render(MenuContext& ctx) {
                  label(kTextSize, kPaper, Align::Centre));
         }
         canvas.restore();
-        scrollbar(canvas, Rect{listView.x, listView.y + 4.0, listView.w - 2.0, listView.h - 13.0},
-                  s.list.contentHeight, s.list.offset, kAdminDashboardSkin.accent, kScrollbarWidth);
+        drawListScrollbar(canvas, listView, s.list, kAdminDashboardSkin.accent);
 
         // The right column: the picked player, what can be done to them, and
         // their bag.
@@ -586,13 +583,12 @@ bool AdminDashboardPanel::render(MenuContext& ctx) {
             s.bag.contentHeight = bagRows * kBagRow + 8.0;
             s.bag.viewHeight = bagView.h;
             if (bagView.contains(mouse)) s.bag.offset -= ctx.wheel() * kWheelStep;
-            s.bag.offset -= touchScroll(ctx.window, bagView, s.bag.maxOffset() > 0);
-            s.bag.offset = clamp(s.bag.offset, 0.0, s.bag.maxOffset());
+            ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, bagView, s.bag);
 
             canvas.save();
             clipCanvas(canvas, bagView);
             double by = bagView.y + 4.0 - s.bag.offset;
-            const double bagRight = bagView.right() - kScrollbarWidth - 6.0;
+            const double bagRight = listScrollContent(bagView, s.bag).right() - 6.0;
             for (int i = 0; i < bagRows; ++i, by += kBagRow) {
                 const Rect line{bagView.x + 4.0, by, bagRight - bagView.x - 4.0, kBagRow - 2.0};
                 if (line.bottom() < bagView.y || line.y > bagView.bottom()) continue;
@@ -623,9 +619,7 @@ bool AdminDashboardPanel::render(MenuContext& ctx) {
                      label(kTextSize, kPaper, Align::Centre));
             }
             canvas.restore();
-            scrollbar(canvas, Rect{bagView.x, bagView.y + 4.0, bagView.w - 2.0, bagView.h - 13.0},
-                      s.bag.contentHeight, s.bag.offset, kAdminDashboardSkin.accent,
-                      kScrollbarWidth);
+            drawListScrollbar(canvas, bagView, s.bag, kAdminDashboardSkin.accent);
         }
     }
 
@@ -649,13 +643,12 @@ bool AdminDashboardPanel::render(MenuContext& ctx) {
         form.matches.contentHeight = static_cast<double>(matches.size()) * kBagRow + 8.0;
         form.matches.viewHeight = listView.h;
         if (listView.contains(mouse)) form.matches.offset -= ctx.wheel() * kWheelStep;
-        form.matches.offset -= touchScroll(ctx.window, listView, form.matches.maxOffset() > 0);
-        form.matches.offset = clamp(form.matches.offset, 0.0, form.matches.maxOffset());
+        ctx.scrollbarOwnsPointer |= updateListScroll(ctx.window, listView, form.matches);
 
         canvas.save();
         clipCanvas(canvas, listView);
         double y = listView.y + 4.0 - form.matches.offset;
-        const double rowW = listView.w - 8.0 - kScrollbarWidth;
+        const double rowW = listScrollContent(listView, form.matches).w - 8.0;
         for (std::size_t i = 0; i < matches.size(); ++i, y += kBagRow) {
             const Rect row{listView.x + 4.0, y, rowW, kBagRow - 2.0};
             if (row.bottom() < listView.y || row.y > listView.bottom()) continue;
@@ -675,9 +668,7 @@ bool AdminDashboardPanel::render(MenuContext& ctx) {
                  label(kTextSize, kPaper, Align::Centre));
         }
         canvas.restore();
-        scrollbar(canvas, Rect{listView.x, listView.y + 4.0, listView.w - 2.0, listView.h - 13.0},
-                  form.matches.contentHeight, form.matches.offset, kAdminDashboardSkin.accent,
-                  kScrollbarWidth);
+        drawListScrollbar(canvas, listView, form.matches, kAdminDashboardSkin.accent);
 
         // The right column: the order, as it will be typed into the console.
         fillRound(canvas, right, 6.0, kInk, 0.16);
