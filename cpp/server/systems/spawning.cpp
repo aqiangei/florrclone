@@ -22,6 +22,7 @@ constexpr double kSpawnedMobBodyScale = 0.75;
 // Prestige Jungle lacks the ordinary Jungle's separately stocked boss populations.
 // More of its own ambient slots can stay latent outside the players' views.
 constexpr double kPrestigeJungleDensityScale = 1.25;
+constexpr double kPrestigeSewersDensityScale = 0.90;
 constexpr double kPrestigeJungleRespawnMinMillis = 2000.0;
 constexpr double kPrestigeJungleRespawnMaxMillis = 6000.0;
 constexpr int kPrestigeJungleMinAwake = 12;
@@ -1664,6 +1665,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
         const std::uint16_t biome = map.prestige() ? kInvalidIndex : bossClockFor(map.biome());
         realmBiome_[realmIndex(map.realm())] = biome;
         const bool prestigeJungle = isPrestigeJungle(map);
+        const bool prestigeSewers = map.prestige() && map.templateId() == "sewers";
         if (prestigeJungle) prestigeJungleRealm_ = map.realm();
         for (const MapElement& element : map.elements()) {
             if (!element.isSpawnBand() && !element.isMobRegion()) continue;
@@ -1717,8 +1719,11 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             // Unless the band is SINGULAR, which is the one band whose size
             // says nothing about its population: it is drawn over everywhere
             // its one mob may be, so area buys reach, not numbers.
-            const double densityScale = prestigeJungle && element.forceRarity < 0
-                                            ? kPrestigeJungleDensityScale : 1.0;
+            double densityScale = 1.0;
+            if (element.forceRarity < 0) {
+                if (prestigeJungle) densityScale = kPrestigeJungleDensityScale;
+                else if (prestigeSewers) densityScale = kPrestigeSewersDensityScale;
+            }
             zone.targetMobs =
                 element.singular
                     ? 1
