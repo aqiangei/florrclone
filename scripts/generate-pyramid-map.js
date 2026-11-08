@@ -5,6 +5,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const maps = path.join(__dirname, '..', 'maps');
 const source = JSON.parse(fs.readFileSync(path.join(maps, 'pyramid.tmj'), 'utf8'));
 const {width, height, tilewidth, tileheight} = source;
@@ -16,10 +17,11 @@ const northShortcut = {x: 14, y: 3, fromX: 33, fromY: 3, size: 3};
 const westShortcut = {x: 4, y: 33, fromX: 17, fromY: 33, size: 4};
 const eastShortcut = {x: 31, y: 23, fromX: 37, fromY: 23, size: 4};
 const layouts = [
-    {id: 'pyramid_alt', horizontal: true, vertical: false, shortcuts: [northShortcut]},
     {id: 'pyramid_west', horizontal: false, vertical: true, shortcuts: [westShortcut, eastShortcut]},
     {id: 'pyramid_east', horizontal: true, vertical: true, shortcuts: [northShortcut, eastShortcut]},
 ];
+
+execFileSync(process.execPath, [path.join(__dirname, 'generate-pyramid-maze.js'), '20261108', 'alternate'], { stdio: 'inherit' });
 
 for (const {id, horizontal, vertical, shortcuts} of layouts) {
     const map = structuredClone(source);

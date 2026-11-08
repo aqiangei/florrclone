@@ -670,7 +670,7 @@ private:
     /// Takes the registry because a pollen puff reaches for the victim's
     /// CONFIG radius rather than the body it actually spawned with.
     void tickGroundEffects(World& world, const SpatialGrid& grid, const ContentRegistry& content,
-                           double nowMillis, double dt);
+                           double nowMillis, double dt, bool bodyGridOnly);
     /// A uranium cloud's bite on the flower wearing it. Sourceless, because
     /// the flower's own side could never hurt it; and it never weakens a
     /// stronger live bite, since a flower carries only one and a common
@@ -681,7 +681,7 @@ private:
     /// mark a mob Dead, which relocates the row the gather is walking.
     void gatherAuras(World& world, const ContentRegistry& content);
     void resolveAuras(World& world, const SpatialGrid& grid, double nowMillis);
-    void gatherMeleeTargets(World& world);
+    void gatherMeleeTargets();
     void gatherContact(World& world, const ContentRegistry& content);
     /// One pass of lightning at RANGE: which mobs are charged and have somebody
     /// in reach, and the strikes they throw. Runs in the world phase, after
@@ -972,6 +972,8 @@ private:
     Rng rng_;
     Rng rubyRng_;
     bool resolvingRuby_=false;
+    DamageResult applyDamageWithRuby(World& world, Entity victim, Entity source, double amount,
+                                     double nowMillis, DamageKind kind, Entity checkedTarget);
     DamageResult applyDamageOnce(World& world, Entity victim, Entity source, double amount,
                                  double nowMillis, DamageKind kind,
                                  Entity checkedTarget = NULL_ENTITY);

@@ -81,7 +81,7 @@ inline NpcService parseNpcService(const std::string& name) {
 /// its own drawn position -- eased, and a snapshot old -- and a flower that
 /// the panel said was close enough must not be refused at the server for
 /// having drifted a few units on the way there.
-inline constexpr double kNpcServiceReach = 250.0;
+inline constexpr double kNpcServiceReach = 400.0;
 inline constexpr double kNpcServiceSlack = 150.0;
 
 /// Historical duration retained for legacy formatting tests; live Oracle trades

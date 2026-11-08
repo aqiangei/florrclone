@@ -767,14 +767,14 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
     terrain_ = nullptr;
 }
 
-void PetalSystem::foldModifiers(World& world, const ContentRegistry& registry) {
+void PetalSystem::foldModifiers(World& world, const ContentRegistry& registry, double nowMillis) {
     bindTo(world);
     players_->collect(playerList_);
     for (const Entity player : playerList_) {
         // A corpse keeps the modifiers it died with: run() clears its ring
         // rather than recomputing, and respawn re-folds from the live loadout.
         if (!world.isAlive(player) || playerIsDown(world, player)) continue;
-        recomputeModifiers(world, registry, player);
+        recomputeModifiers(world, registry, player, nowMillis);
     }
 }
 
@@ -2044,6 +2044,12 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
     if (PlayerVisuals* visuals = world.tryGet<PlayerVisuals>(player)) {
         visuals->equipFlags = equipFlags;
         visuals->equippedCorruption = equippedCorruption;
+        if (nowMillis >= 0.0) {
+            if (visuals->hyperCorruption && !hyperCorruption)
+                visuals->hyperCorruptionExposureUntilMillis = nowMillis + kHyperCorruptionExposureMillis;
+            visuals->hyperCorruptionExposed = !hyperCorruption &&
+                nowMillis < visuals->hyperCorruptionExposureUntilMillis;
+        }
         visuals->hyperCorruption = hyperCorruption;
         visuals->seesGhosts = seesGhosts;
     }
@@ -2781,10 +2787,14 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 }
             }
             const auto rarity = instance->rarity; const auto index = instance->configIndex;
+            const auto tier = ladderRarity(rarity);
+            const bool waveMeteor = world.has<WavePlayer>(player) &&
+                                    (tier == Rarity::Ultra || tier == Rarity::Super);
+            const double health = stats.health * (waveMeteor ? 0.80 : 1.0);
             const Entity rock = world.create();
             world.add<Transform>(rock, Transform{from, 0, realm});
             world.add<Body>(rock, Body{radius, 1000000.0});
-            world.add<Health>(rock, Health{stats.health, stats.health});
+            world.add<Health>(rock, Health{health, health});
             world.add<Faction>(rock, Faction{Team::Players, false});
             world.add<LoosePetal>(rock);world.add<PlantedMeteor>(rock, PlantedMeteor{player});
             world.add<Lifetime>(rock, Lifetime{hyperAmount(profile, HyperTechnique::LongMeteor, 20.0)});

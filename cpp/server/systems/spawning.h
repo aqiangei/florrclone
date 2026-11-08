@@ -1090,6 +1090,7 @@ private:
     /// player" there means "someone is in here".
     std::array<bool, kMaxRealms> realmOccupied_{};
     Realm prestigeJungleRealm_ = Realm::Arena; // No world-map candidate can match until loaded.
+    Realm prestigeSewersRealm_ = Realm::Arena;
     std::array<bool, kMaxRealms> inactivePyramidRealms_{};
     struct MobPlacement { Vec2 position; double radius; };
     std::vector<MobPlacement> mobPlacements_;

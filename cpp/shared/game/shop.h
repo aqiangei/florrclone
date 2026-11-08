@@ -37,7 +37,7 @@ inline double shopPrice(std::uint16_t petalIndex, Rarity rarity) {
         if (id == "sawblade") variety = std::max(variety, 8.0);
     }
     const double previous=std::max(1.0,std::floor(tierPrices[clamp(rarityIndex(rarity),0,11)]*variety));
-    return 2.0 * std::ceil(previous*1.75);
+    return 2.0 * std::ceil(previous * 1.25);
 }
 
 // Apply the economy multiplier after the old discounted rounding too, so

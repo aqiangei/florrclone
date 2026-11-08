@@ -1889,6 +1889,7 @@ void NetClient::handleGuildUpdate(ByteReader& reader) {
         next.name = reader.str();
         next.description = reader.str();
         next.leader = reader.str();
+        next.deputy = reader.str();
         const std::uint16_t count = reader.u16();
         next.members.reserve(count);
         for (std::uint16_t i = 0; i < count; ++i) {
@@ -2283,7 +2284,9 @@ void NetClient::handleDebugStats(ByteReader& reader) {
     stats.heapBytes = reader.f64();
     stats.tickAvgMillis = reader.f32();
     stats.tickMaxMillis = reader.f32();
+    const int pace = reader.u8();
     if (!reader.ok()) return;
+    view_.setSimulationPace(pace);
     serverDebugStats_ = stats;
     serverDebugStatsFresh_ = true;
 }

@@ -747,6 +747,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     if (verb == "/guild-invite") { guildInvite(session, connection, argument); return true; }
     if (verb == "/guild-kick")   { guildKick(session, connection, argument); return true; }
     if (verb == "/guild-transfer") { guildTransfer(session, connection, argument); return true; }
+    if (verb == "/guild-deputy") { guildDeputy(session, connection, argument); return true; }
     if (verb == "/guild-accept") { handleGuildAccept(session, connection); return true; }
     if (verb == "/guild-decline"){ handleGuildDecline(session, connection); return true; }
     if (verb == "/guild-leave")  { handleGuildLeave(session, connection); return true; }
@@ -1001,7 +1002,9 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
                 " members, persistent):</b><br/>";
         help += "/guild-create &lt;tag&gt; [name] - Create a new guild (5-char alphanumeric "
                 "tag, optional display name)<br/>";
-        help += "/guild-invite &lt;username&gt; - Invite a player (leader only)<br/>";
+        help += "/guild-invite &lt;username&gt; - Invite a player (leader or deputy)<br/>";
+        help += "/guild-deputy [username] - Set or remove the invite-only deputy (leader only)<br/>";
+        help += "/guild-transfer &lt;username&gt; - Transfer leadership (leader only)<br/>";
         help += "/guild-accept / /guild-decline - Respond to a guild invite<br/>";
         help += "/guild-leave - Leave your guild<br/>";
         help += "/guild-kick &lt;username&gt; - Kick a member (leader only)<br/>";
@@ -1087,7 +1090,7 @@ void GameServer::runSquadCommand(Session& session, net::Connection& connection,
                                  const std::string& sub, const std::string& argument) {
     const auto out = [&](const std::string& text) { sendSystem(connection, text); };
     const SquadMemberId me = squadIdOf(session);
-    const auto now = static_cast<std::int64_t>(clockMillis_);
+    const auto now = static_cast<std::int64_t>(wallClockMillis_);
 
     const auto notifyDeparture = [&](const SquadRoster::Departure& left) {
         if (!left.wasMember) return;

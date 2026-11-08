@@ -158,6 +158,7 @@ struct Session {
     /// between bodies, so a title-screen session reads as ordinary ground.
     Realm realm = Realm::Overworld;
     bool hasDeathSite = false;
+    bool respawnAtDoor = false;
     Realm deathRealm = Realm::Overworld;
     Vec2 deathPosition{};
 

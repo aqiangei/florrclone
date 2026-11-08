@@ -36,7 +36,7 @@ namespace flix {
 
 struct PlayerTag {};
 struct WavePlayer {};
-struct WaveEnemy {};
+struct WaveEnemy { bool canDrop = true; };
 struct MobTag {};
 struct GhostTag {};
 struct PetalTag {};
@@ -515,6 +515,7 @@ struct PetalRing {
 
 struct PlayerInput {
     net::InputFrame current;
+    Vec2 previousWalkIntent; ///< Unit direction scaled by the last applied walk strength.
 };
 
 /// Account-scoped identity. Cold: read on join, on save, and when someone
@@ -584,6 +585,8 @@ struct PlayerVisuals {
     bool equippedCorruption = false;
     bool hyperCorruption = false;
     bool nearbyCorruption = false;
+    bool hyperCorruptionExposed = false;
+    double hyperCorruptionExposureUntilMillis = 0.0;
     bool seesGhosts = false;
 };
 

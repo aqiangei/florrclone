@@ -443,7 +443,7 @@ void LootSystem::bind(World& world) {
     corpses_.emplace(world);
     // A pet dying is its owner's petal breaking, not a kill, and a corpse that
     // has already paid out must never be walked again.
-    corpses_->without<LootAwarded, Pet, WaveEnemy>();
+    corpses_->without<LootAwarded, Pet>();
 }
 
 void LootSystem::run(World& world, const SpatialGrid& grid, const ContentRegistry& content,
@@ -455,7 +455,7 @@ void LootSystem::run(World& world, const SpatialGrid& grid, const ContentRegistr
 
     maintainDrops(dt, commands);
     collectPickups(world, grid, commands, events);
-    awardDeaths(world, content, rng);
+    awardDeaths(world, content, rng, nowMillis);
     // Deaths pay out after the broadphase pass, but their loot is still
     // collectable this tick: the reference rolls a mob's drops inside the very
     // player step that then tests pickups, so a magnet flower standing on its
@@ -662,7 +662,7 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Re
     if (finished) commands.destroy(candidate);
 }
 
-void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& rng) {
+void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& rng, double nowMillis) {
     fresh_.clear();
     corpses_->collect(corpseList_);
     if (corpseList_.empty()) return;
@@ -770,6 +770,13 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const MobType* type = world.tryGet<MobType>(corpse);
         const Transform* transform = world.tryGet<Transform>(corpse);
         if (type == nullptr || transform == nullptr) continue;
+        const auto* wave = world.tryGet<WaveEnemy>(corpse);
+        const bool waveBoss = wave && (type->rarity == Rarity::Unique || type->rarity == Rarity::Apex);
+        double& waveReady = type->rarity == Rarity::Apex ? nextWaveHyperLootMillis_ : nextWaveEternalLootMillis_;
+        if (wave && (!wave->canDrop || (waveBoss && nowMillis < waveReady))) {
+            world.add<LootAwarded>(corpse);
+            continue;
+        }
         hyperKill=type->rarity==Rarity::Apex;
         reducedClaimants.clear();
 
@@ -844,6 +851,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const bool hasClaimant = std::any_of(eligible_.begin(), eligible_.end(),
             [&](Entity player) { return world.has<PlayerTag>(player); });
         if (!hasClaimant) continue;
+        if (waveBoss) waveReady = nowMillis + (hyperKill ? 720000.0 : 360000.0);
 
         // A worn magic orb rewrites what this mob leaves behind: everything
         // with a magic form drops as that form instead, and nothing gets past

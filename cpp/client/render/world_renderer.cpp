@@ -3493,11 +3493,10 @@ void WorldRenderer::drawDiggerMob(Canvas& canvas, const MobDraw& mob, double rad
     canvas.save();
     canvas.scale(static_cast<float>(scale), static_cast<float>(scale));
     const Vec2 eye = mobEye(mob);
-    // EquipCutter, so the blade is drawn by the one painter a player's flower
-    // uses: the digger carries the same object and must not drift from it.
+    // Digger uses the same blade art as Cutter, with a slower visual rotation.
     // gardn's digger is a flower in its mob colour -- grey wild, and its
     // owner's flower colour once summoned.
-    drawFace(canvas, FaceSquareEyes, EquipCutter, eye.x, eye.y, 14.5, timeSeconds,
+    drawFace(canvas, FaceSquareEyes, EquipCutter, eye.x, eye.y, 14.5, timeSeconds * 0.35,
              mob.pet ? kPetBodyColor : kDiggerBodyColor);
     canvas.restore();
 }
@@ -4754,6 +4753,11 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         // shake -- the obvious `owner.position - owner.targetPosition`
         // fixup subtracts a value that stair-steps at the snapshot rate.
         Vec2 at = entity.isSelf() ? selfDrawn : entity.position;
+        if (entity.isRingPetal() && entity.ownerNetId != 0) {
+            const auto owner = entities.find(entity.ownerNetId);
+            if (owner != entities.end() && owner->second.isSelf())
+                at += selfDrawn - owner->second.position;
+        }
         if (hiddenByOptions(entity)) {
             // A pet drawn before the switch went on keeps the shadow it was
             // last drawn in; dropping it stops that pet's death animation

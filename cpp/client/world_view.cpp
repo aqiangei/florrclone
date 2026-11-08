@@ -7,6 +7,7 @@
 #include "client/render/mob_art.h"
 #include "shared/game/config.h"
 #include "shared/game/player_flags.h"
+#include "shared/game/terrain.h"
 
 namespace flix {
 
@@ -91,6 +92,9 @@ void WorldView::clear() {
     realm_ = Realm::Overworld;
     tick_ = 0;
     selfDrawnPosition_ = {};
+    localPreviewOffset_ = {};
+    simulationPace_ = net::kTicksPerSecond;
+    localCombatInput_ = 0;
     selfSnapPending_ = true;
     selfHealthBar_ = HealthBarEase{};
     suppressSelfCorpse_ = false;
@@ -103,6 +107,7 @@ void WorldView::clear() {
 }
 
 void WorldView::snapAll() {
+    localPreviewOffset_ = {};
     for (auto& entry : entities_) {
         entry.second.needsSnap = true;
         entry.second.samples.clear();
@@ -123,7 +128,42 @@ void WorldView::clearSelfDeathVisuals() {
 Vec2 WorldView::selfDrawnPosition() const {
     // Until the first snapshot has placed this flower there is nothing to ease
     // from, and the authoritative position is the honest answer.
-    return selfSnapPending_ ? self_.position : selfDrawnPosition_;
+    return selfSnapPending_ ? self_.position : selfDrawnPosition_ + localPreviewOffset_;
+}
+
+void WorldView::setSimulationPace(int ticksPerSecond) {
+    simulationPace_ = std::clamp(ticksPerSecond, 1, net::kTicksPerSecond);
+}
+
+void WorldView::previewLocalControl(const net::InputFrame& input, const Terrain& terrain,
+                                    double renderMillis, double dtSeconds) {
+    localCombatInput_ = input.flags & (net::InputAttack | net::InputDefend);
+    const auto self = entities_.find(self_.netId);
+    const double frameSeconds = std::clamp(dtSeconds, 0.0, 0.05);
+    const double fraction = std::min(1.0, frameSeconds * 35.0);
+    Vec2 target;
+    if (simulationPace_ < net::kTicksPerSecond && !selfSnapPending_ && self != entities_.end() &&
+        !self->second.dead() && !(self->second.renderFlags & PlayerRenderSwallowed) &&
+        !(self->second.state & net::StatePadCharging) && input.moveStrength > 0.0) {
+        auto& flower = self->second;
+        // Eyes report the local walk direction immediately. Only a recent
+        // authoritative position may get a small, terrain-checked lead.
+        flower.eyeX += (std::cos(input.moveAngle) * kFlowerEyeTravelX - flower.eyeX) * fraction;
+        flower.eyeY += (std::sin(input.moveAngle) * kFlowerEyeTravelY - flower.eyeY) * fraction;
+        if (lastSnapshotRenderMillis_ > 0 && renderMillis - lastSnapshotRenderMillis_ < 250.0) {
+            const double reach = std::min(8.0, flower.radius * 0.35) * input.moveStrength;
+            const Vec2 lead = Vec2::fromAngle(input.moveAngle, reach);
+            target = lead;
+        }
+    }
+    const Vec2 preview = localPreviewOffset_ + (target - localPreviewOffset_) * fraction;
+    if (self != entities_.end() && preview.lengthSq() > 1e-6 &&
+        !terrain.resolveWall(selfDrawnPosition_ + preview, self->second.radius, realm_).collided &&
+        !terrain.segmentBlocked(selfDrawnPosition_, selfDrawnPosition_ + preview, realm_)) {
+        localPreviewOffset_ = preview;
+    } else {
+        localPreviewOffset_ = {};
+    }
 }
 
 double WorldView::toRenderClock(double serverMillis, double localMillis) {
@@ -633,8 +673,9 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
     // Reload runs on the frame clock between snapshots. Twenty corrections a
     // second are enough to keep it honest and nowhere near enough to sweep a
     // wedge that turns through five revolutions smoothly.
+    const double simulationDelta = dtSeconds * simulationPace_ / net::kTicksPerSecond;
     for (double& remaining : self_.slotReloadRemainingMillis) {
-        remaining = std::max(0.0, remaining - dtSeconds * 1000.0);
+        remaining = std::max(0.0, remaining - simulationDelta * 1000.0);
     }
 
     // Reapplied per frame rather than once when the command runs: the server
@@ -743,7 +784,7 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
     for (auto& entry : entities_) {
         RemoteEntity& e = entry.second;
         if (e.kind != net::EntityKind::Petal) continue;
-        e.petalAgeSeconds += dtSeconds;
+        e.petalAgeSeconds += simulationDelta;
 
         const auto owner = entities_.find(e.ownerNetId);
         if (owner != entities_.end() && !e.isLoosePetal()) continue;   // second pass

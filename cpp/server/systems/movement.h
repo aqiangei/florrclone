@@ -229,7 +229,8 @@ public:
     /// TypeScript advances flowers and their post-movement petal pipeline
     /// before mob AI. The server loop calls these two phases separately to
     /// preserve that ordering while this class still owns all integration.
-    void runPlayerPhase(World& world, const Terrain& terrain, double nowMillis, double dt);
+    void runPlayerPhase(World& world, const Terrain& terrain, double nowMillis, double dt,
+                        double controlSeconds = 0.0);
     void runWorldPhase(World& world, const Terrain& terrain, double nowMillis, double dt);
 
 private:
@@ -337,7 +338,8 @@ private:
     /// what lets popImpulse aim a pop at the moon with the flower's numbers.
     /// Run at the head of the player phase, where a flower spends ITS pop.
     void coastRingAnchors(World& world, const Terrain& terrain, double dt);
-    void movePlayers(World& world, const Terrain& terrain, double nowMillis, double dt);
+    void movePlayers(World& world, const Terrain& terrain, double nowMillis, double dt,
+                     double steeringBoost);
     /// The teleporter pads: the suction well, the dwell and the jump.
     ///
     /// Part of the player pipeline rather than a system of its own because it
@@ -351,6 +353,9 @@ private:
     /// Rebuilds npcDiscs_. NPCs do not move between the two movement phases
     /// of one tick, but either phase may be the first to run in a test.
     void collectNpcDiscs();
+    void collectStationaryMobs(World& world);
+    void pushOutOfStationaryMobs(World& world, const Terrain& terrain, Transform& transform,
+                                 double radius);
     /// Rebuilds looseDiscs_ from the live transforms, and writes it back.
     void collectLooseDiscs();
     void storeLooseDiscs(World& world) const;
@@ -414,6 +419,9 @@ private:
     std::vector<SeekTarget> seekTargets_;
     /// Rebuilt at the top of every player pass. See pushOutOfNpcs().
     std::vector<ObstacleDisc> npcDiscs_;
+    SpatialGrid stationaryMobGrid_{kMobCollisionCellSize};
+    std::vector<Entity> stationaryMobCandidates_;
+    SpatialGrid::QueryScratch stationaryMobScratch_;
     std::array<std::vector<ObstacleDisc>, kMaxRealms> meteorDiscs_;
     /// Rebuilt at the top of each pass that shoves loose petals.
     std::vector<LooseDisc> looseDiscs_;

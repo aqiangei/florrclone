@@ -24,6 +24,7 @@
 #include "server/replication.h"
 #include "server/parallel_snapshots.h"
 #include "server/session.h"
+#include "server/simulation_pacing.h"
 #include "server/squads.h"
 #include "shared/core/world.h"
 #include "shared/game/components.h"
@@ -136,6 +137,7 @@ struct ServerConfig {
     /// this is the one a harness can set before the first tick.
     int botCount = 0;
     bool loadShedding = false;
+    bool adaptivePacing = true;
     bool backgroundSave = false;
     /// The `/admin db` key to use as is, instead of the one in the key file
     /// beside the database. Empty means the file. Only the offline page sets
@@ -631,6 +633,7 @@ private:
     void guildInvite(Session&, net::Connection&, const std::string& target);
     void guildKick(Session&, net::Connection&, const std::string& target);
     void guildTransfer(Session&, net::Connection&, const std::string& target);
+    void guildDeputy(Session&, net::Connection&, const std::string& target);
     void guildInviteToSquad(Session&, net::Connection&, const std::string& target);
 
     // -- squads ------------------------------------------------------------
@@ -961,7 +964,7 @@ private:
     /// boss spent it, so a restart that takes the boss away unkilled hands the
     /// cooldown back and the clock comes up ready.
     void restoreBossClocks(double nowMillis);
-    void persistBossClocks();
+    void persistBossClocks(bool refreshWallDeadline = false);
     /// database_.save() behind a fresh look at which bosses stand, so the
     /// boss clocks reach the disk exactly as they are. Every save goes
     /// through here: the periodic one and persistAll.
@@ -1471,7 +1474,8 @@ private:
 
     /// Moves what the loot system handed out into the owning accounts.
     void bankPickups();
-    void replicate(double nowMillis);
+    void tick(double wallMillis, double worldMillis);
+    void replicate(double nowMillis, double wallMillis);
     void reapDead();
     void serviceNearbyRevives(double nowMillis);
 
@@ -1749,6 +1753,7 @@ private:
     /// rather than a local in run(), because the loop is no longer
     /// necessarily this object's.
     double nextTickMillis_ = 0;
+    SimulationPacing simulationPacing_;
     /// Simulation delta, low-pass filtered over the real elapsed time between
     /// ticks and clamped to three nominal steps.
     ///
@@ -1762,7 +1767,9 @@ private:
     /// Only step() writes it, so a test driving tick() by hand still gets an
     /// exactly fixed step.
     double smoothedDeltaSeconds_ = net::kTickSeconds;
-    double lastTickWallMillis_ = 0;
+    double lastTickWorldMillis_ = 0;
+    double wallClockMillis_ = 0;
+    double nextCouncilSampleMillis_ = 0;
 
     /// How long tick() itself took, drained once a second into a DebugStats
     /// broadcast. The mean says what the server costs at rest; the worst
@@ -1828,6 +1835,7 @@ private:
         std::string biome;
         double uniqueReadyMillis = 0;
         double apexReadyMillis = 0;
+        double worldLagMillis = 0;
     };
     std::vector<SavedBossClock> savedBossClocks_;
     bool bossClocksRestored_ = false;

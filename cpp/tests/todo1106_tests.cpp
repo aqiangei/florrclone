@@ -139,6 +139,35 @@ TEST(todo1106_mana_orbs_stay_close_and_recharge_in_all_attack_modes) {
     }
 }
 
+TEST(wave_meteor_health_is_lower_only_for_ultra_and_super_placed_inside) {
+    const auto& registry = shippedContent();
+    const auto meteor = registry.petalIndex("meteor");
+    for (const Rarity tier : {Rarity::Rare, Rarity::Ultra, Rarity::Super, Rarity::Unique, Rarity::Apex}) {
+        for (const bool inWave : {false, true}) {
+            World world;
+            PetalSystem petals;
+            CommandBuffer commands{world};
+            const Entity player = flower(world);
+            if (inWave) world.add<WavePlayer>(player);
+            wear(world, player, 0, "meteor", tier);
+            world.get<PlayerInput>(player).current.flags = net::InputDefend;
+            Query<PlantedMeteor> planted{world};
+            for (int tick = 0; tick < 300 && planted.count() == 0; ++tick) {
+                petals.run(world, registry, 1000 + tick * 50, .05, commands);
+                commands.flush();
+            }
+            const auto rocks = planted.collect();
+            CHECK_EQ(rocks.size(), std::size_t(1));
+            if (rocks.empty()) continue;
+            const auto& health = world.get<Health>(rocks.front());
+            const double scale = inWave && (tier == Rarity::Ultra || tier == Rarity::Super) ? 0.8 : 1.0;
+            CHECK_NEAR(health.max, registry.petalStats(meteor, tier).health * scale, 1e-6);
+            CHECK_NEAR(health.current, health.max, 1e-6);
+            CHECK_NEAR(world.get<Body>(rocks.front()).radius, 180.0, 1e-9);
+        }
+    }
+}
+
 TEST(todo1106_meteor_plants_in_all_stances_and_hyper_last_two_seconds_longer) {
     const auto& content = shippedContent();
     for (const auto rarity : {Rarity::Common, Rarity::Apex}) {
@@ -691,6 +720,49 @@ TEST(todo1107_map_scale_and_density_use_original_physical_units) {
     CHECK_NEAR(kTileSize, 256, 1e-9);
     CHECK_NEAR(kTargetMobDensity * 60000 * 60000, 9000, 1e-9);
     CHECK_EQ(kMaxLiveMobs, 3000);
+}
+
+TEST(jungle_ladybug_tracks_a_lit_bulb) {
+    const auto& c = shippedContent();
+    const auto index = c.mobIndex("jungle_ladybug");
+    CHECK(index != kInvalidIndex);
+    const auto stats = c.mobStats(index, Rarity::Rare);
+    for (const bool lit : {false, true}) {
+        World world;
+        Terrain terrain;
+        SpatialGrid grid;
+        CommandBuffer commands{world};
+        PetalSystem petals;
+        MobAiSystem ai(world);
+        const auto player = flower(world);
+        if (lit) {
+            wear(world, player, 0, "bulb", Rarity::Common);
+            world.get<PlayerInput>(player).current.flags = net::InputDefend;
+            for (int tick = 0; tick < 120; ++tick) {
+                petals.run(world, c, 1000.0 + tick * 50, 0.05, commands);
+                commands.flush();
+            }
+            CHECK(world.get<PlayerModifiers>(player).aggroRangeScale > 1.0);
+        }
+
+        const auto observer = world.get<Transform>(player);
+        const auto mob = world.create();
+        world.add<MobTag>(mob);
+        world.add<MobType>(mob, MobType{index, Rarity::Rare, 1});
+        world.add<Transform>(mob, Transform{observer.position - Vec2{stats.aggroRange, 0}, 0});
+        world.add<Motion>(mob);
+        world.add<Health>(mob, Health{stats.health, stats.health});
+        world.add<Body>(mob, Body{stats.radius, stats.mass});
+        world.add<Faction>(mob, Faction{Team::Hostiles, false});
+        auto& brain = world.add<MobAi>(mob);
+        brain.kind = stats.ai;
+        brain.aggroRange = stats.aggroRange;
+        grid.insert(player, observer.realm, observer.position, 25);
+
+        ai.run(world, terrain, grid, {{observer.position, observer.realm}}, 7000, .05, commands);
+        commands.flush();
+        CHECK_EQ(world.get<MobAi>(mob).target, lit ? player : NULL_ENTITY);
+    }
 }
 
 TEST(todo1107_hostile_acquires_earlier_and_closes_the_gap) {

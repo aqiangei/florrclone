@@ -1853,7 +1853,8 @@ MobStats ContentRegistry::mobStats(std::uint16_t index, Rarity r) const {
     s.armor = c.armor * kMobArmorScale[t] * (tier == rarityIndex(Rarity::Apex) ? 2.0 : 1.0);
     s.evasion = c.evasion;
     s.radius = scaledSize * kMobBaseRadius;
-    s.mass = bodyMassForRadius(s.radius) * (c.speed == 0.0 ? kAnchoredMassScale : 1.0);
+    s.mass = bodyMassForRadius(s.radius) *
+        (c.speed == 0.0 || c.ai == AiKind::Stationary ? kAnchoredMassScale : 1.0);
     s.speed = c.speed * kMobSpeedUnitsPerSecond;
     // gardn chases at its own factor of PLAYER_ACCELERATION, apart from the
     // speed the mob drifts at -- every neutral at 0.975, a scorpion at 1.2 --

@@ -797,7 +797,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
 
 void GameServer::run() {
     nextTickMillis_ = monotonicMillis();
-    clockMillis_ = nextTickMillis_;
+    wallClockMillis_ = clockMillis_ = nextTickMillis_;
     while (step()) {
     }
     shutdown();
@@ -939,7 +939,7 @@ bool GameServer::saveDatabase(bool periodic, bool stopping) {
     // killed in the last half second has to be on the right side of it.
     if (bossClocksRestored_) {
         spawning_->noteStandingBosses(world_, commands_);
-        persistBossClocks();
+        persistBossClocks(true);
     }
     if (periodic && database_.backgroundSaveEnabled()) {
         database_.requestBackgroundSave();
@@ -970,8 +970,9 @@ void GameServer::restoreBossClocks(double nowMillis) {
     }
 }
 
-void GameServer::persistBossClocks() {
+void GameServer::persistBossClocks(bool refreshWallDeadline) {
     const double offset = static_cast<double>(database_.nowMillis()) - clockMillis_;
+    const double worldLag = wallClockMillis_ - clockMillis_;
     for (const SpawnSystem::BiomeBossClock& clock : spawning_->bossClocks()) {
         if (!clock.scattered) continue;
         // A boss still standing is one a restart would take away unkilled, so
@@ -988,7 +989,8 @@ void GameServer::persistBossClocks() {
             if (candidate.biome == clock.biome) saved = &candidate;
         }
         if (saved != nullptr && saved->uniqueReadyMillis == unique &&
-            saved->apexReadyMillis == apex) {
+            saved->apexReadyMillis == apex &&
+            (!refreshWallDeadline || std::abs(saved->worldLagMillis - worldLag) < 1.0)) {
             continue;
         }
         if (saved == nullptr) {
@@ -997,6 +999,7 @@ void GameServer::persistBossClocks() {
         }
         saved->uniqueReadyMillis = unique;
         saved->apexReadyMillis = apex;
+        saved->worldLagMillis = worldLag;
         Json entry = Json::object();
         entry["uniqueReadyAt"] = std::round(unique + offset);
         entry["apexReadyAt"] = std::round(apex + offset);
@@ -1146,6 +1149,7 @@ bool GameServer::step() {
         (database_.backgroundSaveEnabled() || !commitBeforeReply())) return false;
 
     const double now = monotonicMillis();
+    wallClockMillis_ = now;
 
     // Sleep in the network poll rather than in a bare sleep, so a packet
     // arriving mid-frame is picked up immediately instead of waiting out
@@ -1153,7 +1157,7 @@ bool GameServer::step() {
     const int waitMillis = static_cast<int>(std::max(0.0, nextTickMillis_ - now));
     serviceNetwork(std::min(waitMillis, 5));
     if (persistenceFrozen_) return false;
-    if(hyperBarrierFrozen_){nextTickMillis_=lastTickWallMillis_=monotonicMillis();return true;}
+    if(hyperBarrierFrozen_){nextTickMillis_=monotonicMillis();lastTickWorldMillis_=0;return true;}
     // What the handlers just answered -- a Pong, an AuthResult, a CraftResult
     // -- leaves now, not at the next drain. Under Node that drain is the next
     // step, a whole 60 Hz timer away, or the end of a tick: on loopback it was
@@ -1163,23 +1167,20 @@ bool GameServer::step() {
     const double tickNow = monotonicMillis();
     if (tickNow >= nextTickMillis_) {
         const double tickLagMillis = tickNow - nextTickMillis_;
-        // Real elapsed time, clamped, then low-pass filtered -- see
-        // smoothedDeltaSeconds_. Sampled before the tick so a slow tick
-        // shows up in the NEXT step's delta, exactly as the reference's
-        // performance.now() sample at the top of its interval does.
-        double raw = lastTickWallMillis_ > 0
-                         ? (tickNow - lastTickWallMillis_) / 1000.0
+        const double worldNow = simulationPacing_.advance(tickNow);
+        double raw = lastTickWorldMillis_ > 0
+                         ? (worldNow - lastTickWorldMillis_) / 1000.0
                          : net::kTickSeconds;
-        lastTickWallMillis_ = tickNow;
+        lastTickWorldMillis_ = worldNow;
         if (raw > kMaxDeltaSeconds) raw = kMaxDeltaSeconds;
-        smoothedDeltaSeconds_ += (raw - smoothedDeltaSeconds_) * kDeltaSmoothing;
+        if (simulationPacing_.ticksPerSecond() < net::kTicksPerSecond) {
+            smoothedDeltaSeconds_ = net::kTickSeconds;
+        } else {
+            smoothedDeltaSeconds_ += (raw - smoothedDeltaSeconds_) * kDeltaSmoothing;
+        }
 
-        // The REAL clock, not the scheduled slot. Every absolute deadline
-        // in the world -- poison, slows, reloads, hit cooldowns, despawn --
-        // is compared against this, so handing over a nominal time that
-        // lags wall clock makes all of them fire late and then jump.
         const double tickStarted = monotonicMillis();
-        tick(tickNow);
+        tick(tickNow, worldNow);
         const double tookMillis = monotonicMillis() - tickStarted;
         debugTickAccumMillis_ += tookMillis;
         if (tookMillis > debugTickMaxMillis_) debugTickMaxMillis_ = tookMillis;
@@ -1189,16 +1190,25 @@ bool GameServer::step() {
             slowTickLine_ = describeTickPhases(tookMillis);
         }
 
-        nextTickMillis_ += net::kTickMillis;
+        const int previousRate = simulationPacing_.ticksPerSecond();
+        const bool paceEnabled = config_.loadShedding && config_.adaptivePacing;
+        simulationPacing_.observe(tickNow, tookMillis, paceEnabled, paceEnabled && playerCount() > 0);
+        const int rate = simulationPacing_.ticksPerSecond();
+        if (rate != previousRate) {
+            std::printf("[tick] slow protection %d -> %d TPS, last work %.1f ms\n", previousRate, rate, tookMillis);
+            nextTickMillis_ = tickNow;
+        }
+        nextTickMillis_ += simulationPacing_.intervalMillis();
         // A timer never queues up the fires it missed: a tick that overran
         // simply makes the next one land immediately, it does not run twice
         // to catch up. Replaying would advance the fixed-step mob half once
         // per replay while the dt-scaled half, which has just had its delta
         // reset to almost nothing, stood still.
-        if (nextTickMillis_ < monotonicMillis()) nextTickMillis_ = monotonicMillis();
+        const double earliest = monotonicMillis() + (rate < net::kTicksPerSecond ? 4.0 : 0.0);
+        if (nextTickMillis_ < earliest) nextTickMillis_ = earliest;
 
         recordTickCadence(tickNow, tickLagMillis, tookMillis);
-        if (tickNow >= nextDebugStatsMillis_) {
+        if (tickNow >= nextDebugStatsMillis_ || rate != previousRate) {
             broadcastDebugStats();
             nextDebugStatsMillis_ = tickNow + 1000.0;
             if (!slowTickLine_.empty()) {
@@ -1243,6 +1253,7 @@ void GameServer::serviceNetwork(int timeoutMillis) {
 
 void GameServer::serviceArrivals() {
     if (!running_.load()) return;
+    wallClockMillis_ = monotonicMillis();
     serviceNetwork(0);
     listener_.flush();
 }
@@ -1281,7 +1292,7 @@ void GameServer::recordTickCadence(double nowMillis, double lagMillis, double wo
     if (players > 0 || tickCadenceOverBudget_ > 0) {
         std::printf("[tick] cadence %.2f/%d TPS over %.1f s, players=%zu, over budget=%u/%u, "
                     "max work=%.1f ms, max start lag=%.1f ms\n",
-                    tickCadenceSamples_ * 1000.0 / elapsedMillis, net::kTicksPerSecond,
+                    tickCadenceSamples_ * 1000.0 / elapsedMillis, simulationPacing_.ticksPerSecond(),
                     elapsedMillis / 1000.0, players, tickCadenceOverBudget_, tickCadenceSamples_,
                     tickCadenceMaxWorkMillis_, tickCadenceMaxLagMillis_);
         std::printf("[tick] load players=%zu, sessions=%zu, entities=%zu, mobs=%zu, pets=%zu, "
@@ -1327,8 +1338,13 @@ std::string GameServer::describeTickPhases(double tookMillis) const {
 }
 
 void GameServer::tick(double nowMillis) {
+    tick(nowMillis, nowMillis);
+}
+
+void GameServer::tick(double wallMillis, double nowMillis) {
     if (persistenceFrozen_) return;
     ++tick_;
+    wallClockMillis_ = wallMillis;
     clockMillis_ = nowMillis;
     tickPhaseCount_ = 0;
     if (!bossClocksRestored_) restoreBossClocks(nowMillis);
@@ -1338,21 +1354,22 @@ void GameServer::tick(double nowMillis) {
     // First, so a session whose socket is gone is not counted as a player,
     // simulated or saved by anything below. Above the idle gate because such a
     // session is exactly what keeps a server from ever going idle.
-    if (nowMillis >= nextSocketAuditMillis_) {
-        nextSocketAuditMillis_ = nowMillis + 1000.0;
+    if (wallMillis >= nextSocketAuditMillis_) {
+        nextSocketAuditMillis_ = wallMillis + 1000.0;
         reapSessionsWithoutSockets();
     }
 
-    for (auto& entry : sessions_) refillAllowances(entry.second, nowMillis);
+    for (auto& entry : sessions_) refillAllowances(entry.second, wallMillis);
     // At most one credited second per account and server second; idle input heartbeats do not count.
-    if(tick_%net::kTicksPerSecond==0) {
+    if (wallMillis >= nextCouncilSampleMillis_) {
+        nextCouncilSampleMillis_ = wallMillis + 1000.0;
         std::unordered_map<std::string,bool> credited;
         for(auto& entry:sessions_) {
             auto& s=entry.second;
-            const double elapsed=s.councilSampleAt>0?std::min(1.0,std::max(0.0,(nowMillis-s.councilSampleAt)/1000)):0;
-            s.councilSampleAt=nowMillis;
+            const double elapsed=s.councilSampleAt>0?std::min(1.0,std::max(0.0,(wallMillis-s.councilSampleAt)/1000)):0;
+            s.councilSampleAt=wallMillis;
             const auto* a=database_.findUserById(s.userId);
-            if(!s.playing()||s.councilActiveUntil<nowMillis||!a||a->guest||a->admin||credited[s.userId]) continue;
+            if(!s.playing()||s.councilActiveUntil<wallMillis||!a||a->guest||a->admin||credited[s.userId]) continue;
             credited[s.userId]=true;
             // This counter belongs to the exclusively leased account. The old
             // global table is a read-only historical baseline: a shard's stale
@@ -1367,7 +1384,7 @@ void GameServer::tick(double nowMillis) {
     // disconnects. The ranking table is rebuilt beside it because a member's
     // BODY changes on every death: cached against the roster it would go stale
     // without the roster ever moving.
-    squads_.expire(static_cast<std::int64_t>(nowMillis));
+    squads_.expire(static_cast<std::int64_t>(wallMillis));
     rebuildSquadIndex();
 
     // Above the idle gate on purpose: a server with nobody left on it is
@@ -1375,15 +1392,15 @@ void GameServer::tick(double nowMillis) {
     // install that finished while the last player left still has a restart to
     // schedule.
     serviceAutoUpdate();
-    serviceScheduledRestart(nowMillis);
+    serviceScheduledRestart(wallMillis);
     // Above the idle gate too: a member logging out of the title screen
     // changes every guildmate's roster whether or not anybody is playing.
-    serviceGuildPresence(nowMillis);
+    serviceGuildPresence(wallMillis);
     // Public online list under the minimap (same session walk as the admin
     // crown Players tab; fingerprint skips unchanged payloads).
-    serviceOnlineRoster(nowMillis);
+    serviceOnlineRoster(wallMillis);
     sendDueOnlineRosters();
-    serviceTimedHammers(nowMillis);
+    serviceTimedHammers(wallMillis);
     // One-shot requests are staged only by the server operator in the verified
     // stopped database. No client packet or chosen player name can enqueue one.
     // The maintenance marker keeps the transaction behind successful cutover.
@@ -1440,8 +1457,8 @@ void GameServer::tick(double nowMillis) {
     // Housekeeping, ABOVE the idle gate: an account registered by somebody
     // sitting on the title screen is dirty in memory and would otherwise wait
     // for the next player to actually join before it reached the disk.
-    if (nowMillis >= nextPersistMillis_) {
-        nextPersistMillis_ = nowMillis + kPersistIntervalMillis * (config_.loadShedding ? 2.0 : 1.0);
+    if (wallMillis >= nextPersistMillis_) {
+        nextPersistMillis_ = wallMillis + kPersistIntervalMillis * (config_.loadShedding ? 2.0 : 1.0);
         captureLiveProgress();
         database_.pruneExpiredSessions();
         saveDatabase(true);
@@ -1506,15 +1523,15 @@ void GameServer::tick(double nowMillis) {
     // delta pass is the largest thing in the tick that nothing simulated
     // depends on. Nothing about WHAT happens changes -- one-shot events are
     // queued for the frame either way -- only how often it is described.
-    if (nowMillis >= nextSnapshotMillis_) {
+    if (wallMillis >= nextSnapshotMillis_) {
         // Stepped from the deadline, not from now, so the send rate does not
         // slew with tick jitter; resynced when it falls a whole interval behind
         // rather than firing a burst of catch-up frames.
         nextSnapshotMillis_ += net::kSnapshotMillis;
-        if (nextSnapshotMillis_ < nowMillis) nextSnapshotMillis_ = nowMillis + net::kSnapshotMillis;
+        if (nextSnapshotMillis_ < wallMillis) nextSnapshotMillis_ = wallMillis + net::kSnapshotMillis;
         sendDueProfiles();
         markTickPhase("profiles");
-        replicate(nowMillis);
+        replicate(nowMillis, wallMillis);
         markTickPhase("replicate");
         // One-shot events ride inside the snapshot here, where the reference
         // has its own per-tick outbox, so they are BANKED across the ticks that
@@ -1567,9 +1584,11 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // playerModifiers system sits in Phase.Input, ahead of playerMovement).
     // Folded only inside the petal phase below, a speed or size petal would not
     // reach movement until the tick after it was equipped.
-    petals_->foldModifiers(world_, content());
+    petals_->foldModifiers(world_, content(), nowMillis);
 
-    movement_->runPlayerPhase(world_, *terrain_, nowMillis, dt);
+    const double controlSeconds = simulationPacing_.ticksPerSecond() < net::kTicksPerSecond
+                                      ? simulationPacing_.intervalMillis() / 1000.0 : 0.0;
+    movement_->runPlayerPhase(world_, *terrain_, nowMillis, dt, controlSeconds);
     markTickPhase("players");
     petals_->run(world_, content(), nowMillis, dt, commands_, terrain_.get(), &events_);
     markTickPhase("petals");
@@ -1842,6 +1861,14 @@ void GameServer::reapDead() {
         if (isPlayer) {
             if (session != nullptr) {
                 session->deathReported = true;
+                const Entity killer = CombatSystem::creditedPlayer(world_, world_.get<Dead>(e).killer);
+                const auto fromHyperCorruption = [&](Entity player) {
+                    const auto* visuals = world_.tryGet<PlayerVisuals>(player);
+                    return visuals && (visuals->hyperCorruption || visuals->nearbyCorruption ||
+                                       visuals->hyperCorruptionExposed);
+                };
+                session->respawnAtDoor = killer != NULL_ENTITY && killer != e &&
+                    (fromHyperCorruption(killer) || fromHyperCorruption(e));
                 if (const auto* at = world_.tryGet<Transform>(e)) {
                     session->hasDeathSite = true;
                     session->deathRealm = at->realm;
@@ -1882,11 +1909,12 @@ void GameServer::reapDead() {
     }
 }
 
-void GameServer::replicate(double nowMillis) {
+void GameServer::replicate(double nowMillis, double wallMillis) {
     Replicator::Frame frame;
     frame.tick = tick_;
     frame.snapshotIndex = ++snapshotIndex_;
     frame.nowMillis = nowMillis;
+    frame.wallMillis = wallMillis;
     frame.events = &events_;
     frame.loadShedding = config_.loadShedding;
 
@@ -2747,6 +2775,9 @@ void GameServer::handleSetUsername(Session& session, net::Connection& connection
         if (lowerCase(guild["leaderUsername"].asString()) == oldKey) {
             guild["leaderUsername"] = newName;
         }
+        if (lowerCase(guild["deputyUsername"].asString()) == oldKey) {
+            guild["deputyUsername"] = newName;
+        }
         Json members = guild["memberUsernames"];
         Json renamed = Json::array();
         for (const Json& member : members.items()) {
@@ -3034,29 +3065,48 @@ void GameServer::sendProfileDelta(Session& session, net::Connection& connection)
     w.u32(onMazeTrack ? 0 : static_cast<std::uint32_t>(record.talentPointBonus));
 
     w.u16(static_cast<std::uint16_t>(session.stacksDue.size()));
-    std::vector<std::uint32_t> counts;
-    for (const Session::ProfileCell& group : session.stacksDue) {
-        counts.clear();
+    const auto stackKey = [](std::uint16_t index, Rarity rarity) {
+        return (static_cast<std::uint32_t>(index) << 8) | static_cast<std::uint32_t>(rarity);
+    };
+    std::array<bool, kRarityCount> tiers{};
+    std::unordered_map<std::uint32_t, std::size_t> stackGroups;
+    stackGroups.reserve(session.stacksDue.size());
+    std::vector<std::vector<std::uint32_t>> counts(session.stacksDue.size());
+    for (std::size_t i = 0; i < session.stacksDue.size(); ++i) {
+        const auto& group = session.stacksDue[i];
+        stackGroups.emplace(stackKey(group.index, group.rarity), i);
+        tiers[rarityIndex(group.rarity)] = true;
+    }
+    for (std::size_t tier = 0; tier < tiers.size(); ++tier) {
+        if (!tiers[tier]) continue;
         forEachProfileStack(record, [&](std::uint16_t index, Rarity, std::uint32_t count) {
-            if (index == group.index) counts.push_back(count);
-        }, group.rarity);
+            const auto found = stackGroups.find(stackKey(index, static_cast<Rarity>(tier)));
+            if (found != stackGroups.end() && counts[found->second].size() < 0xFF) {
+                counts[found->second].push_back(count);
+            }
+        }, static_cast<Rarity>(tier));
+    }
+    for (std::size_t i = 0; i < session.stacksDue.size(); ++i) {
+        const auto& group = session.stacksDue[i];
         w.u16(group.index);
         w.u8(static_cast<std::uint8_t>(group.rarity));
-        // Two names for one petal in one tier is a legacy record's oddity,
-        // and 255 of them is not a record at all.
-        const std::size_t n = std::min<std::size_t>(counts.size(), 0xFF);
-        w.u8(static_cast<std::uint8_t>(n));
-        for (std::size_t i = 0; i < n; ++i) w.u32(counts[i]);
+        // Retain the full Profile's order when both legacy names map here.
+        w.u8(static_cast<std::uint8_t>(counts[i].size()));
+        for (const auto count : counts[i]) w.u32(count);
     }
 
     w.u16(static_cast<std::uint16_t>(session.killsDue.size()));
     for (const Session::ProfileCell& cell : session.killsDue) {
-        // The last entry on the cell, as the client keeps it from a Profile;
-        // none at all is a cell the Profile leaves at zero.
+        // Mob IDs have one registry index each. Tier aliases can still map to
+        // the same cell, so keep the last nonzero value in saved order.
         std::uint32_t last = 0;
-        forEachProfileKill(record, [&](std::uint16_t index, Rarity rarity, std::uint32_t count) {
-            if (index == cell.index && rarity == cell.rarity) last = count;
-        });
+        if (cell.index < content().mobCount()) {
+            const Json& byTier = record.mobKills[content().mob(cell.index).id];
+            for (const auto& name : byTier.keys()) {
+                const int count = byTier[name].asInt();
+                if (count > 0 && parseRarity(name) == cell.rarity) last = static_cast<std::uint32_t>(count);
+            }
+        }
         w.u16(cell.index);
         w.u8(static_cast<std::uint8_t>(cell.rarity));
         w.u32(last);
@@ -3354,7 +3404,7 @@ void GameServer::handleInput(Session& session, ByteReader& reader) {
            (std::abs(input.moveAngle-state->current.moveAngle)>.1 ||
             std::abs(input.moveStrength-state->current.moveStrength)>.1 ||
             std::abs(input.aimAngle-state->current.aimAngle)>.1 || input.flags!=state->current.flags))
-            session.councilActiveUntil=clockMillis_+30000;
+            session.councilActiveUntil=wallClockMillis_+30000;
         state->current = input;
     }
 
@@ -3536,7 +3586,7 @@ bool GameServer::screenChatLine(Session& session, net::Connection& speaker,
     // The same line to the same place again within the window. Where it went
     // is part of it: whispering "hi" to two players is not saying it twice.
     std::deque<Session::SaidLine>& recent = session.recentLines;
-    while (!recent.empty() && clockMillis_ - recent.front().atMillis > kChatRepeatWindowMillis) {
+    while (!recent.empty() && wallClockMillis_ - recent.front().atMillis > kChatRepeatWindowMillis) {
         recent.pop_front();
     }
     const std::string key = std::to_string(static_cast<int>(channel)) + ' ' + lowerCase(to) +
@@ -3547,7 +3597,7 @@ bool GameServer::screenChatLine(Session& session, net::Connection& speaker,
                             "said that a moment ago.</span>");
         return false;
     }
-    recent.push_back({key, clockMillis_});
+    recent.push_back({key, wallClockMillis_});
     return true;
 }
 
@@ -3667,21 +3717,21 @@ void GameServer::handleProfileCheck(Session& session, net::Connection& connectio
     const std::uint32_t revision = reader.u32();
     const std::uint32_t claimed = reader.u32();
     if (!reader.ok() || !session.authenticated()) return;
-    if (clockMillis_ < session.nextProfileCheckMillis) return;
-    session.nextProfileCheckMillis = clockMillis_ + kProfileCheckFloorMillis;
+    if (wallClockMillis_ < session.nextProfileCheckMillis) return;
+    session.nextProfileCheckMillis = wallClockMillis_ + kProfileCheckFloorMillis;
 
     if (session.profileDue || connection.snapshotBacklog() >= kSnapshotBacklogLimit) return;
     if (revision == session.profileRevision) {
         session.nextStaleProfileRepairMillis = 0;
         if (claimed == profileDigest(session)) return;
-    } else if (clockMillis_ < session.nextStaleProfileRepairMillis) {
+    } else if (wallClockMillis_ < session.nextStaleProfileRepairMillis) {
         // Checks already in flight may all predate the same repair. Another
         // full bag would push that repair further back and make each check
         // stale again. Retry later if the client really did miss it.
         return;
     }
     sendProfile(session, connection);
-    session.nextStaleProfileRepairMillis = clockMillis_ + kStaleProfileRepairMillis;
+    session.nextStaleProfileRepairMillis = wallClockMillis_ + kStaleProfileRepairMillis;
 }
 
 void GameServer::handleSwapLoadout(Session& session, ByteReader& reader) {
@@ -3929,8 +3979,8 @@ void GameServer::handleBulkCraft(Session& session, net::Connection& connection, 
         excluded[id] = true;
     }
     if(!reader.ok() || !session.authenticated() || target<1 || target>static_cast<unsigned>(rarityIndex(Rarity::Super)))return;
-    if(clockMillis_<session.nextBulkCraftMillis)return;
-    session.nextBulkCraftMillis=clockMillis_+1500;
+    if(wallClockMillis_<session.nextBulkCraftMillis)return;
+    session.nextBulkCraftMillis=wallClockMillis_+1500;
     auto& record=liveRecord(session);int groups=0;
     for(unsigned tier=0;tier<target;++tier) {
         const auto rarity=static_cast<Rarity>(tier);if(!craftsOutOf(rarity))break;
@@ -4086,7 +4136,7 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
         return;
     }
     giveToInventory(record, coin, rarity, 1);
-    traderReadyAt_[session.userId] = clockMillis_ + kTraderCooldownMillis;
+    traderReadyAt_[session.userId] = wallClockMillis_ + kTraderCooldownMillis;
     database_.markDirty();
 
     ByteWriter w;
@@ -4105,7 +4155,7 @@ void GameServer::handleTrade(Session& session, net::Connection& connection, Byte
 double GameServer::traderWaitMillis(const std::string& userId) {
     const auto found = traderReadyAt_.find(userId);
     if (found == traderReadyAt_.end()) return 0.0;
-    const double wait = found->second - clockMillis_;
+    const double wait = found->second - wallClockMillis_;
     if (wait > 0.0) return wait;
     traderReadyAt_.erase(found);
     return 0.0;
@@ -4492,7 +4542,7 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
     if (petalIndex >= content().petalCount()) return;
     // Each answer can be a sweep of every account, so one session gets one
     // every kTitanHolderQueryMillis; the client asks again for one dropped.
-    if (clockMillis_ < session.nextTitanQueryMillis) return;
+    if (wallClockMillis_ < session.nextTitanQueryMillis) return;
     // Asked of the titan, so only where it can be asked: standing at it.
     const bool standing = session.playing() && world_.isAlive(session.entity) &&
                           !world_.has<Dead>(session.entity);
@@ -4502,7 +4552,7 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
                            kNpcServiceReach + kNpcServiceSlack) == NULL_ENTITY) {
         return;
     }
-    session.nextTitanQueryMillis = clockMillis_ + kTitanHolderQueryMillis;
+    session.nextTitanQueryMillis = wallClockMillis_ + kTitanHolderQueryMillis;
     if(config_.authorityHyper) {
         Json query=Json::object();query["kind"]="titan";query["petal"]=petalIndex;
         query["input"]=content().petal(petalIndex).id;query["titan"]=titanForgeScope(worldMaps_,body->realm);query["account"]=session.userId;
@@ -4533,7 +4583,7 @@ bool GameServer::tracksUniversals(const std::string& userId) const {
 std::string GameServer::universalHolderName(std::uint16_t petalIndex) {
     const auto memo = universalHolders_.find(petalIndex);
     if (memo != universalHolders_.end() &&
-        clockMillis_ - memo->second.atMillis < kTitanHolderMemoMillis) {
+        wallClockMillis_ - memo->second.atMillis < kTitanHolderMemoMillis) {
         return memo->second.username;
     }
     // A forge leaves one holder; an operator's `give` can leave more, and then
@@ -4547,7 +4597,7 @@ std::string GameServer::universalHolderName(std::uint16_t petalIndex) {
         holder = account->username;
         break;
     }
-    universalHolders_[petalIndex] = HolderMemo{holder, clockMillis_};
+    universalHolders_[petalIndex] = HolderMemo{holder, wallClockMillis_};
     return holder;
 }
 
@@ -5290,6 +5340,7 @@ void GameServer::broadcastDebugStats() {
     w.f64(static_cast<double>(heapBytes()));
     w.f32(static_cast<float>(avgMillis));
     w.f32(static_cast<float>(maxMillis));
+    w.u8(static_cast<std::uint8_t>(simulationPacing_.ticksPerSecond()));
     broadcastToAuthenticated(w);
 }
 
@@ -5920,6 +5971,7 @@ ByteWriter GameServer::guildRosterMessage(const Json& guild) {
     w.str(guildDisplayName(guild));
     w.str(guild["description"].asString());
     w.str(guild["leaderUsername"].asString());
+    w.str(guild["deputyUsername"].asString());
     w.u16(static_cast<std::uint16_t>(members.size()));
     for (std::size_t i = 0; i < members.size(); ++i) {
         const std::string member = members[i].asString();
@@ -6308,9 +6360,11 @@ void GameServer::guildInvite(Session& session, net::Connection& connection,
         return;
     }
     const Json& guild = database_.storedTable("guilds")[guildName];
-    if (lowerCase(guild["leaderUsername"].asString()) != lowerCase(session.username)) {
+    const std::string inviter = lowerCase(session.username);
+    if (lowerCase(guild["leaderUsername"].asString()) != inviter &&
+        lowerCase(guild["deputyUsername"].asString()) != inviter) {
         sendNotice(connection, net::NoticeSeverity::Warning,
-                   "Only the guild leader can invite players.");
+                   "Only the guild leader or deputy can invite players.");
         return;
     }
     if (guild["memberUsernames"].size() >= kMaxGuildSize) {
@@ -6449,6 +6503,9 @@ void GameServer::handleGuildLeave(Session& session, net::Connection& connection)
         promoted = guild["memberUsernames"][std::size_t{0}].asString();
         guild["leaderUsername"] = promoted;
     }
+    const std::string deputy = lowerCase(guild["deputyUsername"].asString());
+    if (!deputy.empty() && (deputy == lowerCase(session.username) || deputy == lowerCase(promoted)))
+        guild.erase("deputyUsername");
     database_.markDirty();
 
     sendGuildSystem(guild, session.username + " has left the guild.");
@@ -6480,8 +6537,39 @@ void GameServer::guildTransfer(Session& session, net::Connection& connection,
     }
     const auto member = guild["memberUsernames"][static_cast<std::size_t>(at)].asString();
     guild["leaderUsername"] = member;
+    if (lowerCase(guild["deputyUsername"].asString()) == lowerCase(member)) guild.erase("deputyUsername");
     database_.markDirty();
     sendGuildSystem(guild, session.username + " 已将会长转让给 " + member + "。");
+    broadcastGuildRoster(guild);
+}
+
+void GameServer::guildDeputy(Session& session, net::Connection& connection,
+                             const std::string& raw) {
+    if (!session.authenticated()) return;
+    const auto guildName = guildNameForUser(session.username);
+    if (guildName.empty()) return;
+    Json& guild = database_.rawTable("guilds")[guildName];
+    if (lowerCase(guild["leaderUsername"].asString()) != lowerCase(session.username)) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "只有现任会长可以设置副会长。");
+        return;
+    }
+    const std::string target = trimmed(raw);
+    if (target.empty()) {
+        if (guild["deputyUsername"].asString().empty()) return;
+        guild.erase("deputyUsername");
+        sendGuildSystem(guild, "已撤销副会长职位。");
+    } else {
+        const int index = guildMemberIndex(guild, target);
+        if (index < 0 || lowerCase(target) == lowerCase(session.username)) {
+            sendNotice(connection, net::NoticeSeverity::Warning, "请选择本公会的其他成员。");
+            return;
+        }
+        const auto member = guild["memberUsernames"][static_cast<std::size_t>(index)].asString();
+        if (guild["deputyUsername"].asString() == member) return;
+        guild["deputyUsername"] = member;
+        sendGuildSystem(guild, member + " 已成为副会长，可以邀请新成员。");
+    }
+    database_.markDirty();
     broadcastGuildRoster(guild);
 }
 
@@ -6517,6 +6605,7 @@ void GameServer::guildKick(Session& session, net::Connection& connection,
     const std::string member = guild["memberUsernames"][static_cast<std::size_t>(at)].asString();
     Json& members = guild["memberUsernames"];
     members.items().erase(members.items().begin() + at);
+    if (lowerCase(guild["deputyUsername"].asString()) == lowerCase(member)) guild.erase("deputyUsername");
     database_.markDirty();
 
     sendGuildSystem(guild, member + " was kicked from the guild by " + session.username + ".");
@@ -6568,7 +6657,7 @@ bool GameServer::scheduleRestart(double delayMillis, const std::string& reason) 
     if (delayMillis < 0) delayMillis = 0;
 
     restart_.pending = true;
-    restart_.atMillis = clockMillis_ + delayMillis;
+    restart_.atMillis = wallClockMillis_ + delayMillis;
     restart_.reason = reason;
     // Warnings longer than the delay itself are skipped outright rather than
     // fired late: "restarting in 10 minutes" said one second before the exit
@@ -6589,7 +6678,7 @@ bool GameServer::cancelScheduledRestart() {
 
 bool GameServer::scheduledRestartInfo(double& remainingMillis, std::string& reason) const {
     if (!restart_.pending && !restart_.firing) return false;
-    remainingMillis = std::max(0.0, restart_.atMillis - clockMillis_);
+    remainingMillis = std::max(0.0, restart_.atMillis - wallClockMillis_);
     reason = restart_.reason;
     return true;
 }
@@ -7127,7 +7216,7 @@ void GameServer::handleGuildSquadAll(Session& session, net::Connection& connecti
     }
 
     const Json& members = database_.storedTable("guilds")[guildName]["memberUsernames"];
-    const auto now = static_cast<std::int64_t>(clockMillis_);
+    const auto now = static_cast<std::int64_t>(wallClockMillis_);
     int invited = 0;
     for (std::size_t i = 0; i < members.size(); ++i) {
         const std::string member = members[i].asString();
@@ -7201,7 +7290,7 @@ void GameServer::guildInviteToSquad(Session& session, net::Connection& connectio
     }
     const std::string error =
         squads_.invite(squadIdOf(session), squadIdOf(*peerSession),
-                       static_cast<std::int64_t>(clockMillis_));
+                       static_cast<std::int64_t>(wallClockMillis_));
     if (!error.empty()) {
         sendNotice(connection, net::NoticeSeverity::Warning, error);
         return;
@@ -7278,6 +7367,7 @@ void GameServer::handleRespawn(Session& session) {
     // Continue stands near the corpse (ashflor-style in-place respawn), not
     // back at the title-screen door. Capture the death site before the body
     // is removed.
+    const bool respawnAtDoor = session.respawnAtDoor;
     bool corpseKnown = session.hasDeathSite;
     Realm corpseRealm = session.deathRealm;
     Vec2 corpsePos = session.deathPosition;
@@ -7296,7 +7386,7 @@ void GameServer::handleRespawn(Session& session) {
         }
         despawnPlayer(session, false);
     }
-    if (corpseRealm == Realm::Arena) corpseKnown = false;
+    if (corpseRealm == Realm::Arena || respawnAtDoor) corpseKnown = false;
     const Entity reborn = corpseKnown ? spawnPlayerNear(session, corpseRealm, corpsePos)
                                       : spawnPlayer(session);
     // The snapshot stream restates the body but never the realm. If somehow
@@ -7434,6 +7524,7 @@ void GameServer::onPlayerRevived(Entity revived, Entity reviver) {
     // time: without it the next death is silent and the player is left standing
     // as a corpse nobody told them about.
     session->deathReported = false;
+    session->respawnAtDoor = false;
     session->rescueHelper = NULL_ENTITY;
     session->rescueStartedMillis = 0;
     net::Connection* connection = listener_.find(session->connection);
@@ -7563,7 +7654,7 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     // it inherits what the flower it was cut from was carrying.
     Health& health = world_.get<Health>(entity);
     health.current = health.max;
-    health.invulnerableUntilMillis = monotonicMillis() + kRespawnInvulnerabilitySeconds * 1000.0;
+    health.invulnerableUntilMillis = clockMillis_ + kRespawnInvulnerabilitySeconds * 1000.0;
 
     // Respawning in the same pyramid continues the current visit.
     if (session.pyramidMapRealm != realm) session.pyramidMapRevealed = false;
@@ -7572,6 +7663,7 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     // A fresh body has a death of its own still to announce.
     session.deathReported = false;
     session.hasDeathSite = false;
+    session.respawnAtDoor = false;
     // And a fresh life owes nothing to the last one's losses: a splitter on
     // the bar cuts this body in two on the next tick.
     session.splitReadyAtMillis = 0;

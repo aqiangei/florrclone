@@ -189,7 +189,8 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
         // Corruption is a FACE, not a skin: the flower that cracked a Flower
         // petal open turns on everyone, and the face is the only warning the
         // players around it get before its ring starts biting them.
-        if (visuals->corrupted || visuals->equippedCorruption || visuals->nearbyCorruption) out.faceFlags |= FaceHasCorruption;
+        if (visuals->corrupted || visuals->equippedCorruption || visuals->nearbyCorruption ||
+            visuals->hyperCorruptionExposed) out.faceFlags |= FaceHasCorruption;
     }
     if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
         if (afflictions->poisoned(nowMillis)) out.faceFlags |= FacePoisoned;
@@ -436,7 +437,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // --- header -----------------------------------------------------------
     out.u8(static_cast<std::uint8_t>(net::ServerMessage::Snapshot));
     out.u32(frame.tick);
-    out.f64(frame.nowMillis);
+    out.f64(frame.wallMillis.value_or(frame.nowMillis));
 
     // The viewer's own position, always: the camera eases toward it every
     // frame, so it never goes through the change-mask path.

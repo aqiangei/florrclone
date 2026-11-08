@@ -348,12 +348,13 @@ void MovementSystem::run(World& world, const Terrain& terrain, double nowMillis,
 }
 
 void MovementSystem::runPlayerPhase(World& world, const Terrain& terrain,
-                                    double nowMillis, double dt) {
+                                    double nowMillis, double dt, double controlSeconds) {
     bind(world);
     // Before the flowers, so the moon a flower walks into is where its own
     // momentum has already carried it this tick.
     coastRingAnchors(world, terrain, dt);
-    movePlayers(world, terrain, nowMillis, dt);
+    const double steeringBoost = std::clamp((controlSeconds - dt) * 5.0, 0.0, 0.25);
+    movePlayers(world, terrain, nowMillis, dt, steeringBoost);
     // The pads act on the position the tick has already settled on, which is
     // what makes the suction able to beat a shove: the reference runs them at
     // the very end of its per-player pipeline, on the coordinates it is about
@@ -403,6 +404,38 @@ void MovementSystem::collectNpcDiscs() {
     queries_->npcBodies.each([&](Entity, NpcTag&, Transform& transform, Body& body) {
         npcDiscs_.push_back({transform.position, body.radius, transform.realm});
     });
+}
+
+void MovementSystem::collectStationaryMobs(World& world) {
+    stationaryMobGrid_.clear();
+    const auto& registry = content();
+    queries_->mobBodies.each([&](Entity e, MobTag&, Transform& at, Body& body, MobType& type) {
+        if (type.configIndex >= registry.mobCount()) return;
+        const auto& config = registry.mob(type.configIndex);
+        if (config.noMobCollision || world.has<Intangible>(e) || world.has<Pet>(e) ||
+            !anchoredAgainstKnockback(world, registry, e)) return;
+        const double half = squareMobHalfExtent(world, e);
+        const double radius = half > 0.0 ? half * 1.4142135623730951 :
+            sanitizeCollisionRadius(body.radius) * mobBodyContactScale(config.id);
+        if (radius > 0.0) stationaryMobGrid_.insert(e, at.realm, at.position, radius);
+    });
+}
+
+void MovementSystem::pushOutOfStationaryMobs(World& world, const Terrain& terrain,
+                                             Transform& transform, double radius) {
+    stationaryMobGrid_.query(transform.realm, transform.position, radius,
+                             stationaryMobCandidates_, stationaryMobScratch_);
+    for (const Entity mob : stationaryMobCandidates_) {
+        const auto& at = world.get<Transform>(mob);
+        const auto& type = world.get<MobType>(mob);
+        const double mobRadius = sanitizeCollisionRadius(world.get<Body>(mob).radius) *
+            mobBodyContactScale(content().mob(type.configIndex).id);
+        const auto contact = shapedBodyContact(transform.position, radius, 0.0, 0.0,
+            at.position, mobRadius, squareMobHalfExtent(world, mob), at.angle, 0.0);
+        if (contact.depth > 0.0)
+            stepCollide(terrain, transform.realm, transform.position, contact.normal * -contact.depth,
+                        radius, 1.0, true, true);
+    }
 }
 
 void MovementSystem::collectLooseDiscs() {
@@ -455,9 +488,10 @@ void MovementSystem::coastRingAnchors(World& world, const Terrain& terrain, doub
 }
 
 void MovementSystem::movePlayers(World& world, const Terrain& terrain,
-                                 double nowMillis, double dt) {
+                                 double nowMillis, double dt, double steeringBoost) {
     collectNpcDiscs();
     collectLooseDiscs();
+    collectStationaryMobs(world);
 
     queries_->players.each([&](Entity e, PlayerTag&, Transform& transform, Motion& motion,
                                Body& body, PlayerInput& input) {
@@ -471,6 +505,7 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
                 if (!wall.unresolved && !terrain.segmentBlocked(transform.position, wall.position, transform.realm)) {
                     transform.position = wall.position;
                     motion.velocity = {};
+                    input.previousWalkIntent = {};
                     if (auto* shove = world.tryGet<Knockback>(e)) shove->impulse = {};
                     return;
                 }
@@ -484,6 +519,7 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
             terrain.resolveWall(transform.position, body.radius, transform.realm).collided) {
             transform.position = playerRespawnPosition(terrain, transform.realm, transform.position, body.radius);
             motion.velocity = {};
+            input.previousWalkIntent = {};
             if (auto* shove = world.tryGet<Knockback>(e)) shove->impulse = {};
         }
         // Facing is the WALK heading, and it is frozen while the flower is
@@ -520,8 +556,16 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         if (terrain.inWater(transform.position, transform.realm)) maxSpeed *= kWaterSpeedScale;
 
         MoveState state{transform.position, motion.velocity};
-        integrateVelocity(state, desiredVelocity(input.current.moveAngle,
-                                                 input.current.moveStrength, maxSpeed), dt);
+        const Vec2 target = desiredVelocity(input.current.moveAngle, input.current.moveStrength, maxSpeed);
+        const Vec2 intent = maxSpeed > 0.0 && std::isfinite(target.x) && std::isfinite(target.y)
+                                ? target / maxSpeed : Vec2{};
+        integrateVelocity(state, target, dt);
+        // In slow protection, give a changed command extra weight on its
+        // first step. Displacement and existing momentum keep the world dt.
+        if (steeringBoost > 0.0) {
+            state.velocity += (intent - input.previousWalkIntent) * (maxSpeed * steeringBoost);
+        }
+        input.previousWalkIntent = intent;
 
         // A pending shove becomes momentum that the same friction spends, so
         // the flower slides the distance out over the next few ticks instead
@@ -550,6 +594,9 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // Loose petals before NPCs: a wax gives way and an NPC does not, so an
         // NPC is the last word on where the flower may stand, as a wall is.
         if (!looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
+        const auto* visuals = world.tryGet<PlayerVisuals>(e);
+        if (!stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter)))
+            pushOutOfStationaryMobs(world, terrain, transform, body.radius);
         if (!npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
         // Discard velocity into a wall while retaining the achieved slide.
         // Otherwise turning away first has to cancel a full inward velocity.

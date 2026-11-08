@@ -3,13 +3,16 @@
 #include "shared/core/world.h"
 
 namespace flix {
+inline double squareMobHalfExtent(const MobType* type, double radius) {
+    if(!type || type->configIndex>=content().mobCount()) return 0;
+    const auto& config=content().mob(type->configIndex);
+    // square's SVG spans 8..92 plus its 3-unit outline in a 100-unit box.
+    return config.id=="square" ? radius*config.visualScale*.90 : 0;
+}
 inline double squareMobHalfExtent(const World& world, Entity entity) {
     const auto* type=world.tryGet<MobType>(entity);
     const auto* body=world.tryGet<Body>(entity);
-    if(!type || !body || type->configIndex>=content().mobCount()) return 0;
-    const auto& config=content().mob(type->configIndex);
-    // square's SVG spans 8..92 plus its 3-unit outline in a 100-unit box.
-    return config.id=="square" ? body->radius*config.visualScale*.90 : 0;
+    return body ? squareMobHalfExtent(type, body->radius) : 0;
 }
 inline Vec2 contactRotate(Vec2 p,double angle) {
     const double c=std::cos(angle),s=std::sin(angle);

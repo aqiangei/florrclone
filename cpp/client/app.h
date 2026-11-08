@@ -392,7 +392,7 @@ private:
     /// Nothing local acts on it: the flower's drawn position is the server's,
     /// eased (see client/interpolation.h). Producing one of these is the only
     /// thing the client does with a movement key.
-    void sendInputFrame(double dt);
+    void sendInputFrame(double dt, bool periodic);
 
     /// Whether a text field is taking this frame's keystrokes -- the chat
     /// line, a login field, or a panel's own search/code box. While one is,
@@ -892,6 +892,8 @@ private:
     /// The pointer's distance that went with it, held by the same rule.
     std::uint16_t lastAimDistance_ = 0;
     std::uint32_t inputSequence_ = 0;
+    net::InputFrame lastSentInput_;
+    double lastInputSentMillis_ = -1000.0;
     /// Accumulates real time so input is produced at the simulation rate rather
     /// than once per rendered frame -- a 144 Hz client must not send (and be
     /// simulated for) six times what a 25 Hz one does.

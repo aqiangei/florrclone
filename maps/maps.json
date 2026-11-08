@@ -120,6 +120,10 @@
     {
       "file": "pyramid_east.tmj",
       "prestige": true
+    },
+    {
+      "file": "jurassic.tmj",
+      "prestige": true
     }
   ]
 }

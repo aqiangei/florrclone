@@ -319,6 +319,7 @@ public:
         bool loadShedding = false;
         /// All current replicated centres, shared read-only by workers.
         const SpatialGrid* entityGrid = nullptr;
+        std::optional<double> wallMillis;
     };
 
     /// Appends a complete Snapshot payload (message id included) to `out`.

@@ -789,6 +789,7 @@ inline constexpr double kSandstormPetReturnSpeedFactor = 1.5;
 /// Extra chase range per rarity tier a summon is spawned at.
 inline constexpr double kPetAggroRangePerRarity = 200.0;
 inline constexpr double kHyperCorruptionRadius = 600.0;
+inline constexpr double kHyperCorruptionExposureMillis = 8000.0;
 
 /// What a unique pet's size is, as a fraction of its base size on the pet
 /// ladder (kPetSizeScale) -- the endpoint of its mobSizeRamp. A common pet is

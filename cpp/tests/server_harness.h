@@ -776,7 +776,7 @@ struct GameServerPeer {
     }
     static void stageSnapshots(GameServer& server) {
         ++server.tick_;
-        server.replicate(server.clockMillis_);
+        server.replicate(server.clockMillis_, server.wallClockMillis_);
         server.events_.clear();
     }
     static void stageOnlineRoster(GameServer& server, double now) {

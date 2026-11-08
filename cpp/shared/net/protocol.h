@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 107; // Wave result notices.
+inline constexpr std::uint16_t kProtocolVersion = 109; // Simulation pace in DebugStats.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -309,7 +309,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< `more` is set when the page filled the requested
                         ///< limit, which is the TypeScript build's `hasMore`.
     GuildUpdate,        ///< u8 joined, str tag, str displayName, str description,
-                        ///< str leader, u16 memberCount,
+                        ///< str leader, str deputy, u16 memberCount,
                         ///< { str username, u8 online, str location }*.
                         ///< `joined` 0 is the TypeScript build's
                         ///< `guildUpdate null` and carries no rest.
@@ -328,7 +328,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< the world just now, which is every member sitting
                         ///< on the title screen.
     DebugStats,         ///< f64 residentBytes, f64 heapBytes, f32 tickAvgMs,
-                        ///< f32 tickMaxMs -- once a second, and only while
+                        ///< f32 tickMaxMs, u8 simulationTPS -- once a second, and only while
                         ///< somebody is authenticated. The TypeScript server's
                         ///< payload also carried heapTotal; nothing draws it,
                         ///< so it is not on this wire.

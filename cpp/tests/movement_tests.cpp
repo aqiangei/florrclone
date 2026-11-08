@@ -150,6 +150,26 @@ TEST(player_accelerates_to_terminal_velocity_and_coasts_to_rest) {
     CHECK(fx.positionOf(player).x > released.x);
 }
 
+TEST(slow_protection_turns_sooner_without_speeding_up_knockback) {
+    const auto turn = [](double controlSeconds, bool shove) {
+        Fixture fx;
+        const Entity player = fx.spawnPlayer({4000, 4000});
+        fx.drive(player, 0.0, 1.0);
+        fx.step(20);
+        fx.drive(player, kPi, 1.0);
+        if (shove) fx.world.get<Knockback>(player).impulse = {0, 35};
+        const Vec2 before = fx.positionOf(player);
+        fx.movement.runPlayerPhase(fx.world, fx.terrain, fx.nowMillis, net::kTickSeconds,
+                                   controlSeconds);
+        return fx.positionOf(player) - before;
+    };
+    const Vec2 normal = turn(0.0, false);
+    const Vec2 protectedTurn = turn(1.0 / 11.0, false);
+    CHECK(normal.x > 0.0);
+    CHECK(protectedTurn.x < 0.0);
+    CHECK_NEAR(turn(1.0 / 11.0, true).y - protectedTurn.y, turn(0.0, true).y - normal.y, 1e-8);
+}
+
 TEST(partial_move_strength_walks_instead_of_sprinting) {
     Fixture fx;
     const Entity player = fx.spawnPlayer({3000, 3000});
@@ -345,6 +365,30 @@ TEST(a_stationary_mob_is_not_moved_by_knockback) {
     CHECK_NEAR(fx.positionOf(nest).x, 5000.0, 1e-12);
     // Spent all the same, so it cannot land later on a mob that changed.
     CHECK_NEAR(fx.world.get<Knockback>(nest).impulse.x, 0.0, 1e-12);
+}
+
+TEST(a_solid_stationary_mob_blocks_player_movement_but_not_cutter) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    const auto index = content().mobIndex("jurassic_fossil");
+    CHECK(index != kInvalidIndex);
+    const auto stats = content().mobStats(index, Rarity::Common);
+    CHECK(stats.mass >= kAnchoredMassScale);
+    const double contact = stats.radius * mobBodyContactScale("jurassic_fossil") + kPlayerBaseRadius;
+    for (const bool cutter : {false, true}) {
+        Fixture fx;
+        const Vec2 centre{5000.0, 5000.0};
+        const Entity fossil = fx.spawnMob(centre, stats.radius, stats.mass);
+        fx.world.add<MobType>(fossil, MobType{index, Rarity::Common, 1.0});
+        fx.world.add<MobAi>(fossil).kind = AiKind::Stationary;
+        const Entity player = fx.spawnPlayer(centre - Vec2{contact - 10.0, 0.0});
+        if (cutter) fx.world.add<PlayerVisuals>(player).equipFlags = EquipCutter;
+        fx.step(1);
+        const double gap = distance(fx.positionOf(player), centre);
+        if (cutter) CHECK_NEAR(gap, contact - 10.0, 1e-6);
+        else CHECK_NEAR(gap, contact, 1e-6);
+        CHECK_NEAR(distance(fx.positionOf(fossil), centre), 0.0, 1e-9);
+    }
 }
 
 TEST(knockback_cannot_put_a_mob_through_a_wall) {

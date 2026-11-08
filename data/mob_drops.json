@@ -26352,5 +26352,139 @@
       }
     ],
     "highTierPolicy": "restore-super-tail-0.5pct-eternal-1.5pct"
+  },
+  "jurassic_dodo": {
+    "autoEggDrops": false,
+    "drops": [
+      {
+        "type": "petal",
+        "itemType": "leaf",
+        "rarity": "common",
+        "probability": 0.35,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "bone",
+        "rarity": "common",
+        "probability": 0.25,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      }
+    ]
+  },
+  "jurassic_stegosaurus": {
+    "autoEggDrops": false,
+    "drops": [
+      {
+        "type": "petal",
+        "itemType": "bone",
+        "rarity": "common",
+        "probability": 0.55,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "leaf",
+        "rarity": "common",
+        "probability": 0.22,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      }
+    ]
+  },
+  "jurassic_raptor": {
+    "autoEggDrops": false,
+    "drops": [
+      {
+        "type": "petal",
+        "itemType": "claw",
+        "rarity": "common",
+        "probability": 0.3,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "bone",
+        "rarity": "common",
+        "probability": 0.42,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      }
+    ]
+  },
+  "jurassic_pteranodon": {
+    "autoEggDrops": false,
+    "drops": [
+      {
+        "type": "petal",
+        "itemType": "wing",
+        "rarity": "common",
+        "probability": 0.35,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "leaf",
+        "rarity": "common",
+        "probability": 0.23,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      }
+    ]
+  },
+  "jurassic_tyrannosaurus": {
+    "autoEggDrops": false,
+    "drops": [
+      {
+        "type": "petal",
+        "itemType": "fang",
+        "rarity": "common",
+        "probability": 0.22,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "bone",
+        "rarity": "common",
+        "probability": 0.56,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "meteor",
+        "rarity": "common",
+        "probability": 0.025,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      }
+    ]
+  },
+  "jurassic_fossil": {
+    "autoEggDrops": false,
+    "drops": [
+      {
+        "type": "petal",
+        "itemType": "bone",
+        "rarity": "common",
+        "probability": 0.48,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      },
+      {
+        "type": "petal",
+        "itemType": "rock",
+        "rarity": "common",
+        "probability": 0.28,
+        "minQuantity": 1,
+        "maxQuantity": 1
+      }
+    ]
   }
 }

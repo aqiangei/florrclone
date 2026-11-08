@@ -1,11 +1,9 @@
 // A live game, minus its overlays: what this client sends, and what it does
 // when the body it was sending for dies.
 //
-// The input frame is the only thing a movement key produces -- nothing local
-// acts on it, because the drawn flower is the server's position eased (see
-// client/interpolation.h) -- and it is produced at the simulation rate rather
-// than once per rendered frame, so a 144Hz client is not simulated for six
-// times what a 25Hz one is.
+// Controls are sampled each rendered frame. The server sees a fixed heartbeat
+// and early input changes, while slow protection gives the local flower a
+// bounded visual lead until authoritative snapshots arrive.
 //
 // Death is the other half. The card is a screen of its own (Screen::Dead)
 // rather than a dialog, because everything under it keeps running: the world
@@ -167,9 +165,8 @@ void drawDeathFlower(Canvas& canvas, const WorldRenderer& renderer, const Sprite
 
 } // namespace
 
-void App::sendInputFrame(double dt) {
+void App::sendInputFrame(double dt, bool periodic) {
     net::InputFrame input;
-    input.sequence = ++inputSequence_;
 
     // What the camera actually draws, in world units rather than pixels: the
     // render scales by userZoom, so zooming out shows more world through the
@@ -336,7 +333,17 @@ void App::sendInputFrame(double dt) {
         }
     }
 
+    const double now = renderClockMillis();
+    net_.view().previewLocalControl(input, net_.terrain(), now, dt);
+    const bool moved = (input.moveStrength > 0) != (lastSentInput_.moveStrength > 0);
+    const bool turned = input.moveStrength > 0 &&
+                        std::abs(wrapAngle(input.moveAngle - lastSentInput_.moveAngle)) > kPi * 0.25;
+    const bool action = input.flags != lastSentInput_.flags;
+    if ((!periodic && !(moved || turned || action)) || now - lastInputSentMillis_ < 20.0) return;
+    input.sequence = ++inputSequence_;
     net_.sendInput(input);
+    lastSentInput_ = input;
+    lastInputSentMillis_ = now;
 }
 
 void App::updatePlaying(double dt) {
@@ -367,18 +374,13 @@ void App::updatePlaying(double dt) {
         }
     }
 
-    // Input is produced at the simulation rate rather than per rendered frame:
-    // a 144 Hz client must not get six times the inputs of a 30 Hz one.
+    // Sample controls every rendered frame. Send button and direction changes
+    // promptly, with the normal 20 Hz heartbeat and no catch-up burst.
     inputAccumulator_ += dt;
     const double step = net::kTickSeconds;
-    int produced = 0;
-    while (inputAccumulator_ >= step && produced < 4) {
-        inputAccumulator_ -= step;
-        sendInputFrame(step);
-        ++produced;
-    }
-    // A long stall must not queue a burst of catch-up input.
-    if (inputAccumulator_ > step * 4) inputAccumulator_ = 0;
+    const bool periodic = inputAccumulator_ >= step;
+    if (periodic) inputAccumulator_ = std::fmod(inputAccumulator_, step);
+    sendInputFrame(dt, periodic);
 
     // The wheel zooms the camera unless a panel -- or the tutorial box, which
     // is a DOM element and eats the event before the canvas -- is over it, and

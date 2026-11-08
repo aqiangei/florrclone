@@ -231,6 +231,7 @@ enum class GuildAction : std::uint8_t {
     DeclineInvite,
     Kick,
     Transfer,
+    SetDeputy,
     SquadOne,
 };
 
@@ -379,6 +380,8 @@ bool GuildPanel::render(MenuContext& ctx) {
     Form& f = form();
     const std::string me = ctx.net.profile().username;
     const bool leaderIsMe = guild.joined && sameName(guild.leader, me);
+    const bool canInvite = guild.joined && (leaderIsMe || sameName(guild.deputy, me));
+    const bool zh = language() == Language::Zh;
     const double centreX = panel.x + panel.w * 0.5;
 
     // A mode can outlive what it was about: kicked mid-edit, or the leader
@@ -391,7 +394,9 @@ bool GuildPanel::render(MenuContext& ctx) {
         f.createTag = {};
     }
     if (f.mode == Mode::Edit && !leaderIsMe) f.view();
-    if (f.mode == Mode::Invite && !leaderIsMe) f.view();
+    if (f.mode == Mode::Invite && !canInvite) f.view();
+    if (!leaderIsMe && (f.mode == Mode::MemberActions || f.mode == Mode::ConfirmKick ||
+                        f.mode == Mode::ConfirmTransfer)) f.view();
 
     std::vector<HitRegion> regions;
     std::vector<LiveField> fields;
@@ -607,6 +612,7 @@ bool GuildPanel::render(MenuContext& ctx) {
 
             const bool isSelf = sameName(member.name, me);
             const bool isLeader = sameName(member.name, guild.leader);
+            const bool isDeputy = sameName(member.name, guild.deputy);
             const bool canSquad = !isSelf && member.online;
             const bool canKick = leaderIsMe && !isSelf;
             const bool hovered = pointing && row.contains(mouse) && (canSquad || canKick);
@@ -614,11 +620,10 @@ bool GuildPanel::render(MenuContext& ctx) {
             if (hovered) fillRound(canvas, row, 4.0, kPaper, 0.08);
 
             presenceDot(canvas, panel.x + kDotX, midY, member.online);
-            text(canvas, member.name, panel.x + kNameX, textY, cardText(kNameTextSize));
-            if (!member.location.empty()) {
-                text(canvas, member.location, panel.x + kLocationX, textY,
-                     cardText(kDetailTextSize));
-            }
+            const std::string badge = isDeputy ? (zh ? "（副会长）" : " (Deputy)") : "";
+            const double nameWidth = kLocationX - kNameX - 8.0 - measure(badge, kNameTextSize);
+            text(canvas, ellipsize(member.name, kNameTextSize, nameWidth) + badge,
+                 panel.x + kNameX, textY, cardText(kNameTextSize));
             if (isLeader) {
                 // On the true middle: parentheses reach below the baseline,
                 // so the label already looks centred there and the nudge that
@@ -636,6 +641,13 @@ bool GuildPanel::render(MenuContext& ctx) {
                            kRowButtonTextSize);
                 regions.push_back({kick, GuildAction::ManageMember, member.name});
                 buttonRight = kick.x - 6.0;
+                const char* label = zh ? "转让会长" : "Transfer";
+                const double transferWidth = buttonWidth(label, kRowButtonTextSize, 62.0);
+                const Rect transfer{buttonRight - transferWidth, buttonY, transferWidth, kRowButtonHeight};
+                cardButton(canvas, transfer, label, kGuildThumb, kGuildDeep, transfer.contains(mouse),
+                           kRowButtonTextSize);
+                regions.push_back({transfer, GuildAction::Transfer, member.name});
+                buttonRight = transfer.x - 6.0;
             }
             if (canSquad) {
                 const double w = buttonWidth("Squad", kRowButtonTextSize, 52.0);
@@ -643,6 +655,13 @@ bool GuildPanel::render(MenuContext& ctx) {
                 cardButton(canvas, squad, "Squad", kGuildThumb, kGuildDeep, squad.contains(mouse),
                            kRowButtonTextSize);
                 regions.push_back({squad, GuildAction::SquadOne, member.name});
+                buttonRight = squad.x - 6.0;
+            }
+            if (!member.location.empty()) {
+                const double locationX = panel.x + kLocationX;
+                const double locationRight = isLeader ? panel.x + kLeaderX : buttonRight;
+                text(canvas, ellipsize(member.location, kDetailTextSize, locationRight - locationX - 4.0),
+                     locationX, textY, cardText(kDetailTextSize));
             }
         }
         contentHeight = kRowLead * 2 + static_cast<double>(sorted.size()) * kRowPitch;
@@ -705,10 +724,12 @@ bool GuildPanel::render(MenuContext& ctx) {
                 x = footerButton(x, "Squad up", kGuildFrame, kGuildThumb, GuildAction::SquadAll)
                         .right() +
                     kButtonGap;
-                if (leaderIsMe) {
+                if (canInvite) {
                     x = footerButton(x, "Invite", kGuildFrame, kGuildThumb, GuildAction::Invite)
                             .right() +
                         kButtonGap;
+                }
+                if (leaderIsMe) {
                     footerButton(x, "Edit", kGuildFrame, kGuildThumb, GuildAction::Edit);
                 }
                 break;
@@ -735,7 +756,9 @@ bool GuildPanel::render(MenuContext& ctx) {
                 break;
             case Mode::MemberActions:
                 footerQuestion(f.member);
-                rightButtons({{"转让会长", GuildAction::Transfer}, {"Kick member...", GuildAction::Kick}, {"Cancel", GuildAction::Cancel}},
+                rightButtons({{sameName(f.member, guild.deputy) ? (zh ? "撤销副会长" : "Remove deputy")
+                                                               : (zh ? "设为副会长" : "Make deputy"), GuildAction::SetDeputy},
+                              {"Kick member...", GuildAction::Kick}, {"Cancel", GuildAction::Cancel}},
                              kCloseFace, kCloseRim);
                 break;
             case Mode::ConfirmTransfer:
@@ -896,7 +919,13 @@ bool GuildPanel::render(MenuContext& ctx) {
                 f.mode = Mode::ConfirmKick;
                 break;
             case GuildAction::Transfer:
+                f.view();
+                f.member = region.member;
                 f.mode = Mode::ConfirmTransfer;
+                break;
+            case GuildAction::SetDeputy:
+                ctx.net.sendChat(sameName(f.member, guild.deputy) ? "/guild-deputy" : "/guild-deputy " + f.member);
+                f.view();
                 break;
             case GuildAction::Confirm:
                 confirm();

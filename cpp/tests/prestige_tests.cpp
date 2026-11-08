@@ -8,10 +8,12 @@
 #include "server/systems/spawning.h"
 #include "server/systems/combat.h"
 #include "server/systems/dungeons.h"
+#include "server/systems/loot.h"
 #include "shared/game/prestige.h"
 #include "shared/game/difficulty.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/skills.h"
+#include "shared/game/shop.h"
 #include "shared/game/terrain.h"
 #include "test_data.h"
 
@@ -63,6 +65,234 @@ Realm realmOf(World& world, Entity e) {
 }
 
 } // namespace
+
+TEST(jurassic_links_both_jungles_and_stocks_all_six_species) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    const bool loaded = maps.load(dataDir(), &terrain, error);
+    CHECK(loaded);
+    if (!loaded) return;
+    Rng rng{42};
+    const auto checkPad = [&](const char* from, const char* to, const char* id) {
+        bool found = false;
+        const Realm realm = maps.realmOfId(from, found);
+        CHECK(found);
+        if (!found) return;
+        const Realm expected = maps.realmOfId(to, found);
+        CHECK(found);
+        bool sawPad = false;
+        for (const auto& pad : maps.forRealm(realm)->elements()) {
+            if (pad.padId != id) continue;
+            sawPad = true;
+            CHECK(!terrain.resolveWall(pad.centre(), kPlayerBaseRadius, realm).collided);
+            WorldMaps::Destination dest;
+            CHECK(maps.resolveTeleporter(pad, rng, terrain, dest));
+            CHECK(dest.realm == expected);
+            CHECK(!terrain.resolveWall(dest.position, kPlayerBaseRadius, dest.realm).collided);
+        }
+        CHECK(sawPad);
+    };
+    checkPad("jungle", "jurassic", "to-jurassic");
+    checkPad("jurassic", "jungle", "from-jungle");
+    checkPad("prestige_jungle", "prestige_jurassic", "to-jurassic");
+    checkPad("prestige_jurassic", "prestige_jungle", "from-jungle");
+
+    bool found = false;
+    const Realm realm = maps.realmOfId("jurassic", found);
+    CHECK(found);
+    for (const int row : {9, 20}) {
+        const auto a = Terrain::tileCenter(16, row);
+        const auto b = Terrain::tileCenter(24, row);
+        CHECK(!terrain.segmentBlocked(a, b, realm));
+    }
+    CHECK(terrain.segmentBlocked(Terrain::tileCenter(16, 14), Terrain::tileCenter(24, 14), realm));
+
+    World world;
+    CommandBuffer commands{world};
+    SpawnSystem spawning;
+    spawning.worldMaps = &maps;
+    spawning.mobCap = 0;
+    const auto& content = shippedContent();
+    for (int step = 0; step < 15; ++step) {
+        spawning.run(world, terrain, content, {{Terrain::tileCenter(22, 9), realm}},
+                     rng, 50000.0 + step * kPopulationIntervalMillis, net::kTickSeconds, commands);
+        commands.flush();
+    }
+    std::vector<SpawnSystem::LatentSite> sites;
+    spawning.latentSites(realm, sites);
+    std::set<std::string> species;
+    for (const auto& site : sites) {
+        CHECK(!terrain.blocked(site.position, realm));
+        species.insert(content.mob(site.mobIndex).id);
+    }
+    CHECK_EQ(species.size(), std::size_t(6));
+    CHECK(species.count("jurassic_tyrannosaurus"));
+    std::printf("[jurassic] %zu stocked monsters, %zu species\n", sites.size(), species.size());
+}
+
+TEST(jurassic_feedback_bone_stats_and_moon_rock_price) {
+    const auto& registry = shippedContent();
+    const auto bone = registry.petalIndex("bone");
+    CHECK(bone != kInvalidIndex);
+    const auto common = registry.petalStats(bone, Rarity::Common);
+    CHECK_NEAR(common.health, 12.0, 1e-9);
+    CHECK_NEAR(common.petalArmor, 12.0, 1e-9);
+    CHECK_NEAR(common.damage, 14.0, 1e-9);
+    CHECK_NEAR(common.reloadMillis, 2500.0, 1e-9);
+    const auto super = registry.petalStats(bone, Rarity::Super);
+    CHECK_NEAR(super.health, 26244.0, 1e-9);
+    CHECK_NEAR(super.petalArmor, 26244.0, 1e-9);
+    const auto orb = registry.petalIndex("mana_orb");
+    CHECK(orb != kInvalidIndex);
+    CHECK(!registry.petalStats(orb, Rarity::Common).breakable);
+    CHECK(!registry.petalStats(orb, Rarity::Apex).breakable);
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+    CHECK_NEAR(shopPrice("basic", Rarity::Super), 4188.0, 1e-9);
+    CHECK_NEAR(shopPrice("moon_rock", Rarity::Super), 5690.0, 1e-9);
+}
+
+TEST(guild_deputy_can_invite_but_cannot_manage_or_transfer) {
+    Harness h("guild-deputy", [](const std::string& path) {
+        for (const char* name : {"leader", "deputy", "guest", "outsider"})
+            seedUser(path, name, "password7");
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient boss, deputy, guest, outsider;
+    CHECK(logIn(h, boss, "leader"));
+    CHECK(logIn(h, deputy, "deputy"));
+    CHECK(logIn(h, guest, "guest"));
+    CHECK(logIn(h, outsider, "outsider"));
+    const std::vector<NetClient*> clients{&boss, &deputy, &guest, &outsider};
+    boss.requestGuildCreate("ALPHA");
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().joined; }));
+    boss.requestGuildInvite("deputy");
+    CHECK(h.stepUntil(clients, [&] { return deputy.guildInvite().waiting; }));
+    deputy.requestGuildAccept();
+    CHECK(h.stepUntil(clients, [&] { return deputy.guild().joined; }));
+    deputy.requestGuildInvite("guest");
+    h.step(10, clients);
+    CHECK(!guest.guildInvite().waiting);
+    boss.sendChat("/guild-deputy deputy");
+    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputy == "deputy"; }));
+    deputy.requestGuildInvite("guest");
+    CHECK(h.stepUntil(clients, [&] { return guest.guildInvite().waiting; }));
+    guest.requestGuildAccept();
+    CHECK(h.stepUntil(clients, [&] { return guest.guild().joined; }));
+
+    deputy.sendChat("/guild-deputy guest");
+    deputy.sendChat("/guild-transfer guest");
+    deputy.requestGuildKick("guest");
+    deputy.requestGuildEdit("Changed", "Changed");
+    h.step(20, clients);
+    CHECK(guest.guild().joined);
+    CHECK_EQ(boss.guild().leader, std::string("leader"));
+    CHECK_EQ(boss.guild().deputy, std::string("deputy"));
+    CHECK(boss.guild().name != "Changed");
+
+    boss.sendChat("/guild-deputy guest");
+    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputy == "guest"; }));
+    deputy.requestGuildInvite("outsider");
+    h.step(10, clients);
+    CHECK(!outsider.guildInvite().waiting);
+    boss.sendChat("/guild-transfer guest");
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().leader == "guest"; }));
+    CHECK(boss.guild().deputy.empty());
+}
+
+TEST(hyper_corruption_exposure_allows_retaliation_and_continue_returns_to_spawn) {
+    Harness h("corruption-continue", [](const std::string& path) {
+        seedUser(path, "attacker", "password7");
+        seedUser(path, "survivor", "password7");
+        seedProgress(path, "attacker", false, 25);
+        seedProgress(path, "survivor", false, 25);
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient attacker, survivor;
+    CHECK(logIn(h, attacker, "attacker") && join(h, attacker, "attacker", false, "garden"));
+    CHECK(logIn(h, survivor, "survivor") && join(h, survivor, "survivor", false, "garden"));
+    auto& world = h.server.world();
+    const Entity aggressor = bodyNamed(world, "attacker");
+    const Entity victim = bodyNamed(world, "survivor");
+    CHECK(aggressor != NULL_ENTITY && victim != NULL_ENTITY);
+    if (aggressor == NULL_ENTITY || victim == NULL_ENTITY) return;
+    const auto spawn = world.get<Transform>(victim).position;
+    world.get<Loadout>(aggressor).slots[0] = {content().petalIndex("corruption"), Rarity::Apex};
+    h.step(1, {&attacker, &survivor});
+    CHECK(world.get<PlayerVisuals>(aggressor).hyperCorruption);
+    world.get<Loadout>(aggressor).slots[0] = {};
+    h.step(1, {&attacker, &survivor});
+    CHECK(world.get<PlayerVisuals>(aggressor).hyperCorruptionExposed);
+    CHECK(CombatSystem::canDamage(world, victim, aggressor));
+    CHECK(!CombatSystem::canDamage(world, aggressor, victim));
+    h.clock += kHyperCorruptionExposureMillis + 50.0;
+    h.step(1, {&attacker, &survivor});
+    CHECK(!world.get<PlayerVisuals>(aggressor).hyperCorruptionExposed);
+    CHECK(!CombatSystem::canDamage(world, victim, aggressor));
+
+    world.get<Loadout>(aggressor).slots[0] = {content().petalIndex("corruption"), Rarity::Apex};
+    h.step(1, {&attacker, &survivor});
+    const Vec2 deathAt = spawn + Vec2{5000.0, 5000.0};
+    world.get<Transform>(victim).position = deathAt;
+    world.add<Dead>(victim, Dead{aggressor});
+    CHECK(h.stepUntil({&attacker, &survivor}, [&] { return survivor.dead(); }));
+    survivor.requestRespawn();
+    CHECK(h.stepUntil({&attacker, &survivor}, [&] {
+        return !survivor.dead() && bodyNamed(world, "survivor") != victim;
+    }));
+    const Entity reborn = bodyNamed(world, "survivor");
+    CHECK(reborn != NULL_ENTITY);
+    if (reborn != NULL_ENTITY) {
+        CHECK(distance(world.get<Transform>(reborn).position, spawn) < 1800.0);
+        CHECK(distance(world.get<Transform>(reborn).position, deathAt) > 4000.0);
+    }
+}
+
+TEST(wave_loot_pays_from_normal_tables_and_throttles_boss_tiers_independently) {
+    World world;
+    CommandBuffer commands{world};
+    SpatialGrid grid;
+    LootSystem loot;
+    EventQueue events;
+    Rng rng{5150};
+    const auto& registry = shippedContent();
+    std::string error;
+    CHECK(loot.loadTables(registry, dataDir() + "/mob_drops.json", error));
+    const Entity player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Health>(player, Health{100.0, 100.0});
+    world.add<Transform>(player, Transform{{2000.0, 2000.0}, 0.0});
+    const auto roll = [&](Rarity rarity, double now, std::optional<bool> waveCanDrop) {
+        const Entity corpse = world.create();
+        world.add<MobTag>(corpse);
+        world.add<Transform>(corpse, Transform{{4000.0, 4000.0}, 0.0});
+        world.add<MobType>(corpse, MobType{registry.mobIndex("beetle"), rarity, 1.0});
+        world.add<Health>(corpse, Health{0.0, 1000.0});
+        world.add<Bounty>(corpse).credit(player, 1000.0);
+        world.add<Dead>(corpse, Dead{player});
+        if (waveCanDrop) world.add<WaveEnemy>(corpse, WaveEnemy{*waveCanDrop});
+        loot.run(world, grid, registry, rng, now, net::kTickSeconds, commands, events);
+        commands.flush();
+        const auto drops = Query<DropTag>{world}.collect();
+        for (const Entity drop : drops) world.destroy(drop);
+        world.destroy(corpse);
+        return drops.size();
+    };
+    CHECK_EQ(roll(Rarity::Rare, 1000.0, false), std::size_t(0));
+    CHECK(roll(Rarity::Rare, 1100.0, true) > 0);
+    CHECK_EQ(roll(Rarity::Apex, 1200.0, false), std::size_t(0));
+    CHECK(roll(Rarity::Apex, 1300.0, true) > 0);
+    CHECK(roll(Rarity::Unique, 1400.0, true) > 0);
+    CHECK_EQ(roll(Rarity::Apex, 1500.0, true), std::size_t(0));
+    CHECK_EQ(roll(Rarity::Unique, 1600.0, true), std::size_t(0));
+    CHECK(roll(Rarity::Apex, 1700.0, std::nullopt) > 0);
+    CHECK(roll(Rarity::Unique, 361400.0, true) > 0);
+    CHECK_EQ(roll(Rarity::Apex, 361500.0, true), std::size_t(0));
+    CHECK(roll(Rarity::Apex, 721300.0, true) > 0);
+}
 
 // ---------------------------------------------------------------------------
 // The rules
@@ -313,7 +543,7 @@ TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
     CHECK(announced);
 }
 
-TEST(prestige_jungle_wakes_local_mobs_at_the_shared_ambient_limit) {
+TEST(prestige_jungle_and_sewers_box_wake_local_mobs_at_the_shared_ambient_limit) {
     World world;
     CommandBuffer commands{world};
     Terrain terrain;
@@ -378,6 +608,21 @@ TEST(prestige_jungle_wakes_local_mobs_at_the_shared_ambient_limit) {
     });
     CHECK(nearby > 0);
     CHECK(spawner.census().mobs <= kMaxLiveMobs);
+
+    const Realm boxRealm = maps.realmOfId("prestige_sewers", found);
+    CHECK(found);
+    if (!found) return;
+    const Vec2 box = terrain.resolveCircle({21400.0, 4050.0}, kPlayerBaseRadius, boxRealm);
+    viewers.push_back({box, boxRealm});
+    tick(55'600.0);
+    int boxNearby = 0;
+    mobs.each([&](Entity, MobTag&, Transform& at, MobType&, AmbientMob&) {
+        if (at.realm == boxRealm && std::abs(at.position.x - box.x) <= 1400.0 &&
+            std::abs(at.position.y - box.y) <= 1000.0) ++boxNearby;
+    });
+    CHECK(boxNearby > 0);
+    CHECK(spawner.census().mobs <= kMaxLiveMobs);
+    std::printf("[sewers] %d mobs near the box at the ambient budget\n", boxNearby);
 }
 
 TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
@@ -1053,7 +1298,7 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
         // A successful session can pass the old ten-minute limit.
         double now = 16100.0 + (round - 1) * 32000.0;
         const int expected = 54 + 7 * std::min(round - 1, 12);
-        int seen = 0, elites = 0, hypers = 0;
+        int seen = 0, elites = 0, eternals = 0, hypers = 0;
         bool firstBatch = true;
         for (int batch = 0; batch < 20 && seen < expected; ++batch, now += 650.0) {
             tick(now);
@@ -1106,6 +1351,7 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
                 world.get<Bounty>(mob).credit(members[2], hp * 0.005); // Below participation floor.
                 if (round == 1) world.get<Bounty>(mob).credit(members[3], hp * 0.01);
                 elites += world.get<MobType>(mob).rarity == Rarity::Super;
+                eternals += world.get<MobType>(mob).rarity == Rarity::Unique;
                 hypers += world.get<MobType>(mob).rarity == Rarity::Apex;
                 world.add<Dead>(mob);
             }
@@ -1119,7 +1365,8 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
         }
         CHECK_EQ(seen, expected);
         CHECK_EQ(hypers, round % 5 == 0 ? 1 : 0);
-        if (round == 5) CHECK_EQ(elites, 6);
+        CHECK_EQ(eternals, round % 5 == 0 ? 1 : 0);
+        if (round == 5) CHECK_EQ(elites, 5);
         if (round == 21) CHECK(elites > 10);
         total += seen;
         CHECK(dungeon.inWave(world, members[0]));

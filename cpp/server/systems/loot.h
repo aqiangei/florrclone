@@ -289,7 +289,10 @@ private:
     /// Per-tick item maintenance, in the reference's order: wall push, bounds,
     /// expiry. The push is not a nicety -- nothing resolves the spawn scatter.
     void maintainDrops(double dt, CommandBuffer& commands);
-    void awardDeaths(World& world, const ContentRegistry& content, Rng& rng);
+    void awardDeaths(World& world, const ContentRegistry& content, Rng& rng, double nowMillis);
+    // Per server and tier, independent of whether the Wave room is reopened.
+    double nextWaveEternalLootMillis_ = 0.0;
+    double nextWaveHyperLootMillis_ = 0.0;
     /// One full pass of a mob's table into `selected_`. The caller picks
     /// which table: the authored rows for a common mob, the merged one for
     /// every mob above it, since those drop one of everything they have.

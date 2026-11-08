@@ -23,6 +23,7 @@
 namespace flix {
 
 class ContentRegistry;
+class Terrain;
 
 /// What a health bar shows, eased the way rysteria_gardn eases it
 /// (Client/Simulation.cc). The green and the white glide to the wire's values
@@ -323,6 +324,11 @@ public:
     /// the petal ring is anchored to it. Before the first spawn record it is
     /// the raw authoritative position, which is the only thing there is.
     Vec2 selfDrawnPosition() const;
+    void setSimulationPace(int ticksPerSecond);
+    int simulationPace() const { return simulationPace_; }
+    std::uint8_t localCombatInput() const { return localCombatInput_; }
+    void previewLocalControl(const net::InputFrame& input, const Terrain& terrain,
+                             double renderMillis, double dtSeconds);
 
     /// The HUD's health bar for the viewer's own flower: SelfState's exact
     /// health over its max, and the shield off its body, eased as every
@@ -456,6 +462,9 @@ private:
     /// on the self entity because the self entity does not exist until its
     /// spawn record arrives, and the camera needs an answer before then.
     Vec2 selfDrawnPosition_;
+    Vec2 localPreviewOffset_;
+    int simulationPace_ = net::kTicksPerSecond;
+    std::uint8_t localCombatInput_ = 0;
     bool selfSnapPending_ = true;
     HealthBarEase selfHealthBar_;
     /// Set by clearSelfDeathVisuals(); strips StateDead / FaceDeadEyes on the

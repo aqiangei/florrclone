@@ -243,7 +243,7 @@ public:
     /// inside run() alone, a speed or size petal would not reach movement until
     /// the tick after it was equipped, and movement would spend that tick
     /// stepping the flower at its previous speed.
-    void foldModifiers(World& world, const ContentRegistry& registry);
+    void foldModifiers(World& world, const ContentRegistry& registry, double nowMillis = -1.0);
 
     /// Wire ids for the entities this system spawns -- petals, projectiles,
     /// pets and ground effects.

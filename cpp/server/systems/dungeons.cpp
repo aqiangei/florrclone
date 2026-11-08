@@ -287,7 +287,7 @@ std::string DungeonSystem::waveCommand(World& world, const Terrain& terrain, Ent
         if (start) wave_ = {};
         return "当前状态暂时无法进入 Wave。";
     }
-    return "已进入 Wave 房 " + wave_.code + "，开房后 15 秒开始，最多四人。参与并通关的每一波都累加星星。";
+    return "已进入 Wave 房 " + wave_.code + "，15 秒后开始。普通波怪有 25% 机会按正常掉落表结算。永恒／超凡每服分别每 6／12 分钟最多结算一次，超凡从第 10 波起可掉落。";
 }
 
 void DungeonSystem::leaveWave(World& world, const WaveMember& member) {
@@ -384,7 +384,7 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
             }
             if (waveNotice) waveNotice(member.player, "Wave 第 " + std::to_string(wave_.round) +
                 " 波 · " + std::to_string(wave_.roundSize) + " 只" +
-                (wave_.round % 5 == 0 ? " · 超凡首领波" : ""));
+                (wave_.round % 5 == 0 ? " · 永恒／超凡首领波" : ""));
         }
     }
 
@@ -406,9 +406,10 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
          spawning.census().mobs < spawning.mobCap; ++batch) {
         const int slot = wave_.queued;
         const bool hyper = wave_.round % 5 == 0 && slot == 0;
+        const bool eternal = wave_.round % 5 == 0 && slot == 1;
         const bool elite = (wave_.round % 5 == 0 && slot < players + 3) ||
                            (wave_.round >= 8 && slot % (wave_.round >= 20 ? 4 : 8) == 0);
-        const Rarity rarity = hyper ? Rarity::Apex : (elite ? Rarity::Super : tier);
+        const Rarity rarity = hyper ? Rarity::Apex : eternal ? Rarity::Unique : elite ? Rarity::Super : tier;
         const auto type = content.mobIndex(hyper ? "beetle" :
             roster[(wave_.round % std::size(roster) + slot) % std::size(roster)]);
         if (type == kInvalidIndex) break;
@@ -448,7 +449,8 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
         if (enemy == NULL_ENTITY) break;
         // Keep the standard hit ledger to check participation in this wave.
         world.get<Bounty>(enemy).xp = 0.0;
-        world.add<WaveEnemy>(enemy);
+        const bool canDrop = hyper ? wave_.round >= 10 : eternal || rng.chance(0.25);
+        world.add<WaveEnemy>(enemy, WaveEnemy{canDrop});
         world.add<KeepAwake>(enemy);
         // High tiers keep their combat stats. Bound their footprints so the
         // next pack fits around the ring instead of sitting on existing mobs.
@@ -466,6 +468,8 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
                 std::min<std::uint64_t>(wave_.round / 5 - 1, 8));
             health.max = content.mobStats(type, Rarity::Super).health * strength;
             world.get<ContactDamage>(enemy).amount = content.mobStats(type, Rarity::Unique).damage;
+        } else if (eternal) {
+            health.max = content.mobStats(type, Rarity::Super).health * 1.5;
         }
         health.max *= healthScale;
         health.current = health.max;

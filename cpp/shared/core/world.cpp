@@ -294,6 +294,19 @@ Archetype* World::getOrCreateArchetype(std::vector<ComponentId> ids) {
     return raw;
 }
 
+Archetype* World::archetypeAfterAdd(Archetype& from, ComponentId id) {
+    for (const auto& [component, target] : from.addTransitions_) {
+        if (component == id) return target;
+    }
+    // Archetypes live until the World is destroyed. Cache the edge after the
+    // usual lookup so its first traversal still registers layouts in order.
+    auto ids = from.componentIds();
+    ids.insert(std::lower_bound(ids.begin(), ids.end(), id), id);
+    auto* target = getOrCreateArchetype(std::move(ids));
+    from.addTransitions_.emplace_back(id, target);
+    return target;
+}
+
 void World::moveEntity(Entity e, Archetype* from, Archetype* to) {
     Slot& slot = slots_[entityIndex(e)];
     const std::size_t fromRow = slot.row;

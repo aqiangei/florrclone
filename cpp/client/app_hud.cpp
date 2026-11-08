@@ -262,6 +262,25 @@ void drawFlowerFace(Canvas& canvas, std::uint32_t colour, double radius, double 
 
 void App::drawHud(Canvas& canvas, double time) {
     const SelfState& self = net_.view().self();
+    const auto& view = net_.view();
+    if (view.simulationPace() < net::kTicksPerSecond && self.netId != 0) {
+        const bool chinese = ui::language() == ui::Language::Zh;
+        const auto flags = view.localCombatInput();
+        std::string notice = chinese ? "慢速保护 " : "Slow protection ";
+        notice += std::to_string(view.simulationPace() * 100 / net::kTicksPerSecond) + "%";
+        if (flags & net::InputAttack) notice += chinese ? " · 攻击" : " · Attack";
+        if (flags & net::InputDefend) notice += chinese ? " · 防御" : " · Defend";
+        TextStyle protection;
+        protection.size = 16;
+        protection.align = Align::Centre;
+        protection.fill = 0xFFF3B0;
+        text(canvas, notice, canvas.width() * 0.5, 64.0, protection);
+        const float centre = static_cast<float>(canvas.width() * 0.5);
+        setFill(canvas, flags & net::InputAttack ? 0xFFCA58u : 0x253248u);
+        canvas.fillRect(centre - 8.0f, 76.0f, 6.0f, 5.0f);
+        setFill(canvas, flags & net::InputDefend ? 0x6BD8FFu : 0x253248u);
+        canvas.fillRect(centre + 2.0f, 76.0f, 6.0f, 5.0f);
+    }
     // altMode_ (ALT toggle) swaps abbreviated HUD numbers for exact values.
     const bool altHeld = altMode_ || menus_.settings().showExactValues;
 

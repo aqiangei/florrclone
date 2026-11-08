@@ -26,6 +26,8 @@ constexpr double kPrestigeSewersDensityScale = 0.90;
 constexpr double kPrestigeJungleRespawnMinMillis = 2000.0;
 constexpr double kPrestigeJungleRespawnMaxMillis = 6000.0;
 constexpr int kPrestigeJungleMinAwake = 12;
+constexpr int kPrestigeSewersMinAwake = 16;
+constexpr double kPrestigeSewersBoxDifficulty = 70.0;
 
 bool isPrestigeJungle(const MapData& map) {
     return map.prestige() && map.templateId() == "jungle";
@@ -1651,6 +1653,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     vanished_.clear();
     realmBiome_.fill(kInvalidIndex);
     prestigeJungleRealm_ = Realm::Arena;
+    prestigeSewersRealm_ = Realm::Arena;
     if (worldMaps == nullptr) return;
 
     // Every staged map's bands, each tagged with the realm it belongs to. One
@@ -1667,6 +1670,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
         const bool prestigeJungle = isPrestigeJungle(map);
         const bool prestigeSewers = map.prestige() && map.templateId() == "sewers";
         if (prestigeJungle) prestigeJungleRealm_ = map.realm();
+        if (prestigeSewers) prestigeSewersRealm_ = map.realm();
         for (const MapElement& element : map.elements()) {
             if (!element.isSpawnBand() && !element.isMobRegion()) continue;
             SpawnZone zone;
@@ -2505,8 +2509,11 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         double delay = 0.0;
         if (slot == Slot::Killed && seenBy(viewers, zone.realm, at, 0.0)) {
             const bool jungleRefill = zone.realm == prestigeJungleRealm_ && !zone.singular && forcedTier < 0;
-            delay = jungleRefill ? rng.range(kPrestigeJungleRespawnMinMillis, kPrestigeJungleRespawnMaxMillis)
-                                 : rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis);
+            const bool sewersRefill = zone.realm == prestigeSewersRealm_ &&
+                zone.difficulty >= kPrestigeSewersBoxDifficulty && !zone.singular && forcedTier < 0;
+            if (jungleRefill) delay = rng.range(kPrestigeJungleRespawnMinMillis, kPrestigeJungleRespawnMaxMillis);
+            else if (sewersRefill) delay = rng.range(3000.0, 7000.0);
+            else delay = rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis);
         }
         addLatent(zoneIndex, LatentMob{at, nowMillis + delay, type, rarity});
         return true;
@@ -2651,22 +2658,35 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
     if (seers.empty()) return;
 
     const int ambientBudget = mobCap >= 128 ? mobCap - 128 : mobCap;
-    // At saturation, an empty Prestige Jungle can use part of the existing
-    // escort headroom for its nearest animals, without raising the mob cap.
-    const bool jungleInView = ambientBudget < mobCap &&
-        std::any_of(seers.begin(), seers.end(), [&](const Viewer& viewer) {
-            return viewer.realm == prestigeJungleRealm_;
-        });
-    const int wakeBudget = jungleInView ? mobCap : ambientBudget;
-    if (census_.mobs >= wakeBudget) return;
-
-    int jungleAwake = 0;
-    if (jungleInView) {
-        for (const SpawnZone& zone : zones_) {
-            if (zone.realm == prestigeJungleRealm_) jungleAwake += zone.liveMobs;
+    // At saturation, these areas may borrow existing escort headroom for
+    // nearby enemies. The shared live-mob ceiling still applies.
+    constexpr std::array<int, 2> reserveMin{kPrestigeJungleMinAwake, kPrestigeSewersMinAwake};
+    std::array<int, 2> awake{};
+    std::array<bool, 2> inView{};
+    const auto prioritySlot = [&](const SpawnZone& zone) {
+        if (zone.realm == prestigeJungleRealm_) return 0;
+        if (zone.realm == prestigeSewersRealm_ && zone.difficulty >= kPrestigeSewersBoxDifficulty)
+            return 1;
+        return -1;
+    };
+    if (ambientBudget < mobCap) {
+        for (const auto& viewer : seers) {
+            if (viewer.realm == prestigeJungleRealm_) inView[0] = true;
+            if (viewer.realm == prestigeSewersRealm_) inView[1] = true;
         }
-        if (census_.mobs >= ambientBudget && jungleAwake >= kPrestigeJungleMinAwake) return;
+        if (inView[0] || inView[1]) {
+            for (const auto& zone : zones_) {
+                const int slot = prioritySlot(zone);
+                if (slot < 0 || !inView[slot]) continue;
+                if (slot == 1 && !zoneInView(zone.bounds, zone.realm, seers, kLatentWakeMargin)) continue;
+                awake[slot] += zone.liveMobs;
+            }
+        }
     }
+    const bool canReserve = (inView[0] && awake[0] < reserveMin[0]) ||
+                            (inView[1] && awake[1] < reserveMin[1]);
+    const int wakeBudget = canReserve ? mobCap : ambientBudget;
+    if (census_.mobs >= wakeBudget) return;
 
     // Gathered first and woken nearest-first. There is no allowance per band:
     // a player arriving through a door, or wearing antennae that show half the
@@ -2678,7 +2698,9 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
     for (std::size_t index = 0; index < zones_.size(); ++index) {
         SpawnZone& zone = zones_[index];
         if (zone.latent.empty()) continue;
-        if (census_.mobs >= ambientBudget && zone.realm != prestigeJungleRealm_) continue;
+        const int slot = prioritySlot(zone);
+        if (census_.mobs >= ambientBudget &&
+            (slot < 0 || !inView[slot] || awake[slot] >= reserveMin[slot])) continue;
         // The cheap rejection, and the reason this is affordable at all: one
         // rectangle test per viewer says whether the band's records are worth
         // walking, and on a map with two dozen bands almost none of them are.
@@ -2735,9 +2757,9 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         if (census_.mobs >= wakeBudget) break;
         SpawnZone& zone = zones_[candidate.zone];
         const LatentMob& record = zone.latent[candidate.index];
+        const int slot = prioritySlot(zone);
         if (census_.mobs >= ambientBudget) {
-            if (jungleAwake >= kPrestigeJungleMinAwake) break;
-            if (zone.realm != prestigeJungleRealm_) continue;
+            if (slot < 0 || !inView[slot] || awake[slot] >= reserveMin[slot]) continue;
             // A chain wakes whole. Leave it asleep if its body will not fit.
             const int bodyCount = 1 + content.mob(record.mobIndex).segmentCount;
             if (bodyCount > mobCap - census_.mobs) continue;
@@ -2751,7 +2773,7 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         // path shares, and counting it twice here would halve the ceiling for
         // everything else in the same pass.
         ++zone.liveMobs;
-        if (zone.realm == prestigeJungleRealm_) ++jungleAwake;
+        if (slot >= 0) ++awake[slot];
         ++census_.promotedTotal;
         noteLiveBandMob(world, spawned, candidate.zone);
     }

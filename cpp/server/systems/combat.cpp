@@ -78,7 +78,7 @@ bool peacefulPlayerSide(const World& world, Entity entity, Entity player) {
     if (!side.known || side.team != Team::Players || side.friendlyFire) return false;
     const auto* visuals = world.tryGet<PlayerVisuals>(player);
     return !visuals || !(visuals->corrupted || visuals->equippedCorruption ||
-                        visuals->nearbyCorruption);
+                        visuals->nearbyCorruption || visuals->hyperCorruptionExposed);
 }
 
 /// Whether a flower has been turned hostile to every other flower.
@@ -97,7 +97,7 @@ bool equippedCorruptionAllowsPvp(const World& world, Entity a, Entity b) {
     const auto* av = world.tryGet<PlayerVisuals>(a);
     const auto* bv = world.tryGet<PlayerVisuals>(b);
     if ((!av || !(av->equippedCorruption || av->nearbyCorruption)) &&
-        (!bv || !(bv->equippedCorruption || bv->nearbyCorruption))) return false;
+        (!bv || !(bv->equippedCorruption || bv->nearbyCorruption || bv->hyperCorruptionExposed))) return false;
     const auto* ap = world.tryGet<PlayerProgress>(a);
     const auto* bp = world.tryGet<PlayerProgress>(b);
     return ap && bp && ap->level >= 20 && bp->level >= 20;
@@ -722,9 +722,15 @@ bool CombatSystem::canHit(const World& world, Entity victim, Entity source, doub
 
 DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity source,
                                        double amount, double nowMillis, DamageKind kind) {
+    return applyDamageWithRuby(world, victim, source, amount, nowMillis, kind, NULL_ENTITY);
+}
+
+DamageResult CombatSystem::applyDamageWithRuby(World& world, Entity victim, Entity source,
+                                               double amount, double nowMillis, DamageKind kind,
+                                               Entity checkedTarget) {
     if (kind != DamageKind::Lightning || resolvingRuby_ || amount <= 0.0 ||
         !world.has<MobTag>(victim) || world.has<Pet>(victim)) {
-        return applyDamageOnce(world, victim, source, amount, nowMillis, kind);
+        return applyDamageOnce(world, victim, source, amount, nowMillis, kind, checkedTarget);
     }
     const Entity dealer = creditedPlayer(world, source);
     const PlayerModifiers* modifiers = world.tryGet<PlayerModifiers>(dealer);
@@ -738,7 +744,7 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
     }
     const int limit = modifiers != nullptr ? std::clamp(modifiers->maxLightningRepeats, 0, 3) : 0;
     if (chance <= 0.0 || limit == 0) {
-        return applyDamageOnce(world, victim, source, amount, nowMillis, kind);
+        return applyDamageOnce(world, victim, source, amount, nowMillis, kind, checkedTarget);
     }
     // Hold the guard across the initial hit too: colony sharing and reflected
     // damage must not multiply the repeat budget. Never retain ECS pointers
@@ -748,7 +754,7 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
         explicit RepeatGuard(bool& value) : flag(value) { flag = true; }
         ~RepeatGuard() { flag = false; }
     } guard(resolvingRuby_);
-    DamageResult result = applyDamageOnce(world, victim, source, amount, nowMillis, kind);
+    DamageResult result = applyDamageOnce(world, victim, source, amount, nowMillis, kind, checkedTarget);
     if (result.refused || result.dodged) return result;
     for (int repeat = 0; repeat < limit && !result.killed; ++repeat) {
         if (!rubyRng_.chance(clamp(chance, 0.0, 1.0))) break;
@@ -2220,7 +2226,7 @@ void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
     // swings, so the ring neither hits it again nor is credited for it.
     gatherAuras(world, content);
     resolveAuras(world, grid, nowMillis);
-    gatherMeleeTargets(world);
+    gatherMeleeTargets();
     gatherContact(world, content);
     if (placements) {
         // Preserve the full grid's pre-aura geometry and bucket order. Only
@@ -2265,7 +2271,7 @@ void CombatSystem::runWorldPhase(World& world, const SpatialGrid& grid,
     // phase above, where the collision it needs is resolved.
     tickMobLightning(world, grid, content, nowMillis);
     tickProjectiles(world, grid, content, nowMillis, dt, bodyGridOnly);
-    tickGroundEffects(world, grid, content, nowMillis, dt);
+    tickGroundEffects(world, grid, content, nowMillis, dt, bodyGridOnly);
     // Last, so a bubble that went down to poison, a petal or a shot this tick
     // -- in any phase -- pops all the same.
     popBubbles(world, content);
@@ -2402,7 +2408,8 @@ void CombatSystem::tickShieldDecay(World& world, double dt) {
 }
 
 void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
-                                     const ContentRegistry& content, double nowMillis, double dt) {
+                                     const ContentRegistry& content, double nowMillis, double dt,
+                                     bool bodyGridOnly) {
     fields_.clear();
     queries_->fields.each([&](Entity e, GroundEffect& effect, Transform& transform) {
         // In-flight or disabled fields still age; zero radius must not make
@@ -2443,11 +2450,10 @@ void CombatSystem::tickGroundEffects(World& world, const SpatialGrid& grid,
         if (field.radius <= 0.0) continue;
         if (field.damagePerSecond <= 0.0 && field.damagePerHit <= 0.0 &&
             field.slowFactor >= 1.0) continue;
-        queryBodies(grid, field.realm, field.position, field.radius + kBroadphasePad, candidates_);
+        queryBodies(grid, field.realm, field.position, field.radius + kBroadphasePad, candidates_,
+                    NULL_ENTITY, false, std::nullopt, nullptr, bodyGridOnly);
         for (const Entity victim : candidates_) {
             if (world.has<Dead>(field.effect)) break;
-            const auto* lightningTarget = world.tryGet<LightningTarget>(field.effect);
-            if (lightningTarget && lightningTarget->victim != victim) continue;
             const Transform* transform = world.tryGet<Transform>(victim);
             if (transform == nullptr) continue;
             // Circle overlap, not centre-in-radius: every one of the three
@@ -2621,17 +2627,27 @@ void CombatSystem::resolveAuras(World& world, const SpatialGrid& grid, double no
     }
 }
 
-void CombatSystem::gatherMeleeTargets(World& world) {
+void CombatSystem::gatherMeleeTargets() {
     std::fill(meleeTargets_.begin(), meleeTargets_.end(), MeleeTarget{});
-    queries_->meleeTargets.each([&](Entity entity, Transform&, Body& body) {
-        const std::size_t slot = entityIndex(entity);
-        if (slot >= meleeTargets_.size()) meleeTargets_.resize(slot + 1);
-        meleeTargets_[slot] = {
-            entity, body.radius, squareMobHalfExtent(world, entity),
-            world.has<LoosePetal>(entity), world.has<PetalInstance>(entity),
-            world.has<PlayerTag>(entity), world.has<MobTag>(entity),
-            world.has<Pet>(entity), world.has<NpcTag>(entity),
-        };
+    queries_->meleeTargets.eachArchetype([&](Archetype& layout) {
+        const auto* mobTypes = layout.data<MobType>();
+        MeleeTarget target;
+        target.loosePetal = layout.has(componentId<LoosePetal>());
+        target.petal = layout.has(componentId<PetalInstance>());
+        target.player = layout.has(componentId<PlayerTag>());
+        target.mob = layout.has(componentId<MobTag>());
+        target.pet = layout.has(componentId<Pet>());
+        target.npc = layout.has(componentId<NpcTag>());
+        const Entity* entities = layout.entities();
+        const Body* bodies = layout.data<Body>();
+        for (std::size_t i = 0; i < layout.count(); ++i) {
+            target.entity = entities[i];
+            target.radius = bodies[i].radius;
+            target.squareHalf = mobTypes ? squareMobHalfExtent(&mobTypes[i], target.radius) : 0.0;
+            const std::size_t slot = entityIndex(target.entity);
+            if (slot >= meleeTargets_.size()) meleeTargets_.resize(slot + 1);
+            meleeTargets_[slot] = target;
+        }
     });
 }
 
@@ -2849,8 +2865,10 @@ void CombatSystem::prepareMeleeCandidates(const World& world, const SpatialGrid&
             plan.ready = false;
             if (!world.isAlive(source.attacker) || world.has<Dead>(source.attacker)) continue;
             if (scratch.planned.size() == kMaxCandidatesPerLane) continue;
-            plan.player = creditedPlayer(world, source.attacker);
-            plan.excludePeaceful = !filedShots_.empty() &&
+            const auto& shotBounds = shotBounds_[realmIndex(source.realm)];
+            const bool hasShots = shotBounds.firstRow <= shotBounds.lastRow;
+            plan.player = hasShots ? creditedPlayer(world, source.attacker) : NULL_ENTITY;
+            plan.excludePeaceful = hasShots &&
                                    peacefulPlayerSide(world, source.attacker, plan.player);
             queryBodies(source.isHostileBody ? hostileTargets : grid, source.realm,
                         source.position, source.radius + kBroadphasePad, scratch.candidates,
@@ -2886,11 +2904,13 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
         // circle could overlap; the exact test below is the one that decides.
         // Resolved once per source, for the shots below: the answer canDamage()
         // would reach for every one of them.
-        const Entity sourcePlayer = creditedPlayer(world, source.attacker);
+        const auto& shotBounds = shotBounds_[realmIndex(source.realm)];
+        const bool hasShots = shotBounds.firstRow <= shotBounds.lastRow;
+        const Entity sourcePlayer = hasShots ? creditedPlayer(world, source.attacker) : NULL_ENTITY;
         const double sourceHalf = squareMobHalfExtent(world, source.attacker);
         // Two peaceful player-side entities cannot damage each other.
         // Skip whole cells of allied shots around a crowded boss.
-        const bool excludePeaceful = !filedShots_.empty() &&
+        const bool excludePeaceful = hasShots &&
                                      peacefulPlayerSide(world, source.attacker, sourcePlayer);
         const MeleePlan* plan = i < meleePlans_.size() ? &meleePlans_[i] : nullptr;
         const bool usePlan = plan && plan->ready && plan->player == sourcePlayer &&
@@ -2936,6 +2956,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // eases them apart, and a pair that has stopped pressing settles
             // against each other's skin rather than inside it.
             const bool flushPair = (source.isNpcBody && targetBody.player) ||
+                                   (source.isMobBody && !source.givesWay && targetBody.player) ||
                                    ((source.isPlayerBody || source.isPet) && targetBody.npc) ||
                                    (targetBody.loosePetal && !source.isPetal) || source.isLoose;
 
@@ -3141,10 +3162,8 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             const auto beforeHitEvents = events_ ? events_->events().size() : 0;
             // The direct hit's victim was checked above, and only reads and
             // rolls intervene. A shared pool still checks its own recipient.
-            DamageResult hit = source.hitKind == DamageKind::Direct
-                ? applyDamageOnce(world, victim, source.attacker, swing, nowMillis,
-                                  DamageKind::Direct, victim)
-                : applyDamage(world, victim, source.attacker, swing, nowMillis, source.hitKind);
+            DamageResult hit = applyDamageWithRuby(world, victim, source.attacker, swing,
+                                                   nowMillis, source.hitKind, victim);
             if (mobTouchesPlayer && source.swallows &&
                 !hit.refused && !hit.dodged && !hit.killed) {
                 const auto* prior = world.tryGet<WormSwallow>(victim);
@@ -3649,13 +3668,23 @@ void CombatSystem::prepareShotImpacts(World& world, const SpatialGrid& grid,
     if (!limit || shots_.size() < 128) return;
 
     std::fill(shotTargets_.begin(), shotTargets_.end(), ShotTarget{});
-    queries_->meleeTargets.each([&](Entity e, Transform& at, Body& body) {
-        if (!isShootable(world, e)) return;
-        const auto slot = entityIndex(e);
-        if (slot >= shotTargets_.size()) shotTargets_.resize(slot + 1);
-        const bool mob = world.has<MobTag>(e);
-        shotTargets_[slot] = {e, at.position, body.radius, at.angle, squareMobHalfExtent(world, e),
-                              mob && !world.has<Pet>(e), mob && !world.has<Knockback>(e)};
+    queries_->meleeTargets.eachArchetype([&](Archetype& layout) {
+        if (layout.has(componentId<DropTag>()) || layout.has(componentId<GroundEffectTag>())) return;
+        const auto* mobTypes = layout.data<MobType>();
+        const bool mob = layout.has(componentId<MobTag>());
+        const bool wild = mob && !layout.has(componentId<Pet>());
+        const bool movesOnImpact = mob && !layout.has(componentId<Knockback>());
+        const Entity* entities = layout.entities();
+        const Transform* transforms = layout.data<Transform>();
+        const Body* bodies = layout.data<Body>();
+        for (std::size_t i = 0; i < layout.count(); ++i) {
+            const Entity entity = entities[i];
+            const auto slot = entityIndex(entity);
+            if (slot >= shotTargets_.size()) shotTargets_.resize(slot + 1);
+            const auto& at = transforms[i];
+            const double half = mobTypes ? squareMobHalfExtent(&mobTypes[i], bodies[i].radius) : 0.0;
+            shotTargets_[slot] = {entity, at.position, bodies[i].radius, at.angle, half, wild, movesOnImpact};
+        }
     });
 
     constexpr std::size_t batchSize = 24;
@@ -3803,10 +3832,8 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             const bool victimIsShot = world.has<Projectile>(impact.victim);
             const bool victimIsMob = world.has<MobTag>(impact.victim);
 
-            DamageResult hit = hitKind == DamageKind::Direct
-                ? applyDamageOnce(world, impact.victim, shot.entity, damage, nowMillis, hitKind,
-                                  impact.victim)
-                : applyDamage(world, impact.victim, shot.entity, damage, nowMillis, hitKind);
+            DamageResult hit = applyDamageWithRuby(world, impact.victim, shot.entity, damage,
+                                                   nowMillis, hitKind, impact.victim);
             // A shot of zero is refused before applyDamage rolls evasion, and
             // its riders below land regardless -- so it is rolled here, as a
             // zero-damage petal's swing is in resolveMelee.

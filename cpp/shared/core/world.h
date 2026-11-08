@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace flix {
@@ -83,6 +84,7 @@ private:
     ComponentMask mask_;
     std::vector<ComponentId> ids_;      // sorted ascending
     std::vector<Column> columns_;       // parallel to ids_
+    std::vector<std::pair<ComponentId, Archetype*>> addTransitions_;
     std::int16_t columnOf_[kMaxComponents];
     std::vector<Entity> entities_;
     std::size_t count_ = 0;
@@ -142,9 +144,7 @@ public:
         Slot& slot = slots_[entityIndex(e)];
         Archetype* from = archetypes_[slot.archetype].get();
         if (!from->has(id)) {
-            auto ids = from->componentIds();
-            ids.insert(std::lower_bound(ids.begin(), ids.end(), id), id);
-            moveEntity(e, from, getOrCreateArchetype(std::move(ids)));
+            moveEntity(e, from, archetypeAfterAdd(*from, id));
         }
         return *reinterpret_cast<T*>(
             archetypes_[slot.archetype]->column(id)->at(slot.row));
@@ -217,6 +217,7 @@ private:
 
     void assertAlive(Entity e, const char* op) const;
     Archetype* getOrCreateArchetype(std::vector<ComponentId> ids);
+    Archetype* archetypeAfterAdd(Archetype& from, ComponentId id);
     void moveEntity(Entity e, Archetype* from, Archetype* to);
     void releaseRow(Archetype* archetype, std::size_t row);
 
@@ -278,11 +279,20 @@ public:
     /// everything above the row loop, or to SIMD over a column.
     template <class F>
     void chunks(F&& fn) {
+        eachArchetype([&](Archetype& a) {
+            fn(a.count(), a.entities(), a.template data<Ts>()...);
+        });
+    }
+
+    /// Visits the same nonempty chunks when the caller also needs optional
+    /// columns or tags that are shared by every entity in the chunk.
+    template <class F>
+    void eachArchetype(F&& fn) {
         refresh();
         for (const std::uint32_t ai : matched_) {
             Archetype& a = *world_->archetypes()[ai];
             if (a.count() == 0) continue;
-            fn(a.count(), a.entities(), a.template data<Ts>()...);
+            fn(a);
         }
     }
 

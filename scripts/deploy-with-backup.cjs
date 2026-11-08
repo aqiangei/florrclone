@@ -94,6 +94,9 @@ async function main(){
     const resetFile=process.env.FLORR_PASSWORD_RESET_FILE;
     const preserveSave=process.env.FLORR_PRESERVE_SAVE==='1'||Boolean(resetFile);
     const resetRequests=resetFile?require('./reset-password-offline.cjs').readRequests(resetFile):null;
+    const councilManagerId=process.env.FLORR_FRESH_COUNCIL_MANAGER_ID;
+    if(councilManagerId)assert(fresh && preserveSave && !bootstrap,
+      'Council delegation requires the independent second-server save');
     if(resetRequests) {
       assert(!fresh&&!bootstrap&&!process.env.FLORR_RESTORE_SNAPSHOT &&
         !process.env.FLORR_OPERATOR_HYPER_USER && process.env.FLORR_REFUND_ETERNAL_PRICE!=='1',
@@ -320,6 +323,14 @@ async function main(){
       report.councilHistory=require('./merge-council-history.cjs').apply(saved,seed);
       const historyFile=path.join(local,'inventory.history.json');fs.writeFileSync(historyFile,JSON.stringify(saved));next=historyFile;
     }
+    if(councilManagerId){
+      const saved=JSON.parse(fs.readFileSync(next,'utf8'));
+      const {prepareCouncilManagers}=require('./prepare-council-managers.cjs');
+      const delegated=prepareCouncilManagers(saved,[councilManagerId]);
+      next=path.join(local,'inventory.council-delegation.json');
+      fs.writeFileSync(next,JSON.stringify(delegated),{mode:0o600});
+      report.councilDelegation=true;
+    }
     if(resetRequests){
       const reset=path.join(local,'inventory.password-reset.json');
       report.passwordReset=JSON.parse(run(process.execPath,
@@ -328,10 +339,10 @@ async function main(){
       fs.writeFileSync(path.join(local,'password-reset.json'),JSON.stringify(report.passwordReset,null,2));
     }
     scp(next,host+':'+remote+'/inventory.next.json');
-    if(resetRequests){
+    if(resetRequests||councilManagerId){
       const candidateHash=crypto.createHash('sha256').update(fs.readFileSync(next)).digest('hex');
       assert.equal(ssh('sha256sum '+q(remote+'/inventory.next.json')).split(/\s/)[0],candidateHash,
-        'Password reset candidate SHA256 mismatch');
+        'Save candidate SHA256 mismatch');
     }
     // All validation and the local backup gate have completed at this point.
     saveInstallStarted=true;

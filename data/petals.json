@@ -661,9 +661,9 @@
   },
   "bone": {
     "name": "Bone",
-    "health": 10,
+    "health": 12,
     "damage": 14,
-    "petalArmor": 10,
+    "petalArmor": 12,
     "size": 1,
     "cooldown": 2500,
     "price": 23,
@@ -675,62 +675,62 @@
     "rarityStats": {
       "0": {
         "damage": 14,
-        "health": 10,
-        "petalArmor": 10,
+        "health": 12,
+        "petalArmor": 12,
         "reloadMillis": 2500
       },
       "1": {
         "damage": 42,
-        "health": 30,
-        "petalArmor": 30,
+        "health": 36,
+        "petalArmor": 36,
         "reloadMillis": 2500
       },
       "2": {
         "damage": 126,
-        "health": 90,
-        "petalArmor": 90,
+        "health": 108,
+        "petalArmor": 108,
         "reloadMillis": 2500
       },
       "3": {
         "damage": 378,
-        "health": 270,
-        "petalArmor": 270,
+        "health": 324,
+        "petalArmor": 324,
         "reloadMillis": 2500
       },
       "4": {
         "damage": 1134,
-        "health": 810,
-        "petalArmor": 810,
+        "health": 972,
+        "petalArmor": 972,
         "reloadMillis": 2500
       },
       "5": {
         "damage": 3402,
-        "health": 2430,
-        "petalArmor": 2430,
+        "health": 2916,
+        "petalArmor": 2916,
         "reloadMillis": 2500
       },
       "6": {
         "damage": 10206,
-        "health": 7290,
-        "petalArmor": 7290,
+        "health": 8748,
+        "petalArmor": 8748,
         "reloadMillis": 2500
       },
       "7": {
         "damage": 30618,
-        "health": 21870,
-        "petalArmor": 21870,
+        "health": 26244,
+        "petalArmor": 26244,
         "reloadMillis": 2500
       },
       "8": {
         "damage": 91854,
-        "health": 65610,
-        "petalArmor": 65610,
+        "health": 78732,
+        "petalArmor": 78732,
         "reloadMillis": 2500
       },
       "9": {
         "damage": 275562,
-        "health": 196830,
-        "petalArmor": 196830,
+        "health": 236196,
+        "petalArmor": 236196,
         "reloadMillis": 2500
       }
     }
@@ -6158,6 +6158,7 @@
     "zh": "Mana Orb",
     "damage": 0,
     "health": 25,
+    "invulnerable": true,
     "size": 1,
     "cooldown": 2500,
     "price": 10,
@@ -7771,7 +7772,7 @@
     "health": 5000,
     "size": 1,
     "cooldown": 100000,
-    "price": 10,
+    "price": 32,
     "description": "其他花瓣围绕它旋转；它自身几乎不移动。",
     "color": "#90EE90",
     "count": 1,
@@ -8790,7 +8791,7 @@
     "name": "Icosahedron",
     "damage": 19,
     "health": 20,
-    "petalArmor": 10,
+    "petalArmor": 12,
     "size": 2,
     "cooldown": 2500,
     "price": 60,
