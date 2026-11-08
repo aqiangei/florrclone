@@ -2,10 +2,30 @@
 #include "server/parallel_snapshots.h"
 #include "server/systems/loot.h"
 #include "server/systems/movement.h"
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 
 using namespace flix;
+
+TEST(server_workers_complete_each_job_once_across_consecutive_batches) {
+    ServerWorkers workers(4);
+    std::array<std::atomic<unsigned>, 256> visits{};
+    std::atomic<bool> validLane{true};
+    for (unsigned batch = 0; batch < 128; ++batch) {
+        const unsigned limit = batch % 5;
+        const std::size_t jobs = (batch * 53) % visits.size();
+        for (auto& visit : visits) visit.store(0, std::memory_order_relaxed);
+        workers.run(jobs, limit, [&](std::size_t job, unsigned lane) {
+            if (lane > limit) validLane.store(false, std::memory_order_relaxed);
+            visits[job].fetch_add(1, std::memory_order_relaxed);
+        });
+        for (std::size_t job = 0; job < visits.size(); ++job)
+            CHECK_EQ(visits[job].load(std::memory_order_relaxed), job < jobs ? 1u : 0u);
+    }
+    CHECK(validLane.load(std::memory_order_relaxed));
+}
 
 TEST(parallel_snapshots_match_serial_bytes_across_frames_and_membership_changes) {
     World world;
@@ -34,9 +54,9 @@ TEST(parallel_snapshots_match_serial_bytes_across_frames_and_membership_changes)
     loot.netIds = &ids;
     const Entity stack = loot.spawnDrop(world, 2, Rarity::Super, {640, 1000},
                                         Realm::Overworld, {players[2], players[3]});
-    loot.spawnDrop(world, 2, Rarity::Rare, {640, 1000}, Realm::Arena, {});
-    loot.spawnDrop(world, 2, Rarity::Rare, {50000, 50000}, Realm::Overworld, {});
-    SpatialGrid dropGrid;
+    loot.spawnDrop(world, 2, Rarity::Super, {640, 1000}, Realm::Arena, {});
+    loot.spawnDrop(world, 2, Rarity::Super, {50000, 50000}, Realm::Overworld, {});
+    SpatialGrid entityGrid;
     ServerWorkers workers(15);
     ParallelSnapshots parallel(workers, 15), serial(workers, 0);
 #if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
@@ -57,19 +77,21 @@ TEST(parallel_snapshots_match_serial_bytes_across_frames_and_membership_changes)
         if (frame == 4) world.get<DropItem>(stack).quantity += 3;
         if (frame == 8) world.get<Transform>(stack).position.x = 1300;
         if (frame == 11) world.destroy(stack);
-        dropGrid.clear();
-        Query<DropTag, Transform>{world}.each([&](Entity e, DropTag&, Transform& at) {
-            dropGrid.insert(e, at.realm, at.position);
-        });
+        entityGrid.clear();
+        Query<NetId, Replicated, Transform>{world}.each(
+            [&](Entity e, NetId&, Replicated&, Transform& at) {
+                entityGrid.insert(e, at.realm, at.position);
+            });
         for (unsigned i = 0; i < count; ++i) {
             a[i].viewer = b[i].viewer = players[i];
             a[i].view = &parallelViews[i]; b[i].view = &serialViews[i];
-            a[i].squad = b[i].squad = {players[(i + 1) % players.size()]};
+            a[i].squad = b[i].squad = {players[(i + 1) % players.size()],
+                                        players[(i + 13) % players.size()]};
             a[i].frame.tick = b[i].frame.tick = frame * 3;
             a[i].frame.snapshotIndex = b[i].frame.snapshotIndex = frame;
             a[i].frame.nowMillis = b[i].frame.nowMillis = 1000 + frame * 50;
             a[i].frame.events = b[i].frame.events = &events;
-            a[i].frame.dropGrid = count > 1 ? &dropGrid : nullptr;
+            a[i].frame.entityGrid = count > 1 ? &entityGrid : nullptr;
             if (i == 0) a[i].frame.viewport = b[i].frame.viewport = Vec2{2400, 1600};
         }
         serial.build(world, b);

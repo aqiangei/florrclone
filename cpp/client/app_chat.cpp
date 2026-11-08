@@ -228,6 +228,8 @@ struct ChatCommand {
 
 constexpr ChatCommand kChatCommands[] = {
     {"/help", "Show available commands", false},
+    {"/dps", "Personal target dummy damage by source", false},
+    {"/wave", "Wave challenge: start / join code / leave", false},
     {"/biome", "Show the most populated biome", false},
     {"/boss-timers", "Show each biome's unique/apex cooldown", false},
     {"/admin save", "Save player progress", true},

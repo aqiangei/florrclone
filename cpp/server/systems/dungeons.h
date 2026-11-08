@@ -69,6 +69,14 @@ public:
              SpawnSystem& spawning, CombatSystem& combat, Rng& rng, double nowMillis,
              CommandBuffer& commands);
 
+    /// One opt-in room on the staged Wave map.
+    std::string waveCommand(World& world, const Terrain& terrain, Entity player,
+                            const std::string& action, Rng& rng, double nowMillis);
+    bool inWave(const World& world, Entity player) const;
+    bool waveExterior(const World& world, Entity player, Realm& realm) const;
+    std::function<void(Entity, const std::string&)> waveNotice;
+    std::function<void(Entity)> waveRevived;
+
     /// True when `realm` is one of the dungeon copies.
     bool isInstance(Realm realm) const;
     bool exteriorForRealm(Realm realm, Realm& outRealm, Vec2& outPosition) const;
@@ -108,6 +116,25 @@ private:
     Vec2 exitPoint(const Instance& instance, Rng& rng, double bodyRadius) const;
     void evict(World& world, Instance& instance, Rng& rng);
     void release(World& world, Instance& instance, CommandBuffer& commands);
+
+    struct WaveMember {
+        Entity player = NULL_ENTITY;
+        Realm returnRealm = Realm::Overworld;
+        Vec2 returnAt;
+    };
+    struct WaveRoom {
+        Realm realm = Realm::Overworld;
+        std::string code;
+        std::vector<WaveMember> members;
+        std::vector<Entity> enemies;
+        int round = 0;
+        double readyAtMillis = 0.0;
+        double endsAtMillis = 0.0;
+    } wave_;
+    void runWave(World& world, const Terrain& terrain, const ContentRegistry& content,
+                 SpawnSystem& spawning, Rng& rng, double nowMillis, CommandBuffer& commands);
+    void leaveWave(World& world, const WaveMember& member);
+    void closeWave(World& world, CommandBuffer& commands, const std::string& text);
 
     bool indexed_ = false;
     std::vector<Instance> instances_;

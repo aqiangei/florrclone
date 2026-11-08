@@ -443,6 +443,9 @@ struct RadiationSpec {
 /// Some of these are multipliers around a neutral 1.0 and some are additive
 /// amounts in world units. They are kept apart here rather than normalised
 /// because rarity scales the two kinds differently -- see petalStats().
+inline constexpr double kAdditionalBulbAggroScale = 0.20;
+inline constexpr double kAdditionalBulbAggroCap = 0.30;
+
 struct PetalModifiers {
     // Multiplicative, neutral at 1.0.
     double maxHealth = 1.0;
@@ -1754,6 +1757,14 @@ inline PetalStats equippedPetalStats(const ContentRegistry& registry, const Equi
         stats.reloadMillis = registry.petalStats(petal.configIndex, petal.reloadRarity).reloadMillis;
     }
     return stats;
+}
+
+/// Lightning dealt per mana spent by a worn Magic Eye. The mana pool already
+/// scales with rarity, so Hyper's conversion rises by a third over Eternal.
+inline constexpr double magicEyeDamagePerMana(Rarity rarity) {
+    constexpr std::array<double, kLadderRarityCount> conversion{
+        3.3, 4.9, 7.4, 11.1, 16.7, 25.0, 38.0, 56.0, 84.0, 112.0};
+    return conversion[static_cast<std::size_t>(ladderIndex(rarity))];
 }
 
 /// The share the golden leaves on a bar take off every reload on it, 0 when

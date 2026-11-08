@@ -59,6 +59,83 @@ TEST(a_client_connects_registers_and_joins) {
     CHECK_EQ(client.view().self().level, 1);
 }
 
+TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
+    using testsupport::GameServerPeer;
+    Harness h("snapshot-backlog", {}, testsupport::dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient slow, healthy;
+    const auto join = [&](NetClient& client, const char* name) {
+        if (!connectClient(h, client)) return false;
+        client.requestRegister(name, "valid-password");
+        if (!h.stepUntil({&client}, [&] { return client.status() == NetClient::Status::LoggedIn; }))
+            return false;
+        client.joinGame(1280, 720);
+        return h.stepUntil({&client}, [&] { return client.view().self().netId != 0; });
+    };
+    if (!join(slow, "slowviewer") || !join(healthy, "healthyviewer")) { CHECK(false); return; }
+
+    const auto* slowSession = GameServerPeer::sessionOf(h.server, "slowviewer");
+    const auto* healthySession = GameServerPeer::sessionOf(h.server, "healthyviewer");
+    if (!slowSession || !healthySession) { CHECK(false); return; }
+    auto* slowConnection = GameServerPeer::connectionOf(h.server, *slowSession);
+    auto* healthyConnection = GameServerPeer::connectionOf(h.server, *healthySession);
+    if (!slowConnection || !healthyConnection) { CHECK(false); return; }
+
+    ByteWriter notice;
+    notice.u8(static_cast<std::uint8_t>(net::ServerMessage::Notice));
+    notice.u8(static_cast<std::uint8_t>(net::NoticeSeverity::Info));
+    notice.str(std::string(24 * 1024, 'x'));
+    for (int i = 0; i < 3; ++i) slowConnection->send(notice);
+    const auto slowQueued = slowConnection->pendingBytes();
+    const auto healthyQueued = healthyConnection->pendingBytes();
+
+    // While old bytes are still waiting, health changes twice. Only the
+    // healthy connection should be encoded before the slow one can drain.
+    auto& health = h.server.world().get<Health>(slowSession->entity);
+    const auto& at = h.server.world().get<Transform>(slowSession->entity);
+    const auto ownNetId = slow.view().self().netId;
+    auto& events = GameServerPeer::snapshotEvents(h.server);
+    const double original = slow.view().self().health;
+    health.current = health.max * 0.75;
+    events.pickedUp(900001, ownNetId, at.position, at.realm, 0, Rarity::Common, 2, slowSession->connection);
+    GameServerPeer::stageSnapshots(h.server);
+    health.current = health.max * 0.5;
+    const double latest = health.current;
+    events.pickedUp(900002, ownNetId, at.position, at.realm, 0, Rarity::Common, 3, slowSession->connection);
+    GameServerPeer::stageSnapshots(h.server);
+    CHECK_EQ(slowConnection->pendingBytes(), slowQueued);
+    CHECK(healthyConnection->pendingBytes() > healthyQueued);
+
+    const auto drain = [&] {
+        for (int i = 0; i < 12; ++i) {
+            h.server.serviceNetwork(1);
+            slow.poll(1);
+            healthy.poll(1);
+        }
+    };
+    drain();
+    CHECK_EQ(slowConnection->pendingBytes(), std::size_t{0});
+    CHECK_NEAR(slow.view().self().health, original, 1e-4);
+
+    GameServerPeer::stageSnapshots(h.server);
+    drain();
+    CHECK_NEAR(slow.view().self().health, latest, 1e-4);
+    const auto ownPicked = [](NetClient& client) {
+        std::uint32_t quantity = 0;
+        for (const auto& event : client.view().events())
+            if (event.kind == net::EventKind::PickedUp && event.pickupByAccount)
+                quantity += event.pickupQuantity;
+        return quantity;
+    };
+    CHECK_EQ(ownPicked(slow), std::uint32_t{5});
+    CHECK_EQ(ownPicked(healthy), std::uint32_t{0});
+    slow.view().events().clear();
+    GameServerPeer::stageSnapshots(h.server);
+    drain();
+    CHECK_EQ(ownPicked(slow), std::uint32_t{0});
+}
+
 TEST(a_wrong_password_is_refused_and_a_right_one_is_not) {
     Harness h("auth");
     if (!h.ready) { CHECK(false); return; }

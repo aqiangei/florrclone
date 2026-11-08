@@ -743,6 +743,7 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
     for (auto& entry : entities_) {
         RemoteEntity& e = entry.second;
         if (e.kind != net::EntityKind::Petal) continue;
+        e.petalAgeSeconds += dtSeconds;
 
         const auto owner = entities_.find(e.ownerNetId);
         if (owner != entities_.end() && !e.isLoosePetal()) continue;   // second pass

@@ -85,7 +85,7 @@ constexpr Pair kNameTr[] = {
     {"Bone", "骨头"},
     {"Bubble", "泡泡"},
     {"Bubble Egg", "泡泡蛋"},
-    {"Bulb", "球茎"},
+    {"Bulb", "灯泡"},
     {"Bumble Bee", "熊蜂"},
     {"Bumble Bee Egg", "熊蜂蛋"},
     {"Bumble Bee Pollen", "熊蜂花粉"},

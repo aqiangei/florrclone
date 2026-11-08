@@ -1256,8 +1256,10 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
             if (other.noCollision) continue;
 
             const Vec2 toOther = other.position - self.position;
-            const double distance = toOther.length();
             const double minDistance = self.radius + other.radius + kMobCollisionBuffer;
+            const double squared = toOther.lengthSq();
+            if (squared > minDistance * minDistance) continue;
+            const double distance = std::sqrt(squared);
             if (!(distance < minDistance)) continue;
             const bool shaped = self.squareHalf>0 || other.squareHalf>0;
             BodyContactResult shape;

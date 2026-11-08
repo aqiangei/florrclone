@@ -3,7 +3,7 @@
  * Writes maps/pyramid.tmj: the pyramid, a maze laid out by rrolf's maze
  * generator and drawn with florr's pyramid tiles.
  *
- *     node scripts/generate-pyramid-map.js [seed]
+ *     node scripts/generate-pyramid-map.js [seed] [alternate]
  *
  * The maze is generateMaze() from rrolf's map editor (~/rrolf,
  * MapEditor/app.js -- AGPL-3.0-or-later, (C) 2024 Paul Johnson), copied as it
@@ -30,10 +30,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const OUT = path.join(__dirname, '..', 'maps', 'pyramid.tmj');
+const alternate = process.argv[3] === 'alternate';
+const OUT = path.join(__dirname, '..', 'maps', alternate ? 'pyramid_alt.tmj' : 'pyramid.tmj');
 const SEED = Number(process.argv[2] || 20261021);
 
-const GRID_SIZE = 40;          // rrolf's editor grid
+const GRID_SIZE = alternate ? 23 : 40;          // rrolf's editor grid
 const RIM = 1;                 // wall cells around the maze
 const CELL_TILES = 2;          // tiles across one maze cell
 const TILE = 256;
@@ -240,11 +241,13 @@ const doorAt = cellCentre(...SPAWN);
 const DOOR = 384;
 const door = object({
     height: DOOR, width: DOOR, x: doorAt.x - DOOR / 2, y: doorAt.y - DOOR / 2,
+    ...(alternate ? {name: 'pyramid-alt-entry'} : {}),
     properties: [
         prop('biome', 'string', 'pyramid'),
         prop('color', 'color', '#ffccb77a'),
         prop('label', 'string', 'Pyramid'),
         prop('order', 'float', 8),
+        ...(alternate ? [prop('pickable', 'bool', false)] : []),
     ],
 });
 
@@ -254,12 +257,12 @@ const padCell = mazeWall(1, 0) ? [0, 2] : [2, 0];
 const padAt = cellCentre(...padCell);
 const pad = object({
     point: true, x: padAt.x, y: padAt.y,
-    properties: [
-        prop('id', 'string', 'pyramid_portal'),
-        prop('to', 'string', 'pyramid_portal_desert'),
-    ],
+    properties: alternate
+        ? [prop('targetMap', 'string', 'desert'), prop('radius', 'float', 120)]
+        : [prop('id', 'string', 'pyramid_portal'), prop('to', 'string', 'pyramid_portal_desert')],
 });
 
+const reference = alternate ? JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'maps', 'pyramid.tmj'))) : null;
 const bands = [];
 for (let by = 0; by < GRID_SIZE / BLOCK; ++by) {
     for (let bx = 0; bx < GRID_SIZE / BLOCK; ++bx) {
@@ -317,13 +320,13 @@ const doc = {
         tileLayer(1, 'background', floor, false),
         tileLayer(2, 'walls', walls, true),
         objectLayer(3, 'player_spawns', [door]),
-        objectLayer(4, 'spawns', bands),
+        objectLayer(4, 'spawns', reference ? reference.layers.find(layer => layer.name === 'spawns').objects : bands),
         objectLayer(5, 'teleporters', [pad]),
     ],
     nextlayerid: 6,
-    nextobjectid: nextId,
+    nextobjectid: reference ? Math.max(nextId, reference.nextobjectid) : nextId,
     orientation: 'orthogonal',
-    properties: [
+    properties: reference ? reference.properties : [
         prop('darkness', 'color', DARKNESS),
         prop('minimap', 'bool', false),
     ],
@@ -370,5 +373,5 @@ const text = '{' + Object.keys(doc).map(
     k => ' ' + JSON.stringify(k) + ':' + value(doc[k], 1, k, doc)).join(',\n') + '\n}';
 fs.writeFileSync(OUT, text);
 
-console.log(`maps/pyramid.tmj: ${W}x${H} tiles, seed ${SEED}, ${bands.length} bands, ` +
+console.log(`maps/${path.basename(OUT)}: ${W}x${H} tiles, seed ${SEED}, ${doc.layers[3].objects.length} bands, ` +
             `deepest walk ${deepestDistance} cells at ${deepest}`);

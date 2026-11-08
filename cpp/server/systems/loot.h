@@ -49,11 +49,13 @@ struct LootAwarded {};
 // Tuning
 // ---------------------------------------------------------------------------
 
-/// TypeScript rarity-specific item expiry, in seconds.
-/// Universal is apex's: nothing drops one, but a drop is an item and an item
-/// can be any tier.
+/// Sub-Ultra loot stays on the server briefly for nearby pickup. Higher
+/// tiers use their original lifetimes. Event drops set their own lifetime.
+inline constexpr double kShortGroundDropSeconds = 8.0;
 inline constexpr std::array<double, kRarityCount> kDropLifetimeByRarity = {
-    10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 80.0, 120.0, 300.0, 600.0, 600.0,
+    kShortGroundDropSeconds, kShortGroundDropSeconds, kShortGroundDropSeconds,
+    kShortGroundDropSeconds, kShortGroundDropSeconds, kShortGroundDropSeconds,
+    80.0, 120.0, 300.0, 600.0, 600.0,
 };
 
 /// Collision radius a drop is given. It has no Motion and nothing pushes it;
@@ -65,6 +67,11 @@ inline constexpr double kDropBodyRadius = 14.0;
 /// one only has to be found by the pickup query, this one decides whether an
 /// item ends up embedded in a rock.
 inline constexpr double kDropWallRadius = 15.0;
+
+/// Normal stacks can be retired early under crowding. Event drops use their
+/// own lifecycle and do not spend the normal ground budget.
+inline constexpr std::size_t kMaxGroundDropsPerRealm = 512;
+inline constexpr std::size_t kMaxGroundDrops = 1536;
 
 // ---------------------------------------------------------------------------
 // The drop table
@@ -226,6 +233,14 @@ public:
     void run(World& world, const SpatialGrid& grid, const ContentRegistry& content, Rng& rng,
              double nowMillis, double dt, CommandBuffer& commands, EventQueue& events);
 
+    /// Called after the tick's pickup and expiry commands have drained, before
+    /// replication can expose the ground. Returns the number of retired stacks.
+    std::size_t pruneGroundDrops(World& world);
+
+    /// Authored maps are immutable during a live server run. Other consumers
+    /// may edit their terrain, and the daily maze always resolves its walls.
+    bool immutableWorldTerrain = false;
+
     /// Everything picked up during the last run(). Cleared at the start of each.
     const std::vector<Pickup>& pickups() const { return pickups_; }
 
@@ -287,7 +302,14 @@ private:
 
     World* boundWorld_ = nullptr;
     std::optional<Query<PlayerTag, Transform, PlayerModifiers>> collectors_;
-    std::optional<Query<DropTag, Transform, Lifetime>> drops_;
+    std::optional<Query<DropTag, Transform, Lifetime, DropItem>> drops_;
+    struct OverflowDrop {
+        Entity entity;
+        Realm realm;
+        Rarity rarity;
+        double remaining;
+    };
+    std::vector<OverflowDrop> groundDrops_;
     std::optional<Query<MobTag, Dead, MobType, Transform>> corpses_;
 
     DropTables tables_;
@@ -299,6 +321,7 @@ private:
         const Entity* entities;
         Transform* transforms;
         Lifetime* lifetimes;
+        DropItem* items;
         std::size_t size;
     };
     std::vector<DropMaintenanceBatch> maintenanceBatches_;

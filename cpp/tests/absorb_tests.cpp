@@ -49,8 +49,8 @@ bool absorb(Harness& h, NetClient& client, const std::vector<NetClient::AbsorbSt
 
 TEST(absorb_curve_rewards_new_and_veteran_stock_without_replacing_hunting) {
     CHECK_EQ(absorbXpPerPetal(Rarity::Common),1.0);
-    CHECK_EQ(absorbXpPerPetal(Rarity::Super),112000.0);
-    CHECK_EQ(absorbXpPerPetal(Rarity::Unique),800000.0);
+    CHECK_EQ(absorbXpPerPetal(Rarity::Super),140000.0);
+    CHECK_EQ(absorbXpPerPetal(Rarity::Unique),840000.0);
     CHECK_EQ(absorbXpPerPetal(Rarity::Apex),0.0);
     // Veteran stock remains much more valuable than low-tier duplicates.
     for(int tier=1;tier<=8;++tier)
@@ -232,16 +232,16 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     const double before = world.get<PlayerProgress>(body).totalXp;
     const int levelBefore = world.get<PlayerProgress>(body).level;
 
-    // Two legendaries are 800 XP: a fresh flower's first few levels at once,
-    // and the body -- the XP authority while it lives -- takes them now.
+    // Two legendaries grant several levels to a fresh flower immediately.
+    constexpr double earnedXp = 1000.0;
     AbsorbOutcome outcome;
     CHECK(absorb(h, client, {{rose, Rarity::Legendary, 2}}, outcome));
     CHECK(outcome.success);
-    CHECK_EQ(outcome.xpGained, 800.0);
+    CHECK_EQ(outcome.xpGained, earnedXp);
     const PlayerProgress& progress = world.get<PlayerProgress>(body);
-    CHECK_EQ(progress.totalXp, before + 800.0);
+    CHECK_EQ(progress.totalXp, before + earnedXp);
     CHECK(progress.level > levelBefore);
-    CHECK_EQ(progress.level, levelFromTotalXp(before + 800.0).level);
+    CHECK_EQ(progress.level, levelFromTotalXp(before + earnedXp).level);
     // The level-up landed with the XP: the new level's health, full.
     const Health& health = world.get<Health>(body);
     CHECK(health.max > maxHealthForLevel(levelBefore));
@@ -249,6 +249,6 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     // And the record was brought level with the body straight away, so the
     // Profile that followed already counts it.
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
-        return p.totalXp == before + 800.0 && p.stackCount(rose, Rarity::Legendary) == 0u;
+        return p.totalXp == before + earnedXp && p.stackCount(rose, Rarity::Legendary) == 0u;
     }));
 }

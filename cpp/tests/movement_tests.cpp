@@ -1308,7 +1308,7 @@ TEST(a_planted_meteor_blocks_heavy_mobs_even_when_a_step_would_cross_it) {
                 fx.spawnMob({6000.0 + (i % 16) * 160.0, 6000.0 + (i / 16) * 160.0}, 20.0, 1.0);
         }
         const Vec2 centre{3000, 3000};
-        const Entity meteor = fx.spawnLoose(centre, 150.0);
+        const Entity meteor = fx.spawnLoose(centre, 180.0);
         fx.world.add<PlantedMeteor>(meteor);
         const Entity mob = fx.spawnMob({2200, 3000}, 60.0, 1e9);
         const auto charge = [&] {
@@ -1317,7 +1317,7 @@ TEST(a_planted_meteor_blocks_heavy_mobs_even_when_a_step_would_cross_it) {
         };
 
         charge();
-        CHECK_NEAR(fx.positionOf(mob).x, centre.x - 210.0, 0.01);
+        CHECK_NEAR(fx.positionOf(mob).x, centre.x - 240.0, 0.01);
         CHECK_NEAR(fx.positionOf(meteor).x, centre.x, 1e-9);
         CHECK_NEAR(fx.positionOf(meteor).y, centre.y, 1e-9);
 
@@ -1325,18 +1325,18 @@ TEST(a_planted_meteor_blocks_heavy_mobs_even_when_a_step_would_cross_it) {
         fx.world.get<Motion>(mob).velocity = {};
         fx.world.get<Knockback>(mob).impulse = {2000, 0};
         fx.step(1, 1.0);
-        CHECK_NEAR(fx.positionOf(mob).x, centre.x - 210.0, 0.01);
+        CHECK_NEAR(fx.positionOf(mob).x, centre.x - 240.0, 0.01);
 
         // A meteor planted over a moving mob ejects it on its current side.
         fx.world.get<Transform>(mob).position = {3060, 3000};
         fx.world.get<Motion>(mob).velocity = {};
         fx.step();
-        CHECK_NEAR(fx.positionOf(mob).x, centre.x + 210.0, 0.01);
+        CHECK_NEAR(fx.positionOf(mob).x, centre.x + 240.0, 0.01);
 
         fx.world.add<Dead>(meteor);
         fx.world.get<Transform>(mob).position = {2200, 3000};
         charge();
-        CHECK(fx.positionOf(mob).x > centre.x + 210.0);
+        CHECK(fx.positionOf(mob).x > centre.x + 240.0);
     }
 }
 

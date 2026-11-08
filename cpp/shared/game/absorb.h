@@ -7,8 +7,8 @@
 //
 // The curve is sized for this game's levels. Low-tier duplicates always grant
 // at least one XP, including a new player's first Common. Upper tiers remain
-// useful to veterans, but are a supplement to hunting: M/U/S/E pay roughly
-// 7.5/10.7/9.3/11.8% of a same-tier Ladybug kill before Absorption talents.
+// useful to veterans, but even with the top Absorption talent M/U/S/E
+// each pay less than a same-tier Ladybug kill.
 // Every account uses the same table; account age and level never devalue stock.
 
 #include <cmath>
@@ -25,7 +25,7 @@ namespace flix {
 inline constexpr const char* kUnabsorbablePetalId = "basic";
 
 /// Common through Eternal. Tracked Hyper/admin holdings have no burn quote.
-inline constexpr double kAbsorbXpByTier[] = {1, 4, 16, 80, 400, 2400, 16000, 112000, 800000};
+inline constexpr double kAbsorbXpByTier[] = {1, 4, 16, 80, 500, 3000, 18500, 140000, 840000};
 
 /// How many petal stacks one Absorb request may name. More than a grid holds:
 /// a type at every ladder tier for every petal there is.

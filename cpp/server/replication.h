@@ -28,6 +28,7 @@
 namespace flix {
 
 class SpatialGrid;
+struct WireEvent;
 
 /// Allocates the ids entities are known by on the wire.
 ///
@@ -99,12 +100,14 @@ public:
     SelfSent self;
     bool selfSent = false;
 
+    // Own pickups also drive the client's per-run loot tally. Coalesce them
+    // while snapshots are paused so this state can catch up with the world.
+    void deferPickup(const WireEvent& pickup);
+    std::vector<WireEvent> deferredPickups;
+
     /// Cleared when the client re-joins, so a fresh session re-learns the world
     /// rather than inheriting a stale belief about it.
-    void reset() {
-        tracked.clear();
-        selfSent = false;
-    }
+    void reset();
 };
 
 /// Quantisation thresholds below which a field is considered unchanged.
@@ -241,6 +244,20 @@ public:
         events_.push_back(e);
     }
 
+    void berryLaunch(Vec2 at, double radius, double angle, Realm realm, Entity source,
+                     std::uint8_t style) {
+        WireEvent e;
+        e.kind = net::EventKind::Explosion;
+        e.position = at;
+        e.radius = radius;
+        e.amount = angle;
+        e.realm = realm;
+        e.visualSource = source;
+        e.flag = style;
+        e.positional = true;
+        events_.push_back(std::move(e));
+    }
+
     /// `targets` is where the bolts end -- whatever the strike hit, read
     /// before the damage lands -- and the strike is drawn to the
     /// net::kMaxLightningTargets of them nearest `at` when there are more than
@@ -314,8 +331,8 @@ public:
         std::optional<Vec2> viewport;
         Entity splitOther = NULL_ENTITY;
         bool loadShedding = false;
-        /// Current DropTag centres, shared read-only by snapshot workers.
-        const SpatialGrid* dropGrid = nullptr;
+        /// All current replicated centres, shared read-only by workers.
+        const SpatialGrid* entityGrid = nullptr;
     };
 
     /// Appends a complete Snapshot payload (message id included) to `out`.
@@ -389,7 +406,7 @@ private:
     };
 
     std::vector<Candidate> candidates_;
-    std::vector<Entity> nearbyDrops_;
+    std::vector<Entity> nearbyEntities_;
     std::vector<std::uint32_t> removals_;
 };
 

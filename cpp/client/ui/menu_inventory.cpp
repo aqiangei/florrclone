@@ -451,7 +451,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         TooltipLine line{std::string(tipHealPerSec()) + abbreviate(heal), 12.0};
         line.alpha = 0.56;
         line.labelColor = kStatHeal;
-        line.altText = std::string(tipHealPerSec()) + exactNumber(heal);
+        line.altText = std::string(tipHealPerSec()) + oneDecimal(heal);
         lines.push_back(line);
     }
     if (healTalent * kPlayerHealMultiplier != 1.0 && (stats.heal > 0 || stats.passiveHealPerSecond > 0)) {
@@ -459,8 +459,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const double base = stats.heal > 0 ? stats.heal : stats.passiveHealPerSecond;
         lines.push_back({std::string(zh ? "基础治疗：" : "Base healing: ") + exactNumber(base) +
             (stats.heal > 0 ? "" : (zh ? "/秒" : "/s")),12.0});
-        lines.push_back({std::string(zh ? "本服治疗倍率：x" : "Server healing multiplier: x") + exactNumber(kPlayerHealMultiplier),12.0});
-        if (healTalent != 1) lines.push_back({std::string(zh ? "治疗天赋倍率：x" : "Healing talent: x") + exactNumber(healTalent),12.0});
+        lines.push_back({std::string(zh ? "本服治疗倍率：x" : "Server healing multiplier: x") + oneDecimal(kPlayerHealMultiplier),12.0});
+        if (healTalent != 1) lines.push_back({std::string(zh ? "治疗天赋倍率：x" : "Healing talent: x") + oneDecimal(healTalent),12.0});
     }
     if (stats.shield > 0.0) {
         const double shield = std::round(stats.shield);
@@ -597,6 +597,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 stats.modifiers.luck > 0 ? "Luck: +" : "Luck: ", stats.modifiers.luck);
     if (stats.modifiers.aggroRange != 1.0)
         special("怪物警觉范围变化：", "Mob detection range: ", (stats.modifiers.aggroRange - 1.0) * 100.0, "%");
+    if (config.id == "bulb") {
+        special("额外灯泡的引怪增量生效比例：", "Extra bulb aggro bonus retained: ",
+                kAdditionalBulbAggroScale * 100.0, "%");
+        special("叠加上限（基础警觉范围）：", "Stack cap (base aggro range): ",
+                kAdditionalBulbAggroCap * 100.0, "%");
+    }
     if (stats.modifiers.poisonArmor > 0) special("毒抗：", "Poison armor: ", stats.modifiers.poisonArmor);
     if (config.projectile.present) {
         special("每轮弹数：", "Projectiles per volley: ", config.projectile.count);
@@ -606,7 +612,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (config.id == "magic_eye") {
         special("每次消耗当前魔力：", "Current mana spent per cast: ", 50.0, "%");
-        special("每点魔力转化闪电伤害：", "Lightning damage per mana: ", 5.0);
+        special("每点耗蓝转化闪电伤害：", "Lightning damage per mana spent: ",
+                magicEyeDamagePerMana(rarity));
         special("闪电索敌距离：", "Lightning targeting range: ", 240.0);
         special("最多连锁目标：", "Maximum lightning targets: ",
                 std::clamp(std::min(rarityIndex(rarity), rarityIndex(Rarity::Unique)) - 3, 1, 5));

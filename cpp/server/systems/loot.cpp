@@ -408,7 +408,10 @@ Entity LootSystem::spawnDrop(World& world, std::uint16_t petalIndex, Rarity rari
     world.add<DropItem>(e, std::move(item));
 
     world.add<Lifetime>(e, Lifetime{kDropLifetimeByRarity[static_cast<std::size_t>(rarityIndex(rarity))]});
-    world.add<Replicated>(e, Replicated{net::EntityKind::Drop, 0, petalIndex, rarity, 0});
+    // Hidden loot still has a world body and a net id for its pickup cue.
+    // Without Replicated, it never enters the ground snapshot candidates.
+    if (rarityIndex(rarity) >= rarityIndex(Rarity::Ultra))
+        world.add<Replicated>(e, Replicated{net::EntityKind::Drop, 0, petalIndex, rarity, 0});
     if (netIds != nullptr) world.add<NetId>(e, NetId{netIds->next()});
     return e;
 }
@@ -462,29 +465,74 @@ void LootSystem::run(World& world, const SpatialGrid& grid, const ContentRegistr
     collectFresh(world, commands, events);
 }
 
+std::size_t LootSystem::pruneGroundDrops(World& world) {
+    bind(world);
+    if (drops_->count() <= kMaxGroundDropsPerRealm) return 0;
+
+    std::array<std::size_t, kMaxRealms> byRealm{};
+    groundDrops_.clear();
+    drops_->each([&](Entity e, DropTag&, Transform& at, Lifetime& life, DropItem& drop) {
+        if (drop.singleCopy || drop.humansOnly) return;
+        ++byRealm[realmIndex(at.realm)];
+        groundDrops_.push_back({e, at.realm, drop.rarity, std::max(0.0, life.remainingSeconds)});
+    });
+    const auto initial = groundDrops_.size();
+    if (initial <= kMaxGroundDrops &&
+        std::none_of(byRealm.begin(), byRealm.end(),
+                     [](std::size_t count) { return count > kMaxGroundDropsPerRealm; })) return 0;
+
+    std::sort(groundDrops_.begin(), groundDrops_.end(), [](const OverflowDrop& a, const OverflowDrop& b) {
+        if (a.rarity != b.rarity) return rarityIndex(a.rarity) < rarityIndex(b.rarity);
+        if (a.remaining != b.remaining) return a.remaining < b.remaining;
+        return a.entity < b.entity;
+    });
+    std::size_t retained = initial;
+    for (auto& drop : groundDrops_) {
+        auto& count = byRealm[realmIndex(drop.realm)];
+        if (count <= kMaxGroundDropsPerRealm) continue;
+        world.destroy(drop.entity);
+        drop.entity = NULL_ENTITY;
+        --count;
+        --retained;
+    }
+    for (const auto& drop : groundDrops_) {
+        if (retained <= kMaxGroundDrops) break;
+        if (drop.entity == NULL_ENTITY) continue;
+        world.destroy(drop.entity);
+        --retained;
+    }
+    return initial - retained;
+}
+
 void LootSystem::maintainDrops(double dt, CommandBuffer& commands) {
-    const auto expires = [&](Transform& transform, Lifetime& lifetime) {
+    const auto expires = [&](Transform& transform, Lifetime& lifetime, DropItem& drop) {
         // Nothing resolves the +-50 spawn scatter -- the reference does not
         // either, by design -- so this push is the only way a drop that landed
         // inside a rock, a wall or water ever becomes reachable again. Pickup
         // is a plain distance test, and a tile face is far wider than its reach.
-        if (terrain != nullptr) {
-            transform.position =
-                terrain->resolveCircle(transform.position, kDropWallRadius, transform.realm);
-        }
         lifetime.remainingSeconds -= dt;
-        // Outside its realm's playable area, where nothing can ever reach it.
-        // Tested after the wall push, which is what normally pulls an escaping
-        // drop back inside -- what reaches here is a drop the resolver could
-        // not save.
-        // No terrain -- a harness driving the system on its own -- means no
-        // realm rectangle to be outside of, so the drop only ever times out.
-        return lifetime.remainingSeconds <= 0.0 ||
-               (terrain != nullptr && terrain->outside(transform.position, transform.realm));
+        if (terrain == nullptr) return lifetime.remainingSeconds <= 0.0;
+        const bool immutable = immutableWorldTerrain && isWorldRealm(transform.realm);
+        const Vec2 before = transform.position;
+        if (immutable && drop.terrainSettled && drop.settledRealm == transform.realm &&
+            drop.settledPosition.x == before.x && drop.settledPosition.y == before.y) {
+            return lifetime.remainingSeconds <= 0.0;
+        }
+        transform.position = terrain->resolveCircle(before, kDropWallRadius, transform.realm);
+        const bool outside = terrain->outside(transform.position, transform.realm);
+        // A fixed point of the static wall solver is safe to reuse. A push
+        // gets checked again, including cases requiring more than one tick.
+        drop.terrainSettled = immutable && !outside &&
+                              transform.position.x == before.x && transform.position.y == before.y;
+        if (drop.terrainSettled) {
+            drop.settledPosition = before;
+            drop.settledRealm = transform.realm;
+        }
+        return lifetime.remainingSeconds <= 0.0 || outside;
     };
     if (!workers || !workers->count() || !workerLimit || !terrain || drops_->count() < 256) {
-        drops_->each([&](Entity e, DropTag&, Transform& transform, Lifetime& lifetime) {
-            if (expires(transform, lifetime)) commands.destroy(e);
+        drops_->each([&](Entity e, DropTag&, Transform& transform, Lifetime& lifetime, DropItem& item) {
+            if (expires(transform, lifetime, item)) commands.destroy(e);
         });
         return;
     }
@@ -492,10 +540,10 @@ void LootSystem::maintainDrops(double dt, CommandBuffer& commands) {
     constexpr std::size_t batchSize = 64;
     maintenanceBatches_.clear();
     drops_->chunks([&](std::size_t size, const Entity* entities, DropTag*, Transform* transforms,
-                       Lifetime* lifetimes) {
+                       Lifetime* lifetimes, DropItem* items) {
         for (std::size_t i = 0; i < size; i += batchSize) {
             maintenanceBatches_.push_back({entities + i, transforms + i, lifetimes + i,
-                                           std::min(batchSize, size - i)});
+                                           items + i, std::min(batchSize, size - i)});
         }
     });
     expired_.resize(maintenanceBatches_.size() * batchSize);
@@ -503,7 +551,7 @@ void LootSystem::maintainDrops(double dt, CommandBuffer& commands) {
         const auto& batch = maintenanceBatches_[index];
         Entity* results = expired_.data() + index * batchSize;
         for (std::size_t i = 0; i < batchSize; ++i) {
-            results[i] = i < batch.size && expires(batch.transforms[i], batch.lifetimes[i])
+            results[i] = i < batch.size && expires(batch.transforms[i], batch.lifetimes[i], batch.items[i])
                 ? batch.entities[i] : NULL_ENTITY;
         }
     });

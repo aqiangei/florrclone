@@ -1,4 +1,5 @@
 #include "test.h"
+#include "shared/game/berry_projectile.h"
 
 #include "client/camera.h"
 #include "client/render/world_renderer.h"
@@ -1025,4 +1026,83 @@ TEST(the_shipped_mobs_reach_a_flower_touching_them_at_every_tier) {
             CHECK(sim.health(player) < 1e9);
         }
     }
+}
+
+TEST(berry_reload_springs_past_the_ring_and_launches_with_a_brief_flash) {
+    const auto& content = testsupport::shippedContent();
+    WorldRenderer renderer;
+    renderer.setContent(&content);
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    renderer.setSprites(&sprites);
+    auto camera = frameCamera();
+    camera.userZoom = 1.8;
+    WorldRenderer::EntityMap entities;
+    auto& player = entities[1];
+    player.kind = net::EntityKind::Player;
+    player.netId = 1;
+    player.position = kStrikeAt;
+    player.radius = 25.0;
+    auto& berry = entities[2];
+    berry.kind = net::EntityKind::Petal;
+    berry.typeIndex = content.petalIndex("grapes");
+    berry.netId = 2;
+    berry.ownerNetId = 1;
+    berry.position = kStrikeAt + Vec2{55.0, 0.0};
+
+    const auto draw = [&] {
+        Canvas canvas = Canvas::createVirtual(kFrameSize, kFrameSize);
+        renderer.draw(canvas, entities, camera, kStrikeAt, 0.0);
+        return canvas.getImageData(0, 0, kFrameSize, kFrameSize);
+    };
+    const auto fresh = draw();
+    berry.petalAgeSeconds = .085;
+    const auto overshot = draw();
+    berry.petalAgeSeconds = .150;
+    const auto settled = draw();
+    CHECK(testsupport::differingPixels(fresh, settled, 12) > 100);
+    const auto change = testsupport::differingPixels(overshot, settled, 12);
+    std::printf("  berry spring return changes %d pixels\n", change);
+    CHECK(change > 8);
+
+    entities.erase(2);
+    const auto idle = draw();
+    WorldView view;
+    ViewEvent event;
+    event.kind = net::EventKind::Explosion;
+    event.position = kStrikeAt + Vec2{55.0, 0.0};
+    event.radius = 10.0;
+    event.flag = static_cast<std::uint8_t>(BerryShotStyle::Grape);
+    view.events().push_back(event);
+    renderer.ingestEvents(view);
+    CHECK(testsupport::differingPixels(draw(), idle, 12) > 50);
+    renderer.update(.24);
+    CHECK_EQ(testsupport::differingPixels(draw(), idle, 12), 0);
+}
+
+TEST(meteor_draws_its_blocking_edge_and_hyper_veins) {
+    const auto& content = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    WorldRenderer renderer;
+    renderer.setContent(&content);
+    renderer.setSprites(&sprites);
+    WorldRenderer::EntityMap entities;
+    auto& rock = entities[1];
+    rock.netId = 1;
+    rock.kind = net::EntityKind::Projectile;
+    rock.typeIndex = content.petalIndex("meteor");
+    rock.position = kStrikeAt;
+    rock.radius = 180.0;
+    const auto camera = frameCamera();
+    const auto draw = [&](Rarity rarity, double time) {
+        rock.rarity = rarity;
+        Canvas canvas = Canvas::createVirtual(kFrameSize, kFrameSize);
+        renderer.draw(canvas, entities, camera, kStrikeAt, time);
+        return canvas.getImageData(0, 0, kFrameSize, kFrameSize);
+    };
+    const auto regular = draw(Rarity::Common, 0.0);
+    const auto hyper = draw(Rarity::Apex, 0.0);
+    CHECK(testsupport::differingPixels(regular, hyper, 12) > 500);
+    CHECK(testsupport::differingPixels(hyper, draw(Rarity::Apex, 0.6), 6) > 100);
 }

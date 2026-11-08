@@ -391,7 +391,7 @@ void App::drawMinimap(Canvas& canvas) {
     // A map that hides its minimap (florr's `minimap: false`) gets nothing in
     // the corner at all: the pyramid's maze is to be found, not read.
     if (const MapData* map = worldMaps_.forRealm(net_.view().realm())) {
-        if (!map->showsMinimap() && !(map->id() == "pyramid" && net_.pyramidMapRevealed)) return;
+        if (!map->showsMinimap() && !(map->biome() == "pyramid" && net_.pyramidMapRevealed)) return;
     }
 
     const double x = canvas.width() - kMinimapSize - kMinimapPadding;

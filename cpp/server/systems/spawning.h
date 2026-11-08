@@ -58,6 +58,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "server/replication.h"
@@ -991,8 +992,8 @@ private:
     /// population it has to put back.
     std::optional<Query<MobTag, Transform, AmbientMob, Dead>> casualties_;
     std::optional<Query<AmbientMob, Lifetime>> escorts_;
-    /// Every living mob, for the census to find the bodies and escorts that go
-    /// to sleep with their head or nest.
+    std::optional<Query<BodySegment, Transform, AmbientMob>> ambientChains_;
+    /// Finds the escorts that follow a nest back to sleep.
     std::optional<Query<MobTag, AmbientMob>> dependents_;
     std::optional<Query<Transform, MobType, Spawner>> spawners_;
     std::optional<Query<Transform, MobType, NestWaves>> waveNests_;
@@ -1093,8 +1094,9 @@ private:
     struct CensusMob { Entity entity = NULL_ENTITY; Vec2 position; std::uint16_t zone = kInvalidIndex; };
     std::vector<CensusMob> censusMobs_;
     std::vector<CensusMob> vanished_;
-    /// Band mobs this census put back to sleep, for their bodies and escorts
-    /// to follow (takeCensus).
+    /// Current connected roots, independent of the chain's birth cohort.
+    std::unordered_map<Entity, Entity> connectedRoots_;
+    /// Band mobs this census put back to sleep, for their escorts to follow.
     std::vector<Entity> sleepers_;
     /// A record promoteLatent may wake this pass, and how far it is from the
     /// nearest flower: when mobCap binds, the nearest are woken first, so what

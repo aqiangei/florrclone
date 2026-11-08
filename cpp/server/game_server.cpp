@@ -62,6 +62,12 @@ double monotonicMillis() {
 
 namespace {
 
+std::int64_t pyramidRotationCycle() {
+    const auto utcHours = std::chrono::duration_cast<std::chrono::hours>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    return utcHours / 4;
+}
+
 /// Clamp on the viewport a client may claim, per axis, when nothing it wears
 /// pulls the camera out. A client asking to see the whole map is asking for an
 /// advantage, and for the server to build it a snapshot of the entire world.
@@ -128,6 +134,7 @@ constexpr double kDeltaSmoothing = 0.1;
 /// healthy tick is a few milliseconds, and one this long is a visible hitch.
 constexpr double kSlowTickLogMillis = net::kTickMillis * 3.0;
 constexpr double kTickCadenceLogMillis = 10000.0;
+constexpr std::size_t kSnapshotBacklogLimit = 64 * 1024;
 
 /// The batch a craft consumes.
 constexpr int kCraftBatch = 5;
@@ -601,6 +608,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     sacrificeRng_.reseed(config.worldSeed ^ 0x5AC21F1CEull);
     pyramidMapRng_.reseed(config.worldSeed ^ 0x505952414D4944ull);
     pyramidMaps_.clear();
+    pyramidCycle_ = pyramidRotationCycle();
     terrain_ = std::make_unique<Terrain>();
     // Every map the data directory stages, in manifest order: each one gets a
     // realm, a tile grid inside `terrain_` and an annotation layer inside
@@ -616,7 +624,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     grid_.sizeToRealms(*terrain_);
     mobTargetGrid_.sizeToRealms(*terrain_);
     pickupGrid_.sizeToRealms(*terrain_);
-    dropSnapshotGrid_.sizeToRealms(*terrain_);
+    snapshotGrid_.sizeToRealms(*terrain_);
 
     movement_ = std::make_unique<MovementSystem>();
     // The AI caches queries against one world and wanders from its own
@@ -688,12 +696,28 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         moveEntityToRealm(entity, realm, position);
     };
     dungeons_->admits = [this](Entity entity) { return botForEntity(entity) == nullptr; };
+    dungeons_->waveNotice = [this](Entity entity, const std::string& text) {
+        if (const Session* session = sessionForEntity(entity)) {
+            if (auto* connection = listener_.find(session->connection))
+                sendNotice(*connection, net::NoticeSeverity::Info, text);
+        }
+    };
+    dungeons_->waveRevived = [this](Entity entity) {
+        auto& health = world_.get<Health>(entity);
+        health.current = health.max;
+        health.invulnerableUntilMillis = clockMillis_ + kRespawnInvulnerabilitySeconds * 1000.0;
+        if (auto* mana = world_.tryGet<ManaPool>(entity)) mana->current = 0.0;
+        world_.remove<Dead>(entity);
+        if (world_.has<Unrevivable>(entity)) world_.remove<Unrevivable>(entity);
+        onPlayerRevived(entity, NULL_ENTITY);
+    };
     // Bots exist to populate the OVERWORLD, and their controller is written
     // against it: its flow field, its ray casts and its broadphase queries
     // all read that one map. A bot carried through a pad would steer around
     // walls it is not standing among, so pads simply do not take bots.
     movement_->takesTeleporters = [this](Entity entity) { return botForEntity(entity) == nullptr; };
     loot_->terrain = terrain_.get();
+    loot_->immutableWorldTerrain = true;
     loot_->bonusMultiplier = [this](Entity player) {
         const auto* session=sessionForEntity(player);
         return session && session->authenticated() ? activeDropBonus(database_.progress(session->userId),dropBonusNow()) : 1;
@@ -1272,6 +1296,7 @@ void GameServer::tick(double nowMillis) {
     tickPhaseCount_ = 0;
     if (!bossClocksRestored_) restoreBossClocks(nowMillis);
     tickStartedMillis_ = monotonicMillis();
+    servicePyramidRotation(pyramidRotationCycle());
 
     // First, so a session whose socket is gone is not counted as a player,
     // simulated or saved by anything below. Above the idle gate because such a
@@ -1435,6 +1460,8 @@ void GameServer::tick(double nowMillis) {
     commands_.flush();
     serviceNearbyRevives(nowMillis);
     markTickPhase("reap");
+    loot_->pruneGroundDrops(world_);
+    markTickPhase("drop cap");
 
     // The wire runs slower than the simulation and on its own clock: physics
     // and combat want 30 Hz, clients do not, and the per-recipient encode/cull/
@@ -1817,12 +1844,21 @@ void GameServer::replicate(double nowMillis) {
     frame.events = &events_;
     frame.loadShedding = config_.loadShedding;
 
+    deferredPickupViews_.clear();
     std::size_t count = 0;
     for (auto& entry : sessions_) {
         Session& session = entry.second;
         if (!session.playing()) continue;
         net::Connection* connection = listener_.find(session.connection);
         if (!connection) continue;
+        // Let reliable messages and earlier snapshots drain before building
+        // another delta. ClientView still describes the last queued snapshot
+        // so the next one can carry all state changes since then.
+        if (connection->outboundBacklog() >= kSnapshotBacklogLimit) {
+            if (viewpointOf(session) == session.entity)
+                deferredPickupViews_.emplace(session.connection, &views_.at(session.connection));
+            continue;
+        }
 
         if (count == snapshotJobs_.size()) snapshotJobs_.emplace_back();
         auto& job = snapshotJobs_[count++];
@@ -1850,15 +1886,28 @@ void GameServer::replicate(double nowMillis) {
         job.frame = frame;
     }
     snapshotJobs_.resize(count);
-    // Reuse one view of the final drop positions, including items just
-    // awarded this tick. It stays read-only until the worker batch finishes.
+    if (!deferredPickupViews_.empty()) {
+        for (const auto& event : events_.events()) {
+            if (event.kind != net::EventKind::PickedUp) continue;
+            const auto found = deferredPickupViews_.find(event.dealtByConnection);
+            if (found != deferredPickupViews_.end()) found->second->deferPickup(event);
+        }
+    }
+    // Build one spatial view of the final replicated positions. A single
+    // viewer can walk the world directly. Several viewers reuse the index.
     if (count > 1) {
-        dropSnapshotGrid_.clear();
-        Query<DropTag, NetId, Replicated, Transform>{world_}.each(
-            [&](Entity e, DropTag&, NetId&, Replicated&, Transform& at) {
-                dropSnapshotGrid_.insert(e, at.realm, at.position);
+        snapshotGrid_.clear();
+        bool complete = true;
+        Query<NetId, Replicated, Transform>{world_}.each(
+            [&](Entity e, NetId&, Replicated&, Transform& at) {
+                if (!std::isfinite(at.position.x) || !std::isfinite(at.position.y)) {
+                    complete = false;
+                    return;
+                }
+                snapshotGrid_.insert(e, at.realm, at.position);
             });
-        for (auto& job : snapshotJobs_) job.frame.dropGrid = &dropSnapshotGrid_;
+        if (complete)
+            for (auto& job : snapshotJobs_) job.frame.entityGrid = &snapshotGrid_;
     }
     // No ECS, session, event or socket mutation until all readers finish.
     parallelSnapshots_->build(world_, snapshotJobs_);
@@ -6999,7 +7048,8 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
         }
         const auto* at = world_.tryGet<Transform>(victim);
         const auto* hp = world_.tryGet<Health>(victim);
-        if (!corpse.playing() || !world_.has<Dead>(victim) || !at || !hp) {
+        if (!corpse.playing() || !world_.has<Dead>(victim) || !at || !hp ||
+            world_.has<WavePlayer>(victim)) {
             corpse.rescueHelper = NULL_ENTITY;
             continue;
         }
@@ -7034,6 +7084,11 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
 
 void GameServer::handleRespawn(Session& session) {
     if (!session.authenticated()) return;
+    if (dungeons_ && dungeons_->inWave(world_, session.entity) && !isStanding(world_, session.entity)) {
+        if (auto* connection = listener_.find(session.connection))
+            sendNotice(*connection, net::NoticeSeverity::Info, "队友仍在 Wave 中，下一波可重新加入。");
+        return;
+    }
     // A lent console is lent for one life. Dropping it here rather than on
     // death means the grantee keeps it while they are looking at the death
     // card, which is where the reference leaves it too.
@@ -7113,7 +7168,8 @@ void GameServer::collectSpawnBlockers(Realm realm, std::vector<MobDisc>& out) co
 }
 
 bool GameServer::canMarkPlayer(Entity target, Entity marker, Rarity rarity) {
-    if (target == marker || !isStanding(world_, marker) || !world_.has<Dead>(target)) return false;
+    if (target == marker || !isStanding(world_, marker) || !world_.has<Dead>(target) ||
+        world_.has<WavePlayer>(target) || world_.has<WavePlayer>(marker)) return false;
     Session* victim = sessionForEntity(target);
     Session* caster = sessionForEntity(marker);
     if (!victim || !caster || victim->entity != target || caster->entity != marker ||
@@ -7300,11 +7356,14 @@ Entity GameServer::spawnPlayerNear(Session& session, Realm realm, Vec2 around) {
     // The new body's level determines its hull; the base radius can leave a
     // high-level flower embedded and eject it through a rail on the next tick.
     auto& at = world_.get<Transform>(entity);
-    at.position = playerRespawnPosition(*terrain_, realm, around, world_.get<Body>(entity).radius);
+    at.position = playerRespawnPosition(*terrain_, at.realm, at.position,
+                                        world_.get<Body>(entity).radius);
     return entity;
 }
 
 Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) {
+    const Realm requestedRealm = realm;
+    routePyramidEntrance(realm, spawn);
     // The realm is settled on the session BEFORE the account is applied, and
     // the arena's scratch record with it: applyAccountToEntity reads both.
     session.realm = realm;
@@ -7312,6 +7371,10 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     if (realm == Realm::Arena) session.arena = startArenaRun(database_.progress(session.userId));
 
     const Entity entity = createPlayerBody(session, realm, spawn);
+    if (realm != requestedRealm) {
+        world_.get<Transform>(entity).position =
+            playerRespawnPosition(*terrain_, realm, spawn, world_.get<Body>(entity).radius);
+    }
 
     // A FRESH body only: full health and the respawn window. createPlayerBody
     // must never do either -- a splitter's second body is built by it too, and
@@ -7568,6 +7631,13 @@ void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
     if (!world_.isAlive(entity)) return;
     Transform* transform = world_.tryGet<Transform>(entity);
     if (transform == nullptr) return;
+    const Realm requestedRealm = realm;
+    routePyramidEntrance(realm, position);
+    if (realm != requestedRealm) {
+        if (const auto* body = world_.tryGet<Body>(entity)) {
+            position = playerRespawnPosition(*terrain_, realm, position, body->radius);
+        }
+    }
     if (transform->realm != realm && isStanding(world_, entity)) {
         const auto* pads = world_.tryGet<TeleporterState>(entity);
         if (pads && clockMillis_ < pads->markHoldUntilMillis) return;
@@ -7712,7 +7782,8 @@ std::string GameServer::biomeOfEntity(Entity entity) const {
     const Transform* transform = world_.tryGet<Transform>(entity);
     if(!transform)return {};
     Realm exterior;Vec2 entrance;
-    if(dungeons_ && dungeons_->exteriorForRealm(transform->realm,exterior,entrance))return biomeOfRealm(exterior);
+    if (dungeons_ && (dungeons_->waveExterior(world_, entity, exterior) ||
+                     dungeons_->exteriorForRealm(transform->realm, exterior, entrance))) return biomeOfRealm(exterior);
     return biomeOfRealm(transform->realm);
 }
 
@@ -7846,10 +7917,74 @@ void GameServer::sendPyramidMapState(Session& session) {
     }
 }
 
+Realm GameServer::activePyramidRealm(Realm realm) const {
+    const auto* map = worldMaps_.forRealm(realm);
+    if (!map || map->biome() != "pyramid" || pyramidCycle_ < 0) return realm;
+
+    bool found = false;
+    const auto active = worldMaps_.realmOfId(pyramidCycle_ % 2 == 0 ? "pyramid" : "pyramid_alt", found);
+    if (!found) return realm;
+    if (!map->prestige()) return active;
+    const auto twin = worldMaps_.prestigeRealm(active, found);
+    return found ? twin : realm;
+}
+
+void GameServer::routePyramidEntrance(Realm& realm, Vec2& position) {
+    const Realm active = activePyramidRealm(realm);
+    if (active == realm) return;
+    realm = active;
+    const auto entrances = worldMaps_.forRealm(realm)->playerSpawns();
+    if (entrances.empty()) {
+        position = terrain_->spawnPoint(realm);
+    } else {
+        const auto& bounds = entrances.front()->bounds;
+        position = {bounds.x + bounds.w * 0.5, bounds.y + bounds.h * 0.5};
+    }
+}
+
+void GameServer::servicePyramidRotation(std::int64_t cycle) {
+    if (cycle == pyramidCycle_) return;
+    pyramidCycle_ = cycle;
+
+    // Gather first: a realm change moves the player's pets and can update
+    // the session and the archetypes that hold its teleporter state.
+    std::vector<Entity> leaving;
+    Query<PlayerTag, Transform>{world_}.each([&](Entity e, PlayerTag&, Transform& at) {
+        if (activePyramidRealm(at.realm) != at.realm) leaving.push_back(e);
+    });
+    for (const Entity player : leaving) {
+        const auto old = world_.get<Transform>(player).realm;
+        Realm realm = old;
+        Vec2 at;
+        routePyramidEntrance(realm, at);
+        if (const auto* body = world_.tryGet<Body>(player)) {
+            at = playerRespawnPosition(*terrain_, realm, at, body->radius);
+        }
+        if (auto* pads = world_.tryGet<TeleporterState>(player)) pads->markHoldUntilMillis = 0.0;
+        moveEntityToRealm(player, realm, at);
+        if (const auto* session = sessionForEntity(player); session && session->entity == player) {
+            if (auto* connection = listener_.find(session->connection)) {
+                sendSystem(*connection, "金字塔地形已切换，已回到出生点。");
+            }
+        }
+    }
+    // Retire old encounters so an unseen boss cannot hold the active
+    // layout's biome clock. Map scrolls must be collected again.
+    Query<MobTag, Transform>{world_}.each([&](Entity e, MobTag&, Transform& at) {
+        if (!world_.has<Pet>(e) && activePyramidRealm(at.realm) != at.realm) commands_.destroy(e);
+    });
+    for (auto& [key, stock] : pyramidMaps_) {
+        const auto realm = static_cast<Realm>(key);
+        if (activePyramidRealm(realm) == realm) continue;
+        for (const Entity scroll : stock.scrolls) commands_.destroy(scroll);
+        stock = {};
+    }
+}
+
 void GameServer::servicePyramidMaps(double now) {
     // Separate RNG and bounded stock: these are navigation aids, never 30x loot rolls.
     for (const auto& map : worldMaps_.maps()) {
-        if (map.id() != "pyramid") continue;
+        if (map.biome() != "pyramid" || map.prestige() || activePyramidRealm(map.realm()) != map.realm()) continue;
         const Realm realm = map.realm();
         auto& stock = pyramidMaps_[static_cast<unsigned>(realm)];
         auto& scrolls = stock.scrolls;

@@ -1,4 +1,5 @@
 #include "test.h"
+#include "shared/game/berry_projectile.h"
 
 #include "server/replication.h"
 #include "server/hyper_petal_loadout.h"
@@ -2127,6 +2128,28 @@ TEST(the_strongest_worn_aggro_range_boost_wins_and_multiplies_the_strongest_cut)
     CHECK_NEAR(rig.modifiers().aggroRangeScale, 0.75, 1e-12);
 }
 
+TEST(bulb_extra_slots_stack_a_small_share_and_stop_at_the_base_range_cap) {
+    const auto& content = testsupport::shippedContent();
+    Rig rig(content);
+    const auto bulb = content.petalIndex("bulb");
+    const auto scale = [&](Rarity rarity) { return content.petalStats(bulb, rarity).modifiers.aggroRange; };
+    rig.equip(0, "bulb");
+    rig.settleEquips();
+    CHECK_NEAR(rig.modifiers().aggroRangeScale, scale(Rarity::Common), 1e-9);
+    rig.equip(1, "bulb");
+    rig.settleEquips();
+    CHECK_NEAR(rig.modifiers().aggroRangeScale, scale(Rarity::Common) + 0.066, 1e-9);
+
+    rig.equip(2, "bulb", Rarity::Apex);
+    rig.equip(3, "bulb", Rarity::Apex);
+    rig.settleEquips();
+    CHECK_NEAR(rig.modifiers().aggroRangeScale, scale(Rarity::Apex) + 0.30, 1e-9);
+    rig.damage(rig.petals(3).front(), 1e9);
+    rig.tick();
+    CHECK(rig.slot(3).broken);
+    CHECK_NEAR(rig.modifiers().aggroRangeScale, scale(Rarity::Apex) + 0.132, 1e-9);
+}
+
 TEST(aggro_modifiers_work_only_while_the_petal_is_on_the_ring) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -2281,8 +2304,13 @@ TEST(a_leaf_heals_whatever_the_stance) {
          {std::uint8_t{0}, std::uint8_t{net::InputDefend}, std::uint8_t{net::InputAttack},
           std::uint8_t{net::InputAttack | net::InputDefend}}) {
         rig.setFlags(flags);
+        auto& health = rig.world.get<Health>(rig.player);
+        const double before = health.max * 0.5;
+        health.current = before;
         rig.tick();
         CHECK_NEAR(rig.modifiers().passiveHealPerSecond, 1.0 + leaf, 1e-12);
+        CHECK_NEAR(rig.world.get<Health>(rig.player).current - before,
+                   (1.0 + leaf) * net::kTickSeconds * kPlayerHealMultiplier, 1e-9);
     }
 }
 
@@ -2550,19 +2578,23 @@ TEST(a_burst_heal_charges_homes_consumes_and_reloads) {
     Rig rig;
     rig.equip(0, "healer");
     rig.settleEquips();
-    rig.world.get<Health>(rig.player).current = 50.0;
+    constexpr double startHealth = 1.0;
+    rig.world.get<Health>(rig.player).current = startHealth;
     rig.setFlags(net::InputAttack);
-    rig.tick(60);   // well past the petal's 1000ms charge
+    const double startedAt = rig.now;
 
-    // Input does not gate a rose: after charging it flies home because health
-    // is missing, delivers one burst, and enters its normal break cooldown.
-    CHECK_NEAR(rig.world.get<Health>(rig.player).current, 62.0, 1e-9);
-    CHECK(rig.slot(0).broken);
+    // Check at delivery so a short reload cannot finish before the assertion.
+    CHECK(rig.tickUntil([&] { return rig.slot(0).broken; }, 200));
+    const auto& health = rig.world.get<Health>(rig.player);
+    const double expected = startHealth +
+        (10.0 + (rig.now - startedAt) / 1000.0) * kPlayerHealMultiplier;
+    CHECK_NEAR(health.current, std::min(expected, health.max), 1e-9);
     CHECK_EQ(rig.petals(0).size(), std::size_t(0));
 
     CHECK(rig.tickUntil([&] { return !rig.slot(0).broken; }));
     CHECK_EQ(rig.petals(0).size(), std::size_t(1));
-    CHECK(rig.tickUntil([&] { return rig.world.get<Health>(rig.player).current > 70.0; }, 50));
+    rig.world.get<Health>(rig.player).current = startHealth;
+    CHECK(rig.tickUntil([&] { return rig.slot(0).broken; }, 200));
 }
 
 /// The same burst, on a flower running flat out.
@@ -2817,9 +2849,10 @@ TEST(an_orb_charges_homes_and_restores_mana_only_while_the_pool_is_short) {
 
     // Past the orb's 1000ms charge: it flies home on its own, delivers one
     // burst, and enters the normal break cooldown -- the rose's path exactly.
-    rig.tick(60);
+    CHECK(rig.tickUntil([&] {
+        return rig.slot(1).broken && rig.world.get<ManaPool>(rig.player).current >= 60.0;
+    }));
     CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, 60.0, 1e-9);
-    CHECK(rig.slot(1).broken);
 
     // A full pool never calls it home: an orb that spent itself for nothing
     // would be a petal missing from the ring for no gain.
@@ -5514,11 +5547,10 @@ TEST(an_amulet_turns_its_tiers_share_of_overheal_into_shield) {
     ShieldState& shield = rig.world.get<ShieldState>(rig.player);
     shield.amount = 0.0;
     health.current = health.max - 10.0;
-    // Requested 60 lands as 180 (kPlayerHealMultiplier). Ten fill the bar;
-    // 170 spill; a fifth of that stays.
+    // Ten fill the bar; the amulet keeps a fifth of the spill.
     CombatSystem::landHeal(rig.world, rig.player, health, 60.0);
     CHECK_NEAR(health.current, health.max, 1e-9);
-    CHECK_NEAR(shield.amount, 34.0, 1e-9);
+    CHECK_NEAR(shield.amount, (60.0 * kPlayerHealMultiplier - 10.0) * 0.2, 1e-9);
     // Capped at max health, as a shell's shield is.
     CombatSystem::landHeal(rig.world, rig.player, health, health.max * 100.0);
     CHECK_NEAR(shield.amount, health.max, 1e-9);
@@ -5537,9 +5569,8 @@ TEST(a_basil_grows_every_heal_by_florrs_bonus_and_stacks_harmonically) {
     Rig rig;
     Health& health = rig.world.get<Health>(rig.player);
     health.current = health.max - 100.0;
-    // 10 × kPlayerHealMultiplier = 30.
     CombatSystem::landHeal(rig.world, rig.player, health, 10.0);
-    CHECK_NEAR(health.current, health.max - 70.0, 1e-9);
+    CHECK_NEAR(health.current, health.max - 100.0 + 10.0 * kPlayerHealMultiplier, 1e-9);
 
     rig.equip(0, "basil", Rarity::Mythic);
     rig.settleEquips();
@@ -5561,9 +5592,8 @@ TEST(a_basil_grows_every_heal_by_florrs_bonus_and_stacks_harmonically) {
     CHECK_NEAR(rig.modifiers().healBonus, 0.5 + 0.5 / 2.0 + 0.45 / 3.0, 1e-9);
     Health& grown = rig.world.get<Health>(rig.player);
     grown.current = grown.max - 100.0;
-    // 10 × 3 × 1.9 healBonus = 57.
     CombatSystem::landHeal(rig.world, rig.player, grown, 10.0);
-    CHECK_NEAR(grown.current, grown.max - 43.0, 1e-9);
+    CHECK_NEAR(grown.current, grown.max - 100.0 + 10.0 * kPlayerHealMultiplier * 1.9, 1e-9);
     // Still never past max.
     CombatSystem::landHeal(rig.world, rig.player, grown, grown.max);
     CHECK_NEAR(grown.current, grown.max, 1e-9);
@@ -5579,10 +5609,9 @@ TEST(a_basil_grows_the_heal_an_amulet_keeps_the_overflow_of) {
     ShieldState& shield = rig.world.get<ShieldState>(rig.player);
     shield.amount = 0.0;
     health.current = health.max - 10.0;
-    // 40 × 3 × 1.5 basil = 180: ten fill the bar, 170 spill, amulet keeps a fifth.
     CombatSystem::landHeal(rig.world, rig.player, health, 40.0);
     CHECK_NEAR(health.current, health.max, 1e-9);
-    CHECK_NEAR(shield.amount, 34.0, 1e-9);
+    CHECK_NEAR(shield.amount, (40.0 * kPlayerHealMultiplier * 1.5 - 10.0) * 0.2, 1e-9);
 }
 
 TEST(a_disc_resists_collisions_by_florrs_curve_and_does_not_stack) {
@@ -6041,6 +6070,45 @@ TEST(a_nearer_crown_of_another_tier_lends_its_own) {
     const PetalInstance& unique = rig.world.get<PetalInstance>(lentTo(rig, other).front());
     CHECK(unique.creditTo == rig.player);
     CHECK(unique.rarity == Rarity::Unique);
+}
+
+TEST(lightning_discharges_on_first_garbage_contact_then_reloads_once) {
+    Rig rig(testsupport::shippedContent());
+    rig.freezeRing();
+    rig.equip(0, "lightning");
+    rig.settleEquips();
+    rig.settleRing();
+    const auto petal = rig.petals(0).front();
+    const auto at = rig.position(petal);
+    const auto garbage = addMob(rig, at);
+    rig.world.add<MobType>(garbage, MobType{rig.registry.mobIndex("garbage")});
+    const auto next = addMob(rig, at + Vec2{150.0, 0.0});
+    CHECK(rig.healthOf(petal) > 0.0);
+    rig.tick();
+    CHECK_NEAR(rig.healthOf(petal), 0.0, 1e-9);
+    const auto* event = firstStrike(rig);
+    CHECK(event != nullptr);
+    if (event && !event->points.empty()) CHECK_NEAR(distance(event->points.front(), at), 0.0, 1e-9);
+
+    CombatSystem combat;
+    ricochetCombatTick(rig, combat);
+    CHECK(rig.healthOf(garbage) < 10000.0);
+    CHECK(rig.healthOf(next) < 10000.0);
+    rig.tick();
+    CHECK(rig.slot(0).broken);
+    CHECK_EQ(countStrikes(rig), 1u);
+}
+
+TEST(lightning_broken_without_a_mob_contact_does_not_discharge) {
+    Rig rig;
+    rig.equip(0, "lightning");
+    rig.settleEquips();
+    const auto petal = rig.petals(0).front();
+    addMob(rig, rig.position(petal) + Vec2{180.0, 0.0});
+    rig.damage(petal, 1e9);
+    rig.tick();
+    CHECK(rig.slot(0).broken);
+    CHECK_EQ(countStrikes(rig), 0u);
 }
 
 TEST(wiki_mechanism_battery_requires_real_damage_and_bounds_chain_targets) {
@@ -6543,6 +6611,68 @@ TEST(hyper_technique_guard_and_mana_hold_for_larger_deficits) {
     }
 }
 
+TEST(berry_reload_is_visible_before_a_held_attack_fires) {
+    const auto& content = testsupport::shippedContent();
+    for (const auto id : {"grapes", "peas", "magic_peas"}) {
+        Rig rig(content);
+        rig.equip(0, id);
+        rig.equip(1, "mana_orb", Rarity::Unique);
+        rig.setFlags(net::InputAttack | net::InputDefend);
+        CHECK(rig.tickUntil([&] { return !rig.petals(0).empty(); }));
+        const auto ammo = rig.petals(0);
+        CHECK(!ammo.empty());
+        if (ammo.empty()) continue;
+
+        const double loadedAt = rig.world.get<PetalInstance>(ammo.front()).spawnedAtMillis;
+        Query<Projectile> shots{rig.world};
+        CHECK_EQ(shots.count(), 0u);
+        CHECK(rig.tickUntil([&] { return shots.count() > 0; }, 500));
+        CHECK(rig.now >= loadedAt + kBerryLoadMillis);
+        CHECK_EQ(shots.count(), ammo.size());
+
+        std::size_t bursts = 0;
+        const auto style = static_cast<std::uint8_t>(berryShotStyle(id));
+        for (const auto& event : rig.events.events()) {
+            if (event.kind != net::EventKind::Explosion || event.flag != style) continue;
+            CHECK(event.radius > 0.0);
+            CHECK_EQ(event.visualSource, rig.player);
+            ++bursts;
+        }
+        CHECK_EQ(bursts, shots.count());
+    }
+}
+
+TEST(honey_moves_on_the_throw_tick_and_travels_390_units_while_running) {
+    Rig rig;
+    rig.freezeRing();
+    rig.equip(0, "honey");
+    rig.settleEquips();
+    rig.world.get<PetalRing>(rig.player).spin = 0.0;
+    rig.settleRing();
+
+    const auto honey = rig.petals(0).front();
+    constexpr double runningSpeed = 450.0;
+    rig.world.get<Motion>(rig.player).velocity = {runningSpeed, 0.0};
+    rig.world.get<Transform>(rig.player).position.x += runningSpeed * net::kTickSeconds;
+    rig.setFlags(net::InputAttack);
+    rig.tick();
+
+    const auto baits = Query<HoneyBait>{rig.world}.collect();
+    CHECK_EQ(baits.size(), 1u);
+    if (baits.size() != 1u) return;
+    const auto bait = baits.front();
+    const Vec2 from = rig.position(honey);
+    CHECK(rig.position(bait).x - from.x > runningSpeed * net::kTickSeconds);
+    CHECK_NEAR(rig.world.get<HoneyBait>(bait).travel + distance(rig.position(bait), from),
+               390.0, 1e-6);
+    rig.setFlags(0);
+    for (int i = 0; i < 40; ++i) {
+        rig.world.get<Transform>(rig.player).position.x += runningSpeed * net::kTickSeconds;
+        rig.tick();
+    }
+    CHECK_NEAR(distance(rig.position(bait), from), 390.0, 1e-6);
+}
+
 TEST(honey_launches_when_attack_and_defend_are_both_held) {
     if (!contentLoaded()) return;
     Rig rig(testsupport::shippedContent());
@@ -6632,8 +6762,10 @@ TEST(hyper_technique_dahlia_returns_faster_and_honey_flies_further) {
         Query<HoneyBait, Lifetime> baits{rig.world};
         CHECK_EQ(baits.count(), 1u);
         baits.each([&](Entity, HoneyBait& bait, Lifetime& life) {
-            CHECK_NEAR(bait.travel, tier == Rarity::Apex ? 375.0 : 300.0, 1e-9);
-            CHECK_NEAR(bait.travel / bait.velocity.length(), 2.0, 1e-9);
+            const double speed = bait.velocity.length();
+            CHECK_NEAR(bait.travel + speed * net::kTickSeconds,
+                       tier == Rarity::Apex ? 487.5 : 390.0, 1e-9);
+            CHECK_NEAR(bait.travel / speed + net::kTickSeconds, 2.0, 1e-9);
             CHECK_NEAR(life.remainingSeconds, 8.0, 1e-9);
         });
     }

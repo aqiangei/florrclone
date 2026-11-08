@@ -1194,13 +1194,40 @@ TEST(a_flower_standing_still_puts_nothing_to_sleep) {
     CHECK_EQ(sim.mobCount(), awake);
 }
 
+TEST(jungle_centipede_keeps_connected_segments_while_either_end_is_near) {
+    Sim sim;
+    const auto mob = shipped().mobIndex("jungle_centipede");
+    const auto head = sim.spawner.spawnMob(sim.world, sim.terrain, shipped(), mob,
+        Rarity::Ultra, kCentre, Realm::Overworld, sim.now, sim.rng);
+    CHECK(head != NULL_ENTITY);
+    if (head == NULL_ENTITY) return;
+    CHECK_EQ(sim.mobCount(), 1 + kCentipedeSegmentCount);
+
+    // Deliberately place the trailing portion beyond the head's sleep box.
+    const Vec2 tailAt = kCentre + Vec2{4500.0, 0.0};
+    Query<BodySegment, Transform>{sim.world}.each([&](Entity e, BodySegment&, Transform& at) {
+        if (e != head) at.position = tailAt;
+    });
+
+    const double expired = kMobDespawnDelayMillis + kPopulationIntervalMillis + 1.0;
+    sim.jump(expired, {kCentre});
+    CHECK_EQ(sim.mobCount(), 1 + kCentipedeSegmentCount);
+    sim.jump(expired, {tailAt});
+    CHECK_EQ(sim.mobCount(), 1 + kCentipedeSegmentCount);
+
+    sim.jump(expired, {Vec2{5000.0, 5000.0}});
+    CHECK_EQ(sim.mobCount(), 0);
+}
+
 TEST(a_centipedes_body_goes_to_sleep_with_its_head) {
     // The head holds the band's slot; the body holds none, and on its own
     // clock it would outlive the head by up to half a minute -- counted
     // against the cap, and with its first bead promoted to a head of its own.
     const Rect band{kCentre.x - 1500.0, kCentre.y - 1500.0, 3000.0, 3000.0};
     WorldMaps maps;
-    makeBandedWorld(maps, {band}, "centipede 100%");
+    // A single ordinary slot keeps the map's managed Super population out
+    // of this test. Super bosses are explicitly exempt from going to sleep.
+    makeSingularBandWorld(maps, band, "centipede 100%");
     Sim sim;
     sim.spawner.worldMaps = &maps;
     for (int i = 0; i < 30; ++i) sim.tick({kCentre});
@@ -3630,7 +3657,7 @@ TEST(a_killed_mob_drops_from_its_own_table) {
         CHECK(std::abs(offset.x) <= 50.0);
         CHECK(std::abs(offset.y) <= 50.0);
         CHECK(world.has<DropTag>(drop));
-        CHECK_EQ(world.get<Replicated>(drop).kind, net::EntityKind::Drop);
+        CHECK(!world.has<Replicated>(drop));
     }
     CHECK_EQ(petals, 40);
     CHECK_EQ(eggs, 40);
@@ -4063,8 +4090,10 @@ TEST(a_contributor_may_take_a_reserved_drop_at_once) {
     const Entity fighter = makePlayer(world, kCentre, 0.0, 7);
     const Entity drop = loot.spawnDrop(world, shipped().petalIndex("rose"), Rarity::Common,
                                        kCentre, Realm::Overworld, {fighter});
-    // A wired allocator is what makes a drop visible to a client at all.
+    // The hidden common drop still has its pickup cue id and reservation.
     CHECK(world.has<NetId>(drop));
+    CHECK(!world.has<Replicated>(drop));
+    CHECK_NEAR(world.get<Lifetime>(drop).remainingSeconds, 8.0, 1e-12);
     const std::uint32_t dropNetId = world.get<NetId>(drop).value;
 
     rebuildGrid(world, grid);
@@ -4234,6 +4263,42 @@ TEST(a_dead_player_picks_nothing_up) {
     loot.run(world, grid, shipped(), rng, 0.0, 0.0, commands, events);
     commands.flush();
     CHECK_EQ(loot.pickups().size(), std::size_t(0));
+}
+
+TEST(ground_drop_caps_keep_the_best_stacks_and_preserve_special_drops) {
+    World world;
+    LootSystem loot;
+    const Entity claimant = world.create();
+    const auto put = [&](Realm realm, Rarity rarity) {
+        return loot.spawnDrop(world, 0, rarity, {100.0, 100.0}, realm, {claimant});
+    };
+    const Entity oldest = put(Realm::Overworld, Rarity::Common);
+    world.get<Lifetime>(oldest).remainingSeconds = 1.0;
+    const Entity rare = put(Realm::Overworld, Rarity::Unique);
+    CHECK(world.has<Replicated>(rare));
+    CHECK_NEAR(world.get<Lifetime>(rare).remainingSeconds, 300.0, 1e-12);
+    for (std::size_t i = 0; i < kMaxGroundDropsPerRealm - 1; ++i)
+        put(Realm::Overworld, Rarity::Common);
+    const Entity ritual = put(Realm::Overworld, Rarity::Common);
+    world.get<DropItem>(ritual).singleCopy = true;
+    world.get<DropItem>(ritual).humansOnly = true;
+
+    CHECK_EQ(loot.pruneGroundDrops(world), std::size_t{1});
+    CHECK(!world.isAlive(oldest));
+    CHECK(world.isAlive(rare));
+    CHECK(world.isAlive(ritual));
+    Query<DropTag> all{world};
+    CHECK_EQ(all.count(), kMaxGroundDropsPerRealm + 1);
+
+    for (const auto realm : {worldRealm(1), worldRealm(2), worldRealm(3)})
+        for (std::size_t i = 0; i < kMaxGroundDropsPerRealm; ++i)
+            put(realm, Rarity::Super);
+    CHECK_EQ(loot.pruneGroundDrops(world), kMaxGroundDropsPerRealm);
+    CHECK_EQ(all.count(), kMaxGroundDrops + 1);
+    CHECK(world.isAlive(rare));
+    CHECK(world.isAlive(ritual));
+    CHECK_EQ(world.get<DropItem>(rare).eligible.front().body, claimant);
+    CHECK_EQ(loot.pruneGroundDrops(world), std::size_t{0});
 }
 
 TEST(drops_expire) {

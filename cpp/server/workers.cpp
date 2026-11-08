@@ -34,12 +34,11 @@ struct ServerWorkers::Impl {
     std::atomic<std::size_t> next{0};
     const Job* job = nullptr;
     std::size_t size = 0;
-    unsigned generation = 0, active = 0, remaining = 0;
+    unsigned generation = 0, active = 0, running = 0;
     bool stopping = false;
 
-    void drain(unsigned lane) {
-        for (std::size_t i = lane; i < size;
-             i = next.fetch_add(1, std::memory_order_relaxed))
+    void drain(std::size_t first, unsigned lane) {
+        for (std::size_t i = first; i < size; i = next.fetch_add(1, std::memory_order_relaxed))
             (*job)(i, lane);
     }
 
@@ -50,10 +49,15 @@ struct ServerWorkers::Impl {
             ready.wait(lock, [&] { return stopping || (lane <= active && generation != seen); });
             if (stopping) return;
             seen = generation;
+            // A late worker has no reserved work. Join the barrier only when
+            // there is still a real job that this lane can claim.
+            const auto first = next.fetch_add(1, std::memory_order_relaxed);
+            if (first >= size) continue;
+            ++running;
             lock.unlock();
-            drain(lane);
+            drain(first, lane);
             lock.lock();
-            if (--remaining == 0) done.notify_one();
+            if (--running == 0) done.notify_one();
         }
     }
 #endif
@@ -100,17 +104,17 @@ void ServerWorkers::run(std::size_t jobs, unsigned limit, const Job& job) {
     if (active > 0) {
         {
             std::lock_guard lock(impl_->mutex);
-            impl_->active = impl_->remaining = active;
+            impl_->active = active;
             impl_->size = jobs;
             impl_->job = &job;
-            impl_->next.store(active + 1, std::memory_order_relaxed);
+            impl_->next.store(1, std::memory_order_relaxed);
             ++impl_->generation;
         }
         impl_->ready.notify_all();
-        impl_->drain(0);
+        impl_->drain(0, 0);
         std::unique_lock lock(impl_->mutex);
-        impl_->done.wait(lock, [&] { return impl_->remaining == 0; });
         impl_->active = 0;
+        impl_->done.wait(lock, [&] { return impl_->running == 0; });
         impl_->job = nullptr;
         return;
     }

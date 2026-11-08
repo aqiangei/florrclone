@@ -972,9 +972,8 @@ enum class EventKind : std::uint8_t {
     LevelUp,        ///< u32 netId, u16 newLevel. Never produced: a level
                     ///< travels as streamed state (FieldPlayerVisuals, and
                     ///< the viewer's own block).
-    Explosion,      ///< f32 x, f32 y, f32 radius, u8 colorIndex. Never
-                    ///< produced by this server, though the client still
-                    ///< draws one at `position` with `radius`.
+    Explosion,      ///< Positional burst. Berry launches use the colour byte
+                    ///< for their style and the existing amount slot for heading.
     /// A lightning strike: `position` is where it landed and `radius` its
     /// reach. The ONLY event with a variable tail -- u8 count, then that many
     /// f32 x, f32 y -- because a bolt is drawn to each mob the strike hit and

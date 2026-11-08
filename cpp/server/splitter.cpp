@@ -360,7 +360,7 @@ void GameServer::switchSplitHalf(Session& session, double nowMillis) {
 void GameServer::serviceSplitters(double nowMillis) {
     for (auto& entry : sessions_) {
         Session& session = entry.second;
-        if (!session.playing()) continue;
+        if (!session.playing() || world_.has<WavePlayer>(session.entity)) continue;
 
         if (session.split()) {
             const bool activeGone = bodyFinished(world_, session.entity);

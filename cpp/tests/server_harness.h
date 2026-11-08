@@ -771,7 +771,20 @@ struct GameServerPeer {
     // Drive the production death reporter without a transport poll.
     static void reportDeaths(GameServer& server) { server.reapDead(); }
     static void flushCommands(GameServer& server) { server.commands_.flush(); }
+    static net::Connection* connectionOf(GameServer& server, const Session& session) {
+        return server.listener_.find(session.connection);
+    }
+    static void stageSnapshots(GameServer& server) {
+        ++server.tick_;
+        server.replicate(server.clockMillis_);
+        server.events_.clear();
+    }
+    static EventQueue& snapshotEvents(GameServer& server) { return server.events_; }
     static void markClock(GameServer& server, double now) { server.clockMillis_ = now; }
+    static void advancePyramidCycle(GameServer& server) {
+        server.servicePyramidRotation(server.pyramidCycle_ + 1);
+        server.commands_.flush();
+    }
     static bool canMark(GameServer& server, Entity target, Entity owner, Rarity rarity) {
         return server.canMarkPlayer(target, owner, rarity);
     }

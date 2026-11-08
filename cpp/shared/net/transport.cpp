@@ -471,7 +471,7 @@ bool Listener::service(Connection& c, bool readable, bool writable, TransportHan
     // Counted with what the transport is still holding: on the web backend
     // most of a slow peer's backlog lives there, and a cap that only saw this
     // object's half would never fire.
-    if (c.pendingBytes() + c.transportBuffered() > maxPendingBytes) {
+    if (c.outboundBacklog() > maxPendingBytes) {
         error = "outbound backlog exceeded";
         return false;
     }

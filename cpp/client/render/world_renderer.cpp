@@ -1,5 +1,6 @@
 #include "client/render/world_renderer.h"
 
+#include "shared/game/berry_projectile.h"
 #include "shared/game/garbage_contents.h"
 #include <chrono>
 
@@ -253,6 +254,132 @@ constexpr double kPetalHitSize = 10.0;
 /// flower's calibre, three times the body it actually hits with.
 constexpr double kProjectileArtSize = 20.0;
 constexpr double kProjectileArtPerRadius = 2.0;
+constexpr double kBerryLaunchSeconds = 0.22;
+
+struct BerryShotPalette {
+    std::uint32_t skin, shade, light;
+};
+
+double berryLoadSpring(double ageSeconds) {
+    const double t = clamp(ageSeconds * 1000.0 / kBerryLoadMillis, 0.0, 1.0) - 1.0;
+    return 1.0 + t * t * (2.85 * t + 1.85);
+}
+
+BerryShotPalette berryPalette(BerryShotStyle style) {
+    switch (style) {
+        case BerryShotStyle::Grape: return {0xCE76DBu, 0x793D90u, 0xF8C7FFu};
+        case BerryShotStyle::Pea: return {0x8AC255u, 0x487638u, 0xDBFFA8u};
+        case BerryShotStyle::Blueberry: return {0x42E3F5u, 0x247A9Eu, 0xC5FAFFu};
+        case BerryShotStyle::None: return {};
+    }
+    return {};
+}
+
+void drawBerryShot(Canvas& canvas, Vec2 at, double diameter, double heading, BerryShotStyle style) {
+    const auto palette = berryPalette(style);
+    const float r = static_cast<float>(diameter * 0.5);
+    canvas.save();
+    canvas.translate(static_cast<float>(at.x), static_cast<float>(at.y));
+    canvas.rotate(static_cast<float>(heading));
+    // The wake is narrower than the berry, so separate shots read as a fan.
+    ui::setFill(canvas, palette.skin, 0.37);
+    canvas.beginPath();
+    canvas.moveTo(0.0f, -0.60f * r);
+    canvas.quadraticCurveTo(-1.30f * r, -0.59f * r, -3.9f * r, 0.0f);
+    canvas.quadraticCurveTo(-1.30f * r, 0.59f * r, 0.0f, 0.60f * r);
+    canvas.closePath();
+    canvas.fill();
+    ui::setStroke(canvas, palette.light, 0.68);
+    canvas.setLineWidth(std::max(0.7f, 0.16f * r));
+    canvas.setLineCap("round");
+    canvas.beginPath();
+    canvas.moveTo(-2.65f * r, 0.0f);
+    canvas.lineTo(-0.9f * r, 0.0f);
+    canvas.stroke();
+    canvas.restore();
+
+    // Keep the shading in screen space as the berry turns with its flight.
+    ui::setFill(canvas, palette.shade);
+    canvas.fillCircle(static_cast<float>(at.x), static_cast<float>(at.y), r);
+    ui::setFill(canvas, palette.skin);
+    canvas.fillCircle(static_cast<float>(at.x - r * 0.08), static_cast<float>(at.y - r * 0.12), r * 0.80f);
+    ui::setFill(canvas, palette.light, 0.9);
+    canvas.fillCircle(static_cast<float>(at.x - r * 0.30), static_cast<float>(at.y - r * 0.36), r * 0.25f);
+}
+
+void drawMeteorGround(Canvas& canvas, Vec2 at, double radius, bool hyper) {
+    const float x = static_cast<float>(at.x);
+    const float y = static_cast<float>(at.y);
+    const float r = static_cast<float>(radius);
+    ui::setFill(canvas, 0x342D2Cu, 0.22);
+    canvas.beginPath();
+    canvas.ellipse(x, y + r * 0.60f, r * 0.80f, r * 0.28f, 0.0f, 0.0f, static_cast<float>(kTau));
+    canvas.fill();
+
+    ui::setStroke(canvas, hyper ? 0xA7A7F2u : 0xB9A391u, hyper ? 0.52 : 0.29);
+    canvas.setLineWidth(std::max(1.0f, r * 0.012f));
+    canvas.strokeCircle(x, y, r);
+}
+
+void drawHyperMeteorVeins(Canvas& canvas, Vec2 at, double diameter, double timeSeconds) {
+    // The imported rock is a 32-unit drawing. Trace its existing fissure
+    // and leave the stone facets and the silhouette intact.
+    const float unit = static_cast<float>(diameter / 32.0);
+    const double glow = 0.67 + 0.18 * std::sin(timeSeconds * 2.7);
+    canvas.save();
+    canvas.translate(static_cast<float>(at.x), static_cast<float>(at.y));
+    canvas.scale(unit, unit);
+    canvas.translate(-16.0f, -16.0f);
+    canvas.setLineCap("round");
+    canvas.setLineJoin("round");
+    canvas.beginPath();
+    canvas.moveTo(9.8f, 15.0f);
+    canvas.lineTo(14.6f, 16.3f);
+    canvas.lineTo(17.3f, 20.7f);
+    canvas.lineTo(21.3f, 21.7f);
+    canvas.moveTo(14.6f, 16.3f);
+    canvas.lineTo(17.1f, 12.5f);
+    ui::setStroke(canvas, 0x5756B8u, 0.82);
+    canvas.setLineWidth(2.1f);
+    canvas.stroke();
+    ui::setStroke(canvas, 0xBFBFFFu, glow);
+    canvas.setLineWidth(1.05f);
+    canvas.stroke();
+    ui::setFill(canvas, 0xE8EAFFu, glow);
+    canvas.fillCircle(14.6f, 16.3f, 0.78f);
+    canvas.restore();
+}
+
+void drawBerryLaunch(Canvas& canvas, Vec2 at, double size, double heading, double progress,
+                     std::uint32_t color) {
+    const float r = static_cast<float>(size);
+    const float ring = r * static_cast<float>(0.68 + 1.9 * progress);
+    const float alpha = static_cast<float>(1.0 - progress);
+    canvas.save();
+    canvas.translate(static_cast<float>(at.x), static_cast<float>(at.y));
+    canvas.rotate(static_cast<float>(heading));
+
+    // Two separated arcs briefly outline the exit, with a bright core and
+    // four small flecks that separate along the direction of the volley.
+    canvas.setLineCap("round");
+    canvas.setLineWidth(std::max(0.8f, 0.24f * r) * (0.5f + 0.5f * alpha));
+    ui::setStroke(canvas, color, 0.85 * alpha);
+    canvas.beginPath();
+    canvas.arc(0.0f, 0.0f, ring, -1.42f, 1.42f);
+    canvas.stroke();
+    canvas.beginPath();
+    canvas.arc(0.0f, 0.0f, ring, 2.35f, 3.93f);
+    canvas.stroke();
+    ui::setFill(canvas, 0xFFFFFFu, alpha * alpha * 0.83);
+    canvas.fillCircle(0.0f, 0.0f, r * (0.34f + 0.45f * alpha));
+    for (const float lane : {-1.0f, -0.45f, 0.45f, 1.0f}) {
+        ui::setFill(canvas, color, 0.93 * alpha);
+        const float distance = r * static_cast<float>(0.75 + 2.2 * progress);
+        canvas.fillCircle(distance * (1.5f - std::abs(lane)), distance * lane,
+                          std::max(0.6f, r * 0.19f) * (0.45f + 0.55f * alpha));
+    }
+    canvas.restore();
+}
 
 /// A ground drop is the same item tile the menus draw, at its design size and
 /// with the shadow behind it. Nothing about it is derived from the drop's
@@ -1005,6 +1132,19 @@ void WorldRenderer::ingestEvents(WorldView& view) {
             case net::EventKind::Explosion: {
                 if (effects_.size() >= maxEffects) break;
                 Effect e;
+                const auto berry = static_cast<BerryShotStyle>(event.flag & kBerryShotStyleMask);
+                if (berry != BerryShotStyle::None) {
+                    if ((event.flag & kBerryShotForeign) &&
+                        ((event.flag & kBerryShotFromPet) ? options.hideOtherPets : options.hideOtherPetals)) break;
+                    e.kind = Effect::Kind::BerryLaunch;
+                    e.position = event.position;
+                    e.radius = clamp(event.radius, 4.5, 16.0);
+                    e.value = event.amount;
+                    e.color = berryPalette(berry).light;
+                    e.lifeSeconds = kBerryLaunchSeconds;
+                    effects_.push_back(std::move(e));
+                    break;
+                }
                 e.kind = Effect::Kind::Explosion;
                 e.position = event.position;
                 e.radius = event.radius > 0 ? event.radius : 60;
@@ -2772,9 +2912,13 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     // `noPhysics` petals carry no body and would be sized from a default.
     // A loose petal is sized the same way, for the same reason: its body grows
     // with its tier (30 a step, to 300 at apex) and `size` does not.
-    const double diameter = entity.isRingPetal() || entity.isLoosePetal()
-                                ? 2.0 * entity.radius * petalArtScale(config) * zoom
-                                : kPetalArtSize * artSize * zoom;
+    double diameter = entity.isRingPetal() || entity.isLoosePetal()
+                          ? 2.0 * entity.radius * petalArtScale(config) * zoom
+                          : kPetalArtSize * artSize * zoom;
+    if (config && entity.ownerNetId != 0 && !entity.isRingPetal() &&
+        berryShotStyle(config->id) != BerryShotStyle::None) {
+        diameter *= 0.48 + 0.52 * berryLoadSpring(entity.petalAgeSeconds);
+    }
     if (diameter <= 0.5) return;
 
     // The sprite's own spin is the ring's shared phase and nothing else, so
@@ -4040,17 +4184,15 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // visual_scale. entity.radius above is the body the server damages
             // from and stays where it is.
             const double diameter = artUnits * petalArtScale(config) * zoom;
-            if (config && config->id == "meteor" && diameter > 12.0) {
-                ui::setFill(canvas, 0x342D2Cu, 0.22);
-                canvas.beginPath();
-                canvas.ellipse(static_cast<float>(screen.x),
-                               static_cast<float>(screen.y + diameter * 0.30),
-                               static_cast<float>(diameter * 0.40),
-                               static_cast<float>(diameter * 0.14), 0.0f, 0.0f,
-                               static_cast<float>(kTau));
-                canvas.fill();
-            }
+            const bool meteor = config && config->id == "meteor" && diameter > 12.0;
+            const bool hyperMeteor = meteor && entity.rarity == Rarity::Apex;
+            if (meteor) drawMeteorGround(canvas, screen, entity.radius * zoom, hyperMeteor);
             const ScopedColorTint flash(canvas, hitTint(entity.netId));
+            const auto berry = config ? berryShotStyle(config->id) : BerryShotStyle::None;
+            if (berry != BerryShotStyle::None) {
+                drawBerryShot(canvas, screen, diameter, entity.angle, berry);
+                break;
+            }
             if (config && config->id == "gas" && entity.rarity == Rarity::Common) {
                 // Gas is a cloud rather than a petal, and there can be hundreds
                 // of it at once.
@@ -4072,6 +4214,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                                 : rarityColor(entity.rarity),
                          ui::kPaper, 2.0 * zoom);
             }
+            if (hyperMeteor) drawHyperMeteorVeins(canvas, screen, diameter, timeSeconds);
             break;
         }
 
@@ -4350,6 +4493,12 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
                 canvas.setGlobalAlpha(1.0f);
                 break;
             }
+            case Effect::Kind::BerryLaunch:
+                if (onScreen(e.position, 4.0 * e.radius)) {
+                    drawBerryLaunch(canvas, camera.worldToScreen(e.position), e.radius * zoom,
+                                    e.value, t, e.color);
+                }
+                break;
             case Effect::Kind::Sparkle: {
                 // Particles only: the glint has no body of its own.
                 for (const EffectParticle& p : e.particles) drawPetalGlint(canvas, camera, p);
@@ -4688,6 +4837,20 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         if (!onScreen(at, entity.radius)) return;
 
         if (entity.kind == net::EntityKind::Drop) ++timing_.itemCount;
+        if (entity.kind == net::EntityKind::Petal && entity.ownerNetId != 0 && !entity.isRingPetal() &&
+            entity.petalAgeSeconds * 1000.0 < kBerryLoadMillis && content_ &&
+            berryShotStyle(content_->petal(entity.typeIndex).id) != BerryShotStyle::None) {
+            const auto owner = entities.find(entity.ownerNetId);
+            if (owner != entities.end()) {
+                const auto& body = owner->second;
+                const Vec2 centre = body.isSelf() ? selfDrawn : body.position;
+                const Vec2 outward = at - centre;
+                // An already orbiting petal entering the viewport stays in place.
+                if (outward.lengthSq() < 90.0 * 90.0) {
+                    at = centre + outward * berryLoadSpring(entity.petalAgeSeconds);
+                }
+            }
+        }
         drawEntity(canvas, entity, camera, at, timeSeconds);
         if (options.hitboxes) drawHitbox(canvas, entity, camera, at);
     };

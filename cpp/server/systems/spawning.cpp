@@ -362,6 +362,8 @@ void SpawnSystem::bind(World& world) {
     // same system over a second world.
     ambient_.emplace(world);
     ambient_->without<Dead>();
+    ambientChains_.emplace(world);
+    ambientChains_->without<Dead>();
     casualties_.emplace(world);
     escorts_.emplace(world);
     escorts_->without<Dead>();
@@ -767,12 +769,14 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
         world.add<BodySegment>(e, link);
     }
 
-    // A prestige twin pays a tier down (shared/game/prestige.h): its super is
-    // worth an ultra. Every way in -- band, console, sacrifice, a chain's
-    // segments -- comes through here, so none of them can pay more.
     Bounty bounty;
-    bounty.xp = prestigeRealm(realm) ? content.mobStats(mobIndex, prestigeXpRarity(rarity)).xp
-                                     : stats.xp;
+    bounty.xp = stats.xp;
+    if (prestigeRealm(realm)) {
+        const double previous = content.mobStats(mobIndex, prestigeXpRarity(rarity)).xp;
+        // Bounded bonus on the old reward. The authored S/ET XP jumps are
+        // too steep to pay the full promoted tier for routine prestige mobs.
+        bounty.xp = std::min(stats.xp, previous * 1.5);
+    }
     world.add<Bounty>(e, std::move(bounty));
 
     MobAi ai;
@@ -1183,6 +1187,29 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
     // of emptying itself and handing the next arrival a barren map.
     const bool unattended = viewers.empty();
 
+    connectedRoots_.clear();
+    ambientChains_->each([&](Entity e, BodySegment& segment, Transform& at, AmbientMob&) {
+        if (!isWorldRealm(at.realm) || segment.ahead == NULL_ENTITY) return;
+        Entity root = e;
+        const BodySegment* link = &segment;
+        for (int i = 0; i < kCentipedeSegmentCount && link->ahead != NULL_ENTITY; ++i) {
+            const Entity leader = link->ahead;
+            if (world.has<Dead>(leader)) break;
+            link = world.tryGet<BodySegment>(leader);
+            if (!link) break;
+            root = leader;
+        }
+        auto* activity = root != e ? world.tryGet<AmbientMob>(root) : nullptr;
+        if (!activity) return;
+        connectedRoots_.emplace(e, root);
+        // Seeing either end keeps the connected section alive. A broken
+        // link has its own root and can go to sleep independently.
+        if (!unattended && seenBy(viewers, at.realm, at.position,
+                                 kLatentWakeMargin + kLatentSleepMargin)) {
+            activity->lastNearPlayerMillis = nowMillis;
+        }
+    });
+
     ambient_->each([&](Entity e, MobTag&, Transform& transform, Body& body, MobType& type,
                        AmbientMob& ambient) {
         // An arena or maze mob is kept for as long as anyone is in its realm:
@@ -1208,7 +1235,8 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         // stays up until it has had it, rather than going back to a record
         // that would wake whole.
         const bool nearAnyone =
-            unattended || world.has<KeepAwake>(e) || world.has<Undead>(e) ||
+            unattended || connectedRoots_.find(e) != connectedRoots_.end() ||
+            world.has<KeepAwake>(e) || world.has<Undead>(e) ||
             seenBy(viewers, transform.realm, transform.position,
                    kLatentWakeMargin + kLatentSleepMargin);
 
@@ -1251,11 +1279,20 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         mobPlacements_.push_back(MobPlacement{transform.position, body.radius, transform.realm});
     });
 
-    // What a sleeping mob brought with it goes to sleep with it: a centipede's
-    // body and a nest's escorts hold no slot of their own, and the record
-    // wakes with a fresh set. Left to their own, longer clock they would
-    // outlive their head by up to half a minute -- counted against the cap,
-    // and a headless chain promotes its first bead to a head of its own.
+    // A connected chain leaves together when its root is culled.
+    if (!doomed_.empty() && !connectedRoots_.empty()) {
+        std::sort(doomed_.begin(), doomed_.end());
+        const auto roots = static_cast<std::ptrdiff_t>(doomed_.size());
+        for (const auto& [segment, root] : connectedRoots_) {
+            if (std::binary_search(doomed_.begin(), doomed_.begin() + roots, root)) {
+                doomed_.push_back(segment);
+                --census_.mobs;
+            }
+        }
+    }
+
+    // The escorts have no band slot of their own; the nest will grow a fresh
+    // set when its record wakes again.
     if (!sleepers_.empty()) {
         std::sort(sleepers_.begin(), sleepers_.end());
         // Already going, on its own clock or as a sleeper, and so not counted.
@@ -1271,11 +1308,6 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         dependents_->each([&](Entity e, MobTag&, AmbientMob&) {
             if (std::binary_search(doomed_.begin(),
                                    doomed_.begin() + static_cast<std::ptrdiff_t>(goneAlready), e)) {
-                return;
-            }
-            const BodySegment* link = world.tryGet<BodySegment>(e);
-            if (link != nullptr && link->chainHead != e && slept(link->chainHead)) {
-                follow(e);
                 return;
             }
             const HoleTether* tether = world.tryGet<HoleTether>(e);

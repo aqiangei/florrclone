@@ -31,6 +31,82 @@ struct CombatFeedback {
 };
 }
 
+TEST(magic_eye_eternal_uses_seven_mana_orbs_against_a_super_bee) {
+    CombatFeedback r;
+    r.equip(0, "magic_eye");
+    for (int slot = 1; slot <= 7; ++slot) r.equip(slot, "mana_orb");
+    r.prepare();
+
+    auto& mana = r.w.get<ManaPool>(r.player);
+    const double maxMana = mana.max;
+    CHECK_NEAR(maxMana, 103488.0, 1e-6);
+    mana.current = maxMana;
+    const auto bee = r.mob({5075.0, 5000.0});
+    const double health = r.c.mobStats(r.c.mobIndex("bee"), Rarity::Super).health;
+    r.w.get<Health>(bee) = {health, health};
+    r.w.get<PlayerInput>(r.player).current.flags = net::InputAttack | net::InputDefend;
+    r.petals.run(r.w, r.c, 10000.0, .05, r.commands, nullptr, &r.events);
+    r.commands.flush();
+    r.hit(10000.0);
+    CHECK_NEAR(r.w.get<ManaPool>(r.player).current, maxMana * 0.5, 1e-6);
+    CHECK_NEAR(health - r.w.get<Health>(bee).current, 4346496.0, 1e-3);
+}
+
+TEST(practice_dps_tracks_actual_sources_on_one_dummy_and_expires) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    CombatFeedback r;
+    const auto makeDummy = [&]() {
+        const auto e = r.mob({5000, 5000});
+        r.w.remove<MobTag>(e);
+        r.w.add<NpcTag>(e);
+        Npc npc;
+        npc.configIndex = content().mobIndex("target_dummy");
+        r.w.add<Npc>(e, npc);
+        return e;
+    };
+    const auto dummy = makeDummy();
+    const auto otherDummy = makeDummy();
+    const auto ordinaryMob = r.mob({5000, 5000});
+    const auto orb = content().petalIndex("light");
+    const auto eye = content().petalIndex("magic_eye");
+    CHECK(orb != kInvalidIndex);
+    CHECK(eye != kInvalidIndex);
+    const auto petal = r.w.create();
+    PetalInstance instance;
+    instance.owner = r.player;
+    instance.configIndex = orb;
+    instance.rarity = Rarity::Super;
+    r.w.add<PetalInstance>(petal, instance);
+    const auto lightning = r.w.create();
+    GroundEffect effect;
+    effect.owner = r.player;
+    r.w.add<GroundEffect>(lightning, effect);
+    r.w.add<LightningTarget>(lightning, LightningTarget{dummy, true, Rarity::Unique});
+
+    r.combat.applyDamage(r.w, dummy, petal, 40.0, 1000.0);
+    r.combat.applyDamage(r.w, dummy, petal, 60.0, 2000.0);
+    r.combat.applyDamage(r.w, dummy, lightning, 200.0, 2000.0, DamageKind::Lightning);
+    r.combat.applyDamage(r.w, dummy, r.player, 50.0, 2000.0, DamageKind::Reflect);
+    r.combat.applyDamage(r.w, otherDummy, petal, 900.0, 2000.0);
+    r.combat.applyDamage(r.w, ordinaryMob, petal, 700.0, 2000.0);
+    CHECK_NEAR(r.w.get<Health>(dummy).current, 1e12, 1e-3);
+
+    const auto rows = r.combat.practiceDamage(r.player, 2500.0);
+    CHECK_EQ(rows.size(), 3u);
+    if (rows.size() != 3u) return;
+    CHECK_EQ(rows[0].petal, eye);
+    CHECK(rows[0].rarity == Rarity::Unique);
+    CHECK_NEAR(rows[0].amount, 200.0, 1e-6);
+    CHECK_EQ(rows[1].petal, orb);
+    CHECK_NEAR(rows[1].amount, 100.0, 1e-6);
+    CHECK(rows[2].source == CombatSystem::PracticeSource::Reflect);
+    CHECK_NEAR(rows[2].amount, 50.0, 1e-6);
+    CHECK(r.combat.practiceDamage(r.player, 12000.0).empty());
+    r.combat.resetPracticeDamage(r.player);
+    CHECK(r.combat.practiceDamage(r.player, 2500.0).empty());
+}
+
 TEST(todo1107_triangle_stacks_before_talent_and_eternal_counts_super_slots) {
     for (const auto tier : {Rarity::Common, Rarity::Unique}) {
         CombatFeedback r;

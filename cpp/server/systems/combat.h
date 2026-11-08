@@ -20,7 +20,9 @@
 // below is written as gather-then-apply for exactly this reason, and any
 // system that wants to deal damage must do the same.
 
+#include <array>
 #include <cstdint>
+#include <unordered_map>
 #include <memory>
 #include <vector>
 
@@ -366,6 +368,17 @@ public:
     /// is the normal answer for a wild mob.
     static Entity creditedPlayer(const World& world, Entity source);
 
+    enum class PracticeSource { Petal, Summon, Poison, Reflect, Field, Other };
+    struct PracticeDamage {
+        PracticeSource source = PracticeSource::Other;
+        std::uint16_t petal = kNoPetal;
+        Rarity rarity = Rarity::Common;
+        double amount = 0.0;
+    };
+    static constexpr int kPracticeSeconds = 10;
+    std::vector<PracticeDamage> practiceDamage(Entity player, double nowMillis) const;
+    void resetPracticeDamage(Entity player) { practiceDamage_.erase(player); }
+
     /// Whether `source` is allowed to hurt `victim` at all: different sides,
     /// or the same side with friendly fire on. Two things resolving to the
     /// same player never hurt each other, which is what stops a flower's own
@@ -626,6 +639,7 @@ private:
     /// mark a mob Dead, which relocates the row the gather is walking.
     void gatherAuras(World& world, const ContentRegistry& content);
     void resolveAuras(World& world, const SpatialGrid& grid, double nowMillis);
+    void gatherMeleeTargets(World& world);
     void gatherContact(World& world, const ContentRegistry& content);
     /// One pass of lightning at RANGE: which mobs are charged and have somebody
     /// in reach, and the strikes they throw. Runs in the world phase, after
@@ -827,7 +841,21 @@ private:
     static constexpr std::uint32_t kNoShotSlot = 0xFFFFFFFFu;
     std::vector<std::uint32_t> shotSlot_;
 
-    std::vector<Entity> hostileContactBodies_;
+    // Only body geometry and roles that stay fixed during contact. Positions,
+    // health and status still come from the world in hit order.
+    struct MeleeTarget {
+        Entity entity = NULL_ENTITY;
+        double radius = 0.0;
+        double squareHalf = 0.0;
+        bool loosePetal = false;
+        bool petal = false;
+        bool player = false;
+        bool mob = false;
+        bool pet = false;
+        bool npc = false;
+        bool hostileBody = false;
+    };
+    std::vector<MeleeTarget> meleeTargets_;
 
     /// A strike's own broadphase answer and the two lists it builds from it.
     /// Separate from candidates_ because a contact strike is thrown from INSIDE
@@ -870,6 +898,21 @@ private:
     Rng rubyRng_;
     bool resolvingRuby_=false;
     DamageResult applyDamageOnce(World& world,Entity victim,Entity source,double amount,double nowMillis,DamageKind kind);
+
+    struct PracticeBucket {
+        std::int64_t second = -1;
+        std::vector<PracticeDamage> damage;
+    };
+    struct PracticeTarget {
+        Entity dummy = NULL_ENTITY;
+        double lastHitMillis = 0.0;
+        std::array<PracticeBucket, kPracticeSeconds> buckets;
+    };
+    std::unordered_map<Entity, PracticeTarget> practiceDamage_;
+    double nextPracticePruneMillis_ = 0.0;
+    void recordPracticeDamage(const World& world, Entity dummy, Entity source,
+                              DamageKind kind, double amount, double nowMillis);
+    static void mergePracticeDamage(std::vector<PracticeDamage>& rows, const PracticeDamage& hit);
 
     std::uint64_t tick_ = 0;
 };

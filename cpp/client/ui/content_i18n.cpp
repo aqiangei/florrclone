@@ -71,7 +71,7 @@ constexpr Pair kPetals[] = {
     {"bone", "骨头"},
     {"bubble", "泡泡"},
     {"bubble_egg", "泡泡蛋"},
-    {"bulb", "球茎"},
+    {"bulb", "灯泡"},
     {"bumble_bee_egg", "熊蜂蛋"},
     {"bumble_bee_pollen", "熊蜂花粉"},
     {"bur", "刺果"},

@@ -6,6 +6,8 @@
 #include "server_harness.h"
 #include "server/db.h"
 #include "server/systems/spawning.h"
+#include "server/systems/combat.h"
+#include "server/systems/dungeons.h"
 #include "shared/game/prestige.h"
 #include "shared/game/difficulty.h"
 #include "shared/game/map_elements.h"
@@ -13,6 +15,8 @@
 #include "shared/game/terrain.h"
 #include "test_data.h"
 
+#include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -73,26 +77,31 @@ TEST(an_prestige_band_rolls_one_tier_up_and_stops_at_super) {
     CHECK(barredFromPrestige(Rarity::Apex));
 }
 
-TEST(deep_prestige_sewers_keeps_super_a_minority) {
+TEST(deep_prestige_sewers_grows_mostly_super_with_some_ultra) {
     constexpr int samples = 50000;
-    Rng band{711}, promotion{117};
+    Rng band{711}, promotion{117}, previousPromotion{117};
     int ultra = 0;
-    int oldSupers = 0;
+    int fullPromotionSupers = 0;
+    int previousSupers = 0;
     int newSupers = 0;
     for (int i = 0; i < samples; ++i) {
         const auto ordinary = rollReferenceSpawnRarity(75, 1.0, band);
         const auto adjusted = rollPrestigeAmbientRarity(ordinary, promotion);
         ultra += adjusted == Rarity::Ultra;
-        oldSupers += prestigeRarity(ordinary) == Rarity::Super;
+        fullPromotionSupers += prestigeRarity(ordinary) == Rarity::Super;
+        previousSupers += ordinary == Rarity::Super ||
+                          (ordinary == Rarity::Ultra && previousPromotion.chance(0.25));
         newSupers += adjusted == Rarity::Super;
         if (ordinary != Rarity::Ultra) CHECK(adjusted == prestigeRarity(ordinary));
     }
-    CHECK(oldSupers > samples * .75);
-    CHECK(newSupers > samples * .18 && newSupers < samples * .22);
-    CHECK(ultra > samples * .70);
-    std::printf("[prestige sewers difficulty 75] full promotion Super %.2f%%, "
+    CHECK(fullPromotionSupers > samples * .75);
+    CHECK(previousSupers > samples * .18 && previousSupers < samples * .22);
+    CHECK(newSupers > samples * .58 && newSupers < samples * .62);
+    CHECK(ultra > samples * .34 && ultra < samples * .38);
+    std::printf("[prestige sewers difficulty 75] full promotion Super %.2f%%, previous %.2f%%, "
                 "retuned Super %.2f%%, Ultra %.2f%%\n",
-                100.0 * oldSupers / samples, 100.0 * newSupers / samples,
+                100.0 * fullPromotionSupers / samples, 100.0 * previousSupers / samples,
+                100.0 * newSupers / samples,
                 100.0 * ultra / samples);
 }
 
@@ -118,12 +127,20 @@ TEST(prestige_is_one_root_node_costing_225) {
 // The twin maps
 // ---------------------------------------------------------------------------
 
-TEST(every_shipped_biome_has_an_prestige_twin_after_every_plain_realm) {
+TEST(every_authored_prestige_twin_is_loaded_after_the_plain_realms) {
     WorldMaps maps;
     std::string error;
     CHECK(maps.load(dataDir(), nullptr, error));
 
-    int plain = 0;
+    Json manifest;
+    CHECK(Json::parseFile(dataDir() + "/maps.json", manifest, error));
+    std::set<std::string> authoredTwins;
+    for (const Json& entry : manifest["maps"].items()) {
+        if (entry["prestige"].asBool()) {
+            authoredTwins.insert(std::filesystem::path(entry["file"].asString()).stem().string());
+        }
+    }
+    CHECK(authoredTwins.size() >= 8u);
     int twins = 0;
     int lastPlainSlot = -1;
     int firstTwinSlot = maps.count();
@@ -141,13 +158,7 @@ TEST(every_shipped_biome_has_an_prestige_twin_after_every_plain_realm) {
         CHECK(!maps.isPrestige(map.realm()));
         bool found = false;
         const Realm twin = maps.prestigeRealm(map.realm(), found);
-        // The instanced dungeon copies have none; every biome does.
-        if (map.id() != map.templateId() || maps.copiesOf(map.templateId()).size() > 1) {
-            CHECK(!found);
-            continue;
-        }
-        ++plain;
-        CHECK(found);
+        CHECK(found == (authoredTwins.count(map.id()) > 0));
         if (!found) continue;
         const MapData* other = maps.forRealm(twin);
         CHECK(other != nullptr);
@@ -163,8 +174,7 @@ TEST(every_shipped_biome_has_an_prestige_twin_after_every_plain_realm) {
         maps.prestigeRealm(twin, again);
         CHECK(!again);
     }
-    CHECK(plain >= 8);
-    CHECK_EQ(twins, plain);
+    CHECK_EQ(static_cast<std::size_t>(twins), authoredTwins.size());
     // Appended: turning prestige on renumbered no existing realm.
     CHECK(lastPlainSlot < firstTwinSlot);
     // There is no prestige arena or maze.
@@ -285,13 +295,19 @@ TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
     for (const SpawnSystem::BiomeBossClock& clock : spawner.bossClocks()) {
         CHECK(clock.biome.rfind(kPrestigeMapPrefix, 0) != 0);
     }
-    // No announcement either: a twin's supers are its everyday stock. The
-    // plain biomes' cold stock does announce its supers, so the list is not
-    // empty for want of anything to say.
-    CHECK(!spawner.bossSpawns.empty());
-    for (const SpawnSystem::BossSpawn& boss : spawner.bossSpawns) {
-        CHECK(!maps.isPrestige(boss.realm));
+    // Spawn a real announcing tier in the ordinary biome. Supers in the
+    // cold stock are below the global announcement threshold.
+    const auto& content = shippedContent();
+    spawner.restoreBossClock("garden", 0.0, 0.0);
+    const auto boss = spawner.spawnMob(world, terrain, content, content.mobIndex("bee"),
+                                       Rarity::Unique, terrain.spawnPoint(garden), garden, 50000.0, rng);
+    CHECK(boss != NULL_ENTITY);
+    bool announced = false;
+    for (const auto& entry : spawner.bossSpawns) {
+        CHECK(!maps.isPrestige(entry.realm));
+        announced |= entry.entity == boss;
     }
+    CHECK(announced);
 }
 
 TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
@@ -320,7 +336,7 @@ TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
                            rng) != NULL_ENTITY);
 }
 
-TEST(an_prestige_mob_pays_the_xp_of_the_tier_below) {
+TEST(prestige_xp_bonus_caps_the_jump_from_the_tier_below) {
     World world;
     Terrain terrain;
     SpawnSystem spawner;
@@ -345,11 +361,14 @@ TEST(an_prestige_mob_pays_the_xp_of_the_tier_below) {
 
     // The plain garden pays a tier its own XP.
     CHECK(xpOf(Rarity::Super, garden) == content.mobStats(bee, Rarity::Super).xp);
-    // The twin pays one tier down: a super is worth an ultra, an uncommon a
-    // common, and a common (console only) stays a common.
-    CHECK(xpOf(Rarity::Super, twin) == content.mobStats(bee, Rarity::Ultra).xp);
-    CHECK(xpOf(Rarity::Ultra, twin) == content.mobStats(bee, Rarity::Mythic).xp);
-    CHECK(xpOf(Rarity::Uncommon, twin) == content.mobStats(bee, Rarity::Common).xp);
+    // A prestige tier earns at most 50% more than the former payout and
+    // never more than the same monster in the ordinary biome.
+    CHECK(xpOf(Rarity::Super, twin) == std::min(content.mobStats(bee, Rarity::Ultra).xp * 1.5,
+        content.mobStats(bee, Rarity::Super).xp));
+    CHECK(xpOf(Rarity::Ultra, twin) == std::min(content.mobStats(bee, Rarity::Mythic).xp * 1.5,
+        content.mobStats(bee, Rarity::Ultra).xp));
+    CHECK(xpOf(Rarity::Uncommon, twin) == std::min(content.mobStats(bee, Rarity::Common).xp * 1.5,
+        content.mobStats(bee, Rarity::Uncommon).xp));
     CHECK(xpOf(Rarity::Common, twin) == content.mobStats(bee, Rarity::Common).xp);
     CHECK(content.mobStats(bee, Rarity::Ultra).xp < content.mobStats(bee, Rarity::Super).xp);
 }
@@ -543,4 +562,190 @@ TEST(a_prestige_super_is_neither_announced_nor_mourned) {
     // spawned here.
     CHECK(!sawText(client, "Super Bee has spawned!"));
     CHECK(!sawText(client, "Super Bee has been defeated"));
+}
+
+TEST(pyramid_rotation_returns_ordinary_and_prestige_players_to_the_new_entrance) {
+    Harness h("pyramid-rotation",
+              [](const std::string& path) {
+                  seedUser(path, "pyramidwalker", "password7");
+                  seedUser(path, "pyramidclimber", "password7");
+                  seedProgress(path, "pyramidclimber", true);
+              }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    const auto& maps = h.server.worldMaps();
+    bool found = false;
+    const Realm pyramid = maps.realmOfId("pyramid", found);
+    CHECK(found);
+    const auto& choices = maps.spawnChoices();
+    const auto entry = std::find_if(choices.begin(), choices.end(), [&](const SpawnChoice& choice) {
+        return choice.realm == pyramid;
+    });
+    CHECK(entry != choices.end());
+    if (!found || entry == choices.end()) return;
+    NetClient ordinary, prestige;
+    CHECK(logIn(h, ordinary, "pyramidwalker"));
+    CHECK(join(h, ordinary, "pyramidwalker", false, entry->id));
+    CHECK(logIn(h, prestige, "pyramidclimber"));
+    CHECK(join(h, prestige, "pyramidclimber", true, entry->id));
+    World& world = h.server.world();
+    const Entity walker = bodyNamed(world, "pyramidwalker");
+    const Entity climber = bodyNamed(world, "pyramidclimber");
+    if (walker == NULL_ENTITY || climber == NULL_ENTITY) { CHECK(false); return; }
+
+    const auto oldOrdinary = realmOf(world, walker);
+    const auto oldPrestige = realmOf(world, climber);
+    CHECK_EQ(maps.forRealm(oldOrdinary)->biome(), std::string("pyramid"));
+    CHECK_EQ(maps.forRealm(oldPrestige)->biome(), std::string("pyramid"));
+    CHECK(maps.isPrestige(oldPrestige));
+    CHECK(ordinary.view().realm() == oldOrdinary);
+    CHECK(prestige.view().realm() == oldPrestige);
+
+    world.get<Transform>(walker).position = {2000.0, 2000.0};
+    world.get<Transform>(climber).position = {2200.0, 2200.0};
+    GameServerPeer::advancePyramidCycle(h.server);
+    const auto newOrdinary = realmOf(world, walker);
+    const auto newPrestige = realmOf(world, climber);
+    CHECK(newOrdinary != oldOrdinary);
+    CHECK(newPrestige != oldPrestige);
+    CHECK(maps.isPrestige(newPrestige));
+    for (const auto player : {walker, climber}) {
+        const auto& at = world.get<Transform>(player);
+        const auto doors = maps.forRealm(at.realm)->playerSpawns();
+        CHECK(!doors.empty());
+        if (!doors.empty()) CHECK(doors.front()->bounds.contains(at.position));
+        CHECK(!h.server.terrain().blocked(at.position, at.realm));
+    }
+    for (int i = 0; i < 20; ++i) {
+        h.server.serviceNetwork(1);
+        ordinary.poll(1);
+        prestige.poll(1);
+    }
+    CHECK(ordinary.view().realm() == newOrdinary);
+    CHECK(prestige.view().realm() == newPrestige);
+}
+
+TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
+    Harness h("wave-chat",
+              [](const std::string& path) {
+                  seedUser(path, "wavehost", "password7");
+                  seedUser(path, "waveguest", "password7");
+              },
+              dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient host, guest;
+    CHECK(logIn(h, host, "wavehost"));
+    CHECK(join(h, host, "wavehost", false));
+    CHECK(logIn(h, guest, "waveguest"));
+    CHECK(join(h, guest, "waveguest", false));
+
+    World& world = h.server.world();
+    const auto hostBody = bodyNamed(world, "wavehost");
+    const auto guestBody = bodyNamed(world, "waveguest");
+    if (hostBody == NULL_ENTITY || guestBody == NULL_ENTITY) {
+        CHECK(false);
+        return;
+    }
+    const auto origin = world.get<Transform>(guestBody).realm;
+    std::string code;
+    host.sendChat("/wave start");
+    CHECK(h.stepUntil({&host, &guest}, [&] {
+        for (const auto& line : host.chat()) {
+            const auto marker = line.text.find("Wave \u623f ");
+            if (marker == std::string::npos) continue;
+            const auto firstDigit = line.text.find_first_of("0123456789", marker);
+            if (firstDigit != std::string::npos) code = line.text.substr(firstDigit, 6);
+        }
+        return code.size() == 6 && world.has<WavePlayer>(hostBody);
+    }));
+    if (code.size() != 6) return;
+    CHECK(!sawText(guest, code));
+    const auto arena = world.get<Transform>(hostBody).realm;
+    CHECK(arena != origin);
+
+    guest.sendChat("/wave join " + code);
+    CHECK(h.stepUntil({&host, &guest}, [&] {
+        return world.has<WavePlayer>(guestBody) && guest.view().realm() == arena;
+    }));
+    guest.sendChat("/wave leave");
+    CHECK(h.stepUntil({&host, &guest}, [&] {
+        return !world.has<WavePlayer>(guestBody) && guest.view().realm() == origin;
+    }));
+    CHECK(world.has<WavePlayer>(hostBody));
+}
+
+TEST(wave_room_is_capped_revives_at_the_next_wave_and_pays_no_bounties) {
+    World world;
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    const auto& content = shippedContent();
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    DungeonSystem dungeon;
+    dungeon.worldMaps = &maps;
+    dungeon.moveToRealm = [&](Entity e, Realm realm, Vec2 position) {
+        world.get<Transform>(e) = Transform{position, 0.0, realm};
+    };
+    dungeon.waveRevived = [&](Entity e) {
+        auto& hp = world.get<Health>(e);
+        hp.current = hp.max;
+        world.remove<Dead>(e);
+    };
+    CombatSystem combat;
+    Rng rng{42u};
+    CommandBuffer commands{world};
+    const auto tick = [&](double now) {
+        dungeon.run(world, terrain, content, spawner, combat, rng, now, commands);
+        commands.flush();
+    };
+    const Vec2 entry = terrain.spawnPoint(Realm::Overworld);
+    std::vector<Entity> members;
+    for (int i = 0; i < 5; ++i) {
+        const auto e = world.create();
+        world.add<PlayerTag>(e);
+        world.add<Body>(e, Body{25.0, 1.0});
+        world.add<Health>(e, Health{100.0, 100.0});
+        world.add<Faction>(e, Faction{Team::Players, true});
+        world.add<Transform>(e, Transform{entry, 0.0});
+        members.push_back(e);
+    }
+    tick(0.0);
+    const auto reply = dungeon.waveCommand(world, terrain, members[0], "start", rng, 1000.0);
+    const auto firstDigit = reply.find_first_of("0123456789");
+    CHECK(firstDigit != std::string::npos);
+    if (firstDigit == std::string::npos) return;
+    const auto join = "join " + reply.substr(firstDigit, 6);
+    for (int i = 1; i < 5; ++i)
+        dungeon.waveCommand(world, terrain, members[i], join, rng, 2000.0);
+    for (int i = 0; i < 4; ++i) CHECK(dungeon.inWave(world, members[i]));
+    CHECK(!dungeon.inWave(world, members[4]));
+    CHECK(!CombatSystem::canDamage(world, members[0], members[1]));
+
+    for (int round = 1; round <= 5; ++round) {
+        const double now = 16000.0 + (round - 1) * 3600.0;
+        tick(now);
+        const auto mobs = Query<MobTag>{world}.collect();
+        CHECK_EQ(mobs.size(), static_cast<std::size_t>(round == 5 ? 3 : 10 + round));
+        if (round == 2) CHECK(isStanding(world, members[1]));
+        for (const Entity mob : mobs) {
+            CHECK(!world.has<Bounty>(mob));
+            CHECK(CombatSystem::canDamage(world, members[0], mob));
+            if (round == 5) CHECK(world.get<MobType>(mob).rarity == Rarity::Super);
+            world.destroy(mob);
+        }
+        if (round == 1) {
+            world.get<Health>(members[1]).current = 0.0;
+            world.add<Dead>(members[1]);
+        }
+        tick(now + 50.0);
+    }
+    for (const Entity e : members) {
+        CHECK(world.get<Transform>(e).realm == Realm::Overworld);
+        CHECK(!world.has<WavePlayer>(e));
+    }
+    CHECK(CombatSystem::canDamage(world, members[0], members[1]));
 }

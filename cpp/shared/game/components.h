@@ -35,6 +35,7 @@ namespace flix {
 // ---------------------------------------------------------------------------
 
 struct PlayerTag {};
+struct WavePlayer {};
 struct MobTag {};
 struct GhostTag {};
 struct PetalTag {};
@@ -1425,6 +1426,11 @@ struct DropItem {
     /// Bots walk past it: a petal the whole server is racing for is not a
     /// bot's to take.
     bool humansOnly = false;
+
+    // Cached only in the immutable terrain of a running server's world maps.
+    Vec2 settledPosition;
+    Realm settledRealm = Realm::Overworld;
+    bool terrainSettled = false;
 };
 
 /// `Sacrifice` is not a field at all -- nothing reads a GroundEffect for it --
@@ -1526,7 +1532,11 @@ struct LightningClock {
 /// stay exactly what the burst already had. All it wants is a different colour
 /// on the number.
 struct LightningBurst {};
-struct LightningTarget { Entity victim = NULL_ENTITY; };
+struct LightningTarget {
+    Entity victim = NULL_ENTITY;
+    bool fromMagicEye = false;
+    Rarity rarity = Rarity::Common;
+};
 struct BurrowState {
     double untilMillis=0;bool active=false;
     std::uint16_t wormIndex=UINT16_MAX,desertCentipedeIndex=UINT16_MAX;
@@ -1613,6 +1623,7 @@ struct Replicated {
 
 // Component registration. Global scope, once per type.
 FLIX_COMPONENT(flix::PlayerTag);
+FLIX_COMPONENT(flix::WavePlayer);
 FLIX_COMPONENT(flix::MobTag);
 FLIX_COMPONENT(flix::GhostTag);
 FLIX_COMPONENT(flix::PetalTag);

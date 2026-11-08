@@ -105,6 +105,13 @@
     {
       "file": "cyberspace.tmj",
       "prestige": true
+    },
+    {
+      "file": "wave.tmj"
+    },
+    {
+      "file": "pyramid_alt.tmj",
+      "prestige": true
     }
   ]
 }

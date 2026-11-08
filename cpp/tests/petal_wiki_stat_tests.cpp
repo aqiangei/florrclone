@@ -14,13 +14,13 @@ bool hasLine(std::uint16_t id,Rarity r,const std::string& text) {
     return false;
 }
 }
-TEST(wiki_stat_leaf_keeps_server_three_times_and_shows_base) {
+TEST(wiki_stat_leaf_displays_the_player_healing_multiplier_and_base) {
     CHECK(loadWikiStats()); ui::setLanguage(ui::Language::Zh);
     const auto leaf=content().petalIndex("leaf");
     CHECK_NEAR(content().petalStats(leaf,Rarity::Super).passiveHealPerSecond,729,1e-8);
-    CHECK_NEAR(kPlayerHealMultiplier,3,1e-12);
-    CHECK(hasLine(leaf,Rarity::Super,"2187")); CHECK(hasLine(leaf,Rarity::Super,"729"));
-    CHECK(hasLine(leaf,Rarity::Super,"本服治疗倍率：x3"));
+    CHECK_NEAR(kPlayerHealMultiplier,4.5,1e-12);
+    CHECK(hasLine(leaf,Rarity::Super,"3280.5")); CHECK(hasLine(leaf,Rarity::Super,"729"));
+    CHECK(hasLine(leaf,Rarity::Super,"本服治疗倍率：x4.5"));
 }
 TEST(wiki_stat_blueberries_have_real_lightning_damage_and_nonzero_tooltip){
     CHECK(loadWikiStats());ui::setLanguage(ui::Language::Zh);

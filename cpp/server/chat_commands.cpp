@@ -25,6 +25,8 @@
 //    told about, apologised for, or listed in /help.
 
 #include "server/game_server.h"
+#include "server/systems/combat.h"
+#include "server/systems/dungeons.h"
 
 #include <algorithm>
 #include <array>
@@ -36,6 +38,8 @@
 #include <cstdlib>
 #include <ctime>
 #include <limits>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -500,6 +504,69 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     const std::string argument = argumentOf(message);
     const auto out = [&](const std::string& text) { sendSystem(connection, text); };
 
+    if (verb == "/wave") {
+        if (!session.playing() || session.split() || session.controlling != 0 ||
+            session.controlledBy != 0 || !dungeons_) {
+            out("请使用未分裂的角色进入 Wave。");
+        } else {
+            out(dungeons_->waveCommand(world_, *terrain_, session.entity, argument, rng_, clockMillis_));
+        }
+        return true;
+    }
+
+    if (verb == "/dps") {
+        if (!session.playing() || !combat_) return true;
+        if (argument == "reset") {
+            combat_->resetPracticeDamage(session.entity);
+            out("\u5df2\u6e05\u7a7a\u4f60\u7684\u6728\u6869\u4f24\u5bb3\u8bb0\u5f55\u3002");
+            return true;
+        }
+        if (!argument.empty()) {
+            out("/dps | /dps reset");
+            return true;
+        }
+        const auto rows = combat_->practiceDamage(session.entity, clockMillis_);
+        if (rows.empty()) {
+            out("\u8fd1 10 \u79d2\u6ca1\u6709\u6728\u6869\u4f24\u5bb3\u3002\u653b\u51fb\u6728\u6869\u540e\u518d\u8f93\u5165 /dps\u3002");
+            return true;
+        }
+        double total = 0.0;
+        for (const auto& row : rows) total += row.amount;
+
+        std::ostringstream report;
+        report << std::fixed << std::setprecision(1) << "\u6728\u6869\u8fd1 10 \u79d2\u5e73\u5747 "
+               << total / CombatSystem::kPracticeSeconds << " DPS";
+        constexpr std::size_t maxRows = 8;
+        double other = 0.0;
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            const auto& row = rows[i];
+            if (i >= maxRows) {
+                other += row.amount;
+                continue;
+            }
+            using Source = CombatSystem::PracticeSource;
+            const char* category = "\u5176\u4ed6";
+            switch (row.source) {
+            case Source::Petal: category = "\u82b1\u74e3"; break;
+            case Source::Summon: category = "\u53ec\u5524"; break;
+            case Source::Poison: category = "\u6301\u7eed\u6bd2\u4f24"; break;
+            case Source::Reflect: category = "\u53cd\u4f24"; break;
+            case Source::Field: category = "\u8303\u56f4\u6548\u679c"; break;
+            case Source::Other: break;
+            }
+            report << "<br/>" << category;
+            if (row.petal < content().petalCount()) {
+                report << " \u00b7 " << rarityLabel(row.rarity) << ' '
+                       << escapedMarkup(content().petal(row.petal).name);
+            }
+            report << " \u00b7 " << row.amount / CombatSystem::kPracticeSeconds
+                   << " DPS (" << row.amount / total * 100.0 << "%)";
+        }
+        if (other > 0.0) report << "<br/>\u5176\u4f59\u6765\u6e90 \u00b7 " << other / CombatSystem::kPracticeSeconds << " DPS";
+        out(report.str());
+        return true;
+    }
+
     // -- channel shorthands ------------------------------------------------
 
     if (verb == "/g") {
@@ -909,6 +976,8 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         std::string help = "Available commands:\n";
         help += "/mark-return - Mark传送后返回原处；H需等待30秒（死亡或返回菜单解除）<br/>";
         help += "/hyper-abandon [编号] - 主动放弃1份超凡，不返还材料（需要确认）<br/>";
+        help += "/wave start / join 房号 / leave - 四人波次挑战<br/>";
+        help += "/dps / /dps reset - \u67e5\u770b\u6216\u6e05\u7a7a\u4e2a\u4eba\u6728\u6869\u4f24\u5bb3\u7edf\u8ba1<br/>";
         help += "/biome - Show the most populated biome <br/>";
         help += "/boss-timers - Show each biome's unique/apex cooldown <br/>";
         help += "/level-from-string &lt;name&gt; - Show what level a bot named &lt;name&gt; would "

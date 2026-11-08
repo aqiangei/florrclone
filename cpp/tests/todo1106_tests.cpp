@@ -84,8 +84,9 @@ TEST(todo1106_magic_eye_spends_half_mana_and_deals_lightning_with_inverted_defen
     tick(7000.0);
     CHECK_NEAR(w.get<ManaPool>(p).current, before * 0.5, 1e-6);
     CHECK_NEAR(w.get<Health>(ally).current, 100000.0, 1e-6);
+    const double remaining = 100000.0 - before * 0.5 * 25.0;
     for (const auto mob : {first, second}) {
-        CHECK_NEAR(w.get<Health>(mob).current, 100000.0 - before * 2.5, 1e-6);
+        CHECK_NEAR(w.get<Health>(mob).current, remaining, 1e-6);
     }
     int strikes = 0;
     for (const auto& event : events.events()) {
@@ -100,19 +101,91 @@ TEST(todo1106_magic_eye_spends_half_mana_and_deals_lightning_with_inverted_defen
 
     tick(7050.0);
     CHECK_NEAR(w.get<ManaPool>(p).current, before * 0.5, 1e-6);
-    CHECK_NEAR(w.get<Health>(first).current, 100000.0 - before * 2.5, 1e-6);
+    CHECK_NEAR(w.get<Health>(first).current, remaining, 1e-6);
 }
 
-TEST(todo1106_meteor_protects_the_owner_position_with_a_large_body) {
-    const auto& c=shippedContent(); World w; PetalSystem petals; CommandBuffer commands{w};
-    const auto p=flower(w); wear(w,p,0,"meteor",Rarity::Common);
-    w.get<PlayerInput>(p).current.flags=net::InputDefend;
-    for(int tick=0;tick<150;++tick){petals.run(w,c,1000+tick*50,.05,commands);commands.flush();}
-    int count=0; Query<PlantedMeteor,Transform,Body> rocks{w};
-    rocks.each([&](Entity,PlantedMeteor& rock,Transform& at,Body& body){
-        CHECK(rock.owner==p);CHECK_NEAR(distance(at.position,w.get<Transform>(p).position),0,1e-6);
-        CHECK(body.radius>=150);++count;
-    });CHECK(count>0);CHECK(count<=3);
+TEST(todo1106_mana_orbs_stay_close_and_recharge_in_all_attack_modes) {
+    const auto& content = shippedContent();
+    for (const int flags : {0, int(net::InputAttack), int(net::InputDefend),
+                            int(net::InputAttack | net::InputDefend)}) {
+        World world;
+        PetalSystem petals;
+        CommandBuffer commands{world};
+        const auto player = flower(world);
+        wear(world, player, 0, "mana_orb", Rarity::Unique);
+        world.get<PlayerInput>(player).current.flags = flags;
+        const auto tick = [&](int first, int end) {
+            for (int i = first; i < end; ++i) {
+                petals.run(world, content, 1000 + i * 50, .05, commands);
+                commands.flush();
+            }
+        };
+        tick(0, 120);
+        auto& pool = world.get<ManaPool>(player);
+        pool.current = pool.max;
+        tick(120, 240);
+
+        const auto& spawned = world.get<Loadout>(player).spawned;
+        CHECK_EQ(spawned.size(), 1u);
+        if (spawned.size() != 1u) continue;
+        const auto& origin = world.get<Transform>(player).position;
+        const double radius = distance(origin, world.get<Transform>(spawned.front()).position);
+        CHECK_NEAR(radius, 25.0 + kPetalOrbitDefendGap, 1.0);
+
+        const auto& stats = content.petalStats(content.petalIndex("mana_orb"), Rarity::Unique);
+        world.get<ManaPool>(player).current = 0.0;
+        tick(240, 252);
+        CHECK_NEAR(world.get<ManaPool>(player).current, stats.mana, 1e-6);
+    }
+}
+
+TEST(todo1106_meteor_plants_in_all_stances_and_hyper_last_two_seconds_longer) {
+    const auto& content = shippedContent();
+    for (const auto rarity : {Rarity::Common, Rarity::Apex}) {
+        for (const int flags : {int(net::InputAttack), int(net::InputDefend),
+                                int(net::InputAttack | net::InputDefend)}) {
+            World world;
+            PetalSystem petals;
+            CommandBuffer commands{world};
+            const auto player = flower(world);
+            wear(world, player, 0, "meteor", rarity);
+            world.get<PlayerInput>(player).current.flags = flags;
+
+            Query<PlantedMeteor> planted{world};
+            int tick = 0;
+            const auto step = [&] {
+                petals.run(world, content, 1000 + tick++ * 50, .05, commands);
+                commands.flush();
+            };
+            while (tick < 300 && planted.count() == 0) step();
+            const auto rocks = planted.collect();
+            CHECK_EQ(rocks.size(), 1u);
+            if (rocks.size() != 1u) continue;
+
+            const auto rock = rocks.front();
+            CHECK_EQ(world.get<PlantedMeteor>(rock).owner, player);
+            const Vec2 origin = world.get<Transform>(player).position;
+            const Vec2 plantedOffset = world.get<Transform>(rock).position - origin;
+            Vec2 orbitOffset;
+            Query<PetalInstance, Transform>{world}.each(
+                [&](Entity, PetalInstance& ammo, Transform& at) {
+                    if (ammo.owner == player && ammo.configIndex == content.petalIndex("meteor")) {
+                        orbitOffset = at.position - origin;
+                    }
+                });
+            CHECK(orbitOffset.length() > 1.0);
+            CHECK_NEAR(wrapAngle(plantedOffset.angle() - orbitOffset.angle()), 0.0, 1e-6);
+            CHECK_NEAR(plantedOffset.length(), std::max(orbitOffset.length() + 32.0, 162.0), 1e-6);
+            CHECK_NEAR(world.get<Body>(rock).radius, 180.0, 1e-9);
+            const double duration = rarity == Rarity::Apex ? 22.0 : 20.0;
+            CHECK_NEAR(world.get<Lifetime>(rock).remainingSeconds, duration, 1e-9);
+            world.get<PlayerInput>(player).current.flags = 0;
+            for (int i = 0; i < 401; ++i) step();
+            CHECK(world.isAlive(rock) == (rarity == Rarity::Apex));
+            for (int i = 0; i < 40; ++i) step();
+            CHECK(!world.isAlive(rock));
+        }
+    }
 }
 
 TEST(todo1106_mana_talent_scales_actual_passive_recovery_without_capacity_growth) {

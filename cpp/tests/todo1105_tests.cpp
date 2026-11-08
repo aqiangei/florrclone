@@ -345,9 +345,10 @@ TEST(todo1105_honey_attack_detaches_and_limits_travel) {
  CHECK(bait!=NULL_ENTITY);
  if(bait==NULL_ENTITY)return;
  const Vec2 launched=w.get<Transform>(bait).position;
+ const double remaining=w.get<HoneyBait>(bait).travel;
  w.get<PlayerInput>(p).current.flags=0;
  for(int i=1;i<=60;++i) {petals.run(w,c,5000+i*50,.05,commands);commands.flush();}
- CHECK_NEAR(distance(launched,w.get<Transform>(bait).position),300,1e-6);
+ CHECK_NEAR(distance(launched,w.get<Transform>(bait).position),remaining,1e-6);
  for(int i=61;i<=170;++i) {petals.run(w,c,5000+i*50,.05,commands);commands.flush();}
  CHECK(!w.isAlive(bait));
 }
@@ -390,7 +391,7 @@ TEST(todo1105_shovel_defense_burrows_then_expires) {
  CHECK(!w.get<BurrowState>(p).active);
 }
 
-TEST(todo1105_meteor_plants_only_on_defense_and_expires) {
+TEST(todo1105_meteor_plants_on_attack_and_expires) {
  const auto& c=testsupport::shippedContent();
  World w; PetalSystem petals; CommandBuffer commands{w};
  const auto p=w.create();
@@ -399,18 +400,18 @@ TEST(todo1105_meteor_plants_only_on_defense_and_expires) {
  w.add<PlayerModifiers>(p); w.add<PetalRing>(p); w.add<Loadout>(p);
  w.add<PlayerInput>(p); w.add<Faction>(p,Faction{Team::Players,false});
  w.get<Loadout>(p).slots[0].configIndex=c.petalIndex("meteor");
- w.get<PlayerInput>(p).current.flags=net::InputAttack;
+ w.get<PlayerInput>(p).current.flags=0;
  for(int i=0;i<150;++i) {petals.run(w,c,i*50,.05,commands);commands.flush();}
  Entity rock=NULL_ENTITY;
  Query<PlantedMeteor>{w}.each([&](Entity e,PlantedMeteor&){rock=e;});
  CHECK_EQ(rock,NULL_ENTITY);
- w.get<PlayerInput>(p).current.flags=net::InputDefend;
+ w.get<PlayerInput>(p).current.flags=net::InputAttack;
  petals.run(w,c,7500,.05,commands);commands.flush();
  Query<PlantedMeteor>{w}.each([&](Entity e,PlantedMeteor&){rock=e;});
  CHECK(rock!=NULL_ENTITY);
  if(rock==NULL_ENTITY)return;
  CHECK(w.has<LoosePetal>(rock));
- CHECK_NEAR(w.get<Body>(rock).radius,150,1e-9);
+ CHECK_NEAR(w.get<Body>(rock).radius,180,1e-9);
  w.get<PlayerInput>(p).current.flags=0;
  for(int i=151;i<560;++i) {petals.run(w,c,i*50,.05,commands);commands.flush();}
  CHECK(!w.isAlive(rock));

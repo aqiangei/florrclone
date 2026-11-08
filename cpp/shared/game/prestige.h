@@ -8,8 +8,8 @@
 // instead of the biome itself; every pad inside a twin leads to another twin.
 //
 // A twin's bands raise the ordinary roll a tier through Ultra. At the top of
-// the curve, only a small share of natural Ultra rolls becomes Super. A twin
-// has no boss clocks and caps at Super.
+// the curve, most natural Ultra rolls become Super, leaving some Ultra in the
+// mix. A twin has no boss clocks and caps at Super.
 //
 // The PVP arena and the maze are generated rather than authored, have no map
 // file to copy, and have no prestige version; neither do the instanced dungeon
@@ -52,20 +52,17 @@ inline constexpr Rarity prestigeRarity(Rarity rolled) {
                                                     : static_cast<Rarity>(raised);
 }
 
-inline constexpr double kPrestigeUltraPromotionChance = 0.25;
+inline constexpr double kPrestigeUltraPromotionChance = 0.75;
 
-/// Ultra is already the main tier in the deepest bands. Promote a minority of
-/// those rolls so the band stays challenging without becoming a Super farm.
+/// Keep the deepest bands Super-heavy while retaining some quicker Ultra fights.
 inline Rarity rollPrestigeAmbientRarity(Rarity rolled, Rng& rng) {
     if (rolled == Rarity::Ultra && !rng.chance(kPrestigeUltraPromotionChance))
         return Rarity::Ultra;
     return prestigeRarity(rolled);
 }
 
-/// The tier whose XP a mob of `rarity` pays in a prestige twin: one below it,
-/// so a twin's super pays an ultra's XP and its uncommon a common's. The +1 is
-/// a harder fight, not a faster climb. A common (only the console puts one
-/// there) has no tier below and pays its own.
+/// The base tier for the prestige XP cap, one below the spawned tier.
+/// A common has no tier below and uses its own XP as the base.
 inline constexpr Rarity prestigeXpRarity(Rarity rarity) {
     const int lowered = rarityIndex(rarity) - kPrestigeRarityStep;
     return lowered < 0 ? Rarity::Common : static_cast<Rarity>(lowered);

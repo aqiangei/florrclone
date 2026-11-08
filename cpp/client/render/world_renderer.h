@@ -78,7 +78,7 @@ struct Effect {
     /// petal, a burst of disc-shaped grains. It has no body of its own -- only
     /// its particles are drawn. A drop's glitter is not one of these: its
     /// grains live in WorldRenderer::dropSparkles_.
-    enum class Kind : std::uint8_t { DamageNumber, Explosion, Sparkle };
+    enum class Kind : std::uint8_t { DamageNumber, Explosion, Sparkle, BerryLaunch };
     Kind kind = Kind::DamageNumber;
     Vec2 position;
     Vec2 drift;

@@ -1520,7 +1520,7 @@ private:
     SpatialGrid grid_;
     SpatialGrid mobTargetGrid_;
     SpatialGrid pickupGrid_;
-    SpatialGrid dropSnapshotGrid_;
+    SpatialGrid snapshotGrid_;
     Rng rng_;
     /// The bots' OWN stream, separate from the world's.
     ///
@@ -1587,6 +1587,7 @@ private:
     // Account-keyed protection survives bodies/reconnects; never persisted.
     std::unordered_map<std::string, double> markProtectedUntil_;
     std::unordered_map<net::ConnectionId, ClientView> views_;
+    std::unordered_map<net::ConnectionId, ClientView*> deferredPickupViews_;
 
     /// catalogSkinLook's memo, by skin id. Memory only: a look is cheap to
     /// sample once and a catalog's worth of them is too slow to sample on
@@ -1838,6 +1839,10 @@ private:
     };
     std::unordered_map<unsigned, PyramidMapStock> pyramidMaps_;
     Rng pyramidMapRng_;
+    std::int64_t pyramidCycle_ = -1;
+    Realm activePyramidRealm(Realm realm) const;
+    void routePyramidEntrance(Realm& realm, Vec2& position);
+    void servicePyramidRotation(std::int64_t cycle);
     void servicePyramidMaps(double now);
     bool expireTimedHammer(PlayerRecord& record);
     void serviceTimedHammers(double now);

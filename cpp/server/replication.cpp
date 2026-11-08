@@ -1,5 +1,7 @@
 #include "server/replication.h"
 
+#include "shared/game/berry_projectile.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -8,6 +10,22 @@
 #include "shared/game/spatial.h"
 
 namespace flix {
+
+void ClientView::deferPickup(const WireEvent& pickup) {
+    for (auto& pending : deferredPickups) {
+        if (pending.amount != pickup.amount || pending.flag != pickup.flag) continue;
+        const auto remaining = UINT32_MAX - pending.pickupQuantity;
+        pending.pickupQuantity += std::min(pickup.pickupQuantity, remaining);
+        return;
+    }
+    deferredPickups.push_back(pickup);
+}
+
+void ClientView::reset() {
+    tracked.clear();
+    deferredPickups.clear();
+    selfSent = false;
+}
 
 namespace {
 
@@ -370,22 +388,32 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         candidates_.push_back({e, id.value, selectionKey});
     };
 
-    Query<NetId, Replicated, Transform> replicated{world};
     const Vec2 corner{reachX, reachY};
     const Vec2 min = centre - corner;
     const Vec2 max = centre + corner;
-    const bool exemptDrop = frame.alwaysVisible &&
-        std::any_of(frame.alwaysVisible->begin(), frame.alwaysVisible->end(),
-                    [&](Entity e) { return world.has<DropTag>(e); });
-    const bool indexedDrops = frame.dropGrid && !exemptDrop && !world.has<DropTag>(viewer) &&
-        std::isfinite(min.x) && std::isfinite(min.y) && std::isfinite(max.x) && std::isfinite(max.y);
-    if (indexedDrops) replicated.without<DropTag>();
-    replicated.each([&](Entity e, NetId& id, Replicated&, Transform& transform) {
-        gather(e, id, transform);
-    });
-    if (indexedDrops) {
-        frame.dropGrid->queryPointBuckets(realm, min, max, nearbyDrops_);
-        for (Entity e : nearbyDrops_) gather(e, world.get<NetId>(e), world.get<Transform>(e));
+    if (frame.entityGrid &&
+        std::isfinite(min.x) && std::isfinite(min.y) && std::isfinite(max.x) && std::isfinite(max.y)) {
+        frame.entityGrid->queryPointBuckets(realm, min, max, nearbyEntities_);
+        for (Entity e : nearbyEntities_) gather(e, world.get<NetId>(e), world.get<Transform>(e));
+
+        // A watched body and same-realm squadmates can be visible beyond the
+        // indexed rectangle. Add them once if they did not come from a bucket.
+        const auto gatherExempt = [&](Entity e) {
+            if (!world.has<Replicated>(e) ||
+                std::find(nearbyEntities_.begin(), nearbyEntities_.end(), e) != nearbyEntities_.end()) return;
+            const auto* id = world.tryGet<NetId>(e);
+            const auto* at = world.tryGet<Transform>(e);
+            if (id && at) gather(e, *id, *at);
+        };
+        gatherExempt(viewer);
+        if (frame.alwaysVisible) {
+            const auto& always = *frame.alwaysVisible;
+            for (auto it = always.begin(); it != always.end(); ++it)
+                if (*it != viewer && std::find(always.begin(), it, *it) == it) gatherExempt(*it);
+        }
+    } else {
+        Query<NetId, Replicated, Transform>{world}.each(
+            [&](Entity e, NetId& id, Replicated&, Transform& at) { gather(e, id, at); });
     }
 
     if (candidates_.size() > maxEntities) {
@@ -836,6 +864,28 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // --- events -----------------------------------------------------------
     const std::size_t eventCountAt = out.reserveU16();
     std::uint16_t eventCount = 0;
+    const auto writeEvent = [&](const WireEvent& event, std::uint32_t other, std::uint8_t flag,
+                                bool ownPickup) {
+        out.u8(static_cast<std::uint8_t>(event.kind));
+        out.u32(event.netId);
+        out.u32(other);
+        out.f32(static_cast<float>(event.amount));
+        out.position(event.position);
+        out.f32(static_cast<float>(event.radius));
+        out.u8(flag);
+        if (event.kind == net::EventKind::PickedUp) { out.u32(event.pickupQuantity); out.boolean(ownPickup); }
+        if (event.kind == net::EventKind::Lightning) {
+            const std::size_t count = std::min(event.points.size(), net::kMaxLightningTargets);
+            out.u8(static_cast<std::uint8_t>(count));
+            for (std::size_t i = 0; i < count; ++i) out.position(event.points[i]);
+        }
+        ++eventCount;
+    };
+    if (!view.deferredPickups.empty() && view.deferredPickups.front().dealtByConnection == viewerOwner) {
+        for (const auto& pickup : view.deferredPickups)
+            writeEvent(pickup, pickup.otherNetId, pickup.flag, true);
+        view.deferredPickups.clear();
+    }
     if (frame.events) {
         // Which hits are this viewer's own. By connection as well as by body
         // -- the viewerOwner the gather above read -- because a splitter's two
@@ -866,6 +916,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                    event.wornBy == viewer;
         };
         for (const WireEvent& event : frame.events->events()) {
+            if (eventCount == UINT16_MAX) break;
             const bool tile = ownTile(event);
             const bool ownPickup = event.kind == net::EventKind::PickedUp &&
                 ((viewerOwner != 0 && event.dealtByConnection == viewerOwner) ||
@@ -877,36 +928,22 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 continue;
             }
             std::uint8_t flag = event.flag;
-            if (event.kind == net::EventKind::Lightning && event.visualSource != NULL_ENTITY) {
+            const bool lightning = event.kind == net::EventKind::Lightning;
+            const bool berryLaunch = event.kind == net::EventKind::Explosion &&
+                                     (event.flag & kBerryShotStyleMask) != 0;
+            if ((lightning || berryLaunch) && event.visualSource != NULL_ENTITY) {
                 auto owned = ownershipFlags(world, event.visualSource, viewer, viewerOwner);
                 if (world.has<PlayerTag>(event.visualSource)) {
                     const auto* account = world.tryGet<PlayerAccount>(event.visualSource);
                     if (event.visualSource != viewer && !(account && viewerOwner != 0 && account->connection == viewerOwner))
                         owned |= net::SpawnForeign;
                 }
-                if (owned & net::SpawnForeign) flag |= net::LightningForeign;
-                if (owned & net::SpawnIsPet) flag |= net::LightningFromPet;
+                if (owned & net::SpawnForeign) flag |= lightning ? net::LightningForeign : kBerryShotForeign;
+                if (owned & net::SpawnIsPet) flag |= lightning ? net::LightningFromPet : kBerryShotFromPet;
             }
             if (dealtByViewer(event)) flag |= net::DamageByViewer;
             if (offView && event.kind == net::EventKind::Damage) flag |= net::DamageOffView;
-            out.u8(static_cast<std::uint8_t>(event.kind));
-            out.u32(event.netId);
-            out.u32(tile ? event.wornSlot + 1u : event.otherNetId);
-            out.f32(static_cast<float>(event.amount));
-            out.position(event.position);
-            out.f32(static_cast<float>(event.radius));
-            out.u8(flag);
-            if (event.kind == net::EventKind::PickedUp) { out.u32(event.pickupQuantity); out.boolean(ownPickup); }
-            // The one kind with a tail. Written after the fixed fields, so a
-            // reader that has already taken the kind byte knows whether to
-            // expect it; nothing else on this wire is variable-length.
-            if (event.kind == net::EventKind::Lightning) {
-                const std::size_t count =
-                    std::min(event.points.size(), net::kMaxLightningTargets);
-                out.u8(static_cast<std::uint8_t>(count));
-                for (std::size_t i = 0; i < count; ++i) out.position(event.points[i]);
-            }
-            ++eventCount;
+            writeEvent(event, tile ? event.wornSlot + 1u : event.otherNetId, flag, ownPickup);
         }
     }
     out.patchU16(eventCountAt, eventCount);
