@@ -190,6 +190,15 @@ struct VolleyShot {
     double lifetimeSeconds = 0;
 };
 
+// A permanent summon fights at Apex, but its descendants keep its visual tier.
+Rarity derivativeVisualRarity(const World& world, Entity owner, Rarity gameplayRarity) {
+    if (gameplayRarity == Rarity::Apex) {
+        const auto* art = world.tryGet<Replicated>(owner);
+        if (art && art->rarity == Rarity::PermanentHyper) return art->rarity;
+    }
+    return gameplayRarity;
+}
+
 /// The same archetype a petal's shot is built with -- a mob's projectile is
 /// the same object fired by the other side, and combat resolves both through
 /// one path.
@@ -233,7 +242,7 @@ void spawnShot(World& world, const VolleyShot& shot) {
     Replicated replicated;
     replicated.kind = net::EntityKind::Projectile;
     replicated.typeIndex = shot.petalIndex;
-    replicated.rarity = shot.rarity;
+    replicated.rarity = derivativeVisualRarity(world, shot.owner, shot.rarity);
     world.add<Replicated>(e, replicated);
     if (shot.identified) world.add<NetId>(e, NetId{shot.netId});
 }
@@ -278,7 +287,7 @@ void spawnWeb(World& world, const WebDrop& web) {
     Replicated replicated;
     replicated.kind = net::EntityKind::Effect;
     replicated.typeIndex = static_cast<std::uint16_t>(GroundEffectKind::Web);
-    replicated.rarity = web.rarity;
+    replicated.rarity = derivativeVisualRarity(world, web.owner, web.rarity);
     world.add<Replicated>(e, replicated);
     if (web.identified) world.add<NetId>(e, NetId{web.netId});
 }
@@ -598,7 +607,8 @@ Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, co
     // that grows with body size passes the retention radius at the top of the
     // ladder -- a unique queen ant's is over 14,000 units against 9,600 -- and
     // past it the mob would lock on, let go and scan again every tick.
-    const double reach = std::min(range * maxAggroScale_ + maxAggroBonus_, kMobTargetRetainRadius);
+    const auto& limits = realmAggro_[realmIndex(realm)];
+    const double reach = std::min(range * limits.scale + limits.bonus, kMobTargetRetainRadius);
     grid.query(realm, from, reach, scratch.entities, scratch.query);
     auto& candidates = scratch.candidates;
     candidates.clear();
@@ -643,33 +653,34 @@ Entity MobAiSystem::acquireTarget(const World& world, const Terrain& terrain, co
 }
 
 Entity MobAiSystem::acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, Realm realm,
-                                     double range) {
-    if (petList_.empty()) return NULL_ENTITY;
+                                     double range, TargetScratch& scratch) const {
+    const auto& pets = petsByRealm_[realmIndex(realm)];
+    if (pets.empty()) return NULL_ENTITY;
 
     // Not counted as a target scan: the stat exists to report what the
     // broadphase cost, and this is a walk over a list a player's summons fit
     // in twice over.
     const double reachSq = range * range;
-    candidates_.clear();
-    for (const Candidate& pet : petList_) {
+    auto& candidates = scratch.candidates;
+    candidates.clear();
+    for (const Candidate& pet : pets) {
         if (pet.entity == self) continue;
-        if (pet.realm != realm) continue;
         // Strictly inside, and with no aggro bonus applied: a bonus is
         // something a FLOWER carries to make itself conspicuous, and a summon
         // carries none of it.
         const double gapSq = distanceSq(from, pet.position);
         if (!(gapSq < reachSq)) continue;
-        candidates_.push_back(Candidate{pet.entity, pet.position, gapSq});
+        candidates.push_back(Candidate{pet.entity, pet.position, gapSq});
     }
 
     // Squared distance sorts in the same order the distance does, so the scan
     // never takes a square root it does not have to.
-    std::sort(candidates_.begin(), candidates_.end(),
+    std::sort(candidates.begin(), candidates.end(),
               [](const Candidate& a, const Candidate& b) { return a.score < b.score; });
-    const std::size_t rays = std::min<std::size_t>(candidates_.size(),
+    const std::size_t rays = std::min<std::size_t>(candidates.size(),
                                                    static_cast<std::size_t>(kTargetLosRayCap));
     for (std::size_t i = 0; i < rays; ++i) {
-        if (!terrain.segmentBlocked(from, candidates_[i].position, realm)) return candidates_[i].entity;
+        if (!terrain.segmentBlocked(from, candidates[i].position, realm)) return candidates[i].entity;
     }
     return NULL_ENTITY;
 }
@@ -1294,13 +1305,6 @@ void MobAiSystem::roam(const Terrain& terrain, const Transform& transform, Motio
     motion.velocity = drive.gardnMotion ? gardnStep(motion.velocity, push, dt) : push;
 }
 
-bool MobAiSystem::runsLow(World& world, Entity self, const Drive& drive) {
-    if (!drive.diggerAi) return false;
-    const Health* health = world.tryGet<Health>(self);
-    return health != nullptr && health->max > 0.0 &&
-           health->current <= health->max * kDiggerFleeBelow;
-}
-
 Vec2 MobAiSystem::steerIdle(World& world, const Terrain& terrain, Entity self,
                             const Transform& transform, Motion& motion, MobAi& ai,
                             const Drive& drive, double slow, double nowMillis, double dt) {
@@ -1516,7 +1520,8 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
     // only other target is the one that hurt it. No pets: a summon carries no
     // glow. Skipped outright while nobody glows, so a world without a bulb in
     // it never pays a neutral mob's broadphase query.
-    if (ai.kind == AiKind::Neutral && ai.target == NULL_ENTITY && anyAggroRaised_) {
+    if (ai.kind == AiKind::Neutral && ai.target == NULL_ENTITY &&
+        realmAggro_[realmIndex(transform.realm)].raised) {
         ai.target = acquire(true);
     }
     if (ai.kind == AiKind::Hostile) {
@@ -1530,22 +1535,19 @@ bool MobAiSystem::steerAggressive(World& world, const Terrain& terrain, const Sp
         // A pet is what is left when no player is in range, which is what lets
         // a summon soak the aggro it was sent out to soak.
         if (ai.target == NULL_ENTITY) {
-            ai.target = acquirePetTarget(terrain, self, transform.position, transform.realm, range);
+            ai.target = plan && plan->petScanned
+                ? plan->acquiredPet
+                : acquirePetTarget(terrain, self, transform.position, transform.realm, range,
+                                   targetScratch_);
         }
     }
     if (ai.target == NULL_ENTITY) {
         // The next target is engaged from the top of a sidle, as gardn's crab
         // engages from a passive state.
         ai.crabPhase = CrabPhase::None;
-        ai.fleeing = false;
         return false;
     }
-    // Picked and held exactly as a chase would be, so a mending mob -- or a
-    // digger on its last tenth -- runs from whatever it would otherwise be
-    // fighting, the flower that hurt it included, and lets go at the same
-    // leash. gardn's digger runs at the speed it chased at.
-    ai.fleeing = runsLow(world, self, drive);
-    if (ai.recoverPerSecond > 0.0 || ai.fleeing) {
+    if (ai.recoverPerSecond > 0.0) {
         return fleeTarget(world, transform, ai, chaseSpeed, desired);
     }
     return pursueTarget(world, self, type, transform, body, ai, drive, chaseSpeed, nowMillis, dt,
@@ -1951,10 +1953,26 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
 // Pets
 // ---------------------------------------------------------------------------
 
+MobAiSystem::PetPreyTarget MobAiSystem::readPetPrey(const World& world, Entity candidate) {
+    const auto* station = world.tryGet<Npc>(candidate);
+    const bool dummy = station && station->configIndex < content().mobCount() &&
+                       content().mob(station->configIndex).id == "target_dummy";
+    if ((!world.has<MobTag>(candidate) && !dummy) || world.has<Pet>(candidate) ||
+        !isStanding(world, candidate)) return {};
+    const auto* at = world.tryGet<Transform>(candidate);
+    if (!at) return {};
+    int tier = 0;
+    if (const auto* type = world.tryGet<MobType>(candidate)) tier = rarityIndex(type->rarity);
+    else if (const auto* replicated = world.tryGet<Replicated>(candidate))
+        tier = rarityIndex(replicated->rarity);
+    return {candidate, at->position, at->realm, tier};
+}
+
 MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terrain& terrain,
                                                 const SpatialGrid& grid, Entity self, Vec2 from,
                                                 Realm realm, Entity previous, bool hasOwner,
-                                                double range, TargetScratch& scratch) const {
+                                                double range, TargetScratch& scratch,
+                                                bool frozenTargets) const {
     // Every direction around the PET. The owner's screen is a rectangle pinned
     // to the flower, and a summon running ahead of it sat outside the reach it
     // was being measured by; an owned pet therefore scans as far as that screen
@@ -1991,38 +2009,29 @@ MobAiSystem::PetPrey MobAiSystem::acquirePetPrey(const World& world, const Terra
     candidates.clear();
     for (const Entity candidate : scratch.entities) {
         if (candidate == self) continue;
-        // Wild mobs only: pets do not fight each other, and a pet chasing its
-        // owner's other summon is a squad that never reaches anything.
-        const auto* station = world.tryGet<Npc>(candidate);
-        const bool dummy =
-            station && station->configIndex < content().mobCount() &&
-            content().mob(station->configIndex).id == "target_dummy";
-        if ((!world.has<MobTag>(candidate) && !dummy) || world.has<Pet>(candidate)) continue;
-        if (!isStanding(world, candidate)) continue;
-        const Transform* at = world.tryGet<Transform>(candidate);
-        if (at == nullptr || at->realm != realm) continue;
-        const double gapSq = distanceSq(from, at->position);
-        if (!(gapSq < reachSq) || !withinLeash(at->position)) continue;
+        const auto slot = entityIndex(candidate);
+        const auto target = frozenTargets ?
+            (slot < petPreyTargets_.size() ? petPreyTargets_[slot] : PetPreyTarget{}) :
+            readPetPrey(world, candidate);
+        if (target.entity != candidate || target.realm != realm) continue;
+        const double gapSq = distanceSq(from, target.position);
+        if (!(gapSq < reachSq)) continue;
+        const double ownerGapSq = ownerAt ? distanceSq(target.position, ownerAt->position) : gapSq;
+        if (ownerAt && !(ownerGapSq <= kPetOwnerTargetRadius * kPetOwnerTargetRadius)) continue;
         // The highest TIER in reach is the fight; distance decides only between
         // mobs of one tier. A Super across the clearing outranks a common at the
         // pet's feet, and a tier is worth more than any range a pet can have,
         // so one ascending key carries both rules.
-        int tier = 0;
-        if (const MobType* type = world.tryGet<MobType>(candidate)) {
-            tier = rarityIndex(type->rarity);
-        } else if (const Replicated* replicated = world.tryGet<Replicated>(candidate)) {
-            tier = rarityIndex(replicated->rarity);
-        }
         // Guard the flower's nearby fight first, then prefer rarity inside
         // that area. A remote boss cannot pull the pet away from its owner.
-        const double ownerGap = ownerAt ? distance(at->position, ownerAt->position) : std::sqrt(gapSq);
+        const double ownerGap = std::sqrt(ownerGapSq);
         const double priorityRange = kPetOwnerPriorityRadius +
             (candidate == previous ? kPetRetargetMargin : 0.0);
         const bool nearOwner = ownerAt && ownerGap <= priorityRange;
-        double score = ownerGap - tier * kPetTargetTierStride;
+        double score = ownerGap - target.tier * kPetTargetTierStride;
         if (nearOwner) score -= kPetTargetTierStride * kRarityCount;
         if (candidate == previous) score -= kPetRetargetMargin;
-        candidates.push_back(Candidate{candidate, at->position, score});
+        candidates.push_back(Candidate{candidate, target.position, score});
     }
 
     // Sight is the PET's: it goes for what it can reach, and a mob behind a
@@ -2185,7 +2194,6 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
     Vec2 desired{0, 0};
     Vec2 facing{0, 0};
     // Only the fight below runs; every other branch is doing something else.
-    ai.fleeing = false;
 
     if (!ownerAlive) {
         // Owner dead or gone: wander, straight at the destination.
@@ -2272,13 +2280,7 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
     if (!driven) {
         if (attacks) {
             ai.target = acquire(true);
-            // Then it fights exactly as the wild one does: the same chase, the
-            // same weave, the same standoff and volley -- and the same run
-            // once a digger is down to its last tenth.
-            ai.fleeing = ai.target != NULL_ENTITY && runsLow(world, self, drive);
-            if (ai.fleeing) {
-                driven = fleeTarget(world, transform, ai, chaseSpeed, desired);
-            } else if (ai.target != NULL_ENTITY) {
+            if (ai.target != NULL_ENTITY) {
                 driven = pursueTarget(world, self, type, transform, body, ai, drive, chaseSpeed,
                                       nowMillis, dt, desired, facing, commands);
             } else {
@@ -2311,13 +2313,23 @@ void MobAiSystem::steerPet(World& world, const Terrain& terrain, const SpatialGr
                                   drive.reversed, kPi);
 }
 
-void MobAiSystem::preparePetTargets(const World& world, const Terrain& terrain,
+void MobAiSystem::preparePetTargets(World& world, const Terrain& terrain,
                                     const SpatialGrid& grid) {
     petTargetPlans_.clear();
     const unsigned limit = workers ? std::min(workerLimit, workers->count()) : 0;
     if (!limit || stepList_.size() < 64) return;
     // This pass follows wild intent. Player owners and wild targets stay
     // still throughout pet intent; volleys and webs are deferred.
+    std::fill(petPreyTargets_.begin(), petPreyTargets_.end(), PetPreyTarget{});
+    const auto remember = [&](Entity e) {
+        const auto target = readPetPrey(world, e);
+        if (target.entity == NULL_ENTITY) return;
+        const auto slot = entityIndex(e);
+        if (slot >= petPreyTargets_.size()) petPreyTargets_.resize(slot + 1);
+        petPreyTargets_[slot] = target;
+    };
+    Query<MobTag, Transform>{world}.each([&](Entity e, MobTag&, Transform&) { remember(e); });
+    Query<Npc, Transform>{world}.each([&](Entity e, Npc&, Transform&) { remember(e); });
     constexpr std::size_t batchSize = 8;
     petTargetPlans_.resize(stepList_.size());
     workerTargetScratch_.resize(limit + 1);
@@ -2346,7 +2358,7 @@ void MobAiSystem::preparePetTargets(const World& world, const Terrain& terrain,
             auto& plan = petTargetPlans_[index];
             plan = {ai.target, at.position, at.realm,
                 acquirePetPrey(world, terrain, grid, self, at.position, at.realm, ai.target, true,
-                               range, scratch), true};
+                               range, scratch, true), true};
         }
     });
 }
@@ -2781,13 +2793,15 @@ void MobAiSystem::prepareTargets(const World& world, const Terrain& terrain, con
         for (auto index = batch * batchSize; index < end; ++index) {
             const Entity self = stepList_[index];
             const auto* ai = world.tryGet<MobAi>(self);
-            if (!ai || (ai->kind != AiKind::Hostile && !(ai->kind == AiKind::Neutral && anyAggroRaised_)) ||
+            if (!ai || ai->sleeping || (ai->kind != AiKind::Hostile && ai->kind != AiKind::Neutral) ||
                 world.has<Dead>(self) || world.has<HoleTether>(self)) continue;
             const auto* segment = world.tryGet<BodySegment>(self);
             if (segment && !segment->head) continue;
             const auto& at = *world.tryGet<Transform>(self);
-            if (movingTargets[realmIndex(at.realm)]) continue;
-            if (!ai->sleeping && ai->target == NULL_ENTITY &&
+            const auto realm = realmIndex(at.realm);
+            if (movingTargets[realm] || (ai->kind == AiKind::Neutral && !realmAggro_[realm].raised))
+                continue;
+            if (ai->target == NULL_ENTITY &&
                 !isBossRarity(world.tryGet<MobType>(self)->rarity) &&
                 !activePlayersIndex_.near(at.position, at.realm, scratch.proximity) &&
                 (tick_ + entityIndex(self)) % static_cast<std::uint64_t>(kMobFarStride) != 0) continue;
@@ -2808,6 +2822,12 @@ void MobAiSystem::prepareTargets(const World& world, const Terrain& terrain, con
                 plan.acquired = acquireTarget(world, terrain, grid, self, at.position, at.realm,
                                               range, ai->kind == AiKind::Neutral, scratch);
                 plan.scanned = true;
+                if (ai->kind == AiKind::Hostile && plan.acquired == NULL_ENTITY &&
+                    (ai->target == NULL_ENTITY || (plan.checked != NULL_ENTITY && !plan.retained))) {
+                    plan.acquiredPet = acquirePetTarget(terrain, self, at.position, at.realm, range,
+                                                        scratch);
+                    plan.petScanned = true;
+                }
             }
         }
     });
@@ -2815,7 +2835,11 @@ void MobAiSystem::prepareTargets(const World& world, const Terrain& terrain, con
 
 void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& grid,
                       const std::vector<RealmPoint>& activePlayers,
-                      double nowMillis, double dt, CommandBuffer& commands) {
+                      double nowMillis, double dt, CommandBuffer& commands,
+                      const SpatialGrid* playerGrid) {
+    // Wild scans only read flowers. Use a view with the same positions,
+    // footprints and bucket order but without the pets' prey candidates.
+    const SpatialGrid& playerTargets = playerGrid ? *playerGrid : grid;
     activePlayersIndex_.rebuild(activePlayers);
     sleepObservers_.rebuild(activePlayers);
     wideObservers_.clear();
@@ -2824,7 +2848,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             // The viewport diagonal covers its corners. Leave enough room to
             // wake the body before its art enters even a large antenna view.
             const double reach = location.viewport.length() * 0.5 + 2000.0;
-            if (reach > kSleepReach)
+            if (reach > kPassiveSleepReach)
                 wideObservers_.push_back({{at.position, at.realm}, reach * reach});
         });
     stats_ = Stats{};
@@ -2833,13 +2857,12 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
     if (!(dt > 0.0) || !std::isfinite(dt)) return;
     ++tick_;
 
-    maxAggroBonus_ = 0.0;
-    maxAggroScale_ = 1.0;
-    anyAggroRaised_ = false;
-    playerModifiers_.each([&](Entity, PlayerTag&, PlayerModifiers& mods) {
-        if (mods.aggroRadiusBonus > maxAggroBonus_) maxAggroBonus_ = mods.aggroRadiusBonus;
-        if (mods.aggroRangeScale > maxAggroScale_) maxAggroScale_ = mods.aggroRangeScale;
-        anyAggroRaised_ = anyAggroRaised_ || aggroRaised(mods);
+    realmAggro_.fill(AggroLimits{});
+    playerModifiers_.each([&](Entity, PlayerTag&, Transform& at, PlayerModifiers& mods) {
+        auto& limits = realmAggro_[realmIndex(at.realm)];
+        limits.bonus = std::max(limits.bonus, mods.aggroRadiusBonus);
+        limits.scale = std::max(limits.scale, mods.aggroRangeScale);
+        limits.raised = limits.raised || aggroRaised(mods);
     });
 
     // Watermarks belong to mobs, and mobs are reaped without telling this
@@ -2856,10 +2879,10 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
     // Snapshotted before anything moves, which is where the reference builds
     // it: a wild mob hunts a pet from where it stood at the top of the tick,
     // not from wherever the pet pass below has since carried it.
-    petList_.clear();
+    for (auto& pets : petsByRealm_) pets.clear();
     pets_.each([&](Entity self, Pet&, Transform& transform, Motion&, Body&, MobType&, MobAi&) {
         if (!isStanding(world, self)) return;
-        petList_.push_back(Candidate{self, transform.position, 0.0, transform.realm});
+        petsByRealm_[realmIndex(transform.realm)].push_back(Candidate{self, transform.position});
     });
 
     // Collected rather than walked in place: a mob is handed the behaviour
@@ -2874,7 +2897,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
     });
     const bool hasBaits = !baitGrid_.empty();
     mobs_.collect(stepList_);
-    prepareTargets(world, terrain, grid, nowMillis);
+    prepareTargets(world, terrain, playerTargets, nowMillis);
     for (std::size_t index = 0; index < stepList_.size(); ++index) {
         const Entity self = stepList_[index];
         if (!world.isAlive(self) || world.tryGet<Dead>(self) != nullptr) continue;
@@ -2892,6 +2915,16 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
         const bool wasSleeping = brain.sleeping;
         brain.sleeping = false;
         const bool active = isBossRarity(type->rarity) || activePlayersIndex_.near(at->position, at->realm);
+        // An unprovoked neutral without a local glow has no aggro search.
+        // If it has been damaged, preserve the full provocation range.
+        double sleepReach = kSleepReach;
+        if (brain.kind == AiKind::Passive) {
+            sleepReach = kPassiveSleepReach;
+        } else if (!active && brain.kind == AiKind::Neutral &&
+                   !realmAggro_[realmIndex(at->realm)].raised) {
+            const auto* bounty = world.tryGet<Bounty>(self);
+            if (!bounty || bounty->contributors.empty()) sleepReach = kPassiveSleepReach;
+        }
         // Only idle ordinary movers. Keep encounters, long-range weapons,
         // scripted bodies and clocks on the normal simulation path.
         if (!active && drive.valid &&
@@ -2901,7 +2934,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             !world.has<HoleTether>(self) && !world.has<AmbushNest>(self) &&
             brain.target == NULL_ENTITY && brain.jumpRemaining <= 0 &&
             brain.fleeUntilMillis <= nowMillis && world.get<Body>(self).radius <= 512 &&
-            !sleepObservers_.near(at->position, at->realm)) {
+            !sleepObservers_.nearWithin(at->position, at->realm, sleepReach)) {
             const auto* health = world.tryGet<Health>(self);
             const auto* effects = world.tryGet<Afflictions>(self);
             const auto* knockback = world.tryGet<Knockback>(self);
@@ -2968,7 +3001,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             continue;
         }
         const auto* plan = targetPlans_.empty() ? nullptr : &targetPlans_[index];
-        steerMob(world, terrain, grid, self, *transform, *motion, *body, *kind, *ai, drive,
+        steerMob(world, terrain, playerTargets, self, *transform, *motion, *body, *kind, *ai, drive,
                  nowMillis, dt, commands, plan);
         if (drive.laysWeb) layWeb(world, self, nowMillis, commands);
         if (drive.dropsProjectile) dropProjectile(world, self, nowMillis, commands);

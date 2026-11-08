@@ -763,9 +763,6 @@ struct MobAi {
     /// that has not crawled yet and picks a side on its first step. See
     /// MobAiSystem::crawl.
     std::int8_t crawlTurn = 0;
-    /// Set while a `digger_ai` mob is low enough to run from its target
-    /// rather than fight it, so the client does not draw it hunting.
-    bool fleeing = false;
     double lastAttackMillis = 0;
     /// The target a wall is hiding, and since when -- the grace a hostile mob
     /// gives it before letting go (kMobSightGraceMillis). NULL_ENTITY while

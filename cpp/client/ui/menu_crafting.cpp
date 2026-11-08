@@ -101,6 +101,7 @@ constexpr std::uint32_t kHoldMaxStep = 1000000;
 constexpr double kCraftButtonGap = 8.0;
 constexpr double kCraftButtonPadX = 13.0;
 constexpr double kCraftButtonLabelSize = 16.0;
+constexpr double kBulkControlsHeight = 82.0;
 /// Face of the Craft All toggle while it is on (panel accent).
 constexpr std::uint32_t kFillAllOnTint = kCraftingSkin.accent;
 
@@ -184,7 +185,7 @@ double cloverBonus(const Profile& profile, Rarity rarity) {
 Vec2 CraftingPanel::size(const Profile& profile) {
     // Common through unique: nothing upgrades out of apex, so there is no
     // column for it -- the same reason stage() refuses one.
-    return {slotCardWidth(false), slotCardHeight(SlotGrid::rows(profile, false))};
+    return {slotCardWidth(false), slotCardHeight(SlotGrid::rows(profile, false), kBulkControlsHeight)};
 }
 
 void CraftingPanel::reset() {
@@ -474,7 +475,9 @@ bool CraftingPanel::render(MenuContext& ctx) {
     // --- the grid ----------------------------------------------------------
     const std::uint32_t held =
         static_cast<std::uint32_t>(std::max(0, batches_)) * static_cast<std::uint32_t>(kBatch);
-    SlotCardLayout bulkCard=card;bulkCard.listView.y+=82;bulkCard.listView.h=std::max(0.0,bulkCard.listView.h-82);
+    SlotCardLayout bulkCard = card;
+    bulkCard.listView.y += kBulkControlsHeight;
+    bulkCard.listView.h = std::max(0.0, bulkCard.listView.h - kBulkControlsHeight);
     const Rect bulkPrev{panel.x+12,card.listView.y+4,32,30};
     const Rect bulkTarget{bulkPrev.right()+5,bulkPrev.y,170,30};
     const Rect bulkNext{bulkTarget.right()+5,bulkPrev.y,32,30};
@@ -517,7 +520,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             if (isExcluded(petalIndex)) cell.badge = bulkChinese ? "排除" : "Skip";
             return cell;
-        });
+        }, true);
 
     // Craft + Craft All toggle side by side, centred on the card's button
     // anchor. Craft All is a mode, not a one-shot: while on, a click on a

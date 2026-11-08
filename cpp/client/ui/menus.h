@@ -94,6 +94,7 @@ enum class MenuId : std::uint8_t {
     /// signing in to another account, and Log Out. On the top row; its key is
     /// unbound and not rebindable.
     Account,
+    Wave,
     Count,
 };
 
@@ -176,7 +177,7 @@ inline constexpr const char* kAshflorFeedbackBoard = "https://ashflor.com/feedba
 /// bottom-left one. Not every one is shown at once -- see drawIconStrip -- and
 /// three of the top row open no panel (Discord / QQ are links and exit leaves
 /// the game), so this is not `kMenuCount`.
-inline constexpr int kStripSlotCount = 19;
+inline constexpr int kStripSlotCount = 20;
 
 /// The range ClientSettings::zoom is held to, and how far one press of a zoom
 /// key moves it. The step is the browser's own ZOOM_STEP; the range is this
@@ -252,6 +253,9 @@ struct ClientSettings {
     /// place on a HiDPI display, where 1 means filling four times the pixels
     /// a non-Retina panel would ask for.
     double renderScale = 1.0;
+    static constexpr double kMinUiScale = 0.60;
+    static constexpr double kMaxUiScale = 1.20;
+    double uiScale = 1.0;
     /// Browser only: draws into a low-latency (`desynchronized`) canvas, which
     /// can cut a frame of input lag but can also show a frame half drawn.
     /// Off by default because of that flicker. Reaches
@@ -604,7 +608,7 @@ double slotCardColumnsWidth(std::size_t columns);
 double slotCardWidth(bool withApex);
 /// The window's height for a grid `rows` rows deep: as tall as the grid needs,
 /// up to 700, past which the grid scrolls.
-double slotCardHeight(std::size_t rows);
+double slotCardHeight(std::size_t rows, double extraControlsHeight = 0.0);
 /// Where a slot card of this size stands, seated: at x = 95, its bottom 20
 /// above the view's, and never reaching up over the HUD in the top-left.
 Rect slotCardBounds(double width, double height, int viewWidth, int viewHeight);
@@ -664,7 +668,7 @@ public:
         Rarity rarity = Rarity::Common;
     };
 
-    void reset() { scroll_ = {}; }
+    void reset() { scroll_ = {}; thumbGrab_.reset(); }
     /// How many rows the account's petals make: one a type held at a tier the
     /// grid has a column for.
     static std::size_t rows(const Profile&, bool withApex);
@@ -672,10 +676,12 @@ public:
     /// it clickable -- held, and not greyed.
     std::optional<Pick> render(
         MenuContext&, const SlotCardLayout&, const ui::PanelSkin&, bool withApex,
-        const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look);
+        const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
+        bool showScrollbar = false);
 
 private:
     ui::Scroller scroll_;
+    std::optional<double> thumbGrab_;
 };
 
 /// The titan's grid: a cell for every petal type the account holds at ONE
@@ -1126,6 +1132,7 @@ private:
     bool hyper_ = false;
     bool abandon_ = false;
     bool eternalFragment_ = true;
+    bool permanentHyper_ = false;
     bool confirmForge_ = false;
     bool confirmBatch_ = false;
     std::uint32_t resultQuantity_ = 0;
@@ -1358,6 +1365,18 @@ private:
     bool requested_ = false;
     bool hyper_ = false;
     bool playtime_ = false;
+    bool damage_ = false;
+};
+
+class WavePanel {
+public:
+    bool render(MenuContext&);
+    void reset() { code_.clear(); field_ = {}; }
+    static Rect bounds(int viewWidth, int viewHeight);
+
+private:
+    std::string code_;
+    ui::TextFieldState field_;
 };
 
 /// Display switches, camera zoom and the menu keys.
@@ -2033,6 +2052,7 @@ private:
     GalleryPanel gallery_;
     ShopPanel shop_;
     SkinsPanel skins_;
+    WavePanel wave_;
     LeaderboardPanel leaderboard_;
     SettingsPanel settings_panel_;
     ChangelogPanel changelog_;

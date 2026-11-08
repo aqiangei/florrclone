@@ -49,6 +49,7 @@ constexpr Entry kTable[] = {
     {"Disable Ultra+ Particles", "关闭 Ultra+ 粒子"},
     {"Show Console Logs", "显示控制台日志"},
     {"Render Resolution: ", "渲染分辨率："},
+    {"Interface Scale: ", "界面缩放："},
     {"Mob Animation FPS: ", "怪物动画帧率："},
     {"Interpolation: ", "插值："},
     {"Reset Tutorial", "重置教程"},
@@ -215,6 +216,7 @@ const char* menuTitle(MenuId id) {
         case MenuId::AdminDb: return tr(Msg::Database);
         case MenuId::AdminDashboard: return tr(Msg::Admin);
         case MenuId::Assets: return tr(Msg::Assets);
+        case MenuId::Wave: return "Wave 试炼";
         case MenuId::Account: return tr(Msg::Account);
         default: return "";
     }

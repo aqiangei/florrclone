@@ -100,10 +100,13 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     health.current = health.max * 0.75;
     events.pickedUp(900001, ownNetId, at.position, at.realm, 0, Rarity::Common, 2, slowSession->connection);
     GameServerPeer::stageSnapshots(h.server);
+    GameServerPeer::stageOnlineRoster(h.server, h.clock + 2000.0);
     health.current = health.max * 0.5;
     const double latest = health.current;
     events.pickedUp(900002, ownNetId, at.position, at.realm, 0, Rarity::Common, 3, slowSession->connection);
     GameServerPeer::stageSnapshots(h.server);
+    const double rosterAt = h.clock + 4000.0;
+    GameServerPeer::stageOnlineRoster(h.server, rosterAt);
     CHECK_EQ(slowConnection->pendingBytes(), slowQueued);
     CHECK(healthyConnection->pendingBytes() > healthyQueued);
 
@@ -118,8 +121,22 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     CHECK_EQ(slowConnection->pendingBytes(), std::size_t{0});
     CHECK_NEAR(slow.view().self().health, original, 1e-4);
 
+    const auto rosterHealth = [](const NetClient& client) {
+        for (const auto& entry : client.onlineRoster())
+            if (entry.name == "slowviewer") return entry.healthRatio;
+        return -1.0f;
+    };
+    CHECK_NEAR(rosterHealth(healthy), 0.5, 1e-4);
+    CHECK(rosterHealth(slow) != 0.5f);
+    // No roster rebuild is due here. Only the stalled viewer needs the
+    // latest cached roster, even if no other player's state changes again.
+    GameServerPeer::stageOnlineRoster(h.server, rosterAt);
+    CHECK(slowConnection->pendingBytes() > 0);
+    CHECK_EQ(healthyConnection->pendingBytes(), std::size_t{0});
+
     GameServerPeer::stageSnapshots(h.server);
     drain();
+    CHECK_NEAR(rosterHealth(slow), 0.5, 1e-4);
     CHECK_NEAR(slow.view().self().health, latest, 1e-4);
     const auto ownPicked = [](NetClient& client) {
         std::uint32_t quantity = 0;

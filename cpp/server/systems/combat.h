@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <unordered_map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "server/replication.h"
@@ -36,6 +37,8 @@
 #include "shared/game/spatial.h"
 
 namespace flix {
+
+class ServerWorkers;
 
 class Terrain;
 
@@ -196,6 +199,13 @@ struct ShotLanding {
     Vec2 at;
 };
 
+struct ContactBodyPlacement {
+    Entity entity;
+    Realm realm;
+    Vec2 position;
+    double radius;
+};
+
 class CombatSystem {
 public:
     CombatSystem();
@@ -214,6 +224,8 @@ public:
     /// into a flower that stands against a wall pushes it into the wall --
     /// through a thin one, and into a thick one deep enough to be stuck there.
     const Terrain* terrain = nullptr;
+    ServerWorkers* workers = nullptr;
+    unsigned workerLimit = 0;
 
     /// One complete combat tick. Kept for focused simulations; GameServer uses
     /// the three phase methods below so flower/petal contact can happen before
@@ -226,8 +238,11 @@ public:
 
     /// Resolves body and petal contact from the pre-mob-movement world, which
     /// is where the TypeScript player pipeline performs those collisions.
+    /// When provided, placements mirror a projectile-free main grid.
     void runContactPhase(World& world, const SpatialGrid& grid,
-                         const ContentRegistry& content, double nowMillis);
+                         const ContentRegistry& content, double nowMillis,
+                         const std::vector<ContactBodyPlacement>* placements = nullptr);
+    void sizeContactGrid(const Terrain& terrain) { hostileTargets_.sizeToRealms(terrain); }
 
     /// Resolves post-movement projectiles/ground fields and closes the tick.
     void runWorldPhase(World& world, const SpatialGrid& grid,
@@ -368,15 +383,15 @@ public:
     /// is the normal answer for a wild mob.
     static Entity creditedPlayer(const World& world, Entity source);
 
-    enum class PracticeSource { Petal, Summon, Poison, Reflect, Field, Other };
+    using PracticeSource = net::PracticeSource;
     struct PracticeDamage {
         PracticeSource source = PracticeSource::Other;
         std::uint16_t petal = kNoPetal;
         Rarity rarity = Rarity::Common;
         double amount = 0.0;
     };
-    static constexpr int kPracticeSeconds = 10;
-    std::vector<PracticeDamage> practiceDamage(Entity player, double nowMillis) const;
+    static constexpr int kPracticeSeconds = net::kPracticeWindowSeconds;
+    std::vector<PracticeDamage> practiceDamage(Entity player, double nowMillis, Entity dummy = NULL_ENTITY) const;
     void resetPracticeDamage(Entity player) { practiceDamage_.erase(player); }
 
     /// Whether `source` is allowed to hurt `victim` at all: different sides,
@@ -664,7 +679,11 @@ private:
     void dischargeOnContact(World& world, const SpatialGrid& grid, const MeleeSource& source,
                             double nowMillis);
     void gatherPetals(World& world, const ContentRegistry& content, double nowMillis);
-    void resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry, double nowMillis);
+    void resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
+                      double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly);
+    void prepareMeleeCandidates(const World& world, const SpatialGrid& grid,
+                                const SpatialGrid& hostileTargets, bool bodyGridOnly);
+    bool eligibleMeleeCandidate(const MeleeSource& source, Entity victim) const;
     /// A petal swinging at another flower, which is a different collision from
     /// the petal-vs-mob one beside it: gated by the arena/corruption rule
     /// rather than by the faction alone, throttled per victim, costing the
@@ -692,11 +711,14 @@ private:
     /// for the shots at all.
     void queryBodies(const SpatialGrid& grid, Realm realm, Vec2 center, double radius,
                      std::vector<Entity>& out, Entity excludeShotPlayer = NULL_ENTITY,
-                     bool excludePeacefulShots = false);
+                     bool excludePeacefulShots = false,
+                     std::optional<double> meleeRadius = std::nullopt,
+                     SpatialGrid::QueryScratch* scratch = nullptr, bool bodyGridOnly = false) const;
     /// Appends every filed shot that could overlap the circle -- candidates,
     /// as a grid query returns, for the caller's exact test.
     void queryShots(Realm realm, Vec2 center, double radius, std::vector<Entity>& out,
-                    Entity excludePlayer, bool excludePeacefulShots) const;
+                    Entity excludePlayer, bool excludePeacefulShots,
+                    std::optional<double> meleeRadius) const;
     /// Spread a shared chain's pool across the bodies that draw on it: every
     /// segment behind `owner` is given the owner's health FRACTION and its
     /// flash, and -- when the hit was fatal -- the same death.
@@ -818,11 +840,14 @@ private:
         bool allPeaceful = false;
     };
     std::vector<ShotCellRun> shotRuns_;
-    double maxShotRadius_ = 0;
-    /// The rows any shot was filed in, whatever its realm, so that a query
-    /// with an absurd radius walks the rows that exist rather than millions.
-    std::uint32_t shotRowMin_ = 0;
-    std::uint32_t shotRowMax_ = 0;
+    // Bounds for the shots a query can actually reach. An oversized shot in
+    // another realm must not widen every contact query in this realm.
+    struct ShotRealmBounds {
+        double maxRadius = 0.0;
+        std::uint32_t firstRow = UINT32_MAX;
+        std::uint32_t lastRow = 0;
+    };
+    std::array<ShotRealmBounds, kMaxRealms> shotBounds_;
     struct FiledShot {
         Entity entity = NULL_ENTITY;
         /// creditedPlayer() of the shot, resolved once when it is filed.
@@ -854,8 +879,24 @@ private:
         bool pet = false;
         bool npc = false;
         bool hostileBody = false;
+        bool contacted = false;
     };
     std::vector<MeleeTarget> meleeTargets_;
+    SpatialGrid hostileTargets_;
+    struct MeleePlan {
+        Entity player = NULL_ENTITY;
+        std::size_t begin = 0, end = 0;
+        unsigned lane = 0;
+        bool excludePeaceful = false;
+        bool ready = false;
+    };
+    struct MeleeScratch {
+        SpatialGrid::QueryScratch grid;
+        std::vector<Entity> candidates;
+        std::vector<Entity> planned;
+    };
+    std::vector<MeleePlan> meleePlans_;
+    std::vector<MeleeScratch> meleeScratch_;
 
     /// A strike's own broadphase answer and the two lists it builds from it.
     /// Separate from candidates_ because a contact strike is thrown from INSIDE
@@ -868,9 +909,6 @@ private:
     /// strikeVictims_ is never trimmed, because every flower inside the disc
     /// is hit whether or not an arm was drawn to it.
     std::vector<Vec2> strikeArms_;
-    /// TypeScript stops after the first legitimate mob body-contact for a
-    /// player each tick. Reused rather than allocated in resolveMelee().
-    std::vector<Entity> mobContactedPlayers_;
     std::vector<DeathRecord> deaths_;
     std::vector<ShotLanding> shotLandings_;
     /// The segments behind a shared chain's pool owner, gathered before any of
@@ -897,7 +935,9 @@ private:
     Rng rng_;
     Rng rubyRng_;
     bool resolvingRuby_=false;
-    DamageResult applyDamageOnce(World& world,Entity victim,Entity source,double amount,double nowMillis,DamageKind kind);
+    DamageResult applyDamageOnce(World& world, Entity victim, Entity source, double amount,
+                                 double nowMillis, DamageKind kind,
+                                 Entity checkedTarget = NULL_ENTITY);
 
     struct PracticeBucket {
         std::int64_t second = -1;

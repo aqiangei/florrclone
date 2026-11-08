@@ -157,6 +157,9 @@ public:
     // transform of every frame -- scale(uiScale(), uiScale()) -- or nothing
     // will line up with the sizes reported above.
     double uiScale() const;
+    /// Extra scale on the logical interface, independent of backing pixels.
+    void setUiScaleMultiplier(double multiplier);
+    double uiScaleMultiplier() const;
 
     // The display's pixels per point: 2 on a Retina display, 1 elsewhere.
     // Changes when the window is dragged onto another monitor.

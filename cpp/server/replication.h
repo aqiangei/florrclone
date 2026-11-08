@@ -244,20 +244,6 @@ public:
         events_.push_back(e);
     }
 
-    void berryLaunch(Vec2 at, double radius, double angle, Realm realm, Entity source,
-                     std::uint8_t style) {
-        WireEvent e;
-        e.kind = net::EventKind::Explosion;
-        e.position = at;
-        e.radius = radius;
-        e.amount = angle;
-        e.realm = realm;
-        e.visualSource = source;
-        e.flag = style;
-        e.positional = true;
-        events_.push_back(std::move(e));
-    }
-
     /// `targets` is where the bolts end -- whatever the strike hit, read
     /// before the damage lands -- and the strike is drawn to the
     /// net::kMaxLightningTargets of them nearest `at` when there are more than

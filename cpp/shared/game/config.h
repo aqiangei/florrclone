@@ -1490,7 +1490,7 @@ inline bool petalHasOwnSource(const PetalConfig& config) {
 /// `minRarity`. What a drop, a `random` row, the shop and the gallery's
 /// mirror of the drops all ask before they put one in front of a player.
 inline bool petalComesAt(const PetalConfig& config, Rarity rarity) {
-    return rarityIndex(rarity) >= rarityIndex(config.minRarity);
+    return petalTier(rarity) >= rarityIndex(config.minRarity);
 }
 
 /// Whether every copy of this petal but the best one on the bar
@@ -1693,7 +1693,7 @@ struct EquippedPetal {
 
 /// A Hyper Mimic can copy the Eternal antennae view from a lower tier.
 inline double equippedCameraZoom(const ContentRegistry& registry, const EquippedPetal& slot) {
-    const auto tier = slot.rarity == Rarity::Apex && slot.reloadRarity != Rarity::Apex &&
+    const auto tier = isHyperPetal(slot.rarity) && !isHyperPetal(slot.reloadRarity) &&
                       registry.petal(slot.configIndex).id == "antennae"
         ? Rarity::Unique : slot.rarity;
     return petalCameraZoom(registry, slot.configIndex, tier);
@@ -1780,11 +1780,8 @@ inline constexpr double magicEyeDamagePerMana(Rarity rarity) {
 using TriangleCounts = std::array<std::uint8_t, kRarityCount>;
 
 inline double triangleBonusDamage(Rarity rarity, const TriangleCounts& counts) {
-    const int tier = rarityIndex(rarity);
-    // Eternal gets its bonus from Super triangles. Custom higher tiers
-    // continue the same-tier rule.
-    const int matches = rarity == Rarity::Unique
-        ? counts[rarityIndex(Rarity::Super)] : std::max(0, counts[tier] - 1);
+    const int tier = petalTier(rarity);
+    const int matches = std::max(0, counts[tier] - 1);
     constexpr std::array<int, kRarityCount> bonus{
         4, 12, 36, 108, 324, 972, 2916, 8748, 26244, 78732, 236196, 708588};
     return static_cast<double>(matches) * bonus[tier];
@@ -1802,7 +1799,7 @@ double barReloadCut(const ContentRegistry& registry, EquippedAt&& equippedAt, co
         if (petal.empty() || !petalCutsReload(registry.petal(petal.configIndex))) continue;
         adminLeaf = adminLeaf || petal.rarity == Rarity::Admin;
         const auto& config = registry.petal(petal.configIndex);
-        const int copies = petalCopies(1, skills, i, rarityIndex(petal.rarity), config.stackable);
+        const int copies = petalCopies(1, skills, i, petalTier(petal.rarity), config.stackable);
         cut = 1.0 - (1.0 - cut) * std::pow(
             1.0 - registry.petalStats(petal.configIndex, petal.rarity).reloadCut, copies);
     }
@@ -1832,7 +1829,7 @@ int bestCopySlot(std::uint16_t configIndex, EquippedAt&& equippedAt) {
         const EquippedPetal petal = equippedAt(i);
         if (petal.empty() || petal.configIndex != configIndex) continue;
         // Strictly higher, so the leftmost of equal tiers keeps it.
-        if (best < 0 || rarityIndex(petal.rarity) > rarityIndex(held)) {
+        if (best < 0 || petalTier(petal.rarity) > petalTier(held)) {
             best = i;
             held = petal.rarity;
         }

@@ -219,21 +219,23 @@ StepOutcome stepCollide(const Terrain& terrain, Realm realm, Vec2& position, Vec
     // and more of them to cover the same ground.
     // Only the finite map bounds limit travel. Keep short collision steps,
     // adding steps rather than discarding legitimate bubble/powder momentum.
-    const Vec2 extent = terrain.realmExtent(realm);
-    const double reach = extent.length() + (start - extent * 0.5).length() + hull;
     const double stepLength = std::min(substepLength(hull), hull + kMaxSubstepPenetration);
-    const int maxSteps = static_cast<int>(std::ceil(reach / stepLength));
-    if (distance > reach) {
-        // Travel beyond the entire realm can only hit its boundary. Bound
-        // arithmetic work for corrupt magnitudes without imposing a speed cap.
-        delta *= reach / distance;
-        distance = reach;
-    }
-
     int steps = 1;
-    if (distance > stepLength) {
-        steps = static_cast<int>(std::ceil(distance / stepLength));
-        if (steps > maxSteps) steps = maxSteps;   // ceil() rounding
+    // The realm-wide bound is at least the hull radius. A short step
+    // already inside both bounds still goes through the same wall resolver.
+    if (distance > std::min(stepLength, hull)) {
+        const Vec2 extent = terrain.realmExtent(realm);
+        const double reach = extent.length() + (start - extent * 0.5).length() + hull;
+        if (distance > reach) {
+            // Bound arithmetic work for corrupt magnitudes without imposing
+            // a speed cap on a legitimate long move.
+            delta *= reach / distance;
+            distance = reach;
+        }
+        if (distance > stepLength) {
+            const int maxSteps = static_cast<int>(std::ceil(reach / stepLength));
+            steps = std::min(static_cast<int>(std::ceil(distance / stepLength)), maxSteps);
+        }
     }
 
     const Vec2 stepDelta = delta / static_cast<double>(steps);
@@ -366,11 +368,12 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
                                    double nowMillis, double dt) {
     bind(world);
     seekTargetsReady_ = false;
-    meteorDiscs_.clear();
+    for (auto& discs : meteorDiscs_) discs.clear();
     Query<PlantedMeteor, Transform, Body> meteors{world};
     meteors.without<Dead>();
     meteors.each([&](Entity, PlantedMeteor&, Transform& at, Body& body) {
-        meteorDiscs_.push_back({at.position, sanitizeCollisionRadius(body.radius), at.realm});
+        meteorDiscs_[realmIndex(at.realm)].push_back(
+            {at.position, sanitizeCollisionRadius(body.radius), at.realm});
     });
     moveMobs(world, terrain, nowMillis, dt);
     // Projectiles after mobs: a shot fired this tick takes its launch bearing
@@ -751,11 +754,11 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
 
 bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
                                       Vec2& position, double radius) const {
-    if (meteorDiscs_.empty()) return false;
+    const auto& meteors = meteorDiscs_[realmIndex(realm)];
+    if (meteors.empty()) return false;
     const Vec2 intended = position - from;
     bool blocked = false;
-    for (const auto& meteor : meteorDiscs_) {
-        if (meteor.realm != realm) continue;
+    for (const auto& meteor : meteors) {
         const double reach = meteor.radius + radius + kContactEpsilon;
         const Vec2 offset = from - meteor.position;
         if (offset.lengthSq() >= reach * reach) continue;
@@ -774,8 +777,7 @@ bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 
     const double lengthSq = delta.lengthSq();
     double limit = 1.0;
     if (lengthSq > 0.0) {
-        for (const auto& meteor : meteorDiscs_) {
-            if (meteor.realm != realm) continue;
+        for (const auto& meteor : meteors) {
             const double reach = meteor.radius + radius + kContactEpsilon;
             const Vec2 offset = from - meteor.position;
             const double toward = -(offset.x * delta.x + offset.y * delta.y);
@@ -801,7 +803,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         const bool anchored = anchoredAgainstKnockback(world, registry, e);
         if (anchored) motion.velocity = Vec2{0,0};
         double barrierRadius = 0.0;
-        if (!anchored && !meteorDiscs_.empty()) {
+        if (!anchored && !meteorDiscs_[realmIndex(transform.realm)].empty()) {
             const auto* type = world.tryGet<MobType>(e);
             barrierRadius = sanitizeCollisionRadius(world.get<Body>(e).radius) *
                 (type ? mobBodyContactScale(registry.mob(type->configIndex).id) : 1.0);
@@ -1212,7 +1214,7 @@ void MovementSystem::buildSeparationSet(World& world) {
         }
         separationSlot_[index] = static_cast<std::uint32_t>(separationSet_.size());
         separationSet_.push_back(entry);
-        separationGrid_.insert(e, transform.realm, position, entry.radius);
+        if (!entry.noCollision) separationGrid_.insert(e, transform.realm, position, entry.radius);
     });
 }
 

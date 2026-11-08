@@ -12,6 +12,7 @@
 
 #include "server/loot_eligibility.h"
 #include "server/systems/movement.h"
+#include "server/workers.h"
 #include "shared/game/npc.h"
 
 namespace flix {
@@ -528,10 +529,12 @@ void CombatSystem::mergePracticeDamage(std::vector<PracticeDamage>& rows, const 
     else match->amount += hit.amount;
 }
 
-std::vector<CombatSystem::PracticeDamage> CombatSystem::practiceDamage(Entity player, double nowMillis) const {
+std::vector<CombatSystem::PracticeDamage> CombatSystem::practiceDamage(
+    Entity player, double nowMillis, Entity dummy) const {
     std::vector<PracticeDamage> result;
     const auto found = practiceDamage_.find(player);
-    if (found == practiceDamage_.end()) return result;
+    if (found == practiceDamage_.end() ||
+        (dummy != NULL_ENTITY && found->second.dummy != dummy)) return result;
     const auto second = static_cast<std::int64_t>(nowMillis / 1000.0);
     for (const auto& bucket : found->second.buckets) {
         if (bucket.second < 0 || bucket.second > second || second - bucket.second >= kPracticeSeconds) continue;
@@ -766,7 +769,8 @@ DamageResult CombatSystem::applyDamage(World& world, Entity victim, Entity sourc
 }
 
 DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity source,
-                                       double amount, double nowMillis, DamageKind kind) {
+                                       double amount, double nowMillis, DamageKind kind,
+                                       Entity checkedTarget) {
     DamageResult result;
     if(const auto* burrow=world.tryGet<BurrowState>(victim))
         if(burrow->active&&nowMillis<burrow->untilMillis&&(kind==DamageKind::Direct||kind==DamageKind::Lightning)&&!canNoticeBurrowed(world,source,victim)){
@@ -794,7 +798,8 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // pops where the player hit, not up at the head.
     const Entity struck = victim;
     victim = poolOwner(world, victim);
-    if (!canHit(world, victim, source, nowMillis, kind == DamageKind::Sponge)) {
+    if ((checkedTarget == NULL_ENTITY || victim != checkedTarget) &&
+        !canHit(world, victim, source, nowMillis, kind == DamageKind::Sponge)) {
         // One refusal still pays the ledger. Every reference path writes the
         // contribution BEFORE it tests whether the mob is already dead --
         // trackDamage() at playerState.ts:2751 and creditDamage() at
@@ -945,9 +950,9 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         if (const auto* loadout = world.tryGet<Loadout>(pet.owner); loadout && pet.slot < kLoadoutActiveSlots) {
             const auto worn = equippedPetal(content(), *loadout, pet.slot);
             const Rarity attacker = world.get<MobType>(source).rarity;
-            if (!worn.empty() && (worn.rarity == Rarity::Unique || worn.rarity == Rarity::Apex) &&
-                petalIsEgg(content().petal(worn.configIndex)) && rarityIndex(attacker) <= rarityIndex(worn.rarity)) {
-                const int tierGap = rarityIndex(worn.rarity) - rarityIndex(attacker);
+            if (!worn.empty() && (worn.rarity == Rarity::Unique || isHyperPetal(worn.rarity)) &&
+                petalIsEgg(content().petal(worn.configIndex)) && petalTier(attacker) <= petalTier(worn.rarity)) {
+                const int tierGap = petalTier(worn.rarity) - petalTier(attacker);
                 const double maxShare = tierGap >= 2 ? 0.16 : tierGap == 1 ? 0.23 : 0.32;
                 amount = std::min(amount, world.get<Health>(victim).max * maxShare);
             }
@@ -955,7 +960,7 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     }
     // Evasion happens before durability, armor and shields are spent.
     const auto* petal = world.tryGet<PetalInstance>(victim);
-    const auto* technique = petal && petal->rarity == Rarity::Apex && !petal->mimicked &&
+    const auto* technique = petal && isHyperPetal(petal->rarity) && !petal->mimicked &&
         petal->slot < kLoadoutActiveSlots ? hyperTechniqueInfo(content().petal(petal->configIndex).id, petal->rarity)
                                         : nullptr;
     const bool physicalMob = kind == DamageKind::Direct && isWildMob(world, source) &&
@@ -1110,7 +1115,7 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
             bool wardReady = false;
             for (const auto petal : loadout->spawned) {
                 auto* instance = world.tryGet<PetalInstance>(petal);
-                if (!instance || instance->rarity != Rarity::Apex || instance->mimicked ||
+                if (!instance || !isHyperPetal(instance->rarity) || instance->mimicked ||
                     instance->slot >= kLoadoutActiveSlots || world.has<Dead>(petal)) continue;
                 if (instance->configIndex == cotton) cottonReady = true;
                 if (instance->configIndex == nazar) wardReady = true;
@@ -1304,7 +1309,7 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
                 reflectionScale(modifiers->damageReflectionRarity, incomingTier) : 0.0;
             const Entity target = reflectionTarget(world, source);
             if (target != NULL_ENTITY) {
-                if (kind == DamageKind::Direct && rarityIndex(incomingTier) >= rarityIndex(Rarity::Apex) &&
+                if (kind == DamageKind::Direct && petalTier(incomingTier) >= rarityIndex(Rarity::Apex) &&
                     isWildMob(world, target) && hyperDefending(world, victim)) {
                     salt *= hyperAmount(wornHyperTechnique(world, content(), victim, "salt"), HyperTechnique::SaltRetort);
                 }
@@ -1534,10 +1539,19 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
     selectLootRecipients(shares, lootSlotsForRarity(rarity), squads, recipients,
                          lootDamageFloor(rarity, health != nullptr ? health->max : 0.0));
 
-    // Every recipient is paid the mob's full XP -- the corpse is not split
-    // between them, and no account earns at a different rate than another.
-    const double xp = std::round(bounty->xp);
+    // The corpse's XP is not split. Hyper adjusts each recipient's share
+    // from their own contribution, including players admitted by a squad.
+    const double baseXp = bounty->xp;
+    const double maxHealth = health ? health->max : 0.0;
     for (const Entity recipient : recipients) {
+        double xp = baseXp;
+        if (rarity == Rarity::Apex) {
+            const auto* account = world.tryGet<PlayerAccount>(recipient);
+            const int tenths = hyperRewardTenths(*bounty, recipient,
+                account ? account->connection : 0, maxHealth);
+            xp *= tenths / 10.0;
+        }
+        xp = std::round(xp);
         if (!grantXp(world, recipient, xp)) continue;
         // The arena leaderboard counts the XP earned inside the ring
         // (src/server/playerManager.ts:929); a flower outside it has no score.
@@ -2135,7 +2149,7 @@ double CombatSystem::soakIntoCotton(World& world, Entity flower, Entity source, 
         // What the FLOWER is spared is the whole of `caught` either way.
         double wear = caught;
         const auto* petal = world.tryGet<PetalInstance>(cotton);
-        if (petal && petal->soaksOwnerDamage && petal->rarity == Rarity::Apex && !petal->mimicked &&
+        if (petal && petal->soaksOwnerDamage && isHyperPetal(petal->rarity) && !petal->mimicked &&
             kind == DamageKind::Direct && hyperDefending(world, flower) &&
             isWildMob(world, reflectionTarget(world, source))) {
             wear *= hyperAmount(hyperTechniqueInfo("cotton", Rarity::Apex), HyperTechnique::CottonPadding);
@@ -2196,10 +2210,10 @@ void CombatSystem::beginTick(World& world, double nowMillis, double dt, EventQue
 }
 
 void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
-                                   const ContentRegistry& content, double nowMillis) {
+                                   const ContentRegistry& content, double nowMillis,
+                                   const std::vector<ContactBodyPlacement>* placements) {
     melee_.clear();
     auras_.clear();
-    mobContactedPlayers_.clear();
     // The raindrop field runs in updatePlayerPreMovement, ahead of the movement
     // window and therefore ahead of the flower's own body and ring contact. It
     // matters: a mob the field finishes off is already Dead when the ring
@@ -2208,9 +2222,23 @@ void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
     resolveAuras(world, grid, nowMillis);
     gatherMeleeTargets(world);
     gatherContact(world, content);
+    if (placements) {
+        // Preserve the full grid's pre-aura geometry and bucket order. Only
+        // remove bodies that hostile sources already skip before any hit test.
+        hostileTargets_.clear();
+        for (const auto& body : *placements) {
+            const std::size_t slot = entityIndex(body.entity);
+            if (slot >= meleeTargets_.size()) continue;
+            const auto& target = meleeTargets_[slot];
+            if (target.entity != body.entity || target.hostileBody) continue;
+            hostileTargets_.insert(body.entity, body.realm, body.position, body.radius);
+        }
+    }
     gatherPetals(world, content, nowMillis);
     fileShots(world);
-    resolveMelee(world, grid, content, nowMillis);
+    const auto& hostileTargets = placements ? hostileTargets_ : grid;
+    prepareMeleeCandidates(world, grid, hostileTargets, placements != nullptr);
+    resolveMelee(world, grid, content, nowMillis, hostileTargets, placements != nullptr);
 }
 
 void CombatSystem::tickMobLightning(World& world, const SpatialGrid& grid,
@@ -2615,17 +2643,19 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
         source.radius = body.radius;
         source.damage = contact.amount;
         source.hitIntervalMillis = contact.intervalMillis;
-        source.isMobBody = world.has<MobTag>(e);
-        if(source.isMobBody) if(const auto* type=world.tryGet<MobType>(e))
+        auto& target = meleeTargets_[entityIndex(e)];
+        const auto* type = world.tryGet<MobType>(e);
+        source.isMobBody = target.mob;
+        if (source.isMobBody && type)
             source.radius *= mobBodyContactScale(content.mob(type->configIndex).id);
-        if (const double half=squareMobHalfExtent(world,e); half>0) source.radius=half*1.4142135623730951;
-        source.isNpcBody = world.has<NpcTag>(e);
-        source.isPet = world.has<Pet>(e);
-        source.isPlayerBody = world.has<PlayerTag>(e);
+        if (target.squareHalf > 0) source.radius = target.squareHalf * 1.4142135623730951;
+        source.isNpcBody = target.npc;
+        source.isPet = target.pet;
+        source.isPlayerBody = target.player;
         if (source.isMobBody && !source.isPet && !source.isPlayerBody && !world.has<ProjectileTag>(e)) {
             const auto* side = world.tryGet<Faction>(e);
             source.isHostileBody = !side || side->team == Team::Hostiles;
-            if (source.isHostileBody) meleeTargets_[entityIndex(e)].hostileBody = true;
+            target.hostileBody = source.isHostileBody;
         }
         source.givesWay = source.isMobBody && !anchoredAgainstKnockback(world, content, e);
         // A seed of a mob's ring is a piece of that mob's body, so it hits
@@ -2646,7 +2676,7 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
         // an NPC wears -- whose touch carries everything its mob's does.
         std::uint16_t configIndex = kInvalidIndex;
         Rarity rarity = Rarity::Common;
-        if (const MobType* type = world.tryGet<MobType>(e)) {
+        if (type) {
             configIndex = type->configIndex;
             rarity = type->rarity;
         } else if (const Npc* npc = world.tryGet<Npc>(e)) {
@@ -2783,9 +2813,71 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
     });
 }
 
+bool CombatSystem::eligibleMeleeCandidate(const MeleeSource& source, Entity victim) const {
+    const auto slot = entityIndex(victim);
+    if (victim == source.attacker || slot >= meleeTargets_.size()) return false;
+    const auto& target = meleeTargets_[slot];
+    if (target.entity != victim || (source.isHostileBody && target.hostileBody)) return false;
+    if (target.player && (source.isLoose || (source.isPlayerBody && !source.isPetal))) return false;
+    // Rings have their own swings; loose petals can only take body contact.
+    return source.isPetal || !target.petal ||
+           (target.loosePetal && (source.isMobBody || source.isMobRing || source.isNpcBody));
+}
+
+void CombatSystem::prepareMeleeCandidates(const World& world, const SpatialGrid& grid,
+                                          const SpatialGrid& hostileTargets, bool bodyGridOnly) {
+    const unsigned limit = workers ? std::min(workerLimit, workers->count()) : 0;
+    if (!limit || melee_.size() < 256) {
+        meleePlans_.clear();
+        return;
+    }
+
+    constexpr std::size_t kBatchSize = 24;
+    constexpr std::size_t kMaxPlannedSources = 4096;
+    constexpr std::size_t kMaxCandidatesPerLane = 128 * 1024;
+    meleePlans_.resize(std::min(melee_.size(), kMaxPlannedSources));
+    meleeScratch_.resize(limit + 1);
+    for (auto& scratch : meleeScratch_) scratch.planned.clear();
+    workers->run((meleePlans_.size() + kBatchSize - 1) / kBatchSize, limit,
+                 [&](std::size_t batch, unsigned lane) {
+        auto& scratch = meleeScratch_[lane];
+        const auto end = std::min((batch + 1) * kBatchSize, meleePlans_.size());
+        for (std::size_t i = batch * kBatchSize; i < end; ++i) {
+            const auto& source = melee_[i];
+            auto& plan = meleePlans_[i];
+            plan.ready = false;
+            if (!world.isAlive(source.attacker) || world.has<Dead>(source.attacker)) continue;
+            if (scratch.planned.size() == kMaxCandidatesPerLane) continue;
+            plan.player = creditedPlayer(world, source.attacker);
+            plan.excludePeaceful = !filedShots_.empty() &&
+                                   peacefulPlayerSide(world, source.attacker, plan.player);
+            queryBodies(source.isHostileBody ? hostileTargets : grid, source.realm,
+                        source.position, source.radius + kBroadphasePad, scratch.candidates,
+                        plan.player, plan.excludePeaceful, source.radius, &scratch.grid, bodyGridOnly);
+            // A packed per-lane buffer keeps dense sources from paying for
+            // another query merely because their own list is over 192.
+            plan.begin = scratch.planned.size();
+            plan.lane = lane;
+            bool full = false;
+            for (Entity victim : scratch.candidates) {
+                if (!eligibleMeleeCandidate(source, victim)) continue;
+                if (scratch.planned.size() == kMaxCandidatesPerLane) {
+                    scratch.planned.resize(plan.begin);
+                    full = true;
+                    break;
+                }
+                scratch.planned.push_back(victim);
+            }
+            plan.end = scratch.planned.size();
+            plan.ready = !full;
+        }
+    });
+}
+
 void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
-                                double nowMillis) {
-    for (const MeleeSource& source : melee_) {
+                                double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly) {
+    for (std::size_t i = 0; i < melee_.size(); ++i) {
+        const MeleeSource& source = melee_[i];
         if (!world.isAlive(source.attacker) || world.has<Dead>(source.attacker)) continue;
 
         // The grid files each entity under every cell its own radius touches,
@@ -2797,49 +2889,27 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
         const double sourceHalf = squareMobHalfExtent(world, source.attacker);
         // Two peaceful player-side entities cannot damage each other.
         // Skip whole cells of allied shots around a crowded boss.
-        queryBodies(grid, source.realm, source.position, source.radius + kBroadphasePad,
-                    candidates_, sourcePlayer,
-                    !filedShots_.empty() && peacefulPlayerSide(world, source.attacker, sourcePlayer));
+        const bool excludePeaceful = !filedShots_.empty() &&
+                                     peacefulPlayerSide(world, source.attacker, sourcePlayer);
+        const MeleePlan* plan = i < meleePlans_.size() ? &meleePlans_[i] : nullptr;
+        const bool usePlan = plan && plan->ready && plan->player == sourcePlayer &&
+                             plan->excludePeaceful == excludePeaceful;
+        if (!usePlan) {
+            queryBodies(source.isHostileBody ? hostileTargets : grid,
+                        source.realm, source.position, source.radius + kBroadphasePad,
+                        candidates_, sourcePlayer, excludePeaceful, source.radius, nullptr, bodyGridOnly);
+        }
+        // Only the candidate search is parallel. Resolve from live transforms
+        // and health in the original source and target order.
+        const auto& candidates = usePlan ? meleeScratch_[plan->lane].planned : candidates_;
+        const auto first = usePlan ? plan->begin : std::size_t{0};
+        const auto last = usePlan ? plan->end : candidates.size();
         bool ricochetHit = false;
-        for (const Entity victim : candidates_) {
+        for (std::size_t at = first; at < last; ++at) {
             if (ricochetHit) break;
-            if (victim == source.attacker) continue;
-            const auto slot = entityIndex(victim);
-            if (slot >= meleeTargets_.size()) continue;
-            const MeleeTarget& targetBody = meleeTargets_[slot];
-            if (targetBody.entity != victim) continue;
-            // Wild hostile bodies cannot hurt, bump or discharge into each other.
-            if (source.isHostileBody && targetBody.hostileBody) continue;
-            // A shot is judged off the filing table before anything is looked
-            // up, because a cloud of them is most of what a body standing in
-            // one finds. Both tests are the ones below, reached sooner: nothing
-            // this loop does to a shot happens before canHit(), which refuses
-            // a shot answerable to the attacker's own flower, and a shot's
-            // reach carries none of the pet or NPC allowances.
-            if (const FiledShot* shot = filedShot(victim)) {
-                if (sourcePlayer != NULL_ENTITY && shot->player == sourcePlayer) continue;
-                const double reach = source.radius + shot->radius;
-                if ((shot->position - source.position).lengthSq() > reach * reach) continue;
-            }
-            // A petal only ever bleeds inside its OWN hit block, below. The
-            // reference has no mob-vs-petal collision at all, so letting a mob
-            // body melee the ring as well would charge the exchange twice.
-            // A MOB's ring seed is not a PetalInstance and is deliberately
-            // not covered by this: it is a body, and bodies collide.
-            //
-            // A LOOSE petal is the exception, because it has no hit block of
-            // its own to bleed in -- wax swings at nothing, and the moon's
-            // swings pay no recoil (see below): a mob's body bites it instead,
-            // at the mob's contact damage and on the mob's own contact
-            // interval. That is the only thing that ever wears one down.
-            if (!source.isPetal && targetBody.petal &&
-                !(targetBody.loosePetal && (source.isMobBody || source.isMobRing || source.isNpcBody))) {
-                continue;
-            }
-
-            // The moon is a hazard to mobs, not a duelling weapon: a flower
-            // walking into one is shoved by the movement pass and nothing else.
-            if (source.isLoose && targetBody.player) continue;
+            const Entity victim = candidates[at];
+            if (!usePlan && !eligibleMeleeCandidate(source, victim)) continue;
+            MeleeTarget& targetBody = meleeTargets_[entityIndex(victim)];
             const Transform* transform = world.tryGet<Transform>(victim);
             if (transform == nullptr) continue;
 
@@ -2852,9 +2922,6 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                                 nowMillis);
                 continue;
             }
-            // A flower body cannot hit another flower, including in PvP.
-            if (source.isPlayerBody && targetBody.player) continue;
-
             // A pet and a wild mob meet in the separation kernel's contact
             // list, which is built with the same gap the kernel keeps between
             // bodies rather than at exact circle overlap.
@@ -2905,16 +2972,14 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 // one flower wedged in a pile takes one hit/bump per tick, not
                 // a full stack. Preserve that rule across C++'s source-first
                 // combat loop.
-                const bool firstBump =
-                    std::find(mobContactedPlayers_.begin(), mobContactedPlayers_.end(), victim) ==
-                    mobContactedPlayers_.end();
+                const bool firstBump = !targetBody.contacted;
                 // The flower's bounce BEFORE the mob's recoil: gardn sizes it
                 // off the velocities the two met with. Recoiling the mob first
                 // has it already moving away by the time the closing speed is
                 // read, so the flower is barely turned and walks the mob along
                 // -- a ladybug shoved across the map by a flower leaning on it.
                 if (firstBump) {
-                    mobContactedPlayers_.push_back(victim);
+                    targetBody.contacted = true;
                     if (!source.suppressPlayerShove) {
                         bounceOffMob(world, terrain, victim, source.attacker, source.givesWay, offset,
                                      source.radius + targetBody.radius - offset.length());
@@ -2965,7 +3030,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // hit per window however many mobs it is sitting on, rather than
             // one per mob, which would make it a full-rate area attack.
             const bool wild = isWildMob(world, victim);
-            const auto* instance = source.isPetal && source.rarity == Rarity::Apex &&
+            const auto* instance = source.isPetal && isHyperPetal(source.rarity) &&
                 (wild || world.has<Projectile>(victim))
                 ? world.tryGet<PetalInstance>(source.attacker) : nullptr;
             const auto* technique = instance && instance->slot < kLoadoutActiveSlots ?
@@ -3073,8 +3138,12 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 }
             }
             const auto beforeHitEvents = events_ ? events_->events().size() : 0;
-            DamageResult hit =
-                applyDamage(world, victim, source.attacker, swing, nowMillis, source.hitKind);
+            // The direct hit's victim was checked above, and only reads and
+            // rolls intervene. A shared pool still checks its own recipient.
+            DamageResult hit = source.hitKind == DamageKind::Direct
+                ? applyDamageOnce(world, victim, source.attacker, swing, nowMillis,
+                                  DamageKind::Direct, victim)
+                : applyDamage(world, victim, source.attacker, swing, nowMillis, source.hitKind);
             if (mobTouchesPlayer && source.swallows &&
                 !hit.refused && !hit.dodged && !hit.killed) {
                 const auto* prior = world.tryGet<WormSwallow>(victim);
@@ -3266,7 +3335,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             }
 
             // The other half of the one-per-tick contact rule, for the
-            // direction mobContactedPlayers_ cannot see. resolvePlayerMobContact
+            // direction the victim's contacted flag cannot see. resolvePlayerMobContact
             // breaks out of its candidate loop on the first LIVE mob it
             // collides with, so a flower's body lands one hit per tick however
             // many mobs it is wedged between -- a corpse it is also touching
@@ -3759,9 +3828,7 @@ void CombatSystem::fileShots(World& world) {
     filedShots_.clear();
     shotCells_.clear();
     shotRuns_.clear();
-    maxShotRadius_ = 0.0;
-    shotRowMin_ = kShotCellLimit - 1;
-    shotRowMax_ = 0;
+    shotBounds_.fill(ShotRealmBounds{});
 
     queries_->filedShots.each([&](Entity e, ProjectileTag&, Transform& transform, Body& body) {
         const std::uint32_t index = entityIndex(e);
@@ -3782,10 +3849,11 @@ void CombatSystem::fileShots(World& world) {
         // none: it is still a shot, it is just never a candidate.
         const Vec2 at = transform.position;
         if (!std::isfinite(at.x) || !std::isfinite(at.y)) return;
-        if (body.radius > maxShotRadius_) maxShotRadius_ = body.radius;
+        auto& bounds = shotBounds_[realmIndex(transform.realm)];
+        if (body.radius > bounds.maxRadius) bounds.maxRadius = body.radius;
         const std::uint32_t row = shotCellCoord(at.y, kShotCellSize);
-        shotRowMin_ = std::min(shotRowMin_, row);
-        shotRowMax_ = std::max(shotRowMax_, row);
+        bounds.firstRow = std::min(bounds.firstRow, row);
+        bounds.lastRow = std::max(bounds.lastRow, row);
         shotCells_.push_back(
             {shotCellKey(transform.realm, row, shotCellCoord(at.x, kShotCellSize)), slot});
     });
@@ -3811,17 +3879,19 @@ void CombatSystem::fileShots(World& world) {
 
 void CombatSystem::queryShots(Realm realm, Vec2 center, double radius,
                               std::vector<Entity>& out, Entity excludePlayer,
-                              bool excludePeacefulShots) const {
-    if (shotCells_.empty()) return;
+                              bool excludePeacefulShots,
+                              std::optional<double> meleeRadius) const {
+    const auto& bounds = shotBounds_[realmIndex(realm)];
+    if (bounds.firstRow > bounds.lastRow) return;
     if (!std::isfinite(center.x) || !std::isfinite(center.y)) return;
     if (!(radius >= 0.0)) radius = 0.0;   // negative, and NaN
     // Widened by the biggest shot, because a shot is filed only under its
     // centre: one whose edge reaches into the circle may sit a radius outside.
-    const double reach = radius + maxShotRadius_;
+    const double reach = radius + bounds.maxRadius;
     const std::uint32_t x0 = shotCellCoord(center.x - reach, kShotCellSize);
     const std::uint32_t x1 = shotCellCoord(center.x + reach, kShotCellSize);
-    const std::uint32_t y0 = std::max(shotCellCoord(center.y - reach, kShotCellSize), shotRowMin_);
-    const std::uint32_t y1 = std::min(shotCellCoord(center.y + reach, kShotCellSize), shotRowMax_);
+    const std::uint32_t y0 = std::max(shotCellCoord(center.y - reach, kShotCellSize), bounds.firstRow);
+    const std::uint32_t y1 = std::min(shotCellCoord(center.y + reach, kShotCellSize), bounds.lastRow);
     for (std::uint32_t row = y0; row <= y1; ++row) {
         const std::uint64_t first = shotCellKey(realm, row, x0);
         const std::uint64_t last = shotCellKey(realm, row, x1);
@@ -3834,9 +3904,13 @@ void CombatSystem::queryShots(Realm realm, Vec2 center, double radius,
             if (excludePeacefulShots && it->allPeaceful) continue;
             for (std::size_t i = it->begin; i < it->end; ++i) {
                 const auto& shot = filedShots_[shotCells_[i].slot];
-                if ((excludePlayer == NULL_ENTITY || shot.player != excludePlayer) &&
-                    !(excludePeacefulShots && shot.peaceful))
-                    out.push_back(shot.entity);
+                if ((excludePlayer != NULL_ENTITY && shot.player == excludePlayer) ||
+                    (excludePeacefulShots && shot.peaceful)) continue;
+                if (meleeRadius) {
+                    const double contactReach = *meleeRadius + shot.radius;
+                    if ((shot.position - center).lengthSq() > contactReach * contactReach) continue;
+                }
+                out.push_back(shot.entity);
             }
         }
     }
@@ -3857,16 +3931,19 @@ Entity CombatSystem::filedShotPlayer(Entity e) const {
 
 void CombatSystem::queryBodies(const SpatialGrid& grid, Realm realm, Vec2 center, double radius,
                                std::vector<Entity>& out, Entity excludeShotPlayer,
-                               bool excludePeacefulShots) {
-    grid.query(realm, center, radius, out);
+                               bool excludePeacefulShots,
+                               std::optional<double> meleeRadius, SpatialGrid::QueryScratch* scratch,
+                               bool bodyGridOnly) const {
+    if (scratch) grid.query(realm, center, radius, out, *scratch);
+    else grid.query(realm, center, radius, out);
     // The server's grid files no shots, but a focused simulation that builds
     // its grid from every body does -- and must not be handed a shot twice.
-    if (!filedShots_.empty()) {
+    if (!bodyGridOnly && !filedShots_.empty()) {
         out.erase(std::remove_if(out.begin(), out.end(),
                                  [&](Entity e) { return isFiledShot(e); }),
                   out.end());
     }
-    queryShots(realm, center, radius, out, excludeShotPlayer, excludePeacefulShots);
+    queryShots(realm, center, radius, out, excludeShotPlayer, excludePeacefulShots, meleeRadius);
 }
 
 void CombatSystem::pushFromImpact(World& world, Entity victim, Vec2 offset, double shotMass,

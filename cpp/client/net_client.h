@@ -114,6 +114,26 @@ struct Profile {
 };
 
 /// One row of the account leaderboard.
+struct PracticeBoardSource {
+    net::PracticeSource kind = net::PracticeSource::Other;
+    std::uint16_t petal = kNoPetal;
+    Rarity rarity = Rarity::Common;
+    double damage = 0.0;
+};
+
+struct PracticeBoardRow {
+    std::string name;
+    double damage = 0.0;
+    std::vector<PracticeBoardSource> sources;
+};
+
+struct PracticeBoard {
+    bool pending = false;
+    bool hasDummy = false;
+    Rarity rarity = Rarity::Common;
+    std::vector<PracticeBoardRow> rows;
+};
+
 struct LeaderboardRow {
     std::string name;
     int level = 1;
@@ -675,6 +695,7 @@ public:
     /// Forges kTitanForgeCost apex of this petal into one universal at the
     /// titan the body is standing at.
     void requestTitanForge(std::uint16_t petalIndex, bool hyper=false, bool eternalFragment=true, bool batch=false);
+    void requestPermanentHyperForge(std::uint16_t petalIndex);
     /// Asks the titan the body is standing at who holds this petal at
     /// universal. The answer lands in titanHolder(); the server drops a query
     /// that comes too soon after the last, so a caller asks again until one
@@ -727,6 +748,7 @@ public:
     void deleteSkin(const std::string& id);
     /// `includeAdmins` is the "Show Admins on Leaderboard" switch: without it
     /// the server leaves admin accounts off the board.
+    void requestPracticeBoard(bool includeAdmins);
     void requestLeaderboard(bool includeAdmins = false, std::uint32_t hyperOffset = 0);
     /// Asks for one page of the global notification feed, newest first.
     /// `beforeMillis` of 0 asks for the newest page; anything else pages back
@@ -941,6 +963,7 @@ public:
     /// per packet rather than resampling whatever it last saw.
     bool takeServerDebugStats(ServerDebugStats& out);
 
+    const PracticeBoard& practiceBoard() const { return practiceBoard_; }
     const std::vector<LeaderboardRow>& leaderboard() const { return leaderboard_; }
     const std::vector<LeaderboardRow>& playtimeLeaderboard() const { return playtimeLeaderboard_; }
     /// True between asking for the board and the answer arriving.
@@ -1124,6 +1147,7 @@ private:
     void handleShopResult(ByteReader&);
     void handleChangePasswordResult(ByteReader&);
     void handleSetUsernameResult(ByteReader&);
+    void handlePracticeBoard(ByteReader&);
     void handleLeaderboard(ByteReader&);
     void handleNotifications(ByteReader&);
     /// Schedules the next redial, lengthening the wait each time it is
@@ -1206,6 +1230,7 @@ private:
     std::string equippedSkinId_;
     bool skinAdmin_ = false;
 
+    PracticeBoard practiceBoard_;
     std::vector<LeaderboardRow> leaderboard_;
     std::vector<LeaderboardRow> playtimeLeaderboard_; // totalXp stores seconds in these rows.
     std::vector<HyperHoldingRow> hyperBoard_;

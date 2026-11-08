@@ -55,7 +55,7 @@ inline constexpr double kShortGroundDropSeconds = 8.0;
 inline constexpr std::array<double, kRarityCount> kDropLifetimeByRarity = {
     kShortGroundDropSeconds, kShortGroundDropSeconds, kShortGroundDropSeconds,
     kShortGroundDropSeconds, kShortGroundDropSeconds, kShortGroundDropSeconds,
-    80.0, 120.0, 300.0, 600.0, 600.0,
+    80.0, 120.0, 300.0, 600.0, 600.0, 0.0, 600.0,
 };
 
 /// Collision radius a drop is given. It has no Motion and nothing pushes it;

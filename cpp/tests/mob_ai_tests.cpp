@@ -2488,6 +2488,32 @@ TEST(pet_damage_talent_scales_hornet_projectiles_without_changing_fire_rate) {
     }
 }
 
+TEST(permanent_hyper_summon_passes_its_visual_tier_to_ammunition) {
+    CHECK(contentReady());
+    double apexDamage = 0.0;
+    for (const auto visual : {Rarity::Apex, Rarity::PermanentHyper}) {
+        Sim sim;
+        const Entity owner = sim.spawnPlayer(kOrigin - Vec2{100, 0});
+        const Entity pet = sim.spawnMob("hornet", kOrigin, Rarity::Apex);
+        sim.world.add<Pet>(pet, Pet{owner, 0, 0});
+        sim.world.get<Faction>(pet) = Faction{Team::Players, false};
+        Replicated art;
+        art.typeIndex = content().mobIndex("hornet");
+        art.rarity = visual;
+        sim.world.add<Replicated>(pet, art);
+        sim.spawnMob("soldier_ant", kOrigin + Vec2{200, 0});
+
+        const Entity shot = fireAndCatch(sim);
+        CHECK(shot != NULL_ENTITY);
+        if (shot == NULL_ENTITY) continue;
+        const Projectile& projectile = sim.world.get<Projectile>(shot);
+        CHECK(projectile.rarity == Rarity::Apex);
+        CHECK(sim.world.get<Replicated>(shot).rarity == visual);
+        if (visual == Rarity::Apex) apexDamage = projectile.damage;
+        else CHECK_NEAR(projectile.damage, apexDamage, 1e-9);
+    }
+}
+
 TEST(a_bigger_hornet_fires_a_bigger_missile) {
     CHECK(contentReady());
     Sim common;
@@ -4004,33 +4030,19 @@ TEST(an_idle_digger_roams_one_heading_for_five_seconds_then_picks_another) {
     CHECK(std::abs(angleDelta(sim.brainOf(digger).wanderAngle, heading)) > 1e-9);
 }
 
-TEST(a_digger_fights_until_its_last_tenth_then_runs_from_its_target) {
+TEST(a_digger_keeps_chasing_its_target_at_low_health) {
     CHECK(contentReady());
     Sim sim;
     const Entity digger = sim.spawnMob("digger", kOrigin);
     const Entity player = sim.spawnPlayer(kOrigin + Vec2{300, 0});
-    const double max = sim.world.get<Health>(digger).max;
-
-    // At a tenth and a bit it is still fighting.
-    sim.world.get<Health>(digger).current = 0.11 * max;
-    sim.tickIntent(30);
-    CHECK_EQ(sim.brainOf(digger).target, player);
-    CHECK(sim.velocityOf(digger).x > 0.0);
-    CHECK(!sim.brainOf(digger).fleeing);
-    CHECK((computeEntityState(sim.world, digger, sim.now) & net::StateChasing) != 0);
-
-    // At a tenth it turns tail, at the speed it was chasing at, and keeps the
-    // target only to run from it.
-    sim.world.get<Health>(digger).current = 0.1 * max;
-    sim.tickIntent(30);
-    CHECK_EQ(sim.brainOf(digger).target, player);
-    CHECK(sim.brainOf(digger).fleeing);
-    const double chase = content().mobStats(content().mobIndex("digger"), Rarity::Common).chaseSpeed;
-    CHECK_NEAR(sim.velocityOf(digger).x, -chase, 0.01 * chase);
-    CHECK((computeEntityState(sim.world, digger, sim.now) & net::StateChasing) == 0);
-    const double before = sim.gap(digger, player);
-    sim.tick(30);
-    CHECK(sim.gap(digger, player) > before + 100.0);
+    auto& health = sim.world.get<Health>(digger);
+    for (const double fraction : {0.11, 0.1, 0.01}) {
+        health.current = health.max * fraction;
+        sim.tickIntent(30);
+        CHECK_EQ(sim.brainOf(digger).target, player);
+        CHECK(sim.velocityOf(digger).x > 0.0);
+        CHECK((computeEntityState(sim.world, digger, sim.now) & net::StateChasing) != 0);
+    }
 }
 
 TEST(hornet_family_shipped_ammunition_resolves_and_all_variants_fire_real_missiles){

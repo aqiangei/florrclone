@@ -161,7 +161,7 @@ TEST(the_oracle_charges_the_stated_price_for_every_tier) {
     // The design's own numbers, tier by tier -- "unusual" is this game's
     // uncommon. Apex and universal cost nothing because nothing crafts out of
     // either.
-    const int expected[] = {7, 11, 19, 34, 65, 128, 253, 0, 0, 0, 0, 0};
+    const int expected[] = {7, 11, 19, 34, 65, 128, 253, 0, 0, 0, 0, 0, 0};
     static_assert(sizeof(expected) / sizeof(expected[0]) == kRarityCount);
     for (int i = 0; i < kRarityCount; ++i) {
         CHECK_EQ(oracleCraftCost(static_cast<Rarity>(i)), expected[i]);
@@ -2060,13 +2060,97 @@ TEST(todo1107_titan_batch_charges_sequential_prices_and_respects_capacity) {
     removeDataDir(dir);
 }
 
+TEST(permanent_hyper_exchange_consumes_only_bagged_eternals_and_saves_the_new_identity) {
+    const std::string dir = titanWorld("titan-permanent-hyper");
+    Harness h("titan-permanent-hyper", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_rose", Rarity::Unique, 59);
+        seedWorn(path, "smith", 0, "rose", Rarity::Unique);
+        seedWorn(path, "smith", 1, "rose", Rarity::Apex);
+        seedStack(path, "smith", "petal_mjolnir", Rarity::Unique, 30);
+        seedStack(path, "smith", "petal_fragment", Rarity::Unique, 30);
+        seedStack(path, "smith", "petal_blood_sacrifice", Rarity::Unique, 30);
+        seedStack(path, "smith", "petal_wing", Rarity::Unique, 30);
+        seedStack(path, "smith", "petal_wing", Rarity::PermanentHyper, kMaxStackCount);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const std::vector<NetClient*> clients{&client};
+    h.step(3, clients);
+    const auto rose = content().petalIndex("rose");
+    const auto exchange = [&](std::uint16_t index, bool succeeds) {
+        TitanForgeOutcome outcome;
+        client.requestPermanentHyperForge(index);
+        CHECK(awaitForge(h, clients, client, outcome));
+        CHECK_EQ(outcome.success, succeeds);
+        CHECK_EQ(outcome.quantity, succeeds ? 1u : 0u);
+    };
+    exchange(rose, false); // Outside the titan's service radius.
+    standAtTitan(h, clients, "smith");
+    for (const char* id : {"mjolnir", "timed_mjolnir", "fragment", "blood_sacrifice"}) {
+        const auto index = content().petalIndex(id);
+        const auto before = client.profile().stackCount(index, Rarity::Unique);
+        exchange(index, false);
+        CHECK_EQ(client.profile().stackCount(index, Rarity::Unique), before);
+    }
+    const auto wing = content().petalIndex("wing");
+    exchange(wing, false);
+    CHECK_EQ(client.profile().stackCount(wing, Rarity::Unique), 30u);
+    exchange(rose, true);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Unique) == 29 &&
+               p.stackCount(rose, Rarity::PermanentHyper) == 1;
+    }));
+    exchange(rose, false); // The equipped Eternal cannot cover the cost.
+    client.setLoadoutSlot(0, kNoPetal, Rarity::Common);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Unique) == 30;
+    }));
+    exchange(rose, true);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::Unique) == 0 &&
+               p.stackCount(rose, Rarity::PermanentHyper) == 2;
+    }));
+    exchange(rose, false);
+    client.setLoadoutSlot(0, rose, Rarity::PermanentHyper);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.loadout[0].rarity == Rarity::PermanentHyper &&
+               p.loadout[1].rarity == Rarity::Apex &&
+               p.stackCount(rose, Rarity::PermanentHyper) == 1;
+    }));
+    client.saveLoadoutPreset(0);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.presets[0].size() >= 2 && p.presets[0][0].rarity == Rarity::PermanentHyper &&
+               p.presets[0][1].rarity == Rarity::Apex;
+    }));
+    client.setLoadoutSlot(0, kNoPetal, Rarity::Common);
+    CHECK(awaitProfile(h, client, [](const Profile& p) { return p.loadout[0].empty(); }));
+    client.loadLoadoutPreset(0);
+    CHECK(awaitProfile(h, client, [](const Profile& p) {
+        return p.loadout[0].rarity == Rarity::PermanentHyper && p.loadout[1].rarity == Rarity::Apex;
+    }));
+    h.server.shutdown();
+    Database restored;
+    std::string error;
+    CHECK(restored.load(h.dbPath, error));
+    const auto* user = restored.findUser("smith");
+    CHECK(user != nullptr);
+    if (user) {
+        const auto* record = restored.findProgress(user->id);
+        CHECK(record && record->loadout[0] && record->loadout[0]->rarity == Rarity::PermanentHyper);
+        CHECK(record && record->itemCount(Rarity::PermanentHyper, "petal_rose") == 1);
+    }
+    removeDataDir(dir);
+}
+
 TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_accounts) {
     const std::string dir = titanWorld("titan-permanent");
     Harness h("titan-permanent", [](const std::string& path) {
         seedAccount(path, "smith");
         seedStack(path, "smith", "petal_rose", Rarity::Super, 145);
         seedStack(path, "smith", "petal_wing", Rarity::Super, 10);
-        seedStack(path, "smith", "petal_fragment", Rarity::Super, 10);
+        seedStack(path, "smith", "petal_fragment", Rarity::Super, 30);
         seedAccount(path, "rival");
         seedStack(path, "rival", "petal_rose", Rarity::Unique, 3);
         seedWorn(path, "rival", 0, "rose", Rarity::Unique);
@@ -2094,13 +2178,13 @@ TEST(permanent_titan_forge_prices_repeat_independent_petals_and_keeps_other_acco
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(wing, Rarity::Super) == 0 && p.stackCount(wing, Rarity::Unique) == 1;
     }));
-    client.requestTitanForge(content().petalIndex("fragment"));
+    client.requestTitanForge(content().petalIndex("fragment"), false, false);
     CHECK(awaitForge(h, both, client, out)); CHECK(out.success);
     CHECK_EQ(out.petalIndex, content().petalIndex("timed_mjolnir"));
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(content().petalIndex("timed_mjolnir"), Rarity::Unique) == 1;
     }));
-    client.requestTitanForge(content().petalIndex("fragment"));
+    client.requestTitanForge(content().petalIndex("fragment"), false, false);
     CHECK(awaitForge(h,both,client,out));CHECK(out.success);
     CHECK(awaitProfile(h,client,[&](const Profile& p){return p.stackCount(content().petalIndex("timed_mjolnir"),Rarity::Unique)==2 && p.stackCount(content().petalIndex("fragment"),Rarity::Super)==0;}));
     CHECK_EQ(rival.profile().stackCount(rose, Rarity::Unique), 3u);

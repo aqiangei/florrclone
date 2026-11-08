@@ -99,8 +99,21 @@ bool TitanPanel::render(MenuContext& ctx) {
     const Profile& profile = ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
     const double now = ctx.timeSeconds;
-    const Rarity inputTier=hyper_?Rarity::Unique:kTitanInputRarity;
-    const Rarity outputTier=hyper_?Rarity::Apex:kTitanOutputRarity;
+    const bool eternalInput = hyper_ || permanentHyper_;
+    const Rarity inputTier = eternalInput ? Rarity::Unique : kTitanInputRarity;
+    const Rarity outputTier = permanentHyper_ ? Rarity::PermanentHyper
+                             : hyper_ ? Rarity::Apex : kTitanOutputRarity;
+    const auto costOf = [&](std::uint16_t index) {
+        return permanentHyper_ ? kPermanentHyperCost : forgeCost(profile, index, hyper_, ctx.net);
+    };
+    const auto canUse = [&](std::uint16_t index) {
+        const auto& petal = content().petal(index);
+        if (permanentHyper_)
+            return permanentHyperForgeEligible(petal.id) && !petal.isAdminPetal &&
+                   petalComesAt(petal, Rarity::Unique);
+        if (hyper_) return hyperForgeEligible(petal.id);
+        return titanForgeEligible(petal.id) && (eternalFragment_ || petal.id == "fragment");
+    };
     const double dtMs = std::max(0.0, ctx.dt) * 1000.0;
 
     // A result the server sent while this face of the menu was not showing
@@ -151,24 +164,29 @@ bool TitanPanel::render(MenuContext& ctx) {
     // server's, and a profile landing a frame ahead of the result would empty
     // the ring under its own animation.
     if (!abandon_ && phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
-        (forgeInputOwned(profile, stagedPetal_, hyper_) < static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_, hyper_, ctx.net)) ||
-         !(hyper_?hyperForgeEligible(content().petal(stagedPetal_).id):titanForgeEligible(content().petal(stagedPetal_).id)) ||
-         (!hyper_ && !eternalFragment_ && content().petal(stagedPetal_).id!="fragment"))) {
+        (forgeInputOwned(profile, stagedPetal_, eternalInput) < static_cast<std::uint32_t>(costOf(stagedPetal_)) ||
+         !canUse(stagedPetal_))) {
         stagedPetal_ = kNoPetal;
         confirmForge_ = false;
         confirmBatch_ = false;
     }
 
     const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin,
-                                            abandon_?"解除超凡花瓣":hyper_?"超凡争夺锻造":eternalFragment_?"永久永恒锻造":"限时永恒锤（1小时）", "Forge", mouse);
+                                            abandon_ ? "解除超凡花瓣" : permanentHyper_ ? "永久超凡兑换" :
+                                            hyper_ ? "超凡争夺锻造" : eternalFragment_ ? "永久永恒锻造" : "限时永恒锤（1小时）",
+                                            "Forge", mouse);
     const Rect panel = card.panel;
-    const char* modes[]={"永久永恒","限时锤（1h）","超凡争夺","解除超凡"};
-    const double tabW = (panel.w - 36.0) / 4.0;
-    for(int i=0;i<4;++i){
+    const char* modes[]={"永久永恒","限时锤（1h）","超凡争夺","解除超凡","永久超凡"};
+    const double tabW = (panel.w - 36.0) / 5.0;
+    const int activeTab = permanentHyper_ ? 4 : abandon_ ? 3 : hyper_ ? 2 : eternalFragment_ ? 0 : 1;
+    for(int i=0;i<5;++i){
         const Rect tab{panel.x+18+i*tabW,panel.y+62,tabW-6,32};
-        const bool selected=i==3?abandon_:!abandon_&&(i==2?hyper_:!hyper_&&(eternalFragment_==(i==0)));
+        const bool selected = i == activeTab;
         drawSlotButton(canvas,tab,modes[i],selected?std::optional<std::uint32_t>(rarityColor(outputTier)):std::nullopt,tab.contains(mouse),tab.contains(mouse)&&ctx.window.mouseDown(MouseButton::Left));
-        if(ctx.pressed()&&tab.contains(mouse)&&phase_!=Phase::Forging){abandon_=i==3;hyper_=i==2;eternalFragment_=i!=1;reset();return true;}
+        if(ctx.pressed()&&tab.contains(mouse)&&phase_!=Phase::Forging){
+            abandon_=i==3;hyper_=i==2;eternalFragment_=i!=1;permanentHyper_=i==4;
+            reset();return true;
+        }
     }
 
     if (abandon_) {
@@ -233,7 +251,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     ItemTile shownTile;
     shownTile.petalIndex = shown;
     shownTile.rarity = inputTier;
-    shownTile.badge = "x" + std::to_string(phase_ == Phase::Forging ? offeredCost_ : forgeCost(profile, shown, hyper_, ctx.net));
+    shownTile.badge = "x" + std::to_string(phase_ == Phase::Forging ? offeredCost_ : costOf(shown));
     shownTile.timeSeconds = now;
     // Lit under the cursor only while the slot is at rest.
     shownTile.hovered =
@@ -251,7 +269,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     // --- forge button ------------------------------------------------------
     // The colour of the tier it forges toward once five are in the slot --
     // florr's forge wears its top tier's grey.
-    const bool permanent = !hyper_ && eternalFragment_;
+    const bool permanent = !eternalInput && eternalFragment_;
     Rect button = card.button;
     Rect batchButton{};
     if (permanent) {
@@ -267,7 +285,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         (!hyper_ || (holder&&ctx.net.hyperHoldings()<kMaxHyperHoldings&&ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
                      *holder!=profile.username));
     const bool fragment=knownPetal(stagedPetal_)&&content().petal(stagedPetal_).id=="fragment";
-    const char* action=fragment&&!hyper_?(eternalFragment_?(confirmForge_ && !confirmBatch_?"确认：E碎片":"兑换E碎片"):(confirmForge_ && !confirmBatch_?"确认：限时锤":"制作限时锤")):(confirmForge_ && !confirmBatch_?"确认锻造":"锻造");
+    const char* action=fragment&&!eternalInput?(eternalFragment_?(confirmForge_ && !confirmBatch_?"确认：E碎片":"兑换E碎片"):(confirmForge_ && !confirmBatch_?"确认：限时锤":"制作限时锤")):(confirmForge_ && !confirmBatch_?"确认锻造":"锻造");
     drawSlotButton(canvas, button, action,
                    canForge ? std::optional<std::uint32_t>(rarityColor(outputTier))
                             : std::nullopt,
@@ -295,6 +313,15 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
+            if (permanentHyper_) {
+                constexpr std::array<const char*, 3> rules = {
+                    "30 个未装备的同种永恒 → 1 个永久超凡",
+                    "雷神之锤、碎片和血祭不参与兑换",
+                    "数值与技能等同超凡，永久归属"
+                };
+                drawSlotLine(canvas, line, rules[i]);
+                continue;
+            }
             if(!hyper_ && i==0 && knownPetal(stagedPetal_) && content().petal(stagedPetal_).id=="fragment"){drawSlotLine(canvas,line,eternalFragment_?"15个超级碎片 → 1个永久永恒碎片":"15个超级碎片 → 1把永恒限时锤（1小时）");continue;}
             if (hyper_ && i == 0 && knownPetal(stagedPetal_)) {
                 const auto& id = content().petal(stagedPetal_).id;
@@ -320,7 +347,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         if (confirmBatch_ && canBatch)
             drawSlotLine(canvas, line, std::to_string(batch.cost) + " 个超级 → " +
                          std::to_string(batch.quantity) + " 个永久永恒");
-        else drawSlotLine(canvas, line, "本次消耗：" + std::to_string(forgeCost(profile, stagedPetal_, hyper_, ctx.net)) + (hyper_?" 个同种永恒，成功率100%":" 个同种超级，成功率100%"));
+        else drawSlotLine(canvas, line, "本次消耗：" + std::to_string(costOf(stagedPetal_)) + (eternalInput?" 个同种永恒，成功率100%":" 个同种超级，成功率100%"));
     }
 
     if(hyper_&&knownPetal(stagedPetal_)){
@@ -339,12 +366,11 @@ bool TitanPanel::render(MenuContext& ctx) {
             SlotCell cell;
             cell.count = owned;
             if (petalIndex == stagedPetal_) {
-                const std::uint32_t staged = static_cast<std::uint32_t>(forgeCost(profile, stagedPetal_, hyper_, ctx.net));
+                const std::uint32_t staged = static_cast<std::uint32_t>(costOf(stagedPetal_));
                 cell.count = owned > staged ? owned - staged : 0;
             }
-            cell.greyed = cell.count < static_cast<std::uint32_t>(forgeCost(profile, petalIndex, hyper_, ctx.net)) ||
-                          !(hyper_?hyperForgeEligible(content().petal(petalIndex).id):titanForgeEligible(content().petal(petalIndex).id)) ||
-                          (!hyper_ && !eternalFragment_ && content().petal(petalIndex).id!="fragment");
+            cell.greyed = cell.count < static_cast<std::uint32_t>(costOf(petalIndex)) ||
+                          !canUse(petalIndex);
             // A lone petal carries no badge, as in the inventory.
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             return cell;
@@ -382,10 +408,11 @@ bool TitanPanel::render(MenuContext& ctx) {
             phase_ = Phase::Forging;
             phaseStarted_ = now;
             offeredPetal_ = stagedPetal_;
-            offeredCost_ = batchPressed ? batch.cost : forgeCost(profile, stagedPetal_, hyper_, ctx.net);
+            offeredCost_ = batchPressed ? batch.cost : costOf(stagedPetal_);
             resultPending_ = false;
             refusal_.clear();
-            ctx.net.requestTitanForge(stagedPetal_, hyper_, eternalFragment_, batchPressed);
+            if (permanentHyper_) ctx.net.requestPermanentHyperForge(stagedPetal_);
+            else ctx.net.requestTitanForge(stagedPetal_, hyper_, eternalFragment_, batchPressed);
             // Handed over: the ring draws the offer from here, and a refusal
             // is what puts it back.
             stagedPetal_ = kNoPetal;
@@ -414,7 +441,8 @@ bool TitanPanel::render(MenuContext& ctx) {
             refusal_.clear();
         } else {
             const auto& id=content().petal(hovered->petalIndex).id;
-            refusal_=hyper_&&(id=="timed_mjolnir"||id=="mjolnir")?"超凡锤子需10个永恒碎片，限时锤不能参与争夺。":
+            refusal_=permanentHyper_?"需要 30 个同种永恒，雷神之锤、碎片和血祭不参与兑换。":
+                hyper_&&(id=="timed_mjolnir"||id=="mjolnir")?"超凡锤子需10个永恒碎片，限时锤不能参与争夺。":
                 "材料不足或不可锻造；超凡需5个未装备的同种永恒。";
             refusalUntil_=now+kRefusalSeconds;
         }

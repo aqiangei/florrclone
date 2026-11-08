@@ -570,6 +570,20 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         canvas.fillRect(static_cast<float>(-kFaceSide * 0.5),
                         static_cast<float>(kFaceSide * 0.5 - faceHeight),
                         static_cast<float>(kFaceSide), static_cast<float>(faceHeight));
+        if (filled && !greyed && tile.rarity == Rarity::PermanentHyper) {
+            // Draw the brushed highlight inside the remaining gold face.
+            const float top = static_cast<float>(kFaceSide * 0.5 - faceHeight);
+            const float width = static_cast<float>(kFaceSide);
+            setFill(canvas, 0x8B5427u, 0.27);
+            canvas.fillRect(-width * 0.5f, top + static_cast<float>(faceHeight * 0.73),
+                            width, static_cast<float>(faceHeight * 0.27));
+            setFill(canvas, 0xFFF1B2u, 0.58);
+            canvas.fillRect(-width * 0.5f, top + static_cast<float>(faceHeight * 0.10),
+                            width, static_cast<float>(faceHeight * 0.14));
+            setFill(canvas, 0xFFF8D4u, 0.65);
+            canvas.fillRect(-width * 0.5f, top + static_cast<float>(faceHeight * 0.13),
+                            width, static_cast<float>(faceHeight * 0.035));
+        }
     }
 
     if (tile.hovered) {
@@ -604,7 +618,7 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
         // Keep the petal's own cluster layout, but show the equipped quantity.
         const int copies = tile.loadoutSlot >= 0
             ? petalCopies(stats.count, viewerSkills, tile.loadoutSlot,
-                          rarityIndex(tile.rarity), config.stackable)
+                          petalTier(tile.rarity), config.stackable)
             : stats.count;
         canvas.save();
         canvas.translate(0.0f, static_cast<float>(-kItemTileIconRise));

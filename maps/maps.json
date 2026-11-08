@@ -112,6 +112,14 @@
     {
       "file": "pyramid_alt.tmj",
       "prestige": true
+    },
+    {
+      "file": "pyramid_west.tmj",
+      "prestige": true
+    },
+    {
+      "file": "pyramid_east.tmj",
+      "prestige": true
     }
   ]
 }

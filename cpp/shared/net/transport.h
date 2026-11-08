@@ -77,6 +77,10 @@ public:
     /// Includes bytes held by the WebSocket or WebTransport backend.
     std::size_t outboundBacklog() const { return pendingBytes() + transportBuffered(); }
 
+    /// Snapshot pacing also sees data handed off to a proxy that the browser
+    /// has yet to acknowledge. Reliable messages still use the local queue.
+    std::size_t snapshotBacklog() const;
+
     /// Marks the connection for close once its queued bytes have drained.
     void closeGracefully() { closing_ = true; }
     bool closing() const { return closing_; }

@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Who wears the name plate.
@@ -56,7 +57,8 @@ RemoteEntity mobOfType(const char* id, Rarity rarity = Rarity::Common) {
 /// One frame holding a single mob of `id`, as RGBA.
 std::vector<std::uint8_t> frameOf(const char* id, bool pet,
                                   const WorldRenderer::Options* options,
-                                  Rarity rarity = Rarity::Common) {
+                                  Rarity rarity = Rarity::Common, double zoom = 1.0,
+                                  net::EntityKind kind = net::EntityKind::Mob) {
     // The plate's lines are TEXT, and text needs the font the game ships.
     // Without it the renderer paints no line at all, and a check that a line
     // is absent would pass for the wrong reason.
@@ -66,13 +68,16 @@ std::vector<std::uint8_t> frameOf(const char* id, bool pet,
     WorldView view;
     view.setRealm(Realm::Overworld);
     RemoteEntity mob = mobOfType(id, rarity);
+    mob.kind = kind;
     if (pet) mob.spawnFlags |= net::SpawnIsPet;
     view.seedForTest(mob);
 
     WorldRenderer renderer;
     renderer.setContent(&shipped());
     if (options != nullptr) renderer.options = *options;
-    renderer.draw(canvas, view, frameCamera(), kMobAt, 0.0);
+    Camera camera = frameCamera();
+    camera.loadoutZoom = zoom;
+    renderer.draw(canvas, view, camera, kMobAt, 0.0);
 
     return canvas.getImageData(0, 0, kFrameSize, kFrameSize);
 }
@@ -308,6 +313,23 @@ TEST(a_summoned_pet_says_so_under_its_bar) {
     CHECK_EQ(inkOf(kPetLabelColor, "ladybug", true, &neither), 0);
 }
 
+TEST(a_far_camera_skips_mythic_and_lower_mob_plates_only) {
+    WorldRenderer::Options hidden;
+    hidden.healthBars = false;
+    hidden.names = false;
+    const auto plateIsVisible = [&](Rarity rarity, double zoom, bool pet = false,
+                                    net::EntityKind kind = net::EntityKind::Mob) {
+        return frameOf("ladybug", pet, nullptr, rarity, zoom, kind) !=
+               frameOf("ladybug", pet, &hidden, rarity, zoom, kind);
+    };
+    CHECK(!plateIsVisible(Rarity::Common, 0.59));
+    CHECK(!plateIsVisible(Rarity::Mythic, 0.59));
+    CHECK(!plateIsVisible(Rarity::Mythic, 0.59, true));
+    CHECK(plateIsVisible(Rarity::Mythic, 0.60));
+    CHECK(plateIsVisible(Rarity::Ultra, 0.59));
+    CHECK(plateIsVisible(Rarity::Common, 0.59, false, net::EntityKind::Npc));
+}
+
 // ---------------------------------------------------------------------------
 // Holes
 // ---------------------------------------------------------------------------
@@ -344,4 +366,49 @@ TEST(an_ant_standing_on_its_hole_is_drawn_over_it) {
         CHECK_EQ(centreOf({hole, ant}), antAlone);
         CHECK_EQ(centreOf({ant, hole}), antAlone);
     }
+}
+
+TEST(remote_player_guild_uses_a_second_row_only_when_it_would_overlap_the_level) {
+    CHECK(testsupport::fontsReady());
+    const auto render = [](const char* guild, bool names = true) {
+        WorldView view;
+        RemoteEntity player;
+        player.netId = 11;
+        player.kind = net::EntityKind::Player;
+        player.position = player.targetPosition = kMobAt;
+        player.radius = kPlayerBaseRadius;
+        player.needsSnap = false;
+        player.level = 236;
+        player.healthFraction = 1.0;
+        player.guildName = guild;
+        view.seedForTest(player);
+        WorldRenderer renderer;
+        renderer.options.names = names;
+        renderer.options.healthBars = true;
+        Canvas canvas = Canvas::createVirtual(kFrameSize, kFrameSize);
+        renderer.draw(canvas, view, frameCamera(), kMobAt, 0.0);
+        return canvas.getImageData(0, 0, kFrameSize, kFrameSize);
+    };
+    const auto changedRows = [](const auto& a, const auto& b) {
+        int first = kFrameSize;
+        int last = -1;
+        for (int y = 0; y < kFrameSize; ++y) {
+            const auto row = y * kFrameSize * 4;
+            if (std::equal(a.begin() + row, a.begin() + row + kFrameSize * 4, b.begin() + row))
+                continue;
+            first = std::min(first, y);
+            last = y;
+        }
+        return std::pair{first, last};
+    };
+    const auto levelOnly = render("");
+    const auto neither = render("", false);
+    const auto [levelTop, levelBottom] = changedRows(levelOnly, neither);
+    const auto [shortTop, shortBottom] = changedRows(render("A"), levelOnly);
+    const auto [longTop, longBottom] = changedRows(render("12345"), levelOnly);
+    const auto [guildOnlyTop, guildOnlyBottom] = changedRows(render("1234567890", false), neither);
+    CHECK(levelTop <= levelBottom);
+    CHECK(shortTop <= levelBottom && shortBottom >= levelTop);
+    CHECK(longTop > levelBottom && longTop <= longBottom);
+    CHECK(guildOnlyTop <= levelBottom && guildOnlyBottom >= levelTop);
 }

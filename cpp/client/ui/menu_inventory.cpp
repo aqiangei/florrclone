@@ -323,7 +323,7 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
     const bool copiedSawblade = originalIndex != equipped.configIndex &&
         content().petal(equipped.configIndex).id == "sawblade";
     auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, scale, slot,
-                                   triangleBonus, equipped.reloadRarity == equipped.rarity && !copiedSawblade);
+                                   triangleBonus, samePetalTier(equipped.reloadRarity, equipped.rarity) && !copiedSawblade);
     if (originalIndex != equipped.configIndex && !lines.empty()) {
         lines.front().text = std::string(language() == Language::Zh ? "拟态 → " : "Mimic → ") + lines.front().text;
     }
@@ -369,6 +369,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         // {0:rarity} is: a champion's crown hands out a Basic of whatever tier
         // the crown is.
         std::string description = petalDescTr(config.id, config.description.c_str());
+        if (config.id == "triangle" && rarity == Rarity::Unique) {
+            description = language() == Language::Zh
+                ? "主栏中每多装备一枚永恒三角，所有永恒三角都会获得额外伤害。"
+                : "Each additional Eternal Triangle on the active bar adds damage to every Eternal Triangle.";
+        }
         static const std::string kRaritySlot = "{rarity}";
         for (std::size_t at = description.find(kRaritySlot); at != std::string::npos;
              at = description.find(kRaritySlot, at)) {
@@ -511,12 +516,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (config.petMobIndex != kInvalidIndex) {
         const auto& summon=content().mob(config.petMobIndex);
         const bool apex=ladderRarity(rarity)==Rarity::Apex;
-        const auto summonRarity=rarity;
+        const auto summonRarity = petalGameplayRarity(rarity);
         const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config)*hyperSummonScale(config,rarity)*hyperSummonPromotionScale(config,rarity);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
             " x" + std::to_string((config.id=="egg"||config.id=="beetle_egg"
-                ? petalCopies(config.petCount,&skills,slot,rarityIndex(rarity),config.stackable)
+                ? petalCopies(config.petCount,&skills,slot,petalTier(rarity),config.stackable)
                 : config.petCount)*(apex?3:1)),12.0};lines.push_back(pet);
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
@@ -531,7 +536,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (config.projectile.summonMobIndex != kInvalidIndex) {
         const auto& summon = content().mob(config.projectile.summonMobIndex);
         const double scale = petalStatScale(rarity) * strengthBoost(rarity) * hyperSummonPromotionScale(config, rarity);
-        lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(rarity), 12.0});
+        lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") +
+                         rarityTr(petalGameplayRarity(rarity)), 12.0});
         special("每人召唤上限：", "Summon cap per player: ", config.projectile.summonMax);
         special("召唤物生命：", "Summon health: ", summon.health * scale * summon.petHealthScale * skills.healthScale(SkillId::Summoner));
         special("召唤物伤害：", "Summon damage: ", summon.damage * scale * summon.petDamageScale * skills.effectScale(SkillId::PetDamage));
@@ -581,7 +587,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (stats.spongeDamageDurationMillis > 0)
         special("伤害分摊时间：", "Damage spread duration: ", stats.spongeDamageDurationMillis / 1000.0, "s");
-    const double cameraZoom = config.id == "antennae" && !showHyperTechnique && rarity == Rarity::Apex
+    const double cameraZoom = config.id == "antennae" && !showHyperTechnique && isHyperPetal(rarity)
         ? petalCameraZoom(content(), petalIndex, Rarity::Unique) : stats.cameraZoom;
     if (cameraZoom != 1.0) {
         lines.push_back({std::string(chinese ? "视野缩放：" : "Camera zoom: ") +

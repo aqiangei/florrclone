@@ -40,6 +40,7 @@ class MovementSystem;
 class MobAiSystem;
 class PetalSystem;
 class CombatSystem;
+struct ContactBodyPlacement;
 class SpawnSystem;
 class ModeSpawner;
 class LootSystem;
@@ -410,6 +411,7 @@ private:
     void handlePublishSkin(Session&, net::Connection&, ByteReader&);
     void handleEquipSkin(Session&, net::Connection&, ByteReader&);
     void handleDeleteSkin(Session&, net::Connection&, ByteReader&);
+    void handlePracticeBoard(const Session&, net::Connection&, ByteReader&);
     void handleLeaderboard(const Session&, net::Connection&, ByteReader&);
     void handleNotifications(net::Connection&, ByteReader&);
     void handleUsePetal(Session&, ByteReader&);
@@ -1037,6 +1039,7 @@ private:
     /// At most once every two seconds, and only when the fingerprint changes,
     /// so an idle lobby is not a steady unicast tax.
     void serviceOnlineRoster(double nowMillis);
+    void sendDueOnlineRosters();
 
     // -- lifecycle ---------------------------------------------------------
     Entity spawnPlayer(Session&);
@@ -1519,6 +1522,8 @@ private:
     WorldMaps worldMaps_;
     SpatialGrid grid_;
     SpatialGrid mobTargetGrid_;
+    SpatialGrid playerTargetGrid_;
+    std::vector<ContactBodyPlacement> contactBodies_;
     SpatialGrid pickupGrid_;
     SpatialGrid snapshotGrid_;
     Rng rng_;
@@ -1556,6 +1561,8 @@ private:
     /// the first send. Compared before any unicast so unchanged rosters cost
     /// only the cheap string build once per interval.
     std::string onlineRosterFingerprint_;
+    ByteWriter onlineRosterMessage_;
+    std::uint64_t onlineRosterRevision_ = 0;
     double nextOnlineRosterMillis_ = 0;
 
     SquadRoster squads_;
@@ -1840,6 +1847,8 @@ private:
     std::unordered_map<unsigned, PyramidMapStock> pyramidMaps_;
     Rng pyramidMapRng_;
     std::int64_t pyramidCycle_ = -1;
+    std::vector<Realm> pyramidLayouts_;
+    void updatePyramidSpawnRealms();
     Realm activePyramidRealm(Realm realm) const;
     void routePyramidEntrance(Realm& realm, Vec2& position);
     void servicePyramidRotation(std::int64_t cycle);

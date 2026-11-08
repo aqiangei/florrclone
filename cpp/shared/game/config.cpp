@@ -1903,7 +1903,7 @@ namespace {
 PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // Universal reads everything below at apex, `tier`, except health and
     // damage, which take `strength` -- apex's times sqrt(2).
-    const Rarity graded = clampRarity(rarityIndex(r));
+    const Rarity graded = petalGameplayRarity(clampRarity(rarityIndex(r)));
     const Rarity tier = ladderRarity(graded);
     const double strength = petalStrengthScale(graded == Rarity::Admin ? Rarity::Universal : graded);
     const double stat = petalStatScale(graded);

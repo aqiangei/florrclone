@@ -543,10 +543,10 @@ const char* lookup(const Pair* table, std::size_t n, const std::string& id,
 const char* rarityTr(Rarity r) {
     static constexpr const char* kEn[] = {
         "Common","Unusual","Rare","Epic","Legendary","Mythic",
-        "Ultra","Super","Eternal","Hyper","Devine","Admin"};
+        "Ultra","Super","Eternal","Hyper","Devine","Admin","Permanent Hyper"};
     static constexpr const char* kZh[] = {
         "普通","罕见","稀有","史诗","传说","神话",
-        "究极","超级","永恒","超凡","神圣","管理"};
+        "究极","超级","永恒","超凡","神圣","管理","永久超凡"};
     const int i = rarityIndex(r);
     if (i < 0 || i >= kRarityCount) return zh() ? kZh[0] : kEn[0];
     return zh() ? kZh[i] : kEn[i];

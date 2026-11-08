@@ -209,3 +209,23 @@ TEST(the_camera_multiplies_the_setting_by_what_the_loadout_asks) {
     CHECK_NEAR(centre.x, 1000.0, 1e-9);
     CHECK_NEAR(centre.y, 1000.0, 1e-9);
 }
+
+TEST(interface_scale_preserves_the_world_view_and_cursor_aim) {
+    Camera camera;
+    camera.setViewport(1920, 1080);
+    camera.snapTo({1000, 1000});
+    camera.userZoom = 1.6;
+    camera.loadoutZoom = 0.85;
+    const Rect original = camera.visibleWorld();
+    const Vec2 aim = camera.screenToWorld({1200, 600});
+    for (const double scale : {0.6, 1.2}) {
+        camera.setViewport(static_cast<int>(std::round(1920 / scale)),
+                           static_cast<int>(std::round(1080 / scale)), scale);
+        const Rect world = camera.visibleWorld();
+        CHECK_NEAR(world.w, original.w, 1e-9);
+        CHECK_NEAR(world.h, original.h, 1e-9);
+        const Vec2 cursor = camera.screenToWorld({1200 / scale, 600 / scale});
+        CHECK_NEAR(cursor.x, aim.x, 1e-9);
+        CHECK_NEAR(cursor.y, aim.y, 1e-9);
+    }
+}

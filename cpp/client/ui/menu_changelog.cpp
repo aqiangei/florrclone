@@ -7,8 +7,8 @@
 // The table below began as the browser build's CHANGELOG array
 // (src/changelog.ts, in git history; it ends at August 26, 2026), taken
 // verbatim and in its own order -- oldest first -- and is walked backwards to
-// paint. Every release since exists only here. A new one is appended at the
-// end, with nothing to re-sort and no way to get the order wrong.
+// paint. The current release is appended from the deployment notes at build time.
+// Move the previous entry into this history when preparing a new release.
 //
 // Row pitch is written as literals rather than derived from the face's line
 // height: the reference advances 25px under a date and 24px under a bullet
@@ -22,6 +22,8 @@
 
 #include "client/ui/menu_theme.h"
 #include "client/ui/menus.h"
+#include "release_notes.h"
+#include "shared/core/json.h"
 #include "client/ui/text.h"
 
 namespace flix {
@@ -734,9 +736,45 @@ constexpr ChangelogEntry kChangelog[] = {
       "更新日志与通知的滚轮方向与背包一致。",
       "地狱七个混刷区提高地狱蜈蚣的出现概率。"}},
 
+    {"2026年11月8日 · 超凡与战斗修复",
+     {"补齐超凡花瓣的专属机制与神秘提示，永恒和超凡雷神之锤加强。",
+      "翻转防御时按攻击可发射飞船，蜂蜜可在移动中投出。",
+      "法老王冠在窄处也能召唤。衣鱼修正朝向，移动时摆腿。",
+      "恢复野怪体型，去除血条百分比，降低垃圾袋出红宝石的概率。"}},
+    {"2026年11月8日 08:00 · 双服同步更新",
+     {"闪电碰到目标即连锁。修复丛林蜈蚣离屏后只剩头部的问题。",
+      "普通和声望金字塔每四小时换地形，玩家回到新图出生点。",
+      "魔眼戴在花朵的两只眼睛上。法力宝珠在各攻击姿态下贴近花朵。",
+      "陨石可在攻击或防御时投放。增加回血和吸收经验，灯泡可有限叠加。",
+      "提高工厂最深处刷怪密度和声望地图的超级怪比例。",
+      "新增 Wave 五波试炼与木桩伤害统计。"}},
+    {"2026年11月8日 10:30 · 刷怪与索敌减负",
+     {"缩小刷怪补位的检查范围，复用蜂蜜诱饵的索敌索引。"}},
 };
 
-constexpr int kEntryCount = static_cast<int>(sizeof(kChangelog) / sizeof(kChangelog[0]));
+const std::vector<ChangelogEntry>& changelog() {
+    struct Entries {
+        std::string title;
+        std::vector<std::string> changes;
+        std::vector<ChangelogEntry> rows{std::begin(kChangelog), std::end(kChangelog)};
+
+        Entries() {
+            Json notes;
+            std::string error;
+            if (!Json::parse(kReleaseNotesJson, notes, error)) return;
+            title = notes["title"].asString();
+            if (title.empty()) return;
+            for (const auto& line : notes["changes"].items()) {
+                if (line.isString() && changes.size() < kMaxChanges) changes.push_back(line.asString());
+            }
+            ChangelogEntry release{title.c_str(), {}};
+            for (std::size_t i = 0; i < changes.size(); ++i) release.changes[i] = changes[i].c_str();
+            rows.push_back(release);
+        }
+    };
+    static const Entries entries;
+    return entries.rows;
+}
 
 int changeCount(const ChangelogEntry& entry) {
     int count = 0;
@@ -888,7 +926,7 @@ void drawChange(Canvas& canvas, const std::string& change, double x, double y,
 
 } // namespace
 
-int changelogReleaseCount() { return kEntryCount; }
+int changelogReleaseCount() { return static_cast<int>(changelog().size()); }
 
 double ChangelogPanel::preferredWidth() { return 600.0; }
 
@@ -904,7 +942,8 @@ bool ChangelogPanel::render(MenuContext& ctx) {
 
     const double viewport = panel.h - kHeaderHeight;
     double contentHeight = 0;
-    for (const ChangelogEntry& entry : kChangelog) contentHeight += entryHeight(entry);
+    const auto& entries = changelog();
+    for (const ChangelogEntry& entry : entries) contentHeight += entryHeight(entry);
     scroll_.contentHeight = contentHeight;
     scroll_.viewHeight = viewport;
     const double maxScroll = scroll_.maxOffset();
@@ -958,8 +997,8 @@ bool ChangelogPanel::render(MenuContext& ctx) {
     std::vector<LinkHit> links;
 
     // Newest first: the table is stored oldest-first and read backwards.
-    for (int i = kEntryCount - 1; i >= 0; --i) {
-        const ChangelogEntry& entry = kChangelog[i];
+    for (auto row = entries.rbegin(); row != entries.rend(); ++row) {
+        const ChangelogEntry& entry = *row;
         const double height = entryHeight(entry);
         // A row's glyphs reach past its pitch, so the cull keeps a line of
         // slack on each side rather than trusting the box.

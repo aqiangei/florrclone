@@ -6630,16 +6630,39 @@ TEST(berry_reload_is_visible_before_a_held_attack_fires) {
         CHECK(rig.now >= loadedAt + kBerryLoadMillis);
         CHECK_EQ(shots.count(), ammo.size());
 
-        std::size_t bursts = 0;
-        const auto style = static_cast<std::uint8_t>(berryShotStyle(id));
         for (const auto& event : rig.events.events()) {
-            if (event.kind != net::EventKind::Explosion || event.flag != style) continue;
-            CHECK(event.radius > 0.0);
-            CHECK_EQ(event.visualSource, rig.player);
-            ++bursts;
+            CHECK(event.kind != net::EventKind::Explosion);
         }
-        CHECK_EQ(bursts, shots.count());
     }
+}
+
+TEST(meteor_aimed_into_a_wall_lands_on_the_near_side) {
+    Rig rig(testsupport::shippedContent());
+    rig.useHatchTerrain = true;
+    const int column = 10;
+    const double edge = column * kTileSize;
+    const Vec2 origin{edge - 32.0, 4000.0};
+    rig.world.get<Transform>(rig.player).position = origin;
+    for (int y = 0; y < rig.terrain.tileRows(); ++y) rig.terrain.setTile(column, y, Tile::Solid);
+    rig.equip(0, "meteor", Rarity::Apex);
+    rig.settleEquips();
+    const auto ammo = rig.petals(0);
+    CHECK_EQ(ammo.size(), 1u);
+    if (ammo.empty()) return;
+    rig.world.get<Transform>(ammo.front()).position = origin + Vec2{90.0, 0.0};
+    rig.world.get<PetalInstance>(ammo.front()).ringVelocity = {};
+    rig.world.get<PetalRing>(rig.player).spin = 0.0;
+
+    rig.setFlags(net::InputAttack | net::InputDefend);
+    rig.tick();
+    const auto rocks = Query<PlantedMeteor>{rig.world}.collect();
+    CHECK_EQ(rocks.size(), 1u);
+    if (rocks.empty()) return;
+    const auto at = rig.position(rocks.front());
+    CHECK(at.x > origin.x);
+    CHECK(at.x < edge);
+    CHECK(!rig.terrain.segmentBlocked(origin, at, Realm::Overworld));
+    CHECK_NEAR(rig.world.get<Body>(rocks.front()).radius, 180.0, 1e-6);
 }
 
 TEST(honey_moves_on_the_throw_tick_and_travels_390_units_while_running) {
@@ -7300,6 +7323,34 @@ TEST(hyper_final_triangle_counts_only_other_hyper_triangles) {
     TriangleCounts counts{};
     counts[rarityIndex(Rarity::Apex)] = 2;
     CHECK_NEAR(damage(Rarity::Apex), (base + triangleBonusDamage(Rarity::Apex, counts)) * 1.06, 1e-6);
+}
+
+TEST(permanent_hyper_uses_the_same_stats_and_techniques_as_contested_hyper) {
+    const auto& registry = testsupport::shippedContent();
+    CHECK(registry.petalCount() > 0);
+    for (std::uint16_t i = 0; i < registry.petalCount(); ++i) {
+        const auto h = registry.petalStats(i, Rarity::Apex);
+        const auto gold = registry.petalStats(i, Rarity::PermanentHyper);
+        CHECK_EQ(h.damage, gold.damage);
+        CHECK_EQ(h.health, gold.health);
+        CHECK_EQ(h.reloadMillis, gold.reloadMillis);
+        CHECK_EQ(h.count, gold.count);
+        CHECK_EQ(h.cameraZoom, gold.cameraZoom);
+        CHECK(hyperTechniqueInfo(registry.petal(i).id, Rarity::Apex) ==
+              hyperTechniqueInfo(registry.petal(i).id, Rarity::PermanentHyper));
+    }
+    const auto damage = [&](Rarity tier) {
+        Rig rig(registry);
+        rig.setFlags(net::InputAttack);
+        const auto triangle = hyperContactPetal(rig, "triangle", tier);
+        rig.world.get<PlayerModifiers>(rig.player).triangleCounts[rarityIndex(Rarity::Apex)] = 2;
+        const auto mob = hyperContactMob(rig, triangle);
+        CombatSystem combat;
+        ricochetCombatTick(rig, combat);
+        return 1e9 - rig.healthOf(mob);
+    };
+    CHECK(damage(Rarity::Apex) > 0.0);
+    CHECK_NEAR(damage(Rarity::PermanentHyper), damage(Rarity::Apex), 1e-6);
 }
 
 TEST(hyper_final_chip_extends_only_hyper_ship_tracking) {

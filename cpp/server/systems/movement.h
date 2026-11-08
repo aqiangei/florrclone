@@ -14,6 +14,7 @@
 // stops it -- except a carrot's (Projectile::bouncesOffWalls), which meets
 // walls as a body does and comes back off them.
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -413,7 +414,7 @@ private:
     std::vector<SeekTarget> seekTargets_;
     /// Rebuilt at the top of every player pass. See pushOutOfNpcs().
     std::vector<ObstacleDisc> npcDiscs_;
-    std::vector<ObstacleDisc> meteorDiscs_;
+    std::array<std::vector<ObstacleDisc>, kMaxRealms> meteorDiscs_;
     /// Rebuilt at the top of each pass that shoves loose petals.
     std::vector<LooseDisc> looseDiscs_;
     bool seekTargetsReady_ = false;

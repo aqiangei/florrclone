@@ -254,60 +254,17 @@ constexpr double kPetalHitSize = 10.0;
 /// flower's calibre, three times the body it actually hits with.
 constexpr double kProjectileArtSize = 20.0;
 constexpr double kProjectileArtPerRadius = 2.0;
-constexpr double kBerryLaunchSeconds = 0.22;
-
-struct BerryShotPalette {
-    std::uint32_t skin, shade, light;
-};
-
 double berryLoadSpring(double ageSeconds) {
     const double t = clamp(ageSeconds * 1000.0 / kBerryLoadMillis, 0.0, 1.0) - 1.0;
     return 1.0 + t * t * (2.85 * t + 1.85);
 }
 
-BerryShotPalette berryPalette(BerryShotStyle style) {
-    switch (style) {
-        case BerryShotStyle::Grape: return {0xCE76DBu, 0x793D90u, 0xF8C7FFu};
-        case BerryShotStyle::Pea: return {0x8AC255u, 0x487638u, 0xDBFFA8u};
-        case BerryShotStyle::Blueberry: return {0x42E3F5u, 0x247A9Eu, 0xC5FAFFu};
-        case BerryShotStyle::None: return {};
-    }
-    return {};
-}
+constexpr std::uint32_t kDerivativeGold = rarityColor(Rarity::PermanentHyper);
+constexpr std::uint32_t kDerivativeGoldLight = 0xFFE7A2u;
+constexpr std::uint32_t kDerivativeGoldDark = 0x9A681Fu;
 
-void drawBerryShot(Canvas& canvas, Vec2 at, double diameter, double heading, BerryShotStyle style) {
-    const auto palette = berryPalette(style);
-    const float r = static_cast<float>(diameter * 0.5);
-    canvas.save();
-    canvas.translate(static_cast<float>(at.x), static_cast<float>(at.y));
-    canvas.rotate(static_cast<float>(heading));
-    // The wake is narrower than the berry, so separate shots read as a fan.
-    ui::setFill(canvas, palette.skin, 0.37);
-    canvas.beginPath();
-    canvas.moveTo(0.0f, -0.60f * r);
-    canvas.quadraticCurveTo(-1.30f * r, -0.59f * r, -3.9f * r, 0.0f);
-    canvas.quadraticCurveTo(-1.30f * r, 0.59f * r, 0.0f, 0.60f * r);
-    canvas.closePath();
-    canvas.fill();
-    ui::setStroke(canvas, palette.light, 0.68);
-    canvas.setLineWidth(std::max(0.7f, 0.16f * r));
-    canvas.setLineCap("round");
-    canvas.beginPath();
-    canvas.moveTo(-2.65f * r, 0.0f);
-    canvas.lineTo(-0.9f * r, 0.0f);
-    canvas.stroke();
-    canvas.restore();
-
-    // Keep the shading in screen space as the berry turns with its flight.
-    ui::setFill(canvas, palette.shade);
-    canvas.fillCircle(static_cast<float>(at.x), static_cast<float>(at.y), r);
-    ui::setFill(canvas, palette.skin);
-    canvas.fillCircle(static_cast<float>(at.x - r * 0.08), static_cast<float>(at.y - r * 0.12), r * 0.80f);
-    ui::setFill(canvas, palette.light, 0.9);
-    canvas.fillCircle(static_cast<float>(at.x - r * 0.30), static_cast<float>(at.y - r * 0.36), r * 0.25f);
-}
-
-void drawMeteorGround(Canvas& canvas, Vec2 at, double radius, bool hyper) {
+void drawMeteorGround(Canvas& canvas, Vec2 at, double radius, Rarity rarity) {
+    const bool hyper = isHyperPetal(rarity);
     const float x = static_cast<float>(at.x);
     const float y = static_cast<float>(at.y);
     const float r = static_cast<float>(radius);
@@ -316,12 +273,15 @@ void drawMeteorGround(Canvas& canvas, Vec2 at, double radius, bool hyper) {
     canvas.ellipse(x, y + r * 0.60f, r * 0.80f, r * 0.28f, 0.0f, 0.0f, static_cast<float>(kTau));
     canvas.fill();
 
-    ui::setStroke(canvas, hyper ? 0xA7A7F2u : 0xB9A391u, hyper ? 0.52 : 0.29);
+    const auto rim = rarity == Rarity::PermanentHyper ? kDerivativeGold :
+                     hyper ? 0xA7A7F2u : 0xB9A391u;
+    ui::setStroke(canvas, rim, hyper ? 0.52 : 0.29);
     canvas.setLineWidth(std::max(1.0f, r * 0.012f));
     canvas.strokeCircle(x, y, r);
 }
 
-void drawHyperMeteorVeins(Canvas& canvas, Vec2 at, double diameter, double timeSeconds) {
+void drawHyperMeteorVeins(Canvas& canvas, Vec2 at, double diameter, double timeSeconds,
+                          bool gilded) {
     // The imported rock is a 32-unit drawing. Trace its existing fissure
     // and leave the stone facets and the silhouette intact.
     const float unit = static_cast<float>(diameter / 32.0);
@@ -339,45 +299,14 @@ void drawHyperMeteorVeins(Canvas& canvas, Vec2 at, double diameter, double timeS
     canvas.lineTo(21.3f, 21.7f);
     canvas.moveTo(14.6f, 16.3f);
     canvas.lineTo(17.1f, 12.5f);
-    ui::setStroke(canvas, 0x5756B8u, 0.82);
+    ui::setStroke(canvas, gilded ? kDerivativeGoldDark : 0x5756B8u, 0.82);
     canvas.setLineWidth(2.1f);
     canvas.stroke();
-    ui::setStroke(canvas, 0xBFBFFFu, glow);
+    ui::setStroke(canvas, gilded ? kDerivativeGold : 0xBFBFFFu, glow);
     canvas.setLineWidth(1.05f);
     canvas.stroke();
-    ui::setFill(canvas, 0xE8EAFFu, glow);
+    ui::setFill(canvas, gilded ? kDerivativeGoldLight : 0xE8EAFFu, glow);
     canvas.fillCircle(14.6f, 16.3f, 0.78f);
-    canvas.restore();
-}
-
-void drawBerryLaunch(Canvas& canvas, Vec2 at, double size, double heading, double progress,
-                     std::uint32_t color) {
-    const float r = static_cast<float>(size);
-    const float ring = r * static_cast<float>(0.68 + 1.9 * progress);
-    const float alpha = static_cast<float>(1.0 - progress);
-    canvas.save();
-    canvas.translate(static_cast<float>(at.x), static_cast<float>(at.y));
-    canvas.rotate(static_cast<float>(heading));
-
-    // Two separated arcs briefly outline the exit, with a bright core and
-    // four small flecks that separate along the direction of the volley.
-    canvas.setLineCap("round");
-    canvas.setLineWidth(std::max(0.8f, 0.24f * r) * (0.5f + 0.5f * alpha));
-    ui::setStroke(canvas, color, 0.85 * alpha);
-    canvas.beginPath();
-    canvas.arc(0.0f, 0.0f, ring, -1.42f, 1.42f);
-    canvas.stroke();
-    canvas.beginPath();
-    canvas.arc(0.0f, 0.0f, ring, 2.35f, 3.93f);
-    canvas.stroke();
-    ui::setFill(canvas, 0xFFFFFFu, alpha * alpha * 0.83);
-    canvas.fillCircle(0.0f, 0.0f, r * (0.34f + 0.45f * alpha));
-    for (const float lane : {-1.0f, -0.45f, 0.45f, 1.0f}) {
-        ui::setFill(canvas, color, 0.93 * alpha);
-        const float distance = r * static_cast<float>(0.75 + 2.2 * progress);
-        canvas.fillCircle(distance * (1.5f - std::abs(lane)), distance * lane,
-                          std::max(0.6f, r * 0.19f) * (0.45f + 0.55f * alpha));
-    }
     canvas.restore();
 }
 
@@ -599,6 +528,7 @@ constexpr double kPetalGlowAlpha = 76.0 / 255.0;
 /// 80 + 10 x tier long whatever the mob's size, stroked with round caps: a
 /// #222222 track kMobBarThickness wide, the red at 0.6 of that, the green at
 /// 0.7 and the shield's white at 0.5, each starting at the line's left end.
+constexpr double kLowDetailMobLabelZoom = 0.6;
 constexpr double kMobBarBaseLength = 80.0;
 constexpr double kMobBarLengthPerTier = 10.0;
 constexpr double kMobBarThickness = 10.0;
@@ -1131,20 +1061,9 @@ void WorldRenderer::ingestEvents(WorldView& view) {
             }
             case net::EventKind::Explosion: {
                 if (effects_.size() >= maxEffects) break;
+                // Protocol 104 servers may still send the retired berry launch marker.
+                if (event.flag & kLegacyBerryLaunchMask) break;
                 Effect e;
-                const auto berry = static_cast<BerryShotStyle>(event.flag & kBerryShotStyleMask);
-                if (berry != BerryShotStyle::None) {
-                    if ((event.flag & kBerryShotForeign) &&
-                        ((event.flag & kBerryShotFromPet) ? options.hideOtherPets : options.hideOtherPetals)) break;
-                    e.kind = Effect::Kind::BerryLaunch;
-                    e.position = event.position;
-                    e.radius = clamp(event.radius, 4.5, 16.0);
-                    e.value = event.amount;
-                    e.color = berryPalette(berry).light;
-                    e.lifeSeconds = kBerryLaunchSeconds;
-                    effects_.push_back(std::move(e));
-                    break;
-                }
                 e.kind = Effect::Kind::Explosion;
                 e.position = event.position;
                 e.radius = event.radius > 0 ? event.radius : 60;
@@ -2730,6 +2649,8 @@ void WorldRenderer::drawPlayerPlate(Canvas& canvas, const RemoteEntity& entity,
         canvas.restore();
     }
 
+    const double detailY = barY + 20.0 * zoom;
+    double guildRoom = bar.width;
     if (options.names) {
         ui::TextStyle level;
         level.size = 10.0 * zoom;
@@ -2738,22 +2659,23 @@ void WorldRenderer::drawPlayerPlate(Canvas& canvas, const RemoteEntity& entity,
         // Tinted with the best rarity anywhere in that flower's loadout, which
         // is how a passing flower advertises what it is carrying.
         level.fill = rarityColor(entity.bestRarity);
-        ui::text(canvas, "Lv. " + std::to_string(entity.level), right, barY + 20.0 * zoom,
-                 level);
-
+        const std::string label = "Lv. " + std::to_string(entity.level);
+        ui::text(canvas, label, right, detailY, level);
+        if (!entity.guildName.empty())
+            guildRoom -= ui::textWidth(canvas, label, level.size) + 4.0 * zoom;
     }
     // Public guild remains visible with health bars even if names are hidden.
     if ((options.names || options.healthBars) && !entity.guildName.empty()) {
-            ui::TextStyle tag;
-            tag.size = 8.0 * zoom;
-            tag.align = ui::Align::Left;
-            tag.baseline = ui::Baseline::Alphabetic;
-            tag.fill = 0x27DADEu;
-            const std::string label="[" + entity.guildName + "]";
-            const double width=ui::textWidth(canvas,label,tag.size);
-            const double available=(right-left)*0.6;
-            if(width>available && width>0) tag.size*=available/width;
-            ui::text(canvas,label,left,barY+20.0*zoom,tag);
+        ui::TextStyle tag;
+        tag.size = 8.0 * zoom;
+        tag.align = ui::Align::Left;
+        tag.baseline = ui::Baseline::Alphabetic;
+        tag.fill = 0x27DADEu;
+        const std::string label = "[" + entity.guildName + "]";
+        const double width = ui::textWidth(canvas, label, tag.size);
+        const bool ownRow = options.names && width > guildRoom;
+        if (width > bar.width) tag.size *= bar.width / width;
+        ui::text(canvas, label, left, detailY + (ownRow ? 11.0 * zoom : 0.0), tag);
     }
 }
 
@@ -2916,7 +2838,7 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
                           ? 2.0 * entity.radius * petalArtScale(config) * zoom
                           : kPetalArtSize * artSize * zoom;
     if (config && entity.ownerNetId != 0 && !entity.isRingPetal() &&
-        berryShotStyle(config->id) != BerryShotStyle::None) {
+        hasBerryLoadAnimation(config->id)) {
         diameter *= 0.48 + 0.52 * berryLoadSpring(entity.petalAgeSeconds);
     }
     if (diameter <= 0.5) return;
@@ -3842,13 +3764,14 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
     // A chain's body bead is florr's one unlabelled mob: a bar, and no name,
     // tier or "Summon" to go with it.
     const bool labelled = config == nullptr || !config->chainBody;
+    const bool gilded = mob.pet && mob.rarity == Rarity::PermanentHyper;
 
     // Everything below is in world units off the mob's centre, scaled by the
     // zoom where it is drawn. The bar's length is florr's 80 + 10 per tier
     // whatever the body's size; its LINE is where the strokes run, with the
     // round caps standing half a thickness past both ends.
     const double length =
-        kMobBarBaseLength + kMobBarLengthPerTier * static_cast<int>(mob.rarity);
+        kMobBarBaseLength + kMobBarLengthPerTier * static_cast<int>(petalGameplayRarity(mob.rarity));
     const double halfSpan = (length + kMobBarThickness) * 0.5;
     const double lineY = mob.radius + kMobBarGap + kMobBarThickness * 0.5;
     const auto sx = [&](double x) { return screen.x + x * zoom; };
@@ -3889,7 +3812,7 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         };
         // Bottom to top, in florr's order. Each line is blended on its own at
         // the plate's opacity, as florr's are, rather than as one layer.
-        stroke(1.0, kMobBarThickness, kMobBarTrack, 1.0);
+        stroke(1.0, kMobBarThickness, gilded ? 0x725322u : kMobBarTrack, 1.0);
         stroke(lag, kMobBarThickness * kMobBarLagWidth, kMobBarLag, fade(lag));
         stroke(health, kMobBarThickness * kMobBarHealthWidth,
                invulnerable ? kInvulnerableHealth : ui::kHealth, fade(health));
@@ -3944,8 +3867,8 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         const std::string summon = ui::tipSummon();
         const double box = boxWidth(summon, kMobTierSize);
         const double left = std::min(-halfSpan, -1.0 - box);
-        label(summon, kMobTierSize, kPetLabelColor, left, rowY);
-        tierFloor = left + box + 1.0;
+        label(summon, kMobTierSize, gilded ? kDerivativeGold : kPetLabelColor, left, rowY);
+        tierFloor = left + box + (gilded ? 6.0 : 1.0);
     }
     if (labelled && options.names) {
         const std::string tier = ui::rarityTr(mob.rarity);
@@ -4130,6 +4053,8 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // A Killed event arrives after the snapshot has already erased the
             // entity, so remember what the mob looked like while it is here.
             mobShadows_[entity.netId] = mob;
+            if (zoom < kLowDetailMobLabelZoom && mob.rarity <= Rarity::Mythic) break;
+
             // Bars, names and tiers all go down after every body, so a mob
             // drawn later cannot cover an earlier one's label.
             //
@@ -4185,14 +4110,12 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // from and stays where it is.
             const double diameter = artUnits * petalArtScale(config) * zoom;
             const bool meteor = config && config->id == "meteor" && diameter > 12.0;
-            const bool hyperMeteor = meteor && entity.rarity == Rarity::Apex;
-            if (meteor) drawMeteorGround(canvas, screen, entity.radius * zoom, hyperMeteor);
-            const ScopedColorTint flash(canvas, hitTint(entity.netId));
-            const auto berry = config ? berryShotStyle(config->id) : BerryShotStyle::None;
-            if (berry != BerryShotStyle::None) {
-                drawBerryShot(canvas, screen, diameter, entity.angle, berry);
-                break;
-            }
+            const bool hyperMeteor = meteor && isHyperPetal(entity.rarity);
+            const bool gilded = entity.rarity == Rarity::PermanentHyper;
+            if (meteor) drawMeteorGround(canvas, screen, entity.radius * zoom, entity.rarity);
+            Color tint = hitTint(entity.netId);
+            if (gilded && !meteor && tint.a == 0) tint = Color{78, 64, 32, 90};
+            const ScopedColorTint flash(canvas, tint);
             if (config && config->id == "gas" && entity.rarity == Rarity::Common) {
                 // Gas is a cloud rather than a petal, and there can be hundreds
                 // of it at once.
@@ -4214,7 +4137,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                                 : rarityColor(entity.rarity),
                          ui::kPaper, 2.0 * zoom);
             }
-            if (hyperMeteor) drawHyperMeteorVeins(canvas, screen, diameter, timeSeconds);
+            if (hyperMeteor) drawHyperMeteorVeins(canvas, screen, diameter, timeSeconds, gilded);
             break;
         }
 
@@ -4240,6 +4163,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
         case net::EntityKind::Effect: {
             // Replicated::typeIndex carries the field kind: pollen, web, or
             // radiation. The effect's rarity supplies its tier treatment.
+            const bool gilded = entity.rarity == Rarity::PermanentHyper;
             switch (static_cast<GroundEffectKind>(entity.typeIndex)) {
                 // Drawn in a pass of its own, over the mobs: see
                 // drawSacrificeRituals.
@@ -4269,7 +4193,7 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                     const double r = radius;
                     ui::setFill(canvas, 0x12B8A6u, 0.13);
                     canvas.fillCircle(0, 0, static_cast<float>(r));
-                    ui::setStroke(canvas, 0x44E9D5u, 0.65);
+                    ui::setStroke(canvas, gilded ? kDerivativeGold : 0x44E9D5u, 0.65);
                     canvas.setLineWidth(static_cast<float>(std::max(1.0, r * 0.016)));
                     canvas.beginPath();
                     for (int level = 1; level <= 3; ++level) {
@@ -4283,7 +4207,8 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                         canvas.moveTo(0, 0); canvas.lineTo(p.x, p.y);
                     }
                     canvas.stroke();
-                    ui::setStroke(canvas, 0xEDFF87u, 0.8 + 0.2 * std::sin(timeSeconds * 12));
+                    ui::setStroke(canvas, gilded ? kDerivativeGoldLight : 0xEDFF87u,
+                                  0.8 + 0.2 * std::sin(timeSeconds * 12));
                     canvas.setLineWidth(static_cast<float>(std::max(1.5, r * 0.025)));
                     canvas.beginPath();
                     for (int i = 0; i < 3; ++i) {
@@ -4299,9 +4224,10 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                     break;
                 }
                 case GroundEffectKind::Web: {
-                    const auto paintWeb = [](Canvas& target, double r) {
+                    const auto paintWeb = [gilded](Canvas& target, double r) {
                         constexpr int spokes=10,levels=5;
-                        ui::setStroke(target,0xFFFFFFu);target.setLineCap("round");
+                        ui::setStroke(target, gilded ? kDerivativeGoldLight : 0xFFFFFFu);
+                        target.setLineCap("round");
                         target.setLineWidth(static_cast<float>(std::max(1.0,r*.075)));
                         target.beginPath();
                         for(int i=0;i<spokes;++i){const double angle=kTau*i/spokes;
@@ -4319,25 +4245,31 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                     canvas.setGlobalAlpha(static_cast<float>(0x60/255.0));
 #ifdef __EMSCRIPTEN__
                     // Padding keeps rounded spoke ends intact. The bitmap is
-                    // shared by every size/rotation, so memory stays at 1 MiB.
-                    constexpr float stampSide=512,stampRadius=244;
-                    if(webStampCache_){
-                        if(!webStamp_){webStamp_=std::make_unique<Canvas>(Canvas::createVirtual(512,512));
-                            webStamp_->translate(256,256);paintWeb(*webStamp_,stampRadius);}
-                        const float side=static_cast<float>(radius*stampSide/stampRadius);
-                        canvas.drawCanvas(*webStamp_,-side*.5f,-side*.5f,side,side);
-                    }else paintWeb(canvas,radius);
+                    // shared by every size and rotation of the same palette.
+                    constexpr float stampSide = 512, stampRadius = 244;
+                    if (webStampCache_) {
+                        auto& stamp = webStamps_[gilded];
+                        if (!stamp) {
+                            stamp = std::make_unique<Canvas>(Canvas::createVirtual(512, 512));
+                            stamp->translate(256, 256);
+                            paintWeb(*stamp, stampRadius);
+                        }
+                        const float side = static_cast<float>(radius * stampSide / stampRadius);
+                        canvas.drawCanvas(*stamp, -side * 0.5f, -side * 0.5f, side, side);
+                    } else {
+                        paintWeb(canvas, radius);
+                    }
 #else
                     paintWeb(canvas,radius);
 #endif
                     canvas.restore();break;
                 }
                 case GroundEffectKind::Radiation: {
-                    const std::uint32_t tint = 0x9B59B6u;
-                    ui::setFill(canvas, tint, 0.22);
+                    constexpr std::uint32_t kRadiationPurple = 0x9B59B6u;
+                    ui::setFill(canvas, kRadiationPurple, 0.22);
                     canvas.fillCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
                                       static_cast<float>(radius));
-                    ui::setStroke(canvas, tint, 0.5);
+                    ui::setStroke(canvas, gilded ? kDerivativeGold : kRadiationPurple, 0.5);
                     canvas.setLineWidth(static_cast<float>(2.0 * zoom));
                     canvas.strokeCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
                                         static_cast<float>(radius));
@@ -4359,7 +4291,8 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                 }
                 case GroundEffectKind::Poison:
                 default:
-                    ui::disc(canvas, screen, radius, 0xFFE763u, 0xCFBB50u, 3.0 * zoom);
+                    ui::disc(canvas, screen, radius, 0xFFE763u,
+                             gilded ? kDerivativeGoldDark : 0xCFBB50u, 3.0 * zoom);
                     break;
             }
             break;
@@ -4493,12 +4426,6 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
                 canvas.setGlobalAlpha(1.0f);
                 break;
             }
-            case Effect::Kind::BerryLaunch:
-                if (onScreen(e.position, 4.0 * e.radius)) {
-                    drawBerryLaunch(canvas, camera.worldToScreen(e.position), e.radius * zoom,
-                                    e.value, t, e.color);
-                }
-                break;
             case Effect::Kind::Sparkle: {
                 // Particles only: the glint has no body of its own.
                 for (const EffectParticle& p : e.particles) drawPetalGlint(canvas, camera, p);
@@ -4839,7 +4766,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
         if (entity.kind == net::EntityKind::Drop) ++timing_.itemCount;
         if (entity.kind == net::EntityKind::Petal && entity.ownerNetId != 0 && !entity.isRingPetal() &&
             entity.petalAgeSeconds * 1000.0 < kBerryLoadMillis && content_ &&
-            berryShotStyle(content_->petal(entity.typeIndex).id) != BerryShotStyle::None) {
+            hasBerryLoadAnimation(content_->petal(entity.typeIndex).id)) {
             const auto owner = entities.find(entity.ownerNetId);
             if (owner != entities.end()) {
                 const auto& body = owner->second;

@@ -1028,7 +1028,7 @@ TEST(the_shipped_mobs_reach_a_flower_touching_them_at_every_tier) {
     }
 }
 
-TEST(berry_reload_springs_past_the_ring_and_launches_with_a_brief_flash) {
+TEST(berry_reload_springs_past_the_ring_and_ignores_legacy_launch_flashes) {
     const auto& content = testsupport::shippedContent();
     WorldRenderer renderer;
     renderer.setContent(&content);
@@ -1072,11 +1072,9 @@ TEST(berry_reload_springs_past_the_ring_and_launches_with_a_brief_flash) {
     event.kind = net::EventKind::Explosion;
     event.position = kStrikeAt + Vec2{55.0, 0.0};
     event.radius = 10.0;
-    event.flag = static_cast<std::uint8_t>(BerryShotStyle::Grape);
+    event.flag = 1;  // Protocol 104 grape launch marker.
     view.events().push_back(event);
     renderer.ingestEvents(view);
-    CHECK(testsupport::differingPixels(draw(), idle, 12) > 50);
-    renderer.update(.24);
     CHECK_EQ(testsupport::differingPixels(draw(), idle, 12), 0);
 }
 

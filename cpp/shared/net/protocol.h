@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 104; // Daily streak includes the actual reward already credited.
+inline constexpr std::uint16_t kProtocolVersion = 106; // Damage leaderboard and Permanent Hyper identity.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -54,6 +54,11 @@ inline constexpr double kSnapshotMillis = 1000.0 / kSnapshotsPerSecond;
 // ---------------------------------------------------------------------------
 // Message ids
 // ---------------------------------------------------------------------------
+
+enum class PracticeSource : std::uint8_t { Petal, Summon, Poison, Reflect, Field, Other };
+inline constexpr int kPracticeWindowSeconds = 10;
+inline constexpr std::uint8_t kPracticeBoardRows = 20;
+inline constexpr std::uint8_t kPracticeBoardSources = 6;
 
 enum class ClientMessage : std::uint8_t {
     Hello = 1,          ///< u16 protocolVersion, u32 contentHash
@@ -159,7 +164,8 @@ enum class ClientMessage : std::uint8_t {
     GuildEdit,          ///< str displayName, str description -- both replace
                         ///< what the guild has. Leader only; the tag is the
                         ///< guild's key and cannot be edited. (Version 45.)
-    TitanForge,         ///< u16 input petal, u8 mode (0 permanent, 1 hyper, 2 Eternal fragment, 3 timed hammer, 4 max permanent batch). Normal: 10 then 15 Super;
+    TitanForge,         ///< u16 input petal, u8 mode (0 Eternal, 1 contested Hyper, 2 Eternal fragment,
+                        ///< 3 timed hammer, 4 max Eternal batch, 5 permanent Hyper).
                         ///< Hyper: 5 Eternal -> globally contested Hyper (v82).
                         ///< permanent next-tier petal, Fragment -> Mjolnir.
                         ///< Per-account/per-petal price ledger; never takes
@@ -235,6 +241,7 @@ enum class ClientMessage : std::uint8_t {
     DailyDropBonus,     ///< u8 action: 0 query, 1 claim, 2 toggle shop lock; daily one-hour drop bonus (v78).
     DailyLoginClaim,    ///< no payload; idempotent daily login reward / refresh.
     AccountQQ,          ///< bool save, str value if saving; private account record only.
+    RequestPracticeBoard, ///< bool includeAdmins.
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -459,6 +466,8 @@ enum class ServerMessage : std::uint8_t {
     PyramidMapState,    ///< u8 realm, u8 revealed; visit-only, never saved (v74).
     DailyDropBonusState, ///< v93: bonus fields, i64 locked rotation, locked offers, i64 current rotation, current offers. Each list: u8 count, {u16 petal,u8 rarity,f64 price,u8 discount,u16 remaining (65535 unlimited)}.
     AccountQQ,          ///< bool saved, str current value; only to the authenticated owner.
+    PracticeBoard,      ///< bool hasDummy; if true, u8 tier, u8 rows, then
+                        ///< { str name, f64 damage, u8 sources, { u8 kind, u16 petal, u8 tier, f64 damage }* }*.
 };
 
 // ---------------------------------------------------------------------------
@@ -501,6 +510,7 @@ enum class NotificationKind : std::uint8_t {
     ApexCraft,
     StarCode,
     UniversalCraft,     ///< a universal forged at a titan (version 47)
+    PermanentHyperForge,
 };
 
 /// What the Profile says about the account itself rather than its progress:

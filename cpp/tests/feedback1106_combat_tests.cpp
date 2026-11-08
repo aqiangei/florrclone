@@ -107,28 +107,49 @@ TEST(practice_dps_tracks_actual_sources_on_one_dummy_and_expires) {
     CHECK(r.combat.practiceDamage(r.player, 2500.0).empty());
 }
 
-TEST(todo1107_triangle_stacks_before_talent_and_eternal_counts_super_slots) {
-    for (const auto tier : {Rarity::Common, Rarity::Unique}) {
+TEST(triangle_stacks_with_its_own_tier_before_talent) {
+    for (const auto tier : {Rarity::Common, Rarity::Super, Rarity::Unique}) {
         CombatFeedback r;
         r.equip(0, "triangle", tier);
-        r.equip(1, "triangle", Rarity::Common);
-        r.equip(2, "triangle", Rarity::Super);
-        r.equip(kLoadoutActiveSlots, "triangle", Rarity::Common);
+        r.equip(1, "triangle", tier);
+        r.equip(2, "triangle", tier == Rarity::Super ? Rarity::Unique : Rarity::Super);
+        r.equip(kLoadoutActiveSlots, "triangle", tier);
         auto& skills = r.w.add<PlayerSkillTree>(r.player).skills;
         skills.set(SkillId::Damage, 2);
         r.prepare();
-        Entity triangle = NULL_ENTITY;
+        std::array<Entity, 2> targets{};
         Query<PetalInstance> petals{r.w};
         petals.each([&](Entity e, PetalInstance& petal) {
+            if (petal.slot < targets.size())
+                targets[petal.slot] = r.mob(r.w.get<Transform>(e).position);
+        });
+        const double bonus = tier == Rarity::Unique ? 26244 : tier == Rarity::Super ? 8748 : 4;
+        const double base = r.c.petalStats(r.c.petalIndex("triangle"), tier).damage;
+        const double expected = (base + bonus) * skills.effectScale(SkillId::Damage);
+        r.hit(10000);
+        for (const Entity target : targets) {
+            CHECK(target != NULL_ENTITY);
+            if (target != NULL_ENTITY)
+                CHECK_NEAR(1e12 - r.w.get<Health>(target).current, expected, 1e-3);
+        }
+    }
+}
+
+TEST(eternal_triangle_counts_each_additional_eternal_and_ignores_super) {
+    for (const int copies : {1, 3}) {
+        CombatFeedback r;
+        for (int slot = 0; slot < copies; ++slot) r.equip(slot, "triangle", Rarity::Unique);
+        r.equip(copies, "triangle", Rarity::Super);
+        r.prepare();
+        Entity triangle = NULL_ENTITY;
+        Query<PetalInstance>{r.w}.each([&](Entity e, PetalInstance& petal) {
             if (petal.slot == 0) triangle = e;
         });
         CHECK(triangle != NULL_ENTITY);
         if (triangle == NULL_ENTITY) continue;
-        const auto mob = r.mob(r.w.get<Transform>(triangle).position);
-        const double expected = (tier == Rarity::Common ? 5 + 4 : 32805 + 26244) *
-            skills.effectScale(SkillId::Damage);
+        const auto target = r.mob(r.w.get<Transform>(triangle).position);
         r.hit(10000);
-        CHECK_NEAR(1e12 - r.w.get<Health>(mob).current, expected, 1e-3);
+        CHECK_NEAR(1e12 - r.w.get<Health>(target).current, 32805 + (copies - 1) * 26244, 1e-3);
     }
 }
 

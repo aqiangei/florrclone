@@ -33,9 +33,9 @@ inline const HyperTechniqueInfo* wornHyperTechnique(const World& world, const Co
     const auto index = registry.petalIndex(std::string(id));
     if (index == kInvalidIndex) return nullptr;
     for (int i = 0; i < active; ++i) {
-        if (loadout->slots[static_cast<std::size_t>(i)].rarity != Rarity::Apex) continue;
+        if (!isHyperPetal(loadout->slots[static_cast<std::size_t>(i)].rarity)) continue;
         const auto slot = equippedPetal(registry, *loadout, i);
-        if (slot.configIndex == index && slot.reloadRarity == Rarity::Apex) {
+        if (slot.configIndex == index && isHyperPetal(slot.reloadRarity)) {
             return hyperTechniqueInfo(id, Rarity::Apex);
         }
     }

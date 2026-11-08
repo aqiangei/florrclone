@@ -10,6 +10,7 @@
 #include "shared/core/text.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/markup.h"
+#include "shared/game/npc.h"
 
 namespace flix {
 
@@ -46,6 +47,7 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::ResetSkills:         return "resetSkills";
         case net::ClientMessage::BuyPetal:            return "buyPetal";
         case net::ClientMessage::SetSkin:             return "setSkin";
+        case net::ClientMessage::RequestPracticeBoard: return "practiceBoard";
         case net::ClientMessage::RequestLeaderboard:  return "leaderboard";
         case net::ClientMessage::RedeemCode:          return "redeemCode";
         case net::ClientMessage::PublishSkin:         return "publishSkin";
@@ -92,6 +94,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::Died:                return "died";
         case net::ServerMessage::Revived:             return "revived";
         case net::ServerMessage::CraftResult:         return "craftResult";
+        case net::ServerMessage::PracticeBoard:       return "practiceBoard";
         case net::ServerMessage::Leaderboard:         return "leaderboard";
         case net::ServerMessage::Pong:                return "pong";
         case net::ServerMessage::Kick:                return "kick";
@@ -312,6 +315,7 @@ void NetClient::forgetAccount() {
     skinCatalog_.clear();
     equippedSkinId_.clear();
     skinAdmin_ = false;
+    practiceBoard_ = {};
     leaderboard_.clear();
     playtimeLeaderboard_.clear();
     hyperBoard_.clear(); hyperHoldingsTotal_ = hyperHoldingsOffset_ = 0;
@@ -558,6 +562,14 @@ void NetClient::requestTitanForge(std::uint16_t petalIndex,bool hyper,bool etern
     send(w);
 }
 
+void NetClient::requestPermanentHyperForge(std::uint16_t petalIndex) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::TitanForge);
+    w.u16(petalIndex);
+    w.u8(kPermanentHyperForgeMode);
+    send(w);
+}
+
 void NetClient::requestTitanHolder(std::uint16_t petalIndex) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::TitanHolder);
@@ -652,6 +664,14 @@ void NetClient::deleteSkin(const std::string& id) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::DeleteSkin);
     w.str(id);
+    send(w);
+}
+
+void NetClient::requestPracticeBoard(bool includeAdmins) {
+    practiceBoard_.pending = true;
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::RequestPracticeBoard);
+    w.boolean(includeAdmins);
     send(w);
 }
 
@@ -1234,6 +1254,7 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::Died:         handleDied(reader); break;
         case net::ServerMessage::Revived:      handleRevived(reader); break;
         case net::ServerMessage::CraftResult:  handleCraftResult(reader); break;
+        case net::ServerMessage::PracticeBoard: handlePracticeBoard(reader); break;
         case net::ServerMessage::Leaderboard:  handleLeaderboard(reader); break;
         // Timed from when the bytes arrived, not from this read of them. The
         // client reads once a frame, so a reply that came straight back still
@@ -1695,6 +1716,33 @@ void NetClient::handleSetUsernameResult(ByteReader& reader) {
     if (outcome.ok && !username.empty()) profile_.username = username;
     outcome.pending = true;
     usernameOutcome_ = std::move(outcome);
+}
+
+void NetClient::handlePracticeBoard(ByteReader& reader) {
+    PracticeBoard board;
+    board.hasDummy = reader.boolean();
+    if (board.hasDummy) {
+        board.rarity = clampRarity(reader.u8());
+        const auto count = reader.u8();
+        if (count > net::kPracticeBoardRows) return;
+        for (unsigned i = 0; i < count; ++i) {
+            PracticeBoardRow row;
+            row.name = reader.str();
+            row.damage = reader.f64();
+            const auto sources = reader.u8();
+            if (sources > net::kPracticeBoardSources) return;
+            for (unsigned j = 0; j < sources; ++j) {
+                PracticeBoardSource source;
+                source.kind = static_cast<net::PracticeSource>(reader.u8());
+                source.petal = reader.u16();
+                source.rarity = clampRarity(reader.u8());
+                source.damage = reader.f64();
+                row.sources.push_back(source);
+            }
+            board.rows.push_back(std::move(row));
+        }
+    }
+    if (reader.ok()) practiceBoard_ = std::move(board);
 }
 
 void NetClient::handleLeaderboard(ByteReader& reader) {

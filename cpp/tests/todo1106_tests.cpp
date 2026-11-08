@@ -728,6 +728,10 @@ TEST(todo1107_hostile_acquires_earlier_and_closes_the_gap) {
 }
 
 TEST(todo1106_idle_mob_sleeps_until_observed_or_hurt) {
+    std::string error;
+    const bool loaded = loadContent(testsupport::dataDir(), error);
+    CHECK(loaded);
+    if (!loaded) return;
     World world;
     Terrain terrain;
     SpatialGrid grid;
@@ -766,6 +770,32 @@ TEST(todo1106_idle_mob_sleeps_until_observed_or_hurt) {
     world.get<Transform>(player).position = home + Vec2{200, 0};
     step(1150);
     CHECK(!world.get<MobAi>(mob).sleeping);
+
+    world.get<Transform>(mob).position = home;
+    world.get<Transform>(player).position = home - Vec2{7000, 0};
+    world.get<MobAi>(mob).kind = AiKind::Passive;
+    step(1200);
+    CHECK(world.get<MobAi>(mob).sleeping);
+    CHECK_NEAR(distance(home, world.get<Transform>(mob).position), 0, 1e-9);
+    world.get<PlayerLocation>(player).viewport = {14000, 1080};
+    step(1250);
+    CHECK(!world.get<MobAi>(mob).sleeping);
+
+    world.get<PlayerLocation>(player).viewport = {1920, 1080};
+    world.get<Transform>(mob).position = home;
+    world.get<MobAi>(mob).kind = AiKind::Neutral;
+    world.get<MobAi>(mob).aggroRange = 6500;
+    const auto remote = flower(world);
+    world.get<Transform>(remote).realm = Realm::Arena;
+    world.get<PlayerModifiers>(remote).aggroRadiusBonus = 1000;
+    grid.insert(player, Realm::Overworld, world.get<Transform>(player).position, 25);
+    step(1300);
+    CHECK(world.get<MobAi>(mob).sleeping);
+
+    world.get<PlayerModifiers>(player).aggroRadiusBonus = 1000;
+    step(1350);
+    CHECK(!world.get<MobAi>(mob).sleeping);
+    CHECK_EQ(world.get<MobAi>(mob).target, player);
 }
 
 TEST(todo1106_loadout_presets_restore_independent_talents) {

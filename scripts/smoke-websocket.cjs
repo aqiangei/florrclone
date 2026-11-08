@@ -8,22 +8,21 @@ function appFrame(body) {
   body.copy(out, 4);
   return out;
 }
-function mask(payload) {
+function mask(payload, opcode = 0x2) {
   const m = crypto.randomBytes(4);
   const len = payload.length;
   let header;
   if (len < 126) {
     header = Buffer.alloc(2);
-    header[0] = 0x82;
     header[1] = 0x80 | len;
   } else if (len < 65536) {
     header = Buffer.alloc(4);
-    header[0] = 0x82;
     header[1] = 0x80 | 126;
     header.writeUInt16BE(len, 2);
   } else {
     throw new Error('payload too large');
   }
+  header[0] = 0x80 | opcode;
   const out = Buffer.alloc(header.length + 4 + len);
   header.copy(out, 0);
   m.copy(out, header.length);
@@ -67,7 +66,11 @@ function parseFrames(buffer, state) {
       for (let i = 0; i < payload.length; i++) payload[i] ^= mk[i & 3];
     }
     at += need;
-    if (opcode === 0x8 || opcode === 0x9 || opcode === 0xa) continue; // control
+    if (opcode === 0x9) {
+      state.replyPong(payload);
+      continue;
+    }
+    if (opcode === 0x8 || opcode === 0xa) continue;
     if (opcode === 0x0 && pending) {
       pending = Buffer.concat([pending, payload]);
     } else if (opcode === 0x1 || opcode === 0x2) {
@@ -113,7 +116,10 @@ function wsConnect(port) {
       }
       socket.setTimeout(0);
       socket.on('error', () => {});
-      const state = { buffer: Buffer.alloc(0), queue: [], listeners: new Set() };
+      const state = {
+        buffer: Buffer.alloc(0), queue: [], listeners: new Set(),
+        replyPong: payload => socket.write(mask(payload, 0xa)),
+      };
       socket.smokeReader = state;
       const data = chunk => {
         const parsed = parseFrames(Buffer.concat([state.buffer, chunk]), state);

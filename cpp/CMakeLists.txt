@@ -409,6 +409,10 @@ if(EMSCRIPTEN)
 endif()
 set(FLIX_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${FLIX_GENERATED_DIR})
+set(FLIX_RELEASE_NOTES_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/release-notes.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${FLIX_RELEASE_NOTES_FILE}")
+file(READ "${FLIX_RELEASE_NOTES_FILE}" FLIX_RELEASE_NOTES_JSON)
+configure_file(client/ui/release_notes.h.in "${FLIX_GENERATED_DIR}/release_notes.h" @ONLY)
 set(FLIX_FACE_TABLE ${FLIX_GENERATED_DIR}/face_metrics_table.inc)
 add_custom_command(
   OUTPUT ${FLIX_FACE_TABLE}

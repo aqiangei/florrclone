@@ -19,6 +19,17 @@ constexpr double kSpawnedMobBodyScale = 0.75;
 /// Mobs that are never put to sleep and never recycled: they stay live
 /// entities wherever they stand, however long nobody looks at them.
 ///
+// Prestige Jungle lacks the ordinary Jungle's separately stocked boss populations.
+// More of its own ambient slots can stay latent outside the players' views.
+constexpr double kPrestigeJungleDensityScale = 1.25;
+constexpr double kPrestigeJungleRespawnMinMillis = 2000.0;
+constexpr double kPrestigeJungleRespawnMaxMillis = 6000.0;
+constexpr int kPrestigeJungleMinAwake = 12;
+
+bool isPrestigeJungle(const MapData& map) {
+    return map.prestige() && map.templateId() == "jungle";
+}
+
 /// A BOSS is an event -- the whole server was told it appeared and the bots
 /// were sent at it, so it has to be there when somebody arrives, doing what it
 /// was doing. A target dummy is furniture someone walked away from, and the
@@ -1600,6 +1611,38 @@ void SpawnSystem::runNests(World& world, const Terrain& terrain, const ContentRe
 // Spawn rectangles
 // ---------------------------------------------------------------------------
 
+void SpawnSystem::setActivePyramidRealms(Realm ordinary, Realm prestige) {
+    if (worldMaps == nullptr) return;
+    std::array<bool, kMaxRealms> inactive{};
+    for (const MapData& map : worldMaps->maps()) {
+        const Realm realm = map.realm();
+        if (map.biome() == "pyramid" && realm != ordinary && realm != prestige)
+            inactive[realmIndex(realm)] = true;
+    }
+    if (inactive == inactivePyramidRealms_) return;
+    inactivePyramidRealms_ = inactive;
+
+    for (SpawnZone& zone : zones_) {
+        if (!inactive[realmIndex(zone.realm)]) continue;
+        zone.latent.clear();
+        zone.liveMobs = 0;
+    }
+    censusMobs_.erase(std::remove_if(censusMobs_.begin(), censusMobs_.end(), [&](const CensusMob& mob) {
+        return inactive[realmIndex(zones_[mob.zone].realm)];
+    }), censusMobs_.end());
+
+    const auto clearRetired = [&](auto& states) {
+        states.erase(std::remove_if(states.begin(), states.end(), [&](const auto& state) {
+            return inactive[realmIndex(state.realm)];
+        }), states.end());
+    };
+    clearRetired(superPopulations_);
+    clearRetired(superFarmPopulations_);
+    clearRetired(eternalPopulations_);
+    clearRetired(hyperPopulations_);
+    nextPopulationMillis_ = 0.0;
+}
+
 void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     if (zoneMaps_ == worldMaps && zoneContentHash_ == content.contentHash()) return;
     zoneMaps_ = worldMaps;
@@ -1611,6 +1654,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     censusMobs_.clear();
     vanished_.clear();
     realmBiome_.fill(kInvalidIndex);
+    prestigeJungleRealm_ = Realm::Arena;
     if (worldMaps == nullptr) return;
 
     // Every staged map's bands, each tagged with the realm it belongs to. One
@@ -1624,6 +1668,8 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
         // there is ever upgraded, and a unique or apex never stands in one.
         const std::uint16_t biome = map.prestige() ? kInvalidIndex : bossClockFor(map.biome());
         realmBiome_[realmIndex(map.realm())] = biome;
+        const bool prestigeJungle = isPrestigeJungle(map);
+        if (prestigeJungle) prestigeJungleRealm_ = map.realm();
         for (const MapElement& element : map.elements()) {
             if (!element.isSpawnBand() && !element.isMobRegion()) continue;
             SpawnZone zone;
@@ -1676,11 +1722,13 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             // Unless the band is SINGULAR, which is the one band whose size
             // says nothing about its population: it is drawn over everywhere
             // its one mob may be, so area buys reach, not numbers.
+            const double densityScale = prestigeJungle && element.forceRarity < 0
+                                            ? kPrestigeJungleDensityScale : 1.0;
             zone.targetMobs =
                 element.singular
                     ? 1
                     : std::max(1, static_cast<int>(std::ceil(
-                          kTargetMobDensity * element.density * element.area())));
+                          kTargetMobDensity * element.density * element.area() * densityScale)));
             zones_.push_back(std::move(zone));
         }
 
@@ -1993,7 +2041,7 @@ void SpawnSystem::stockSupers(World& world, const Terrain& terrain,
                               const ContentRegistry& content, const std::vector<Viewer>& viewers,
                               Rng& rng, double nowMillis) {
     for (const SpawnZone& zone : zones_) {
-        if (zone.prestige) continue;
+        if (zone.prestige || inactivePyramidRealms_[realmIndex(zone.realm)]) continue;
         const auto* map = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
         if (map && map->templateId() == "super") continue;
         const auto found = std::find_if(superPopulations_.begin(), superPopulations_.end(),
@@ -2104,8 +2152,9 @@ void SpawnSystem::stockSuperFarms(World& world, const Terrain& terrain,
     if (!worldMaps) return;
     for (const auto& map : worldMaps->maps()) {
         const bool dedicatedFarm = map.templateId() == "super";
-        if (worldMaps->isPrestige(map.realm()) || (!dedicatedFarm && !map.usesReferenceSpawnCurve()) ||
-            !supportsSuperFarm(map.id())) continue;
+        const auto& farmId = map.biome() == "pyramid" ? map.biome() : map.id();
+        if (inactivePyramidRealms_[realmIndex(map.realm())] || map.prestige() ||
+            (!dedicatedFarm && !map.usesReferenceSpawnCurve()) || !supportsSuperFarm(farmId)) continue;
         double highest = -1;
         for (const auto& zone : zones_)
             if (zone.realm==map.realm() && !zone.prestige && !zone.singular && zone.forceRarity<0)
@@ -2172,8 +2221,9 @@ void SpawnSystem::stockEternals(World& world, const Terrain& terrain,
                                 Rng& rng, double nowMillis) {
     if(!worldMaps)return;
     for(const auto& map:worldMaps->maps()) {
-        const auto& id=map.id();
-        if(worldMaps->isPrestige(map.realm()) || !map.usesReferenceSpawnCurve() ||
+        const auto& id = map.biome() == "pyramid" ? map.biome() : map.id();
+        if(inactivePyramidRealms_[realmIndex(map.realm())] || map.prestige() ||
+           !map.usesReferenceSpawnCurve() ||
            (id!="garden"&&id!="desert"&&id!="computer"&&id!="ocean"&&id!="jungle"&&
             id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"&&id!="cyberspace"))continue;
         auto state=std::find_if(eternalPopulations_.begin(),eternalPopulations_.end(),
@@ -2219,8 +2269,9 @@ void SpawnSystem::stockHypers(World& world, const Terrain& terrain,
                                 Rng& rng, double nowMillis) {
     if(!worldMaps)return;
     for(const auto& map:worldMaps->maps()) {
-        const auto& id=map.id();
-        if(worldMaps->isPrestige(map.realm()) || !map.usesReferenceSpawnCurve() ||
+        const auto& id = map.biome() == "pyramid" ? map.biome() : map.id();
+        if(inactivePyramidRealms_[realmIndex(map.realm())] || map.prestige() ||
+           !map.usesReferenceSpawnCurve() ||
            (id!="garden"&&id!="desert"&&id!="computer"&&id!="ocean"&&id!="jungle"&&
             id!="hel"&&id!="ant_hell"&&id!="sewers"&&id!="pyramid"&&id!="cyberspace"))continue;
         auto state=std::find_if(hyperPopulations_.begin(),hyperPopulations_.end(),
@@ -2273,6 +2324,7 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
 
     for (std::size_t index = 0; index < zones_.size(); ++index) {
         SpawnZone& zone = zones_[index];
+        if (inactivePyramidRealms_[realmIndex(zone.realm)]) continue;
         // The band's whole population, awake and asleep. Nothing about a
         // viewport appears in this test: a band on the far side of the map is
         // stocked to exactly the same number as the one under the player's
@@ -2300,6 +2352,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
                             SpawnZone& zone, std::uint16_t zoneIndex,
                             const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
                             Slot slot, Vec2 lostAt, bool fixedSuper, Rarity managedTier, bool superFarm) {
+    if (inactivePyramidRealms_[realmIndex(zone.realm)]) return false;
     const auto* authoredMap = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
     // The dedicated farm uses the capped Super population and its vacancy
     // timer. Ordinary fill and casualty paths cannot create lower tiers here.
@@ -2449,9 +2502,12 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         // does not wait to be full: the first player onto a server, or an
         // operator after a killall, sees the band full on the next pass, on
         // their own screen too.
-        const double delay = slot == Slot::Killed && seenBy(viewers, zone.realm, at, 0.0)
-                                 ? rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis)
-                                 : 0.0;
+        double delay = 0.0;
+        if (slot == Slot::Killed && seenBy(viewers, zone.realm, at, 0.0)) {
+            const bool jungleRefill = zone.realm == prestigeJungleRealm_ && !zone.singular && forcedTier < 0;
+            delay = jungleRefill ? rng.range(kPrestigeJungleRespawnMinMillis, kPrestigeJungleRespawnMaxMillis)
+                                 : rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis);
+        }
         addLatent(zoneIndex, LatentMob{at, nowMillis + delay, type, rarity});
         return true;
     }
@@ -2594,6 +2650,24 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
     // the whole map is stocked and not one of it is simulated.
     if (seers.empty()) return;
 
+    const int ambientBudget = mobCap >= 128 ? mobCap - 128 : mobCap;
+    // At saturation, an empty Prestige Jungle can use part of the existing
+    // escort headroom for its nearest animals, without raising the mob cap.
+    const bool jungleInView = ambientBudget < mobCap &&
+        std::any_of(seers.begin(), seers.end(), [&](const Viewer& viewer) {
+            return viewer.realm == prestigeJungleRealm_;
+        });
+    const int wakeBudget = jungleInView ? mobCap : ambientBudget;
+    if (census_.mobs >= wakeBudget) return;
+
+    int jungleAwake = 0;
+    if (jungleInView) {
+        for (const SpawnZone& zone : zones_) {
+            if (zone.realm == prestigeJungleRealm_) jungleAwake += zone.liveMobs;
+        }
+        if (census_.mobs >= ambientBudget && jungleAwake >= kPrestigeJungleMinAwake) return;
+    }
+
     // Gathered first and woken nearest-first. There is no allowance per band:
     // a player arriving through a door, or wearing antennae that show half the
     // map, sees the whole of what is in front of them at once rather than
@@ -2604,6 +2678,7 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
     for (std::size_t index = 0; index < zones_.size(); ++index) {
         SpawnZone& zone = zones_[index];
         if (zone.latent.empty()) continue;
+        if (census_.mobs >= ambientBudget && zone.realm != prestigeJungleRealm_) continue;
         // The cheap rejection, and the reason this is affordable at all: one
         // rectangle test per viewer says whether the band's records are worth
         // walking, and on a map with two dozen bands almost none of them are.
@@ -2656,13 +2731,18 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
               });
 
     std::size_t attempted = 0;
-    // Keep bounded room for combat-triggered nest defenders. Ambient records
-    // remain on the map and can wake as those slots become available.
-    const int ambientBudget=mobCap>=128?mobCap-128:mobCap;
-    for (; attempted < wakeList_.size() && census_.mobs < ambientBudget; ++attempted) {
-        const WakeCandidate& candidate = wakeList_[attempted];
+    for (const WakeCandidate candidate : wakeList_) {
+        if (census_.mobs >= wakeBudget) break;
         SpawnZone& zone = zones_[candidate.zone];
         const LatentMob& record = zone.latent[candidate.index];
+        if (census_.mobs >= ambientBudget) {
+            if (jungleAwake >= kPrestigeJungleMinAwake) break;
+            if (zone.realm != prestigeJungleRealm_) continue;
+            // A chain wakes whole. Leave it asleep if its body will not fit.
+            const int bodyCount = 1 + content.mob(record.mobIndex).segmentCount;
+            if (bodyCount > mobCap - census_.mobs) continue;
+        }
+        wakeList_[attempted++] = candidate;
         const Entity spawned =
             spawnMobAt(world, terrain, content, record.mobIndex, record.rarity, record.position,
                        zone.realm, nowMillis, rng, 0, candidate.zone, candidate.facing);
@@ -2671,12 +2751,13 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         // path shares, and counting it twice here would halve the ceiling for
         // everything else in the same pass.
         ++zone.liveMobs;
+        if (zone.realm == prestigeJungleRealm_) ++jungleAwake;
         ++census_.promotedTotal;
         noteLiveBandMob(world, spawned, candidate.zone);
     }
 
-    // Every record that was tried is gone from the records, woken or not: one
-    // whose type the content no longer defines cannot be woken and must not be
+    // Only the compacted, attempted records are removed. A record whose
+    // type the content no longer defines cannot be woken and must not be
     // retried every pass forever, and dropping it lets the band stock a
     // replacement it can actually place. Removed highest index first within
     // each band, so a swap with the back never moves a record still to go.

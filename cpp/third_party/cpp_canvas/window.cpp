@@ -509,6 +509,7 @@ struct Window::Impl {
   // the mouse is divided by; `uiScale` is the caller's base transform.
   double fit = 1.0;
   double uiScale = 1.0;
+  double uiScaleMultiplier = 1.0;
   bool shouldClose = false;
 
   std::array<bool, kKeyCount> down{}, pressed{}, released{}, typedKeys{};
@@ -761,6 +762,7 @@ struct Window::Impl {
     } else {
       fit = 1.0;
     }
+    fit *= uiScaleMultiplier;
     uiScale = fit * devicePixelRatio * renderScale;
     if (!(uiScale > 0)) uiScale = 1.0;
 
@@ -1648,6 +1650,7 @@ int Window::height() const { return impl_->viewHeight; }
 int Window::pixelWidth() const { return impl_->pixelWidth; }
 int Window::pixelHeight() const { return impl_->pixelHeight; }
 double Window::uiScale() const { return impl_->uiScale; }
+double Window::uiScaleMultiplier() const { return impl_->uiScaleMultiplier; }
 double Window::devicePixelRatio() const { return impl_->devicePixelRatio; }
 double Window::renderScale() const { return impl_->renderScale; }
 
@@ -1655,6 +1658,17 @@ void Window::setDesignSize(int width, int height) {
   impl_->designWidth = std::max(0, width);
   impl_->designHeight = std::max(0, height);
   impl_->refreshGeometry();
+}
+
+void Window::setUiScaleMultiplier(double multiplier) {
+  if (!std::isfinite(multiplier) || multiplier <= 0.0 ||
+      multiplier == impl_->uiScaleMultiplier) return;
+  const double previousFit = impl_->fit;
+  impl_->uiScaleMultiplier = multiplier;
+  impl_->refreshGeometry();
+  // Keep the last pointer position on the same physical pixel until it moves.
+  impl_->mouseX *= static_cast<float>(previousFit / impl_->fit);
+  impl_->mouseY *= static_cast<float>(previousFit / impl_->fit);
 }
 
 void Window::setRenderScale(double scale) {

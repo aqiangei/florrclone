@@ -105,9 +105,9 @@ TEST(deep_prestige_sewers_grows_mostly_super_with_some_ultra) {
                 100.0 * ultra / samples);
 }
 
-TEST(prestige_is_one_root_node_costing_225) {
+TEST(prestige_is_one_root_node_costing_175) {
     CHECK_EQ(skillTierCount(SkillId::Prestige), 1);
-    CHECK_EQ(skillTierCost(SkillId::Prestige, 0), 225);
+    CHECK_EQ(skillTierCost(SkillId::Prestige, 0), 175);
     CHECK(skillGate(SkillId::Prestige) == nullptr);
     CHECK(skillFromKey("prestige") == SkillId::Prestige);
 
@@ -116,8 +116,9 @@ TEST(prestige_is_one_root_node_costing_225) {
     CHECK(skills.prerequisiteMet(SkillId::Prestige));
     skills.set(SkillId::Prestige, 0);
     CHECK(skills.prestigeUnlocked());
-    CHECK_EQ(skills.spent(), 225);
-    CHECK_EQ(availableTalentPoints(113, skills), 1);
+    CHECK_EQ(skills.spent(), 175);
+    CHECK_EQ(availableTalentPoints(88, skills), 1);
+    CHECK_EQ(availableTalentPoints(113, skills), 51);
     // It multiplies nothing.
     CHECK_NEAR(skills.statScale(SkillId::Damage), 1.0, 1e-12);
     CHECK_NEAR(skills.reloadScale(), 1.0, 1e-12);
@@ -310,6 +311,73 @@ TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
     CHECK(announced);
 }
 
+TEST(prestige_jungle_wakes_local_mobs_at_the_shared_ambient_limit) {
+    World world;
+    CommandBuffer commands{world};
+    Terrain terrain;
+    SpawnSystem spawner;
+    Rng rng{42u};
+    WorldMaps maps;
+    std::string error;
+    if (!maps.load(dataDir(), &terrain, error)) {
+        CHECK(false);
+        return;
+    }
+    spawner.worldMaps = &maps;
+    bool found = false;
+    const Realm jungle = maps.realmOfId("jungle", found);
+    CHECK(found);
+    const Realm twin = maps.prestigeRealm(jungle, found);
+    CHECK(found);
+    if (!found) return;
+
+    const Realm pyramid = maps.realmOfId("pyramid", found);
+    CHECK(found);
+    if (!found) return;
+    const Realm prestigePyramid = maps.prestigeRealm(pyramid, found);
+    CHECK(found);
+    if (!found) return;
+    spawner.setActivePyramidRealms(pyramid, prestigePyramid);
+
+    // Many ordinary bands in view exhaust their share before the first
+    // player enters the prestige twin. Use the shipped map geometry.
+    std::vector<RealmPoint> viewers;
+    for (const MapData& map : maps.maps()) {
+        if (map.prestige() || map.id() != map.templateId()) continue;
+        if (map.biome() == "pyramid" && map.realm() != pyramid) continue;
+        for (const MapElement& band : map.elements()) {
+            if (!band.isSpawnBand() || band.singular || band.forceRarity >= 0) continue;
+            const Vec2 at{band.bounds.x + band.bounds.w * 0.5, band.bounds.y + band.bounds.h * 0.5};
+            if (!terrain.blocked(at, map.realm())) viewers.push_back({at, map.realm()});
+            if (viewers.size() == 60) break;
+        }
+        if (viewers.size() == 60) break;
+    }
+    const auto tick = [&](double time) {
+        spawner.run(world, terrain, shippedContent(), viewers, rng, time, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    for (int pass = 0; pass < 12; ++pass) tick(50'000.0 + pass * kPopulationIntervalMillis);
+
+    const int before = spawner.census().mobs;
+    CHECK(before >= kMaxLiveMobs - 170);
+    const Vec2 entrance{25217.0, 3577.0};
+    viewers.push_back({entrance, twin});
+    tick(55'550.0); // Arrive between regular population passes.
+
+    int nearby = 0;
+    Query<MobTag, Transform, MobType, AmbientMob> mobs{world};
+    mobs.without<Dead>();
+    mobs.each([&](Entity, MobTag&, Transform& at, MobType& type, AmbientMob&) {
+        if (at.realm != twin) return;
+        CHECK(!barredFromPrestige(type.rarity));
+        if (std::abs(at.position.x - entrance.x) <= 1200.0 &&
+            std::abs(at.position.y - entrance.y) <= 820.0) ++nearby;
+    });
+    CHECK(nearby > 0);
+    CHECK(spawner.census().mobs <= kMaxLiveMobs);
+}
+
 TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
     World world;
     Terrain terrain;
@@ -430,27 +498,27 @@ TEST(only_a_tree_with_prestige_joins_the_prestige_biome) {
     CHECK(realmOf(world, bodyNamed(world, "climber")) == Realm::Arena);
 }
 
-TEST(prestige_is_bought_with_225_points_and_not_on_the_maze_tree) {
+TEST(prestige_is_bought_with_175_points_and_not_on_the_maze_tree) {
     Harness h("prestige-buy",
               [](const std::string& path) {
                   seedUser(path, "rich", "password7");
                   seedUser(path, "poor", "password7");
-                  seedProgress(path, "rich", false, 113);
-                  seedProgress(path, "poor", false, 112);
+                  seedProgress(path, "rich", false, 88);
+                  seedProgress(path, "poor", false, 87);
               },
               dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient poor;
     CHECK(logIn(h, poor, "poor"));
-    CHECK(awaitProfile(h, poor, [](const Profile& p) { return p.level == 112; }));
+    CHECK(awaitProfile(h, poor, [](const Profile& p) { return p.level == 87; }));
     poor.requestUpgradeSkill(SkillId::Prestige, 0);
-    CHECK(h.stepUntil({&poor}, [&] { return sawText(poor, "need 225"); }, 60));
+    CHECK(h.stepUntil({&poor}, [&] { return sawText(poor, "need 175"); }, 60));
     CHECK(!poor.profile().skills.prestigeUnlocked());
 
     NetClient rich;
     CHECK(logIn(h, rich, "rich"));
-    CHECK(awaitProfile(h, rich, [](const Profile& p) { return p.level == 113; }));
+    CHECK(awaitProfile(h, rich, [](const Profile& p) { return p.level == 88; }));
     rich.requestUpgradeSkill(SkillId::Prestige, 0);
     CHECK(awaitProfile(h, rich, [](const Profile& p) {
         return p.skills.prestigeUnlocked() && p.talentPoints() == 1;
@@ -564,6 +632,152 @@ TEST(a_prestige_super_is_neither_announced_nor_mourned) {
     CHECK(!sawText(client, "Super Bee has been defeated"));
 }
 
+TEST(pyramid_layouts_have_connected_routes_and_share_the_active_spawn_rules) {
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    if (!maps.load(dataDir(), &terrain, error)) { CHECK(false); return; }
+
+    const auto center = [](const MapElement& object) {
+        return Vec2{object.bounds.x + object.bounds.w * 0.5, object.bounds.y + object.bounds.h * 0.5};
+    };
+    const auto exitPad = [](const MapData& map) {
+        return std::find_if(map.elements().begin(), map.elements().end(), [](const MapElement& object) {
+            return object.kind == MapElementKind::Teleporter;
+        });
+    };
+    int layouts = 0;
+    for (const MapData& map : maps.maps()) {
+        if (map.biome() != "pyramid" || map.prestige()) continue;
+        ++layouts;
+        const Realm realm = map.realm();
+        bool found = false;
+        const Realm twin = maps.prestigeRealm(realm, found);
+        if (!found) { CHECK(false); continue; }
+        CHECK(realmFromByte(static_cast<std::uint8_t>(twin)) == twin);
+        const auto entrances = map.playerSpawns();
+        const auto pad = exitPad(map);
+        if (entrances.size() != 1 || pad == map.elements().end()) { CHECK(false); continue; }
+        const Vec2 entrance = center(*entrances.front());
+        const Vec2 exit = center(*pad);
+        CHECK(!terrain.resolveWall(entrance, kPlayerBaseRadius, realm).collided);
+        CHECK(!terrain.resolveWall(exit, kPlayerBaseRadius, realm).collided);
+
+        // Test the collision polygons used by the server, including the
+        // transformed tiles. Every walkable sample must be reachable from
+        // the entrance by a flower with room to clear each step.
+        constexpr int step = 64;
+        const Vec2 extent = terrain.realmExtent(realm);
+        const int width = static_cast<int>(extent.x) / step;
+        const int height = static_cast<int>(extent.y) / step;
+        const auto grid = [width](Vec2 at) {
+            return static_cast<int>(at.y) / step * width + static_cast<int>(at.x) / step;
+        };
+        const auto sample = [width](int cell) {
+            return Vec2{static_cast<double>(cell % width * step + step / 2),
+                        static_cast<double>(cell / width * step + step / 2)};
+        };
+        std::vector<unsigned char> open(width * height);
+        int walkable = 0;
+        for (int cell = 0; cell < width * height; ++cell) {
+            if (terrain.resolveWall(sample(cell), kPlayerBaseRadius, realm).collided) continue;
+            open[cell] = 1;
+            ++walkable;
+        }
+        const int start = grid(entrance);
+        if (!open[start]) { CHECK(false); continue; }
+        std::vector<int> reached{start};
+        open[start] = 2;
+        for (std::size_t i = 0; i < reached.size(); ++i) {
+            const int cell = reached[i];
+            const int x = cell % width;
+            for (const int next : {x > 0 ? cell - 1 : -1, x + 1 < width ? cell + 1 : -1,
+                                   cell - width, cell + width}) {
+                if (next < 0 || next >= width * height || open[next] != 1) continue;
+                if (terrain.resolveWall((sample(cell) + sample(next)) * 0.5, kPlayerBaseRadius, realm).collided)
+                    continue;
+                open[next] = 2;
+                reached.push_back(next);
+            }
+        }
+        CHECK(open[grid(exit)] == 2);
+        CHECK_EQ(reached.size(), static_cast<std::size_t>(walkable));
+
+        Rng rng{20261108};
+        for (const Realm current : {realm, twin}) {
+            const MapData& currentMap = *maps.forRealm(current);
+            const auto currentPad = exitPad(currentMap);
+            WorldMaps::Destination destination;
+            if (currentPad == currentMap.elements().end() ||
+                !maps.resolveTeleporter(*currentPad, rng, terrain, destination)) {
+                CHECK(false);
+                continue;
+            }
+            CHECK(maps.forRealm(destination.realm)->biome() == "desert");
+            CHECK(maps.isPrestige(destination.realm) == (current == twin));
+            CHECK(!terrain.blocked(destination.position, destination.realm));
+        }
+
+        World world;
+        CommandBuffer commands{world};
+        SpawnSystem spawner;
+        spawner.worldMaps = &maps;
+        spawner.sizePlacementGrids(terrain);
+        spawner.setActivePyramidRealms(realm, twin);
+        spawner.restoreBossClock("pyramid", 0.0, 0.0);
+        for (int pass = 0; pass < 12; ++pass) {
+            spawner.run(world, terrain, shippedContent(), {{entrance, realm}, {entrance, twin}},
+                        rng, 50'000.0 + pass * kPopulationIntervalMillis, net::kTickSeconds, commands);
+            commands.flush();
+        }
+
+        int ordinary = 0, prestige = 0, farm = 0, eternal = 0, hyper = 0;
+        Query<MobTag, Transform, MobType, AmbientMob> mobs{world};
+        mobs.without<Dead>();
+        mobs.each([&](Entity entity, MobTag&, Transform& at, MobType& mob, AmbientMob& ambient) {
+            if (maps.forRealm(at.realm) == nullptr || maps.forRealm(at.realm)->biome() != "pyramid")
+                return;
+            CHECK(at.realm == realm || at.realm == twin);
+            if (at.realm == realm) {
+                ordinary += ambient.zone != kInvalidIndex;
+                farm += world.has<SuperFarmMob>(entity);
+                eternal += mob.rarity == Rarity::Unique;
+                hyper += mob.rarity == Rarity::Apex;
+            } else if (at.realm == twin) {
+                prestige += ambient.zone != kInvalidIndex;
+                CHECK(!barredFromPrestige(mob.rarity));
+            }
+        });
+        CHECK(ordinary > 0);
+        CHECK(prestige > 0);
+        CHECK_EQ(farm, kSuperFarmPopulation);
+        CHECK(eternal > 0);
+        CHECK(hyper > 0);
+        for (const MapData& inactive : maps.maps()) {
+            if (inactive.biome() != "pyramid" || inactive.realm() == realm || inactive.realm() == twin)
+                continue;
+            std::vector<SpawnSystem::LatentSite> sites;
+            spawner.latentSites(inactive.realm(), sites);
+            CHECK(sites.empty());
+        }
+        std::printf("[pyramid %s] reachable %zu/%d, ordinary %d, prestige %d, farm %d, Eternal %d, Hyper %d\n",
+                    map.id().c_str(), reached.size(), walkable, ordinary, prestige, farm, eternal, hyper);
+
+        std::vector<SpawnSystem::LatentSite> previousStock;
+        spawner.latentSites(twin, previousStock);
+        CHECK(!previousStock.empty());
+        const Realm next = maps.realmOfId(map.id() == "pyramid" ? "pyramid_alt" : "pyramid", found);
+        CHECK(found);
+        const Realm nextTwin = maps.prestigeRealm(next, found);
+        CHECK(found);
+        spawner.setActivePyramidRealms(next, nextTwin);
+        std::vector<SpawnSystem::LatentSite> retiredStock;
+        spawner.latentSites(twin, retiredStock);
+        CHECK(retiredStock.empty());
+    }
+    CHECK_EQ(layouts, 4);
+}
+
 TEST(pyramid_rotation_returns_ordinary_and_prestige_players_to_the_new_entrance) {
     Harness h("pyramid-rotation",
               [](const std::string& path) {
@@ -601,28 +815,70 @@ TEST(pyramid_rotation_returns_ordinary_and_prestige_players_to_the_new_entrance)
     CHECK(ordinary.view().realm() == oldOrdinary);
     CHECK(prestige.view().realm() == oldPrestige);
 
-    world.get<Transform>(walker).position = {2000.0, 2000.0};
-    world.get<Transform>(climber).position = {2200.0, 2200.0};
-    GameServerPeer::advancePyramidCycle(h.server);
-    const auto newOrdinary = realmOf(world, walker);
-    const auto newPrestige = realmOf(world, climber);
-    CHECK(newOrdinary != oldOrdinary);
-    CHECK(newPrestige != oldPrestige);
-    CHECK(maps.isPrestige(newPrestige));
-    for (const auto player : {walker, climber}) {
-        const auto& at = world.get<Transform>(player);
-        const auto doors = maps.forRealm(at.realm)->playerSpawns();
-        CHECK(!doors.empty());
-        if (!doors.empty()) CHECK(doors.front()->bounds.contains(at.position));
-        CHECK(!h.server.terrain().blocked(at.position, at.realm));
+    const auto padFor = [](const MapData& map, const std::string& target) {
+        return std::find_if(map.elements().begin(), map.elements().end(), [&](const MapElement& object) {
+            return object.kind == MapElementKind::Teleporter && object.targetMap == target;
+        });
+    };
+    Rng padRng{123u};
+    std::set<Realm> visited;
+    for (int i = 0; i < 4; ++i) {
+        const Realm before = realmOf(world, walker);
+        const Entity retired = world.create();
+        world.add<MobTag>(retired);
+        world.add<Transform>(retired, Transform{{2000.0, 2000.0}, 0.0, before});
+        world.get<Transform>(walker).position = {2000.0, 2000.0};
+        world.get<Transform>(climber).position = {2200.0, 2200.0};
+        GameServerPeer::advancePyramidCycle(h.server);
+        CHECK(!world.isAlive(retired));
+        const Realm newOrdinary = realmOf(world, walker);
+        const Realm newPrestige = realmOf(world, climber);
+        CHECK(newOrdinary != before);
+        bool twinFound = false;
+        CHECK(maps.prestigeRealm(newOrdinary, twinFound) == newPrestige);
+        CHECK(twinFound);
+        visited.insert(newOrdinary);
+
+        for (const auto player : {walker, climber}) {
+            const auto at = world.get<Transform>(player);
+            const MapData& map = *maps.forRealm(at.realm);
+            const auto doors = map.playerSpawns();
+            CHECK(!doors.empty());
+            if (!doors.empty()) CHECK(doors.front()->bounds.contains(at.position));
+            CHECK(!h.server.terrain().blocked(at.position, at.realm));
+
+            const auto outgoing = padFor(map, maps.isPrestige(at.realm) ? "prestige_desert" : "desert");
+            WorldMaps::Destination exit;
+            if (outgoing == map.elements().end() ||
+                !maps.resolveTeleporter(*outgoing, padRng, h.server.terrain(), exit)) {
+                CHECK(false);
+                continue;
+            }
+            GameServerPeer::markTeleport(h.server, player, exit.realm, exit.position);
+            CHECK(realmOf(world, player) == exit.realm);
+            const MapData& desert = *maps.forRealm(exit.realm);
+            const auto incoming = padFor(desert, maps.isPrestige(exit.realm) ? "prestige_pyramid" : "pyramid");
+            WorldMaps::Destination arrival;
+            if (incoming == desert.elements().end() ||
+                !maps.resolveTeleporter(*incoming, padRng, h.server.terrain(), arrival)) {
+                CHECK(false);
+                continue;
+            }
+            GameServerPeer::markTeleport(h.server, player, arrival.realm, arrival.position);
+            CHECK(realmOf(world, player) == at.realm);
+            CHECK(!h.server.terrain().blocked(world.get<Transform>(player).position, at.realm));
+        }
+        for (int frame = 0; frame < 20; ++frame) {
+            h.server.serviceNetwork(1);
+            ordinary.poll(1);
+            prestige.poll(1);
+        }
+        CHECK(ordinary.view().realm() == newOrdinary);
+        CHECK(prestige.view().realm() == newPrestige);
     }
-    for (int i = 0; i < 20; ++i) {
-        h.server.serviceNetwork(1);
-        ordinary.poll(1);
-        prestige.poll(1);
-    }
-    CHECK(ordinary.view().realm() == newOrdinary);
-    CHECK(prestige.view().realm() == newPrestige);
+    CHECK_EQ(visited.size(), std::size_t(4));
+    CHECK(realmOf(world, walker) == oldOrdinary);
+    CHECK(realmOf(world, climber) == oldPrestige);
 }
 
 TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {

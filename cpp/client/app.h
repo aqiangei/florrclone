@@ -805,16 +805,11 @@ private:
     double mazeMinimapDensity_ = 0.0;
 
     // -- scene wipe ----------------------------------------------------------
-    /// The iris that covers a scene change. `Covered` holds the outgoing frame
-    /// whole until the incoming scene has something to show; `Wiping` opens or
-    /// closes the hole over IRIS_DURATION_MS.
+    /// The iris that reveals the world after joining. `Covered` holds the lobby
+    /// whole until the world has something to show; `Wiping` opens the hole.
     struct SceneWipe {
         enum class Phase : std::uint8_t { Idle, Covered, Wiping };
         Phase phase = Phase::Idle;
-        /// True going INTO the game: the hole grows and the outgoing still is
-        /// what is left outside it. False going back to the title, where the
-        /// still shrinks to a point instead.
-        bool holeGrows = false;
         double phaseStartSeconds = 0;
         /// A frozen copy of the outgoing scene. Null means the copy failed, in
         /// which case the wipe falls through black exactly as the reference's
@@ -822,7 +817,7 @@ private:
         std::unique_ptr<Canvas> snapshot;
     };
     SceneWipe wipe_;
-    void beginSceneWipe(bool toGame);
+    void beginWorldReveal();
     void drawSceneWipe(Canvas&);
     /// True once the incoming scene has something worth revealing.
     bool wipeReadyToReveal() const;

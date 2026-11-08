@@ -298,10 +298,21 @@ TEST(a_profile_check_behind_the_server_s_revision_recovers_without_relogin) {
     CHECK(checkBroughtProfile(h, client));
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Rare), 4u);
 
-    // Caught up, the same disagreement is a desync, and is repaired at once.
-    editInMemory(client).revision = latest;
+    const std::uint32_t repaired = client.profile().revision;
+    editInMemory(client).revision = latest - 1;
+    CHECK(!checkBroughtProfile(h, client));
+
+    // An already applied repair can reveal a real mismatch at the current
+    // revision. Fix it immediately even inside the stale-revision window.
+    editInMemory(client).revision = repaired;
+    setHeldCount(client, rose, Rarity::Rare, 999);
     CHECK(checkBroughtProfile(h, client));
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Rare), 4u);
+
+    // If the earlier repair was never applied, a later check can retry it.
+    editInMemory(client).revision = latest - 1;
+    h.step(kSettleTicks * 2, {&client});
+    CHECK(checkBroughtProfile(h, client));
 }
 
 TEST(pickups_are_told_as_a_delta_that_leaves_the_digests_agreeing) {

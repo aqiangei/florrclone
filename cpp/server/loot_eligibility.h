@@ -23,11 +23,10 @@
 // ranks the same again. A party cannot out-rank a solo player by being
 // numerous, and cannot pad its average by leaving the passengers out of it.
 //
-// A CONTENDER MUST HAVE EARNED IT. Nobody is paid for a mob they did less than
-// 1% of its health to -- a solo player on their own damage, a squad on that
-// same average over its full membership. Without the floor a single stray
-// petal on a boss twenty other flowers are killing is a full share of its
-// drops and XP.
+// A CONTENDER MUST HAVE EARNED IT. Below Hyper, a solo player's damage or a
+// squad's full-membership average must reach 1% of the mob's health. Hyper
+// admits positive contenders and scales each eligible player's loot and XP
+// by their own contribution.
 
 #include <algorithm>
 #include <cstddef>
@@ -110,6 +109,23 @@ inline double lootDamageFloor(double mobMaxHealth) {
 /// the gallery must use the same floor as the drops they accompany.
 inline double lootDamageFloor(Rarity rarity, double mobMaxHealth) {
     return rarity == Rarity::Apex ? 0.0 : lootDamageFloor(mobMaxHealth);
+}
+
+inline constexpr int kHyperLowRewardTenths = 5;
+
+/// The kill announcement names the first highest contributor. Use the
+/// original ledger so a leader who left cannot promote somebody else.
+inline int hyperRewardTenths(const Bounty& bounty, Entity recipient,
+                             net::ConnectionId owner, double mobMaxHealth) {
+    const auto& shares = bounty.contributors;
+    const auto top = std::max_element(shares.begin(), shares.end(),
+        [](const auto& a, const auto& b) { return a.damage < b.damage; });
+    for (auto it = shares.begin(); it != shares.end(); ++it) {
+        if (it->owner != 0 ? it->owner != owner : it->player != recipient) continue;
+        if (it == top && it->damage > 0.0) return 13;
+        return it->damage < lootDamageFloor(mobMaxHealth) ? kHyperLowRewardTenths : 10;
+    }
+    return mobMaxHealth > 0.0 ? kHyperLowRewardTenths : 10;
 }
 
 /// How many PEOPLE a group of bodies holds.

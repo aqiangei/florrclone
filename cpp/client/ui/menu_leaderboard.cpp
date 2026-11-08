@@ -62,6 +62,21 @@ std::string formatXp(double xp) {
 /// Where a scrollbar drag started. This belongs on LeaderboardPanel beside the
 /// scroller, but menus.h is not this file's to change; there is exactly one
 /// panel instance, so one copy here is that state under another name.
+std::string practiceSourceLabel(const PracticeBoardSource& source) {
+    const auto& registry = content();
+    if (source.petal < registry.petalCount()) {
+        const auto& petal = registry.petal(source.petal);
+        return std::string(rarityTr(source.rarity)) + " " + petalNameTr(petal.id, petal.name.c_str());
+    }
+    switch (source.kind) {
+        case net::PracticeSource::Summon: return "召唤";
+        case net::PracticeSource::Poison: return "持续毒伤";
+        case net::PracticeSource::Reflect: return "反伤";
+        case net::PracticeSource::Field: return "范围效果";
+        default: return "其他伤害";
+    }
+}
+
 struct BarDrag {
     bool active = false;
     double anchorY = 0;
@@ -82,6 +97,7 @@ void LeaderboardPanel::reset() {
     requested_ = false;
     hyper_ = false;
     playtime_ = false;
+    damage_ = false;
     barDrag() = {};
 }
 
@@ -99,13 +115,16 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
 
     const std::vector<LeaderboardRow>& rows = playtime_ ? ctx.net.playtimeLeaderboard() : ctx.net.leaderboard();
     const auto& holdings = ctx.net.hyperBoard();
-    const bool pending = ctx.net.leaderboardPending();
-    const std::size_t rowCount = hyper_ ? holdings.size() : rows.size();
-    const Rect xpTab{panel.x+12, panel.y+50, 95, 28};
-    const Rect hyperTab{panel.x+115, panel.y+50, 115, 28};
-    const Rect timeTab{panel.x+238, panel.y+50, 115, 28};
-    const Rect prevPage{panel.right()-92, panel.y+50, 32, 28};
-    const Rect nextPage{panel.right()-50, panel.y+50, 32, 28};
+    const auto& practice = ctx.net.practiceBoard();
+    const bool pending = damage_ ? practice.pending : ctx.net.leaderboardPending();
+    const std::size_t rowCount = damage_ ? practice.rows.size()
+                                         : (hyper_ ? holdings.size() : rows.size());
+    const Rect xpTab{panel.x+12, panel.y+50, 70, 28};
+    const Rect hyperTab{panel.x+89, panel.y+50, 86, 28};
+    const Rect timeTab{panel.x+182, panel.y+50, 105, 28};
+    const Rect damageTab{panel.x+294, panel.y+50, 83, 28};
+    const Rect prevPage{panel.right()-99, panel.y+50, 26, 28};
+    const Rect nextPage{panel.right()-39, panel.y+50, 26, 28};
 
     const Rect closeRect = closeButtonRect(panel);
     const Rect refreshRect{panel.right() - 140.0, panel.y + 10.0, 80.0, 30.0};
@@ -120,6 +139,9 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     scroll_.contentHeight = rowCount == 0 && !pending
                                 ? kRowHeight
                                 : kColumnHeader + static_cast<double>(rowCount) * kRowHeight;
+    if (damage_ && rowCount > 0) {
+        for (const auto& row : practice.rows) scroll_.contentHeight += row.sources.size() * 23.0;
+    }
     // Clamped against the viewport ui::scrollbar measures, not against the
     // clipped view, so the thumb lands on the end of its track exactly when
     // the board does; at the end of a long board that last 5px of content
@@ -141,11 +163,16 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     if (ctx.pressed()) {
         if (closeRect.contains(mouse)) {
             closing = true;
-        } else if (xpTab.contains(mouse) || hyperTab.contains(mouse) || timeTab.contains(mouse)) {
+        } else if (xpTab.contains(mouse) || hyperTab.contains(mouse) ||
+                   timeTab.contains(mouse) || damageTab.contains(mouse)) {
             playtime_ = timeTab.contains(mouse);
-            hyper_ = hyperTab.contains(mouse); scroll_.offset = 0; drag.active = false;
-            ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard);
-            return true; // Recompute the selected row count on the next frame.
+            hyper_ = hyperTab.contains(mouse);
+            damage_ = damageTab.contains(mouse);
+            scroll_.offset = 0;
+            drag.active = false;
+            if (damage_) ctx.net.requestPracticeBoard(ctx.settings.showAdminsOnLeaderboard);
+            else ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard);
+            return true;
         } else if (hyper_ && !pending && (prevPage.contains(mouse) || nextPage.contains(mouse))) {
             const auto offset = ctx.net.hyperHoldingsOffset();
             if (prevPage.contains(mouse) && offset > 0)
@@ -154,7 +181,8 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
                 ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard, offset+kHyperBoardPageSize);
             scroll_.offset = 0;
         } else if (refreshRect.contains(mouse)) {
-            ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard,
+            if (damage_) ctx.net.requestPracticeBoard(ctx.settings.showAdminsOnLeaderboard);
+            else ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard,
                 hyper_ ? ctx.net.hyperHoldingsOffset() : 0);
         } else if (scrollable && bar.contains(mouse)) {
             drag.active = true;
@@ -196,14 +224,15 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
 
     pillButton(canvas, refreshRect, tipRefresh(), kLeaderboardSkin.border);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
-    pillButton(canvas, xpTab, "等级榜", !hyper_ && !playtime_ ? 0x85530Cu : kLeaderboardSkin.border);
+    pillButton(canvas, xpTab, "等级榜", !hyper_ && !playtime_ && !damage_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, hyperTab, "超凡持有", hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, timeTab, "有效游玩时间", playtime_ ? 0x85530Cu : kLeaderboardSkin.border);
+    pillButton(canvas, damageTab, "伤害统计", damage_ ? 0x85530Cu : kLeaderboardSkin.border);
     if (hyper_) {
         const auto pages = std::max(1u, (ctx.net.hyperHoldingsTotal()+kHyperBoardPageSize-1)/kHyperBoardPageSize);
         TextStyle info; info.size=12; info.strokeWidth=0;
         text(canvas, std::to_string(ctx.net.hyperHoldingsOffset()/kHyperBoardPageSize+1)+" / "+std::to_string(pages),
-            panel.right()-155, panel.y+64, info);
+            panel.right()-70, panel.y+64, info);
         pillButton(canvas, prevPage, "<", kLeaderboardSkin.border);
         pillButton(canvas, nextPage, ">", kLeaderboardSkin.border);
     }
@@ -216,7 +245,54 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
 
     double y = view.y - scroll_.offset;
 
-    if (rowCount == 0) {
+    if (damage_) {
+        TextStyle label;
+        label.size = 14.0;
+        label.baseline = Baseline::Middle;
+        const double left = panel.x + 18.0;
+        const double right = panel.right() - 28.0;
+        const std::string header = pending ? "正在读取木桩伤害…"
+            : !practice.hasDummy ? "当前地图没有木桩。可去丛林训练区。"
+            : std::string(rarityTr(practice.rarity)) + " 木桩 · 最近 10 秒";
+        text(canvas, header, left, y + 15.0, label);
+        y += kColumnHeader;
+        if (practice.hasDummy && practice.rows.empty() && !pending) {
+            text(canvas, "暂无伤害。攻击附近的木桩后点刷新。", left, y + 15.0, label);
+        }
+        for (std::size_t i = 0; i < practice.rows.size(); ++i) {
+            const auto& row = practice.rows[i];
+            const double top = y;
+            y += kRowHeight + 23.0 * row.sources.size();
+            if (y < view.y || top > view.bottom()) continue;
+            setFill(canvas, kPaper, i % 2 == 0 ? 0.15 : 0.08);
+            canvas.fillRect(static_cast<float>(panel.x + 10.0), static_cast<float>(top),
+                            static_cast<float>(panel.w - 20.0), static_cast<float>(y - top));
+            label.align = Align::Left;
+            label.fill = rankColor(static_cast<int>(i) + 1);
+            const std::string name = std::to_string(i + 1) + ". " + row.name;
+            label.size = std::min(15.0, 15.0 * (right - left - 125.0) / std::max(1.0, measure(name, 15.0)));
+            text(canvas, name, left, top + kRowHeight * 0.5, label);
+            label.align = Align::Right;
+            label.size = 14.0;
+            label.fill = kPaper;
+            text(canvas, formatCompact(row.damage / net::kPracticeWindowSeconds) + " DPS",
+                 right, top + kRowHeight * 0.5, label);
+            for (std::size_t j = 0; j < row.sources.size(); ++j) {
+                const auto& source = row.sources[j];
+                const double sy = top + kRowHeight + j * 23.0 + 10.0;
+                const auto title = practiceSourceLabel(source);
+                label.align = Align::Left;
+                label.size = std::min(13.0, 13.0 * (right - left - 153.0) /
+                                      std::max(1.0, measure(title, 13.0)));
+                text(canvas, title, left + 18.0, sy, label);
+                label.size = 13.0;
+                label.align = Align::Right;
+                const auto share = row.damage > 0.0 ? std::lround(100.0 * source.damage / row.damage) : 0;
+                text(canvas, formatCompact(source.damage / net::kPracticeWindowSeconds) +
+                     " DPS · " + std::to_string(share) + "%", right, sy, label);
+            }
+        }
+    } else if (rowCount == 0) {
         TextStyle empty;
         empty.size = 14.0;
         empty.align = Align::Centre;
@@ -285,6 +361,60 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
         scrollbar(canvas, view, scroll_.contentHeight, scroll_.offset, kLeaderboardSkin.accent,
                   kScrollbarWidth);
     }
+    return true;
+}
+
+bool WavePanel::render(MenuContext& ctx) {
+    const Rect panel = ctx.bounds;
+    const Rect close = closeButtonRect(panel);
+    const double x = panel.x + 16.0;
+    const double y = panel.y;
+    const Rect start{x, y + 94.0, 100.0, 30.0};
+    const Rect leave{panel.right() - 116.0, y + 94.0, 100.0, 30.0};
+    const Rect field{x, y + 140.0, panel.w - 135.0, 32.0};
+    const Rect join{field.right() + 8.0, field.y, 94.0, field.h};
+    const Vec2 mouse = ctx.mouse();
+    if (ctx.pressed() && close.contains(mouse)) return false;
+
+    trackTextMouse(ctx.window, field_, field, inputFieldRun(field, code_, field_),
+                   code_, ctx.timeSeconds);
+    const bool typing = field_.focused;
+    if (typing) {
+        TextEditOptions options;
+        options.maxBytes = 6;
+        options.asciiOnly = true;
+        editText(ctx.window, code_, field_, ctx.timeSeconds, options);
+        ctx.wantsText = true;
+    }
+    const bool valid = code_.size() == 6 &&
+        std::all_of(code_.begin(), code_.end(), [](char c) { return c >= '0' && c <= '9'; });
+    if (ctx.pressed() && start.contains(mouse)) {
+        ctx.net.sendChat("/wave start");
+        return false;
+    }
+    if (ctx.pressed() && leave.contains(mouse)) {
+        ctx.net.sendChat("/wave leave");
+        return false;
+    }
+    if (valid && ((ctx.pressed() && join.contains(mouse)) ||
+                  (typing && ctx.window.keyPressed(Key::Enter)))) {
+        ctx.net.sendChat("/wave join " + code_);
+        return false;
+    }
+
+    Canvas& canvas = ctx.canvas;
+    panelCard(canvas, panel, kLeaderboardSkin);
+    panelHeading(canvas, panel, "Wave 试炼");
+    panelClose(canvas, close, close.contains(mouse));
+    TextStyle info;
+    info.size = 14.0;
+    text(canvas, "最多四人，连续五波。", x, y + 54.0, info);
+    text(canvas, "房号发到个人聊天，开房 15 秒后开打。", x, y + 74.0, info);
+    pillButton(canvas, start, "创建房间", kLeaderboardSkin.border);
+    pillButton(canvas, leave, "离开房间", kLeaderboardSkin.border);
+    inputField(canvas, field, code_, "六位房号", typing, ctx.timeSeconds, &field_);
+    pillButton(canvas, join, "加入", valid ? kLeaderboardSkin.border : 0x767676u);
+    text(canvas, "试炼怪不产出经验、星星或掉落。", x, y + 195.0, info);
     return true;
 }
 

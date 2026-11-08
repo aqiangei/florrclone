@@ -1,9 +1,8 @@
 #pragma once
 // Rarity: the single axis both mobs and items are graded on.
 //
-// Twelve tiers: florrclone's eleven-rung ladder (Common through Devine), then
-// the give-only Admin tier above it. Wire ids stay Unique/Apex/Universal;
-// display names follow florrclone (Eternal/Hyper/Devine).
+// The wire and save use stable rarity IDs. Permanent Hyper is an item
+// identity with Hyper mechanics and its own color.
 
 #include <array>
 #include <cstdint>
@@ -16,7 +15,7 @@ namespace flix {
 enum class Rarity : std::uint8_t {
     Common = 0, Uncommon, Rare, Epic, Legendary,
     Mythic, Ultra, Super, Unique, Apex,
-    Universal, Admin,
+    Universal, Admin, PermanentHyper,
     Count
 };
 
@@ -25,7 +24,7 @@ inline constexpr int kRarityCount = static_cast<int>(Rarity::Count);
 inline constexpr std::array<const char*, kRarityCount> kRarityNames = {
     "common", "uncommon", "rare", "epic", "legendary",
     "mythic", "ultra", "super", "unique", "apex",
-    "universal", "admin",
+    "universal", "admin", "permanent_hyper",
 };
 
 /// Display names, used on drop labels and inventory tooltips.
@@ -33,7 +32,7 @@ inline constexpr std::array<const char*, kRarityCount> kRarityNames = {
 inline constexpr std::array<const char*, kRarityCount> kRarityLabels = {
     "Common", "Unusual", "Rare", "Epic", "Legendary",
     "Mythic", "Ultra", "Super", "Eternal", "Hyper",
-    "Devine", "Admin",
+    "Devine", "Admin", "Permanent Hyper",
 };
 
 /// Tier colours. These carry meaning at a glance -- a player reads rarity from
@@ -53,9 +52,18 @@ inline constexpr std::array<std::uint32_t, kRarityCount> kRarityColors = {
     0x153B8Fu,  // hyper      navy
     0x29292Fu,  // devine     near-black
     0xFFB020u,  // admin      gold (give-only; not in florrclone)
+    0xE7BD60u,  // permanent hyper
 };
 
 inline constexpr int rarityIndex(Rarity r) { return static_cast<int>(r); }
+inline constexpr Rarity petalGameplayRarity(Rarity r) {
+    return r == Rarity::PermanentHyper ? Rarity::Apex : r;
+}
+inline constexpr int petalTier(Rarity r) { return rarityIndex(petalGameplayRarity(r)); }
+inline constexpr bool isHyperPetal(Rarity r) { return petalGameplayRarity(r) == Rarity::Apex; }
+inline constexpr bool samePetalTier(Rarity a, Rarity b) {
+    return petalGameplayRarity(a) == petalGameplayRarity(b);
+}
 inline constexpr const char* rarityName(Rarity r) {
     return rarityIndex(r) < kRarityCount ? kRarityNames[rarityIndex(r)] : "common";
 }
@@ -218,7 +226,7 @@ inline double mobSizeRamp(Rarity r, double scaleAtUnique) {
 /// armour strip, a root's stack -- read it here, so universal gives them apex.
 inline double petalStatScale(Rarity r) {
     // Hyper no longer triples Eternal. Universal/Admin retain their own tier.
-    if (r == Rarity::Apex) return std::pow(3.0, rarityIndex(Rarity::Unique)) * 1.5;
+    if (isHyperPetal(r)) return std::pow(3.0, rarityIndex(Rarity::Unique)) * 1.5;
     return std::pow(3.0, ladderIndex(r));
 }
 

@@ -779,8 +779,14 @@ struct GameServerPeer {
         server.replicate(server.clockMillis_);
         server.events_.clear();
     }
+    static void stageOnlineRoster(GameServer& server, double now) {
+        server.serviceOnlineRoster(now);
+        server.sendDueOnlineRosters();
+    }
     static EventQueue& snapshotEvents(GameServer& server) { return server.events_; }
     static void markClock(GameServer& server, double now) { server.clockMillis_ = now; }
+    static CombatSystem& practiceCombat(GameServer& server) { return *server.combat_; }
+    static double practiceClock(const GameServer& server) { return server.clockMillis_; }
     static void advancePyramidCycle(GameServer& server) {
         server.servicePyramidRotation(server.pyramidCycle_ + 1);
         server.commands_.flush();

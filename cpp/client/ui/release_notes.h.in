@@ -1,0 +1,6 @@
+#pragma once
+
+// The same notes used by the deployment maintenance page.
+namespace flix {
+inline constexpr char kReleaseNotesJson[] = R"flix_notes(@FLIX_RELEASE_NOTES_JSON@)flix_notes";
+}

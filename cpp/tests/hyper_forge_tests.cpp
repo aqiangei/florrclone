@@ -221,6 +221,32 @@ TEST(hyper_cap_reopens_after_one_copy_is_stolen_and_preserves_existing_five){
     CHECK(forgeHyper(f.db,f.a,"basic",15LL*3600000).ok);CHECK_EQ(hyperHoldingCount(f.db,f.a),5);
     CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex,"petal_leaf"),4);
 }
+TEST(contested_hyper_transfer_and_abandon_leave_permanent_items_alone) {
+    Fixture f;
+    f.give(f.a, "rose");
+    f.give(f.b, "rose");
+    CHECK(forgeHyper(f.db, f.a, "rose", 0).ok);
+    auto& old = f.db.progress(f.a);
+    const StoredItem contested{"petal", Rarity::Apex, "rose"};
+    const StoredItem permanent{"petal", Rarity::PermanentHyper, "rose"};
+    old.addItem(Rarity::Apex, "petal_rose", -1);
+    old.addItem(Rarity::PermanentHyper, "petal_rose", 1);
+    old.loadout = {permanent, contested};
+    old.loadoutPresets["K1"] = {contested, permanent};
+    CHECK_EQ(hyperHoldingCount(f.db, f.a), 1);
+    CHECK(forgeHyper(f.db, f.b, "rose", 15LL * 3600000).ok);
+    const auto& transferred = f.db.progress(f.a);
+    CHECK_EQ(transferred.itemCount(Rarity::PermanentHyper, "petal_rose"), 1);
+    CHECK(transferred.loadout[0] && transferred.loadout[0]->rarity == Rarity::PermanentHyper);
+    CHECK(!transferred.loadout[1]);
+    CHECK(!transferred.loadoutPresets.at("K1")[0]);
+    CHECK(transferred.loadoutPresets.at("K1")[1] &&
+          transferred.loadoutPresets.at("K1")[1]->rarity == Rarity::PermanentHyper);
+    f.db.progress(f.b).addItem(Rarity::PermanentHyper, "petal_rose", 1);
+    CHECK(abandonHyper(f.db, f.b, "rose").ok);
+    CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::PermanentHyper, "petal_rose"), 1);
+    CHECK_EQ(f.db.progress(f.b).itemCount(Rarity::Apex, "petal_rose"), 0);
+}
 TEST(hyper_forge_race_has_one_winner_and_steals_reach_the_one_hour_floor){
     Fixture f;f.give(f.a,"rose",100);f.give(f.b,"rose",100);
     const auto third=f.db.createUser("three","password8").account->id;f.give(third,"rose",5);

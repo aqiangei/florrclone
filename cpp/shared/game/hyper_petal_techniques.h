@@ -458,7 +458,7 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
 
 inline const HyperTechniqueInfo* hyperTechniqueInfo(std::string_view id, Rarity rarity,
                                                      bool copiedFromOtherTier = false) {
-    if (rarity != Rarity::Apex || copiedFromOtherTier) return nullptr;
+    if (!isHyperPetal(rarity) || copiedFromOtherTier) return nullptr;
     const auto* end = kHyperTechniques + sizeof(kHyperTechniques) / sizeof(*kHyperTechniques);
     const auto* entry = std::lower_bound(kHyperTechniques, end, id,
         [](const HyperTechniqueInfo& info, std::string_view key) { return info.id < key; });

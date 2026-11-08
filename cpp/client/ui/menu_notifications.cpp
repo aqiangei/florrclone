@@ -132,6 +132,7 @@ std::uint32_t stripeColor(const NotificationEntry& notice, bool isRead) {
         case net::NotificationKind::ApexCraft: color = rarityColor(Rarity::Apex); break;
         case net::NotificationKind::StarCode: color = 0xFFD700u; break;
         case net::NotificationKind::UniversalCraft: color = rarityColor(Rarity::Universal); break;
+        case net::NotificationKind::PermanentHyperForge: color = rarityColor(Rarity::PermanentHyper); break;
         case net::NotificationKind::Generic: break;
     }
     return color;

@@ -1,7 +1,5 @@
 #include "server/replication.h"
 
-#include "shared/game/berry_projectile.h"
-
 #include <algorithm>
 #include <cmath>
 
@@ -152,7 +150,7 @@ std::uint8_t computeEntityState(World& world, Entity e, double nowMillis) {
         // A mending mob holds its target only to run from it, and a starfish
         // spinning as if it were hunting would say the opposite. So does a
         // digger on its last tenth.
-        if (ai->target != NULL_ENTITY && !(ai->recoverPerSecond > 0.0) && !ai->fleeing) {
+        if (ai->target != NULL_ENTITY && !(ai->recoverPerSecond > 0.0)) {
             state |= net::StateChasing;
         }
         if (nowMillis < ai->stingLoadedAtMillis) state |= net::StateUnloaded;
@@ -233,7 +231,8 @@ PlayerVisualState computePlayerVisuals(World& world, Entity e, double nowMillis)
         // passing flower advertises what it is carrying.
         for (const LoadoutSlot& slot : loadout->slots) {
             if (slot.empty()) continue;
-            if (static_cast<int>(slot.rarity) > static_cast<int>(out.bestRarity)) {
+            if (petalTier(slot.rarity) > petalTier(out.bestRarity) ||
+                (slot.rarity == Rarity::PermanentHyper && out.bestRarity == Rarity::Apex)) {
                 out.bestRarity = slot.rarity;
             }
         }
@@ -928,18 +927,15 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 continue;
             }
             std::uint8_t flag = event.flag;
-            const bool lightning = event.kind == net::EventKind::Lightning;
-            const bool berryLaunch = event.kind == net::EventKind::Explosion &&
-                                     (event.flag & kBerryShotStyleMask) != 0;
-            if ((lightning || berryLaunch) && event.visualSource != NULL_ENTITY) {
+            if (event.kind == net::EventKind::Lightning && event.visualSource != NULL_ENTITY) {
                 auto owned = ownershipFlags(world, event.visualSource, viewer, viewerOwner);
                 if (world.has<PlayerTag>(event.visualSource)) {
                     const auto* account = world.tryGet<PlayerAccount>(event.visualSource);
                     if (event.visualSource != viewer && !(account && viewerOwner != 0 && account->connection == viewerOwner))
                         owned |= net::SpawnForeign;
                 }
-                if (owned & net::SpawnForeign) flag |= lightning ? net::LightningForeign : kBerryShotForeign;
-                if (owned & net::SpawnIsPet) flag |= lightning ? net::LightningFromPet : kBerryShotFromPet;
+                if (owned & net::SpawnForeign) flag |= net::LightningForeign;
+                if (owned & net::SpawnIsPet) flag |= net::LightningFromPet;
             }
             if (dealtByViewer(event)) flag |= net::DamageByViewer;
             if (offView && event.kind == net::EventKind::Damage) flag |= net::DamageOffView;

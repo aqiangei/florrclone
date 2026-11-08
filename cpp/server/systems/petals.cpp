@@ -610,7 +610,7 @@ bool championCrownTier(const ContentRegistry& registry, const Loadout& loadout, 
         // Resolved, so a mimic beside a crown is a crown at the mimic's tier.
         const EquippedPetal slot = equippedPetal(registry, loadout, i);
         if (slot.empty() || !petalLendsBasic(registry.petal(slot.configIndex))) continue;
-        if (!worn || rarityIndex(slot.rarity) > rarityIndex(tier)) tier = slot.rarity;
+        if (!worn || petalTier(slot.rarity) > petalTier(tier)) tier = slot.rarity;
         worn = true;
     }
     return worn;
@@ -985,7 +985,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         // already knows how, full reload included.
         const int count = petalAnchorsRing(config) && i != moonSlot
                               ? 0
-                              : petalCopies(std::max(0, stats.count), skills, i, rarityIndex(equipped.rarity), config.stackable);
+                              : petalCopies(std::max(0, stats.count), skills, i, petalTier(equipped.rarity), config.stackable);
         const double reload = reloadMillisFor(stats, reloadScale);
 
         if (slotState.equippedIndex != slot.configIndex ||
@@ -1032,7 +1032,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         }
 
         const auto* technique = hyperTechniqueInfo(config.id, equipped.rarity,
-                                                   equipped.reloadRarity != equipped.rarity);
+                                                   !samePetalTier(equipped.reloadRarity, equipped.rarity));
         double manaCost = stats.requiredMana;
         if (technique && technique->technique == HyperTechnique::MagicNeedleReserve) {
             const auto* mana = world.tryGet<ManaPool>(player);
@@ -1312,7 +1312,7 @@ void PetalSystem::gatherCrownLenders(World& world, const ContentRegistry& regist
     std::vector<double> reachSquared;
     reachSquared.reserve(crownWearers_.size());
     for (const auto& wearer : crownWearers_) {
-        const auto* technique = wearer.tier == Rarity::Apex
+        const auto* technique = isHyperPetal(wearer.tier)
             ? wornHyperTechnique(world, registry, wearer.entity, "champion_crown") : nullptr;
         const double radius = kCrownLendRadius * hyperAmount(technique, HyperTechnique::CrownReach);
         reachSquared.push_back(radius * radius);
@@ -1488,7 +1488,7 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     // flower -- which it would then shove -- nor in the path it is walking.
     const bool loose = petalIsLooseBody(config);
     const auto* technique = slot == kLentPetalSlot ? nullptr :
-        hyperTechniqueInfo(config.id, rarity, equipped.reloadRarity != rarity);
+        hyperTechniqueInfo(config.id, rarity, !samePetalTier(equipped.reloadRarity, rarity));
     const Vec2 position = loose
         ? loosePetalRestPoint(world, player, *ownerTransform, stats.radius,
                               hyperAmount(technique, HyperTechnique::LongWax))
@@ -1537,7 +1537,7 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
         if (auto* contact = world.tryGet<ContactDamage>(petal))
             contact->amount *= dominoDamageMultiplier(instance.dominoPips, rarity);
     }
-    instance.mimicked = equipped.reloadRarity != equipped.rarity;
+    instance.mimicked = !samePetalTier(equipped.reloadRarity, equipped.rarity);
     instance.reloadRarity = equipped.reloadRarity;
     instance.slot = slot;
     instance.subIndex = subIndex;
@@ -1547,7 +1547,7 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     // the ring. Its cooldown begins only after an actual shot.
     instance.nextProjectileMillis = config.projectile.present ? nowMillis : 0.0;
     // A reloaded berry must reach the client before being spent on a held attack.
-    if (berryShotStyle(config.id) != BerryShotStyle::None) {
+    if (hasBerryLoadAnimation(config.id)) {
         instance.nextProjectileMillis = nowMillis + kBerryLoadMillis;
     }
     instance.spawnedAtMillis = nowMillis;
@@ -1728,7 +1728,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             const LoadoutSlot& slot = loadout->slots[static_cast<std::size_t>(i)];
             if(!slot.empty()) {
                 const unsigned part=computerPart(registry.petal(slot.configIndex).id);
-                for(int tier=0;tier<=rarityIndex(slot.rarity);++tier)
+                for(int tier=0;tier<=petalTier(slot.rarity);++tier)
                     aggregate.modifiers.computerParts[tier]|=part;
             }
             // A mimic grants what the petal it copies grants, at its own tier.
@@ -1739,7 +1739,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                 equipFlags |= registry.petal(equipped.configIndex).equipFlags;
                 const auto& worn = registry.petal(equipped.configIndex);
                 if (worn.id == "triangle")
-                    ++aggregate.modifiers.triangleCounts[rarityIndex(equipped.rarity)];
+                    ++aggregate.modifiers.triangleCounts[petalTier(equipped.rarity)];
                 if (worn.id == "pharaoh_s_crown") equipFlags |= EquipPharaohCrown;
                 if (worn.id == "corruption") {
                     equippedCorruption = true;
@@ -1756,7 +1756,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             const PetalModifiers& mods = stats.modifiers;
             const auto* technique = world.has<PlayerTag>(player) ?
                 hyperTechniqueInfo(registry.petal(equipped.configIndex).id, equipped.rarity,
-                                   equipped.reloadRarity != equipped.rarity) : nullptr;
+                                   !samePetalTier(equipped.reloadRarity, equipped.rarity)) : nullptr;
 
             // ONE contribution per SLOT. A four-grain clump of sand is one
             // equipped petal, not four; summing per instance would make `count`
@@ -1848,7 +1848,7 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
             // reloading a copy must not repeatedly shrink and refill the pool.
             const auto& manaConfig = registry.petal(equipped.configIndex);
             const int manaCopies = petalCopies(1, activeTree ? &activeTree->skills : nullptr,
-                i, rarityIndex(equipped.rarity), manaConfig.stackable);
+                i, petalTier(equipped.rarity), manaConfig.stackable);
             aggregate.modifiers.maxMana += stats.maxMana * manaCopies;
             aggregate.modifiers.passiveManaPerSecond += stats.passiveManaPerSecond;
             if (blocking && wearerMana && wearerMana->current < wearerMana->max * 0.25) {
@@ -2101,7 +2101,7 @@ void PetalSystem::onKill(World& world, const ContentRegistry& registry, Entity p
         const auto stats = equippedPetalStats(registry, slot);
         if (stats.totemHealPerSecond > 0) {
             const auto* technique = hyperTechniqueInfo(registry.petal(slot.configIndex).id, slot.rarity,
-                                                      slot.reloadRarity != slot.rarity);
+                                                      !samePetalTier(slot.reloadRarity, slot.rarity));
             rates.push_back({nowMillis + hyperAmount(technique, HyperTechnique::LongTotem, 10000.0),
                              stats.totemHealPerSecond});
         }
@@ -2311,7 +2311,7 @@ void PetalSystem::placePetals(World& world, const ContentRegistry& registry, Ent
         // ring at all, so it leaves no gap in it either.
         if (config.noPhysics || petalIsLooseBody(config)) continue;
         const int count = std::max(
-            1, petalCopies(registry.petalStats(slot.configIndex, slot.rarity).count, skills, i, rarityIndex(slot.rarity), config.stackable));
+            1, petalCopies(registry.petalStats(slot.configIndex, slot.rarity).count, skills, i, petalTier(slot.rarity), config.stackable));
         occupied += config.clumped ? 1 : count;
     }
     // A crown's loan takes the place after the bar's last, and keeps it open
@@ -2761,9 +2761,25 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             // Put the rock on the perimeter, close enough for neighbouring
             // stones to overlap when the player places a ring of three.
             const Vec2 aim = origin + outward * std::max(orbitReach + 32.0, radius * 0.9);
-            const Vec2 from = terrain_ ? terrain_->resolveCircle(aim, radius, realm) : aim;
-            if (terrain_ && (terrain_->segmentBlocked(origin, from, realm) ||
-                             distanceSq(aim, from) > radius * radius)) continue;
+            Vec2 from = aim;
+            if (terrain_) {
+                if (terrain_->blocked(origin, realm)) continue;
+                // The blocker can meet a static wall. Only its centre needs
+                // to stay on the flower's side, even in narrow corridors.
+                if (terrain_->segmentBlocked(origin, aim, realm)) {
+                    const Vec2 span = aim - origin;
+                    double clear = 0.0, solid = 1.0;
+                    for (int step = 0; step < 10; ++step) {
+                        const double mid = (clear + solid) * 0.5;
+                        if (terrain_->segmentBlocked(origin, origin + span * mid, realm)) {
+                            solid = mid;
+                        } else {
+                            clear = mid;
+                        }
+                    }
+                    from = origin + outward * std::max(0.0, span.length() * clear - 4.0);
+                }
+            }
             const auto rarity = instance->rarity; const auto index = instance->configIndex;
             const Entity rock = world.create();
             world.add<Transform>(rock, Transform{from, 0, realm});
@@ -3450,10 +3466,6 @@ bool PetalSystem::fireProjectiles(World& world, const ContentRegistry& registry,
         world.add<Replicated>(shot, replicated);
         assignNetId(world, shot);
     }
-    const auto launch = berryShotStyle(config.id);
-    if (events_ && launch != BerryShotStyle::None) {
-        events_->berryLaunch(from, shotRadius, heading, realm, player, static_cast<std::uint8_t>(launch));
-    }
     return true;
 }
 
@@ -3684,7 +3696,7 @@ void PetalSystem::castMagicEye(World& world, const ContentRegistry& registry, En
 
     const auto eye = equippedPetal(registry, loadout, slot);
     const auto stats = equippedPetalStats(registry, eye);
-    const auto* profile = hyperTechniqueInfo("magic_eye", eye.rarity, eye.rarity != eye.reloadRarity);
+    const auto* profile = hyperTechniqueInfo("magic_eye", eye.rarity, !samePetalTier(eye.rarity, eye.reloadRarity));
     const double reachScale = hyperAmount(profile, HyperTechnique::WideMagicEye);
     const int tier = std::min(rarityIndex(eye.rarity), rarityIndex(Rarity::Unique));
     const int targets = std::clamp(tier - 3, 1, 5);
@@ -3995,7 +4007,7 @@ void PetalSystem::strikeWornLightning(World& world, const ContentRegistry& regis
         // Maximised independently of the damage, as the raindrop aura maximises
         // its reach: two cutters are one strike, and it is thrown at the best
         // of everything the flower is wearing.
-        if (rarityIndex(slot.rarity) > rarityIndex(tier)) tier = slot.rarity;
+        if (petalTier(slot.rarity) > petalTier(tier)) tier = slot.rarity;
     }
     if (!worn) return;
 
@@ -4114,7 +4126,7 @@ void PetalSystem::dischargeCapacitors(World& world, const ContentRegistry& regis
             std::min(instance->contactMillis * kCapacitorChargePerMillis, kCapacitorMaxCharge);
         instance->contactMillis = 0.0;
         const auto* modifiers = world.tryGet<PlayerModifiers>(player);
-        const double setScale = modifiers && computerPartCount(modifiers->computerParts[rarityIndex(rarity)]) >= 3 ? 1.12 : 1.0;
+        const double setScale = modifiers && computerPartCount(modifiers->computerParts[petalTier(rarity)]) >= 3 ? 1.12 : 1.0;
         const auto* technique = hyperTechniqueInfo("capacitor", rarity, instance->mimicked);
         const double reach = !touching && charge < kCapacitorMaxCharge - 1e-6 &&
             hyperDefending(world, player) ? hyperAmount(technique, HyperTechnique::CapacitorRelease) : 1.0;
@@ -4361,7 +4373,7 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     const bool egg = config.id == "egg" || config.id == "beetle_egg";
     const Rarity petRarity = rarity;
     const int squad = egg ? petalCopies(config.petCount, tree ? &tree->skills : nullptr,
-        slot, rarityIndex(rarity), config.stackable) : config.petCount;
+        slot, petalTier(rarity), config.stackable) : config.petCount;
     const int wanted = std::max(0, squad) * (apex ? kApexPetCount : 1);
     if (wanted <= 0) return;
 
@@ -4550,7 +4562,7 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     // Summons get at least the default chase range before rarity bonuses.
     // In particular, small ants should notice enemies before body contact.
     const double aggroRange = std::max(mob.aggroRange, kEnemyChaseRange)
-                           + rarityIndex(rarity) * kPetAggroRangePerRarity;
+                           + petalTier(rarity) * kPetAggroRangePerRarity;
 
     const Entity pet = world.create();
     world.add<MobTag>(pet);
@@ -4565,7 +4577,7 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     world.add<Armor>(pet, Armor{mob.armor});
     if (mob.evasion > 0.0) world.add<Evasion>(pet, Evasion{mob.evasion});
     world.add<Faction>(pet, faction);
-    world.add<MobType>(pet, MobType{mobIndex, rarity, sizeJitter});
+    world.add<MobType>(pet, MobType{mobIndex, petalGameplayRarity(rarity), sizeJitter});
     // A pet of an undead kind rises from its own killing blow too: florr's
     // pharaoh crown summons Undead beetles to fight at your side.
     if (const double undead = mobUndeadMillis(config, rarity); undead > 0.0) {

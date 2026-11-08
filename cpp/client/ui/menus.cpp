@@ -174,6 +174,7 @@ const std::array<MenuMeta, kMenuCount> kMenus = {{
     {"Admin", Key::Unknown},
     {"Assets", Key::Unknown},
     {"Account", Key::Unknown},
+    {"Wave", Key::Unknown},
 }};
 
 /// Every rebindable action, indexed by ControlAction, in the browser's
@@ -812,6 +813,12 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "zoom") zoom = clamp(std::atof(value.c_str()), kMinZoom, kMaxZoom);
         else if (key == "interp") interpolation = clamp(std::atof(value.c_str()), 0.05, 0.5);
         else if (key == "renderScale") renderScale = clamp(std::atof(value.c_str()), 0.25, 1.0);
+        else if (key == "uiScale") {
+            char* end = nullptr;
+            const double scale = std::strtod(value.c_str(), &end);
+            if (end != value.c_str() && *end == '\0' && std::isfinite(scale))
+                uiScale = clamp(scale, kMinUiScale, kMaxUiScale);
+        }
         else if (key == "desynchronized") desynchronizedCanvas = number != 0;
         else if (key == "spawn") spawnChoice = (value == "-" ? std::string() : value);
         // `biome` is what this line was called before spawn points replaced the
@@ -874,6 +881,7 @@ bool ClientSettings::save(const std::string& path) const {
          << "zoom " << zoom << '\n'
          << "interp " << interpolation << '\n'
          << "renderScale " << renderScale << '\n'
+         << "uiScale " << uiScale << '\n'
          << "desynchronized " << (desynchronizedCanvas ? 1 : 0) << '\n'
          // A dash rather than an empty field: the reader splits on whitespace,
          // and an empty value would swallow the next key as its own.
@@ -962,6 +970,7 @@ void MenuSystem::toggle(MenuId id) {
         case MenuId::AdminDb:     adminDb_.reset(); break;
         case MenuId::AdminDashboard: adminDashboard_.reset(); break;
         case MenuId::Assets:      assets_.reset(); break;
+        case MenuId::Wave:        wave_.reset(); break;
         case MenuId::Account:     account_.reset(); break;
         default: break;
     }
@@ -1170,13 +1179,20 @@ Rect ShopPanel::bounds(int, int) {
 Rect SkinsPanel::bounds(int w, int h) {
     return cornerPanel(preferredWidth(), SkinsPanel::preferredHeight(), kMenuCornerY, w, h);
 }
+Rect WavePanel::bounds(int w, int h) {
+    return cornerPanel(390.0, 220.0, kMenuCornerY, w, h);
+}
 Rect LeaderboardPanel::bounds(int w, int h) {
     return cornerPanel(preferredWidth(), 500.0, kMenuCornerY, w, h);
 }
 // Settings and debug sit two pixels higher than the other overlays, which is
 // what the browser does; not worth "correcting" into disagreement with it.
 Rect SettingsPanel::bounds(int w, int h) {
-    return cornerPanel(preferredWidth(), 500.0, kMenuCornerY - 2.0, w, h);
+    Rect panel = cornerPanel(preferredWidth(), 500.0, kMenuCornerY - 2.0, w, h);
+    // Keep the scale control reachable after enlarging the UI in portrait.
+    panel.w = clamp(w - panel.x * 2.0, 0.0, panel.w);
+    panel.h = clamp(h - panel.y - panel.x, 0.0, panel.h);
+    return panel;
 }
 Rect DebugPanel::bounds(int w, int h) {
     // Taller than the other corner panels by the tab row it grew, so the
@@ -1218,6 +1234,7 @@ Rect MenuSystem::panelBounds(MenuId id, int viewWidth, int viewHeight) {
         case MenuId::AdminDb:       return AdminDbPanel::bounds(viewWidth, viewHeight);
         case MenuId::AdminDashboard: return AdminDashboardPanel::bounds(viewWidth, viewHeight);
         case MenuId::Assets:        return AssetsPanel::bounds(viewWidth, viewHeight);
+        case MenuId::Wave:          return WavePanel::bounds(viewWidth, viewHeight);
         case MenuId::Account:       return AccountPanel::bounds(viewWidth, viewHeight);
         default:                    return listPanel(380.0, viewWidth, viewHeight);
     }
@@ -1252,6 +1269,7 @@ const std::array<MenuSystem::StripSlot, kStripSlotCount>& MenuSystem::strip() {
         {MenuId::Changelog,     A::OpenMenu, "changelog",     true,  0x00DB3Eu, 0x00AF32u},
         {MenuId::Notifications, A::OpenMenu, "notifications", true,  0x4A90E2u, 0x3B73B5u},
         {MenuId::Leaderboard,   A::OpenMenu, "leaderboard",   true,  0xE8A023u, 0xBA801Cu},
+        {MenuId::Wave,          A::OpenMenu, "wave",          true,  0x4D80C4u, 0x3A629Au},
         {MenuId::Guild,         A::OpenMenu, "guild",         true,  0x27DADEu, 0x1FB3B0u},
         {MenuId::Skins,         A::OpenMenu, "skins",         true,  0xC45CFFu, 0x9A3FD0u},
         {MenuId::Gallery,       A::OpenMenu, "mob_gallery",   true,  0xD6C206u, 0xAB9B05u},
@@ -1306,6 +1324,8 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
         else if (slot.action == StripAction::Feedback || slot.action == StripAction::Discord ||
                  slot.action == StripAction::Qq || slot.action == StripAction::Github)
             visible[static_cast<std::size_t>(i)] = !inGame_;
+        else if (slot.menu == MenuId::Wave)
+            visible[static_cast<std::size_t>(i)] = inGame_;
         else if (slot.menu == MenuId::Debug)
             visible[static_cast<std::size_t>(i)] = settings_.showDebugButton;
         // Only an account the server calls an admin is offered the console's
@@ -2219,7 +2239,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             for (int i = 0; i < profile.skills.loadoutSlots(); ++i) {
                 const auto worn = resolveEquippedPetal(content(), i, slotAt);
                 if (!worn.empty() && content().petal(worn.configIndex).id == "triangle")
-                    ++counts[rarityIndex(worn.rarity)];
+                    ++counts[petalTier(worn.rarity)];
             }
             triangleBonus = triangleBonusDamage(equipped.rarity, counts);
         }
@@ -3037,6 +3057,7 @@ void MenuSystem::renderOpenPanel(Canvas& canvas, Window& window, NetClient& net,
         case MenuId::AdminDb:     keepOpen = adminDb_.render(ctx); break;
         case MenuId::AdminDashboard: keepOpen = adminDashboard_.render(ctx); break;
         case MenuId::Assets:      keepOpen = assets_.render(ctx); break;
+        case MenuId::Wave:        keepOpen = wave_.render(ctx); break;
         case MenuId::Account:     keepOpen = account_.render(ctx); break;
         default: break;
     }
@@ -3488,7 +3509,7 @@ double loadoutCameraZoom(const Profile& profile, const ContentRegistry& registry
         if (slot.empty()) continue;
         if (registry.petal(slot.configIndex).id == "paranormal_goggles") {
             const auto* technique = hyperTechniqueInfo("paranormal_goggles", slot.rarity,
-                                                       slot.reloadRarity != slot.rarity);
+                                                       !samePetalTier(slot.reloadRarity, slot.rarity));
             const double scale = hyperAmount(technique, HyperTechnique::GhostSight, 1.25);
             gogglesScale = gogglesScale > 0.0 ? std::min(gogglesScale, scale) : scale;
         }

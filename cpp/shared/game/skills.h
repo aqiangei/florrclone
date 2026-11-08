@@ -89,7 +89,7 @@ inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
     {{1, 2, 3, 5, 8, 12, 18, 25, 26, 30}},     // reference Damage
     {{1, 2, 3, 5, 8, 12, 18, 25, 26, 30}},     // reference Absorption
     {{4, 8, 14}},                              // movement speed
-    {{225}},                                  // unlock the prestige worlds
+    {{175}},                                  // unlock the prestige worlds
     {{2, 3, 5, 8, 12, 16, 20, 25, 30, 35}},   // pet damage
     {{2, 4, 6, 8, 10, 14, 18, 22, 26}}, // mana regeneration
 }};

@@ -477,6 +477,8 @@ public:
     /// them itself through spawnMob().
     const WorldMaps* worldMaps = nullptr;
 
+    void setActivePyramidRealms(Realm ordinary, Realm prestige);
+
     /// A boss the last pass admitted, for whoever owns the chat channel.
     ///
     /// Every path that creates a mob reports through here -- a band stocking
@@ -1087,6 +1089,8 @@ private:
     /// arena or maze mob alive: those realms are populated whole, so "near a
     /// player" there means "someone is in here".
     std::array<bool, kMaxRealms> realmOccupied_{};
+    Realm prestigeJungleRealm_ = Realm::Arena; // No world-map candidate can match until loaded.
+    std::array<bool, kMaxRealms> inactivePyramidRealms_{};
     struct MobPlacement { Vec2 position; double radius; };
     std::vector<MobPlacement> mobPlacements_;
     SpatialGrid placementGrid_;

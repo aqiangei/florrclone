@@ -1986,7 +1986,7 @@
   "digger": {
     "name": "Digger",
     "damage": 30,
-    "health": 375,
+    "health": 250,
     "size": 1.3333,
     "visual_scale": 1,
     "speed": 0.52,

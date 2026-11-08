@@ -53,6 +53,7 @@ enum class Msg : std::uint16_t {
     DisableUltraParticles,
     ShowConsoleLogs,
     RenderResolution,
+    UiScale,
     MobAnimationFps,
     Interpolation,
     ResetTutorial,

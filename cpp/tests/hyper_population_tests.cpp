@@ -69,7 +69,7 @@ TEST(hyper_one_per_regular_map_preserves_supers_eternals_and_waits_thirty_minute
     w.destroy(boss);step(9000999);CHECK_EQ(population(w,garden,Rarity::Apex),0);
     for(int i=0;i<20;++i)step(9001000+i*500);CHECK_EQ(population(w,garden,Rarity::Apex),1);
 }
-TEST(hyper_actual_loot_is_thirty_trials_of_super_eternal_materials_never_hyper){
+TEST(hyper_top_contributor_gets_thirty_nine_trials_of_materials_below_hyper){
     World w;CommandBuffer commands{w};EventQueue events;SpatialGrid grid;LootSystem loot;Rng rng{81927};
     const auto player=w.create();w.add<PlayerTag>(player);w.add<Transform>(player,Transform{{10000,10000},0});
     w.add<Body>(player,Body{25,1});w.add<Health>(player,Health{100,100});
@@ -80,7 +80,15 @@ TEST(hyper_actual_loot_is_thirty_trials_of_super_eternal_materials_never_hyper){
         loot.run(w,grid,data(),rng,n,0,commands,events);commands.flush();w.destroy(corpse);}
     int total=0,eternal=0;Query<DropTag,DropItem> q{w};q.each([&](Entity,DropTag&,DropItem& item){
         CHECK(rarityIndex(item.rarity)<rarityIndex(Rarity::Apex));total+=item.quantity;if(item.rarity==Rarity::Unique)eternal+=item.quantity;});
-    CHECK_EQ(total-eternal,100*30*3);CHECK(eternal>20&&eternal<80);
+    CHECK_EQ(total-eternal,100*39*3);CHECK(eternal>20&&eternal<100);
+}
+
+TEST(digger_uses_the_reduced_base_health_across_rarities) {
+    const auto id = data().mobIndex("digger");
+    CHECK(id != kInvalidIndex);
+    if (id == kInvalidIndex) return;
+    CHECK_NEAR(data().mob(id).health, 250, 1e-6);
+    CHECK_NEAR(data().mobStats(id, Rarity::Super).health, 250 * 1187000.0, 1e-3);
 }
 
 TEST(super_farm_has_thirty_six_slots_and_refills_the_deepest_sewer_room){

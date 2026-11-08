@@ -42,18 +42,19 @@ public:
     /// The visible extent in DESIGN units -- Window::width()/height(), never
     /// a pixel count. Feeding it pixels is what makes a HiDPI display show
     /// twice as much world as everyone else.
-    void setViewport(int width, int height) {
+    void setViewport(int width, int height, double uiScale = 1.0) {
         viewportWidth_ = width;
         viewportHeight_ = height;
+        uiScale_ = uiScale;
     }
 
     /// World units -> design units: the player's setting times what the worn
     /// loadout asks for, the same product as Graphics.zoomLevel. Independent
     /// of the window size and of the display's pixel density, both of which
-    /// are absorbed by the frame's base transform long before anything asks
-    /// the camera anything.
+    /// are absorbed by the frame's base transform. Undo the optional interface
+    /// multiplier so a UI preference cannot change the world view.
     double zoom() const {
-        const double z = userZoom * loadoutZoom;
+        const double z = userZoom * loadoutZoom / uiScale_;
         return std::isfinite(z) && z > 0.0 ? z : 1.0;
     }
 
@@ -102,6 +103,7 @@ private:
     Vec2 centre_;
     int viewportWidth_ = 1280;
     int viewportHeight_ = 720;
+    double uiScale_ = 1.0;
 };
 
 } // namespace flix

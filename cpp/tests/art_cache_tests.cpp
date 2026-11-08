@@ -5,6 +5,7 @@
 #include "client/render/sprites.h"
 #include "shared/game/config.h"
 #include "fixture_content.h"
+#include "render_rig.h"
 #include "test_data.h"
 
 #include <functional>
@@ -72,6 +73,37 @@ TEST(hel_spider_legs_follow_distance_instead_of_clock_time) {
     const auto standing = pixels(0, 0);
     CHECK(standing == pixels(0, 2));
     CHECK(standing != pixels(20, 0));
+}
+
+TEST(imported_hel_and_mecha_sprites_face_the_in_game_heading) {
+    const auto& content = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(content, testsupport::dataDir()));
+    for (const char* name : {"hel_spider", "hel_wasp", "mecha_crab", "mecha_spider"}) {
+        const auto id = content.mobIndex(name);
+        CHECK(sprites.mobDrawable(id));
+        if (!sprites.mobDrawable(id)) continue;
+        const auto art = SvgDocument::fromString(content.mob(id).image);
+        const auto sourcePixels = [&](double rotation) {
+            Canvas canvas = Canvas::createVirtual(128, 128);
+            canvas.translate(64.0f, 64.0f);
+            canvas.rotate(static_cast<float>(rotation));
+            art.renderFitted(canvas, -56.0f, -56.0f, 112.0f, 112.0f, 0.0f);
+            return canvas.getImageData(0, 0, 128, 128);
+        };
+        for (const double heading : {0.0, kPi / 2.0}) {
+            Canvas canvas = Canvas::createVirtual(128, 128);
+            sprites.drawMob(canvas, id, Rarity::Common, 64, 64, 112, heading, 0.0);
+            const auto actual = canvas.getImageData(0, 0, 128, 128);
+            // Walking legs can differ from their SVG rest pose at phase zero.
+            const auto aligned = sourcePixels(heading + 3.0 * kPi / 4.0);
+            const auto unaligned = sourcePixels(heading);
+            const int alignedDiff = testsupport::differingPixels(actual, aligned);
+            const int unalignedDiff = testsupport::differingPixels(actual, unaligned);
+            CHECK(alignedDiff >= 0);
+            CHECK(alignedDiff * 2 < unalignedDiff);
+        }
+    }
 }
 
 TEST(silverfish_antennae_point_along_the_in_game_facing) {

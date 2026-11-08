@@ -1316,6 +1316,12 @@ TEST(a_planted_meteor_blocks_heavy_mobs_even_when_a_step_would_cross_it) {
             fx.step(1, 1.0);
         };
 
+        fx.world.get<Transform>(meteor).realm = Realm::Maze;
+        charge();
+        CHECK(fx.positionOf(mob).x > centre.x + 240.0);
+        fx.world.get<Transform>(meteor).realm = Realm::Overworld;
+        fx.world.get<Transform>(mob).position = {2200, 3000};
+
         charge();
         CHECK_NEAR(fx.positionOf(mob).x, centre.x - 240.0, 0.01);
         CHECK_NEAR(fx.positionOf(meteor).x, centre.x, 1e-9);

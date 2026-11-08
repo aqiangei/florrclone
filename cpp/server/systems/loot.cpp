@@ -699,11 +699,26 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             life && life->remainingSeconds > 0) indexStack(e, item, at, false);
     });
     bool hyperKill=false,hyperEternalRoll=false;
+    std::vector<Entity> reducedClaimants;
+    std::vector<Entity> filteredClaimants;
     const auto stackDrop = [&](std::uint16_t petal, Rarity rarity, Vec2 at, Realm realm,
-                               const std::vector<Entity>& eligible) {
+                               const std::vector<Entity>& claimants) {
         rarity=payoutDropRarity(rarity,hyperKill?Rarity::Apex:Rarity::Common);
         if(hyperKill&&rarity==Rarity::Unique&&!hyperEternalRoll)return;
         if (petal == kNoPetal) return;
+        // Thin the weak shares after rolling. This also halves special
+        // guaranteed copies, while preserving the shared loot roll.
+        if (!reducedClaimants.empty()) {
+            filteredClaimants.clear();
+            for (Entity claimant : claimants) {
+                if (std::find(reducedClaimants.begin(), reducedClaimants.end(), claimant) !=
+                        reducedClaimants.end() &&
+                    !rng.chance(kHyperLowRewardTenths / 10.0)) continue;
+                filteredClaimants.push_back(claimant);
+            }
+        }
+        const auto& eligible = reducedClaimants.empty() ? claimants : filteredClaimants;
+        if (eligible.empty()) return;
         StackEntry* merge = nullptr;
         std::size_t first = stackOrder;
         const int cellX=static_cast<int>(std::floor(at.x/150.0));
@@ -756,6 +771,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const Transform* transform = world.tryGet<Transform>(corpse);
         if (type == nullptr || transform == nullptr) continue;
         hyperKill=type->rarity==Rarity::Apex;
+        reducedClaimants.clear();
 
         // Read the corpse out in full first. Everything below is a structural
         // change, and these pointers are into an archetype column. The realm
@@ -766,7 +782,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const Vec2 at = transform->position;
         const Realm realm = transform->realm;
         const Health* health = world.tryGet<Health>(corpse);
-        const double damageFloor = lootDamageFloor(mobRarity, health != nullptr ? health->max : 0.0);
+        const double maxHealth = health != nullptr ? health->max : 0.0;
+        const double damageFloor = lootDamageFloor(mobRarity, maxHealth);
 
         // Loot slots go to the highest positive contributors, just like XP.
         ranked_.clear();
@@ -858,17 +875,30 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         };
         std::vector<ClaimantRolls> claimantRolls;
         claimantRolls.reserve(baseEligible.size());
-        int maxBonus=1;
+        int trials = 0;
         for(const auto claimant:baseEligible) {
             const int bonus=bonusMultiplier
                 ? clamp(bonusMultiplier(claimant),1,3) : 1;
             const int orbTier = visibleGarbage ? kRarityCount : wornOrbTier(world,content,claimant,magicOrb);
-            claimantRolls.push_back({bonusLootTrialsForRarity(mobRarity,bonus),orbTier});
-            maxBonus=std::max(maxBonus,bonus);
+            int rolls = bonusLootTrialsForRarity(mobRarity, bonus);
+            if (hyperKill) {
+                const auto* account = world.tryGet<PlayerAccount>(claimant);
+                const int tenths = hyperRewardTenths(world.get<Bounty>(corpse), claimant,
+                    account ? account->connection : 0, maxHealth);
+                if (tenths < 10) {
+                    reducedClaimants.push_back(claimant);
+                } else if (tenths > 10) {
+                    const int scaled = rolls * tenths;
+                    rolls = scaled / 10;
+                    const int remainder = scaled % 10;
+                    if (remainder != 0 && rng.chance(remainder / 10.0)) ++rolls;
+                }
+            }
+            claimantRolls.push_back({rolls,orbTier});
+            trials = std::max(trials, rolls);
         }
         const int baseTrials=baseLootTrialsForRarity(mobRarity);
         const auto eternalChances=hyperEternalChances(hyperSuperWeights,kHyperEternalDropBudget/baseTrials);
-        const int trials=bonusLootTrialsForRarity(mobRarity,maxBonus);
         const bool grouped=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rollGroup!=0;});
         const bool legacy=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rates.empty();});
         for (int trial=0;trial<trials;++trial) {
@@ -880,7 +910,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
                 eligibleOrbs_.push_back(claimant.orbTier);
                 anyOrb=anyOrb||claimant.orbTier!=kRarityCount;
             }
-            // One shared budget for the entire corpse, never a budget per drop row.
+            // One shared Eternal roll across all rows in this trial.
             std::size_t eternalPick=hyperEternalPool.size();
             if(hyperKill&&!hyperEternalPool.empty()) {
                 double roll=rng.unit();

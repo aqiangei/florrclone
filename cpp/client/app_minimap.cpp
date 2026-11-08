@@ -142,7 +142,8 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
     const MapData* annotations = worldMaps_.forRealm(realm);
     double farmHighest=-1;
     if (annotations && !worldMaps_.isPrestige(realm) &&
-        annotations->usesReferenceSpawnCurve() && supportsSuperFarm(annotations->id())) {
+        annotations->usesReferenceSpawnCurve() && supportsSuperFarm(
+            annotations->biome() == "pyramid" ? annotations->biome() : annotations->id())) {
         for (const auto& element:annotations->elements())
             if (element.isSpawnBand() && !element.singular && element.forceRarity<0)
                 farmHighest=std::max(farmHighest,element.difficulty);

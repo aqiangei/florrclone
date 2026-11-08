@@ -407,7 +407,7 @@ void App::enterGame() {
     camera_.snapTo(net_.selfPlaced() ? net_.view().selfDrawnPosition() : net_.arrival());
     // What it photographs is the loading screen, the last frame drawn, and it
     // holds that up until the body arrives -- see wipeReadyToReveal().
-    beginSceneWipe(true);
+    beginWorldReveal();
     // --dead is the only route a scripted run has to the death card: being
     // killed for real is not something `--frames` can arrange.
     screen_ = config_.autoDead ? Screen::Dead : Screen::Playing;
@@ -445,7 +445,10 @@ void App::startGame() {
     const std::string& where =
         config_.autoSpawn.empty() ? menus_.settings().spawnChoice : config_.autoSpawn;
     const bool prestige = config_.autoPrestige || (config_.autoSpawn.empty() && prestigeOn());
-    net_.joinGame(window_.width(), window_.height(), where, playerName_, prestige);
+    const double uiScale = window_.uiScaleMultiplier();
+    net_.joinGame(static_cast<int>(std::round(window_.width() * uiScale)),
+                  static_cast<int>(std::round(window_.height() * uiScale)),
+                  where, playerName_, prestige);
     joinStartedSeconds_ = timeSeconds_;
     // The lobby is about to give way to the loading screen, which has no
     // field: a caret left in the name box would keep a phone's keyboard up
@@ -579,6 +582,11 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
             if (index != kNoPetal) titlePetalTypes_.push_back(index);
         }
     }
+    // Cover the whole backing store before laying down tiles or petals.
+    const std::uint32_t base = backdrop == "pvp" ? 0x777777u : biomePickerColor(backdrop);
+    canvas.clear({static_cast<std::uint8_t>(base >> 16),
+                  static_cast<std::uint8_t>(base >> 8),
+                  static_cast<std::uint8_t>(base)});
     const SvgDocument* texture = titleBackground(backdrop);
 
     // A fixed step per rendered frame rather than elapsed seconds: this is the
@@ -627,19 +635,12 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
                 }
             }
         }
-    } else {
-        // No art: a flat field, which is what the reference falls back to. A
-        // pattern here would be a second design nobody asked for.
-        setFill(canvas, backdrop=="pvp"?0x777777u:biomePickerColor(backdrop));
-        canvas.fillRect(0, 0, static_cast<float>(canvas.width()),
-                        static_cast<float>(canvas.height()));
-        if(backdrop=="pvp"){
-            ui::setStroke(canvas,0x000000u,0.18);canvas.setLineWidth(1);canvas.beginPath();
-            const double offset=std::fmod(titleBackgroundTime_*.01,50.0);
-            for(double x=offset;x<canvas.width();x+=50){canvas.moveTo(x,0);canvas.lineTo(x,canvas.height());}
-            for(double y=offset;y<canvas.height();y+=50){canvas.moveTo(0,y);canvas.lineTo(canvas.width(),y);}
-            canvas.stroke();
-        }
+    } else if (backdrop == "pvp") {
+        ui::setStroke(canvas,0x000000u,0.18);canvas.setLineWidth(1);canvas.beginPath();
+        const double offset=std::fmod(titleBackgroundTime_*.01,50.0);
+        for(double x=offset;x<canvas.width();x+=50){canvas.moveTo(x,0);canvas.lineTo(x,canvas.height());}
+        for(double y=offset;y<canvas.height();y+=50){canvas.moveTo(0,y);canvas.lineTo(canvas.width(),y);}
+        canvas.stroke();
     }
 
     // A golden wash while the arrow is up, so the screen says which world

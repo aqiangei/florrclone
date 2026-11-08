@@ -78,7 +78,7 @@ struct Effect {
     /// petal, a burst of disc-shaped grains. It has no body of its own -- only
     /// its particles are drawn. A drop's glitter is not one of these: its
     /// grains live in WorldRenderer::dropSparkles_.
-    enum class Kind : std::uint8_t { DamageNumber, Explosion, Sparkle, BerryLaunch };
+    enum class Kind : std::uint8_t { DamageNumber, Explosion, Sparkle };
     Kind kind = Kind::DamageNumber;
     Vec2 position;
     Vec2 drift;
@@ -350,7 +350,7 @@ public:
     };
     const SectionOps& sectionOps() const { return ops_; }
     // One reusable web stamp, rather than 60 curve segments per field/frame.
-    mutable std::unique_ptr<Canvas> webStamp_;
+    mutable std::array<std::unique_ptr<Canvas>, 2> webStamps_;
     bool webStampCache_ = true;
     void setWebStampCache(bool on) { webStampCache_=on; }
 

@@ -92,6 +92,28 @@ std::uint32_t netIdOf(World& w, Entity e) { return w.get<NetId>(e).value; }
 
 } // namespace
 
+TEST(remote_level_theme_prefers_permanent_hyper_over_contested_at_the_same_rank) {
+    Fixture f;
+    const auto other = f.addPlayer("gold", {1100, 1000});
+    auto& loadout = f.world.add<Loadout>(other);
+    loadout.slots[0] = {0, Rarity::Apex};
+    loadout.slots[1] = {0, Rarity::PermanentHyper};
+    WorldView view;
+    f.tick(view, 1, 1000);
+    const auto id = netIdOf(f.world, other);
+    CHECK(view.entities().count(id));
+    if (!view.entities().count(id)) return;
+    CHECK(view.entities().at(id).bestRarity == Rarity::PermanentHyper);
+    CHECK(rarityColor(view.entities().at(id).bestRarity) != rarityColor(Rarity::Apex));
+    loadout.slots[2] = {0, Rarity::Universal};
+    f.tick(view, 2, 1050);
+    CHECK(view.entities().at(id).bestRarity == Rarity::Universal);
+    loadout.slots[2] = {};
+    loadout.slots[1] = {};
+    f.tick(view, 3, 1100);
+    CHECK(view.entities().at(id).bestRarity == Rarity::Apex);
+}
+
 TEST(split_mana_updates_privately_and_clears_on_merge) {
     Fixture fixture;
     const Entity main = fixture.viewer;

@@ -191,7 +191,7 @@ enum Toggle : int {
     kToggleCount,
 };
 
-enum Slider : int { kRenderScale, kMobFramerate, kInterpolation };
+enum Slider : int { kRenderScale, kMobFramerate, kInterpolation, kUiScale };
 
 enum Button : int {
     kSaveControls,
@@ -479,6 +479,7 @@ struct Painter {
         if (st.dragging == id) {
             const double raw = lo + clamp((mouse().x - x) / w, 0.0, 1.0) * span;
             value = clamp(std::round(raw / step) * step, lo, hi);
+            if (ctx.released()) consumed = true;
         }
 
         char caption[96];
@@ -565,10 +566,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
 
     // The browser clears its press on mouseup and only runs the click after,
     // so a button is never painted pressed on the frame it fires.
-    if (ctx.released()) {
-        st.pressed = WidgetId{};
-        st.dragging = -1;
-    }
+    if (ctx.released()) st.pressed = WidgetId{};
 
     const double contentX = panel.x + kPad;
     const double contentW = panel.w - kPad * 2;
@@ -749,6 +747,9 @@ bool SettingsPanel::render(MenuContext& ctx) {
         }
 
         case Tab::Graphics: {
+            p.sliderRow(kUiScale, tr(Msg::UiScale), "%", settings.uiScale,
+                        ClientSettings::kMinUiScale, ClientSettings::kMaxUiScale, 0.05,
+                        100.0, 0, kInk, 28.0);
             p.fullscreenRow();
 #ifdef __EMSCRIPTEN__
             const bool lowQuality = flix_settings_low_quality();
@@ -874,16 +875,17 @@ bool SettingsPanel::render(MenuContext& ctx) {
 
     st.contentHeight = p.cy - contentStart;
     canvas.restore();
+    // Touch taps may press and release in the same frame. Let the slider
+    // read that frame's position, then drop the drag before the next frame.
+    if (!ctx.window.mouseDown(MouseButton::Left)) st.dragging = -1;
 
     // --- input the widgets did not take -------------------------------------
-    if (!ctx.released()) return keepOpen;
+    if (!ctx.released() || p.consumed) return keepOpen;
     if (inPanel) {
         // A click on the card's empty space drops whatever had focus, the way
         // clicking off a field does everywhere else.
-        if (!p.consumed) {
-            rebinding_ = -1;
-            st.ipField.blur();
-        }
+        rebinding_ = -1;
+        st.ipField.blur();
         return keepOpen;
     }
     // A click anywhere outside the card closes the panel. The gear is the one

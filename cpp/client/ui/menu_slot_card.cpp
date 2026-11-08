@@ -109,6 +109,9 @@ constexpr double kCellInsetX = 5.0;
 constexpr double kCellInsetY = 10.0;
 constexpr double kListBottomPad = 10.0;
 constexpr double kWheelStep = 100.0;
+constexpr double kScrollbarWidth = 14.0;
+constexpr double kScrollbarHitWidth = 22.0;
+constexpr double kMinThumbHeight = 28.0;
 
 /// A path round `r` with corners of `radius` drawn the way florr's widgets
 /// draw them: a quadratic through the corner point, not a circular arc.
@@ -250,9 +253,10 @@ double slotCardColumnsWidth(std::size_t columns) {
     return std::max(kWindowMinWidth, listWidth(columns) + 2.0 * (kWindowPad + 7.0));
 }
 
-double slotCardHeight(std::size_t rows) {
+double slotCardHeight(std::size_t rows, double extraControlsHeight) {
     return std::min(kWindowMaxHeight,
-                    kListTop + kCellInsetY + static_cast<double>(rows) * kGridPitch + kListBottomPad);
+                    kListTop + kCellInsetY + static_cast<double>(rows) * kGridPitch +
+                        kListBottomPad + extraControlsHeight);
 }
 
 Rect slotCardBounds(double width, double height, int, int viewHeight) {
@@ -377,7 +381,7 @@ std::vector<std::uint16_t> heldTypes(const Profile& profile, Held held) {
 
 /// Wheel and touch scrolling over the list, clamped to what it holds.
 void scrollList(MenuContext& ctx, ui::Scroller& scroll, const SlotCardLayout& layout,
-                double contentHeight) {
+                double contentHeight, Rect touchView) {
     const Vec2 mouse = ctx.mouse();
     scroll.contentHeight = contentHeight;
     scroll.viewHeight = layout.listView.h;
@@ -385,7 +389,7 @@ void scrollList(MenuContext& ctx, ui::Scroller& scroll, const SlotCardLayout& la
     if (layout.panel.contains(mouse) && mouse.y >= layout.listView.y) {
         scroll.offset -= static_cast<double>(ctx.wheel()) * kWheelStep;
     }
-    scroll.offset -= touchScroll(ctx.window, layout.listView, scroll.maxOffset() > 0);
+    scroll.offset -= touchScroll(ctx.window, touchView, scroll.maxOffset() > 0 && touchView.h > 0);
     scroll.offset = clamp(scroll.offset, 0.0, scroll.maxOffset());
 }
 
@@ -410,7 +414,8 @@ std::size_t SlotGrid::rows(const Profile& profile, bool withApex) {
 
 std::optional<SlotGrid::Pick> SlotGrid::render(
     MenuContext& ctx, const SlotCardLayout& layout, const PanelSkin& skin, bool withApex,
-    const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look) {
+    const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
+    bool showScrollbar) {
     Canvas& canvas = ctx.canvas;
     const Profile& profile = ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
@@ -421,8 +426,43 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
     const std::vector<std::uint16_t> types = heldTypes(
         profile, [&](Rarity r) { return rarityIndex(r) < static_cast<int>(columns); });
 
-    scrollList(ctx, scroll_, layout, contentHeightFor(types.size(), layout.listInsetY));
     const Rect clip = listClip(layout, columns);
+    const double contentHeight = contentHeightFor(types.size(), layout.listInsetY);
+    const bool scrollable = showScrollbar && clip.h > 0.0 && contentHeight > clip.h;
+    // A narrow viewport may crop the panel's right gutter.
+    const bool leftBar = layout.panel.right() > canvas.width();
+    const Rect hit{leftBar ? layout.panel.x : layout.panel.right() - kScrollbarHitWidth,
+                   clip.y, kScrollbarHitWidth, clip.h};
+    Rect touchView = layout.listView;
+    if (scrollable) {
+        if (leftBar) touchView.x += hit.w;
+        touchView.w -= hit.w;
+    }
+    scrollList(ctx, scroll_, layout, contentHeight, touchView);
+
+    if (!scrollable || (!ctx.pressed() && !ctx.window.mouseDown(MouseButton::Left))) {
+        thumbGrab_.reset();
+    }
+    if (scrollable) {
+        const double trackX = leftBar ? clip.x - kScrollbarWidth - 1.0 : clip.right() + 1.0;
+        const Rect track{trackX, clip.y, kScrollbarWidth, clip.h};
+        const double thumbHeight = std::max(std::min(kMinThumbHeight, track.h * 0.5),
+                                            track.h * clip.h / contentHeight);
+        const double travel = track.h - thumbHeight;
+        const double maxOffset = scroll_.maxOffset();
+        const auto thumbY = [&] { return track.y + scroll_.offset / maxOffset * travel; };
+        if (ctx.pressed() && hit.contains(mouse)) {
+            const double inThumb = mouse.y - thumbY();
+            thumbGrab_ = inThumb >= 0.0 && inThumb <= thumbHeight ? inThumb : thumbHeight * 0.5;
+        }
+        if (thumbGrab_) {
+            const double fraction = clamp((mouse.y - track.y - *thumbGrab_) / travel, 0.0, 1.0);
+            scroll_.offset = fraction * maxOffset;
+        }
+        fillQuadRound(canvas, track, std::min(track.w, track.h) * 0.5, skin.border);
+        fillQuadRound(canvas, {track.x, thumbY(), track.w, thumbHeight},
+                      std::min(track.w, thumbHeight) * 0.5, kPaper);
+    }
 
     canvas.save();
     canvas.beginPath();
@@ -451,7 +491,8 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
                 drawSlotPlate(canvas, ctx.sprites, rect, skin);
                 continue;
             }
-            const bool over = !cell.greyed && rect.contains(mouse) && clip.contains(mouse);
+            const bool over = !thumbGrab_ && !(scrollable && hit.contains(mouse)) &&
+                              !cell.greyed && rect.contains(mouse) && clip.contains(mouse);
             if (over) hovered = Pick{petalIndex, rarity};
 
             ItemTile tile;
@@ -491,7 +532,7 @@ std::optional<SlotTierGrid::Pick> SlotTierGrid::render(
     SlotCardLayout from = layout;
     from.listView.y = layout.panel.y + top;
     from.listView.h = std::max(0.0, layout.panel.bottom() - kListBottomPad - from.listView.y);
-    scrollList(ctx, scroll_, from, contentHeightFor(rows, from.listInsetY));
+    scrollList(ctx, scroll_, from, contentHeightFor(rows, from.listInsetY), from.listView);
     const Rect clip = listClip(from, columns);
     const double areaCentre = clip.x + clip.w * 0.5;
 

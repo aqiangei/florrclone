@@ -276,6 +276,7 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     window_.setRenderScale(config_.lowMemoryGraphics
         ? std::min(0.5, menus_.settings().renderScale) : menus_.settings().renderScale);
     window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
+    window_.setUiScaleMultiplier(menus_.settings().uiScale);
     if (!net_.connect(config.host, config.port)) {
         errorOut = net_.lastError();
         return false;
@@ -686,6 +687,12 @@ void App::frame(double dt) {
     window_.setRenderScale(config_.lowMemoryGraphics
         ? std::min(0.5, menus_.settings().renderScale) : menus_.settings().renderScale);
     window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
+    // Apply after the slider gesture has finished so the track and the
+    // pointer stay in the same coordinate space throughout the drag.
+    if (window_.touches().empty() && !window_.touchPan().active &&
+        !window_.mouseDown(MouseButton::Left) && !window_.mouseReleased(MouseButton::Left)) {
+        window_.setUiScaleMultiplier(menus_.settings().uiScale);
+    }
 
 #ifdef __EMSCRIPTEN__
     // Before anything is drawn: the text atlas may only be drawn into while
@@ -701,7 +708,7 @@ void App::frame(double dt) {
     canvas.resetTransform();
     const float uiScale = static_cast<float>(window_.uiScale());
     canvas.scale(uiScale, uiScale);
-    camera_.setViewport(window_.width(), window_.height());
+    camera_.setViewport(window_.width(), window_.height(), window_.uiScaleMultiplier());
     // Polling continues above, but no menu, keyboard or gameplay actions run
     // until the destination confirms account ownership (or rollback finishes).
     if (menus_.shardSelection().switching) {
@@ -852,8 +859,6 @@ void App::frame(double dt) {
     // It rides into the viewport the next input frame reports, so the server
     // widens what it streams as soon as an observer goes on.
     camera_.loadoutZoom = loadoutCameraZoom(net_.profile(), content());
-    const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
-    menus_.setInGame(inWorld);
     menus_.setTouchLayout(config_.forceTouchControls || menus_.settings().touchControlsWanted(
         coarsePointer_ || window_.touchSeen()), mobile_.hitBounds());
     // Re-measured every frame, so the craft panel turns into the oracle's (or
@@ -873,7 +878,9 @@ void App::frame(double dt) {
         screen_ == Screen::Playing && net_.selfPlaced() && !net_.controllingFlower();
     menus_.setNearbyNpc(standingSomewhere ? nearbyNpc(net_.view().selfDrawnPosition())
                                           : NearbyNpc{});
-    if (menus_.takeExitRequest() && inWorld) leaveToTitle();
+    if (menus_.takeExitRequest() && (screen_ == Screen::Playing || screen_ == Screen::Dead)) {
+        leaveToTitle();
+    }
     // No inWorld guard: Settings' Log Out is offered on the title screen too,
     // and it is the one action that has to work from either of them.
     if (menus_.takeLogoutRequest()) logout();
@@ -901,6 +908,9 @@ void App::frame(double dt) {
     }
 
     // --- draw -------------------------------------------------------------
+    // Exit, logout and shard switching above can change the screen this frame.
+    const bool inWorld = screen_ == Screen::Playing || screen_ == Screen::Dead;
+    menus_.setInGame(inWorld);
     // Forgotten before the draw, and set again by whoever paints it. Both the
     // chat's hit tests read the box the LAST frame painted, so a screen that
     // stops painting it -- the settings switch off, a panel covering it, the
@@ -1361,7 +1371,8 @@ void App::returnToTitle() {
     // Not finished, just gone: the browser destroys the Tutorial with the Game
     // that owns it, and an unfinished one comes back on the next join.
     tutorial_.endGame();
-    beginSceneWipe(false);
+    // Paint the lobby without replaying the outgoing combat frame.
+    wipe_ = {};
     // A deliberate return cancels any scripted join still armed (e.g. local
     // --user admin): otherwise the lobby's autoJoin fires and the player
     // cannot stay on the title.
@@ -1422,10 +1433,7 @@ void App::showLoggedOut() {
     chatField_.blur();
     nameField_.blur();
 
-    // Only worth a wipe when there is a world to hide: lobby and login are the
-    // same scene with a different card on it, and wiping between them would
-    // read as a stutter rather than a transition.
-    if (inWorld) beginSceneWipe(false);
+    wipe_ = {};
     screen_ = Screen::Login;
 }
 
@@ -1447,7 +1455,7 @@ void App::showSessionReplaced() {
     pendingAuth_.clear();
     loginMessage_.clear();
 
-    if (inWorld) beginSceneWipe(false);
+    wipe_ = {};
     screen_ = Screen::Replaced;
 }
 
@@ -1472,21 +1480,17 @@ std::unique_ptr<Canvas> App::snapshotWindow() {
     return snapshot;
 }
 
-void App::beginSceneWipe(bool toGame) {
+void App::beginWorldReveal() {
     // Snapshot BEFORE the scene commits. Nothing has painted yet this frame, so
     // the window still holds the outgoing scene whole -- which is exactly the
     // still the wipe has to hold up while the incoming one builds itself.
     wipe_.snapshot = snapshotWindow();
-    wipe_.holeGrows = toGame;
     wipe_.phase = SceneWipe::Phase::Covered;
     wipe_.phaseStartSeconds = timeSeconds_;
 }
 
 bool App::wipeReadyToReveal() const {
-    // Going back to the title there is nothing to wait for. Going into a game
-    // the hold lasts until the player's own body has actually arrived, so the
-    // reveal never opens on an empty world.
-    if (!wipe_.holeGrows) return true;
+    // Wait for the player's body so the reveal never opens on an empty world.
     return (screen_ == Screen::Playing || screen_ == Screen::Dead) &&
            net_.view().self().netId != 0;
 }
@@ -1526,28 +1530,16 @@ void App::drawSceneWipe(Canvas& canvas) {
     // corners rather than leaving four dark wedges.
     const double maxRadius = std::sqrt(centreX * centreX + centreY * centreY);
     const double inverse = 1.0 - progress;
-    const double eased =
-        wipe_.holeGrows ? 1.0 - inverse * inverse * inverse : inverse * inverse * inverse;
+    const double eased = 1.0 - inverse * inverse * inverse;
     const double radius = std::max(0.0, eased * maxRadius);
 
     canvas.save();
     canvas.beginPath();
-    if (wipe_.holeGrows) {
-        // Everything OUTSIDE the growing hole keeps the outgoing still. The
-        // counter-clockwise arc punches the hole out of the rectangle by
-        // winding against it.
-        //
-        // The angles run kTau -> 0, not 0 -> kTau. A reversed arc's sweep is
-        // normalised with fmod unless it is already a whole turn NEGATIVE, so
-        // asking for (0, +kTau) counter-clockwise degenerates to a zero-length
-        // arc and the hole never appears.
-        canvas.rect(0, 0, static_cast<float>(canvas.width()), static_cast<float>(canvas.height()));
-        canvas.arc(static_cast<float>(centreX), static_cast<float>(centreY),
-                   static_cast<float>(radius), static_cast<float>(kTau), 0.0f, true);
-    } else {
-        canvas.arc(static_cast<float>(centreX), static_cast<float>(centreY),
-                   static_cast<float>(radius), 0, static_cast<float>(kTau));
-    }
+    // Everything outside the hole keeps the outgoing still. The arc's
+    // negative full turn winds against the surrounding rectangle.
+    canvas.rect(0, 0, static_cast<float>(canvas.width()), static_cast<float>(canvas.height()));
+    canvas.arc(static_cast<float>(centreX), static_cast<float>(centreY),
+               static_cast<float>(radius), static_cast<float>(kTau), 0.0f, true);
     canvas.clip();
     if (wipe_.snapshot) {
         canvas.drawCanvas(*wipe_.snapshot, 0, 0, static_cast<float>(canvas.width()),

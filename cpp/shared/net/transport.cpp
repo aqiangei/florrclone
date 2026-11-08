@@ -193,6 +193,11 @@ std::size_t Connection::transportBuffered() const {
     return fd_ >= 0 ? web::buffered(fd_) : 0;
 }
 
+std::size_t Connection::snapshotBacklog() const {
+    if (fd_ < 0) return pendingBytes();
+    return pendingBytes() + std::max(transportBuffered(), web::unacknowledged(fd_));
+}
+
 #else
 
 bool Connection::readAvailable(std::string& errorOut) {
@@ -246,6 +251,7 @@ bool Connection::writeAvailable(std::string& errorOut) {
 }
 
 std::size_t Connection::transportBuffered() const { return 0; }
+std::size_t Connection::snapshotBacklog() const { return pendingBytes(); }
 
 #endif  // __EMSCRIPTEN__
 

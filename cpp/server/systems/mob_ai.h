@@ -65,6 +65,7 @@
 // is flagged for the petal system to retire. A sandstorm keeps its own leash.
 
 #include <algorithm>
+#include <array>
 #include "shared/game/player_proximity.h"
 #include <cstdint>
 #include <functional>
@@ -272,9 +273,6 @@ inline constexpr double kCentipedeFlipSeconds = 5.0;
 
 /// How long one roaming heading holds.
 inline constexpr double kDiggerRoamMillis = 5000.0;
-/// At or below this fraction of its health a digger runs rather than fights:
-/// gardn attacks while `health / max_health > 0.1`.
-inline constexpr double kDiggerFleeBelow = 0.1;
 
 // -- the hornet --------------------------------------------------------------
 //
@@ -683,7 +681,8 @@ public:
     /// nothing this pass creates exists until `commands` is flushed.
     void run(World& world, const Terrain& terrain, const SpatialGrid& grid,
              const std::vector<RealmPoint>& activePlayers,
-             double nowMillis, double dt, CommandBuffer& commands);
+             double nowMillis, double dt, CommandBuffer& commands,
+             const SpatialGrid* playerGrid = nullptr);
 
     /// Carries a mob's ring seeds on their seats, retires the ones that have
     /// been broken, and pays off the seeds it owes.
@@ -755,8 +754,7 @@ private:
         bool crabStrafe = false;
         /// A chain head that crawls on a bending heading. See crawl().
         bool centipedeCrawl = false;
-        /// Roams on held headings, and runs below kDiggerFleeBelow of its
-        /// health. See roam().
+        /// Roams on held headings when idle.
         bool diggerAi = false;
         /// Circles its target inside its standoff. See pursueTarget().
         bool hornetStrafe = false;
@@ -808,12 +806,20 @@ private:
         Entity unseen = NULL_ENTITY;
         double unseenSince = 0;
         Entity acquired = NULL_ENTITY;
+        Entity acquiredPet = NULL_ENTITY;
         bool retained = false;
         bool scanned = false;
+        bool petScanned = false;
     };
     struct PetPrey {
         Entity target = NULL_ENTITY;
         bool searched = false;
+    };
+    struct PetPreyTarget {
+        Entity entity = NULL_ENTITY;
+        Vec2 position;
+        Realm realm = Realm::Overworld;
+        int tier = 0;
     };
     struct PetTargetPlan {
         Entity previous = NULL_ENTITY;
@@ -824,7 +830,8 @@ private:
     };
     void prepareTargets(const World& world, const Terrain& terrain, const SpatialGrid& grid,
                         double nowMillis);
-    void preparePetTargets(const World& world, const Terrain& terrain, const SpatialGrid& grid);
+    void preparePetTargets(World& world, const Terrain& terrain, const SpatialGrid& grid);
+    static PetPreyTarget readPetPrey(const World& world, Entity candidate);
 
     Drive driveFor(std::uint16_t configIndex, Rarity rarity);
 
@@ -903,8 +910,6 @@ private:
     /// The heading is left in `ai.wanderAngle`.
     void roam(const Terrain& terrain, const Transform& transform, Motion& motion, MobAi& ai,
               const Drive& drive, double speed, double nowMillis, double dt);
-    /// Whether a `digger_ai` mob is low enough to run rather than fight.
-    static bool runsLow(World& world, Entity self, const Drive& drive);
 
     /// Weather. Blows toward a point re-picked on its own fast clock, and from
     /// kSandstormSuckRarity up drags the players around it in as it goes.
@@ -967,7 +972,7 @@ private:
     /// than a single grid cell, and a world with no pets in it must not cost a
     /// query per hostile mob per tick.
     Entity acquirePetTarget(const Terrain& terrain, Entity self, Vec2 from, Realm realm,
-                            double range);
+                            double range, TargetScratch& scratch) const;
     /// The nearest contributor on `self`'s bounty ledger standing in `realm`
     /// within `radius` of `from`. The ledger outlives a teleport, so a
     /// contributor who left for another map is skipped however close its
@@ -1038,7 +1043,7 @@ private:
     /// kPetRetargetMargin kept by its current target.
     PetPrey acquirePetPrey(const World& world, const Terrain& terrain, const SpatialGrid& grid,
                            Entity self, Vec2 from, Realm realm, Entity previous, bool hasOwner,
-                           double range, TargetScratch& scratch) const;
+                           double range, TargetScratch& scratch, bool frozenTargets = false) const;
     /// Pops a sandstorm pet onto a clear, visible ring position around its
     /// owner. False when nothing was clear and the pet stayed where it was.
     bool teleportPetToOwner(const Terrain& terrain, Transform& transform, Vec2 ownerPosition);
@@ -1075,30 +1080,27 @@ private:
     /// side. The query above cannot do it: a mob that died is excluded from
     /// it, and a mob that despawned is not there to be walked at all.
     Query<MobRingPetal> seeds_;
-    Query<PlayerTag, PlayerModifiers> playerModifiers_;
+    Query<PlayerTag, Transform, PlayerModifiers> playerModifiers_;
 
     Rng rng_;
     Stats stats_;
     PlayerProximityIndex activePlayersIndex_{kMobActiveRadius};
     static constexpr double kSleepReach = kMobTargetRetainRadius + 1000.0;
-    PlayerProximityIndex sleepObservers_{kSleepReach};
+    static constexpr double kPassiveSleepReach = kMobActiveRadius + 1000.0;
+    PlayerProximityIndex sleepObservers_{kPassiveSleepReach};
     std::vector<std::pair<RealmPoint, double>> wideObservers_;
 
     /// Ticks run, which is the phase the far stride is measured against.
     std::uint64_t tick_ = 0;
 
-    /// The widest aggro bonus any live player carries, recomputed once per
-    /// tick. The bonus is per-player but the broadphase radius is per-query, so
-    /// without it a mob would query its bare range and miss exactly the player
-    /// whose petals were meant to draw attention.
-    double maxAggroBonus_ = 0;
-    /// The widest aggro-range multiplier any live player carries, floored at
-    /// 1, for the same reason: a range scaled past 1 reaches beyond the bare
-    /// query a mob would otherwise make.
-    double maxAggroScale_ = 1.0;
-    /// Whether any live player's aggro is raised this tick -- the gate on a
-    /// neutral mob's scan, which can only ever find such a player.
-    bool anyAggroRaised_ = false;
+    /// Upper bounds for each realm's broadphase. Individual notice circles
+    /// are still evaluated using the target player's own modifiers.
+    struct AggroLimits {
+        double bonus = 0.0;
+        double scale = 1.0;
+        bool raised = false;
+    };
+    std::array<AggroLimits, kMaxRealms> realmAggro_{};
 
     std::vector<Drive> drives_;
     std::uint32_t drivesHash_ = 0;
@@ -1113,16 +1115,16 @@ private:
     std::vector<Entity> stepList_;
     std::vector<TargetPlan> targetPlans_;
     std::vector<PetTargetPlan> petTargetPlans_;
+    std::vector<PetPreyTarget> petPreyTargets_;
     TargetScratch targetScratch_;
     std::vector<TargetScratch> workerTargetScratch_;
     std::vector<Entity> seedList_;
     std::vector<Entity> gridScratch_;
-    std::vector<Candidate> candidates_;
     /// This tick's pets, snapshotted before anything moves -- which is where
     /// the reference builds it, so a pet is hunted from where it stood at the
     /// top of the tick rather than from wherever the pet pass has since
     /// carried it.
-    std::vector<Candidate> petList_;
+    std::array<std::vector<Candidate>, kMaxRealms> petsByRealm_;
     SpatialGrid baitGrid_;
     std::vector<Entity> nearbyBaits_;
     std::vector<Entity> chainScratch_;

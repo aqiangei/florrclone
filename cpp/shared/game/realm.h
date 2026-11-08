@@ -36,13 +36,10 @@ enum class Realm : std::uint8_t {
 /// runtime, and a fixed-size array indexed by realm is what keeps the
 /// broadphase and the terrain grids allocation-free per tick.
 ///
-/// Sixty-four because the realm travels as a byte; the shipped manifest stages
-/// twenty-six map realms (nine maps, their nine prestige twins -- see
-/// shared/game/prestige.h -- and eight copies of the termite mound), and
-/// this leaves room to grow. Raising it costs one broadphase Layer and one
-/// tile grid header per realm, and nothing on the wire; a realm nothing was
-/// staged for keeps a one-cell layer and an empty grid.
-inline constexpr int kMaxRealms = 128;
+/// Realm identifiers travel as a byte. This includes the instanced maps,
+/// prestige twins and all four Pyramid layouts. An unstaged realm only uses
+/// an empty tile grid and a one-cell broadphase layer.
+inline constexpr int kMaxRealms = 136;
 
 /// How many world MAPS can be staged: every realm that is not the arena or the
 /// maze.

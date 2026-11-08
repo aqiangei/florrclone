@@ -9,7 +9,6 @@ namespace flix {
 class PlayerProximityIndex {
 public:
     struct Scratch {
-        SpatialGrid::QueryScratch query;
         std::vector<Entity> hits;
     };
     explicit PlayerProximityIndex(double radius) : radius_(radius), grid_(radius) {}
@@ -24,20 +23,27 @@ public:
         return near(point, realm, scratch_);
     }
     bool near(Vec2 point, Realm realm, Scratch& scratch) const {
+        return nearWithin(point, realm, radius_, scratch);
+    }
+    bool nearWithin(Vec2 point, Realm realm, double radius) const {
+        return nearWithin(point, realm, radius, scratch_);
+    }
+private:
+    bool nearWithin(Vec2 point, Realm realm, double radius, Scratch& scratch) const {
         if(players_.empty())return true;
-        const double squared=radius_*radius_;
+        const double squared=radius*radius;
         if(players_.size()<16){
             for(const auto& p:players_)if(p.realm==realm&&distanceSq(point,p.position)<=squared)return true;
             return false;
         }
-        grid_.query(realm,point,radius_,scratch.hits,scratch.query);
+        const Vec2 reach{radius, radius};
+        grid_.queryPointBuckets(realm, point - reach, point + reach, scratch.hits);
         for(const auto id:scratch.hits){
             const auto& p=players_[static_cast<std::size_t>(id)-1];
             if(distanceSq(point,p.position)<=squared)return true;
         }
         return false;
     }
-private:
     double radius_;
     SpatialGrid grid_;
     std::vector<RealmPoint> players_;

@@ -122,6 +122,8 @@ struct Session {
     /// GameServer::handleProfileCheck.
     std::uint32_t profileRevision = 0;
     double nextProfileCheckMillis = 0;
+    double nextStaleProfileRepairMillis = 0;
+    std::uint64_t onlineRosterRevision = 0;
     /// What kills and pickups changed since the last Profile or delta: the
     /// bag's (petal, rarity) groups and the ledger's (mob, rarity) cells, each
     /// listed once. GameServer::sendDueProfiles sends them with the next

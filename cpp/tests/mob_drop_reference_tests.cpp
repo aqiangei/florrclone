@@ -37,18 +37,18 @@ double expectedHyperEternals(const char* id) {
     double expected=0;for(double chance:hyperEternalChances(weights,kHyperEternalDropBudget/kLootFeelCopies))expected+=chance*kLootFeelCopies;
     return expected;
 }
-TEST(hyper_drop_budget_is_capped_at_035_eternal_per_corpse_not_per_drop_row){
+TEST(hyper_drop_budget_is_shared_across_rows_and_scales_for_the_top_contributor){
     for(const auto id:{"ladybug","bee","beetle"}){
         const auto result=kills(id,Rarity::Apex,2000);int eternal=0;
         for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
-        CHECK_NEAR(eternal/2000.0,expectedHyperEternals(id),0.08);
+        CHECK_NEAR(eternal/2000.0,expectedHyperEternals(id)*1.3,0.08);
     }
 }
 TEST(hyper_drop_budget_bonus_uses_one_point_four_and_one_point_eight_rates){
     for(int bonus=2;bonus<=3;++bonus){
         const auto result=kills("ladybug",Rarity::Apex,2000,false,bonus);int eternal=0;
         for(const auto& [key,n]:result)if(key.second==rarityIndex(Rarity::Unique))eternal+=n;
-        CHECK_NEAR(eternal/2000.0,expectedHyperEternals("ladybug")*(bonus==2?1.4:1.8),0.1);
+        CHECK_NEAR(eternal/2000.0,expectedHyperEternals("ladybug")*1.3*(bonus==2?1.4:1.8),0.1);
     }
 }
 TEST(reference_pharaoh_crown_really_drops_at_unique_from_super_and_eternal_beetles){
@@ -130,7 +130,68 @@ TEST(daily_bonus_mixed_claimants_keep_only_their_own_super_eternal_and_hyper_tri
         int counts[3]={};Query<DropTag,DropItem> drops{w};
         drops.each([&](Entity,DropTag&,DropItem& item){if(c.petal(item.configIndex).id!="sand")return;
             for(int i=0;i<3;++i)if(LootSystem::mayPickUp(item,players[i],70+i))counts[i]+=static_cast<int>(item.quantity);});
-        for(int i=0;i<3;++i)CHECK_EQ(counts[i],bonusLootTrialsForRarity(rarity,i+1));
+        for(int i=0;i<3;++i) {
+            const int expected = bonusLootTrialsForRarity(rarity,i+1);
+            CHECK_EQ(counts[i], rarity == Rarity::Apex && i == 0 ? expected * 13 / 10 : expected);
+        }
+    }
+}
+
+TEST(hyper_rewards_follow_personal_damage_and_km_wins_ties_before_the_finisher) {
+    const auto& content = registry();
+    for (const double maxHealth : {100000.0, 1000000.0}) {
+        World world;
+        CommandBuffer commands{world};
+        EventQueue events;
+        SpatialGrid grid;
+        Rng rng{8157};
+        LootSystem loot;
+        CombatSystem combat;
+        std::array<Entity, 4> players{};
+        for (Entity& player : players) {
+            player = world.create();
+            world.add<PlayerTag>(player);
+            world.add<Health>(player, Health{100, 100});
+            world.add<Transform>(player, Transform{{10000, 10000}, 0});
+            world.add<Faction>(player, Faction{Team::Players});
+            world.add<PlayerProgress>(player);
+        }
+
+        constexpr int kills = 100;
+        for (int i = 0; i < kills; ++i) {
+            const Entity corpse = world.create();
+            world.add<MobTag>(corpse);
+            world.add<MobType>(corpse, MobType{content.mobIndex("sandstorm"), Rarity::Apex, 1});
+            world.add<Transform>(corpse, Transform{{1000, 1000}, 0});
+            world.add<Faction>(corpse, Faction{Team::Hostiles});
+            world.add<Health>(corpse, Health{2999, maxHealth});
+            world.add<Bounty>(corpse).xp = 1000;
+            const double now = i * 100.0 + 1000.0;
+            combat.applyDamage(world, corpse, players[0], 1000, now);
+            combat.applyDamage(world, corpse, players[1], 1000, now);
+            CHECK(combat.applyDamage(world, corpse, players[2], 999, now).killed);
+            loot.run(world, grid, content, rng, now, 0.0, commands, events);
+            commands.flush();
+            world.destroy(corpse);
+        }
+
+        std::array<int, 4> sand{};
+        Query<DropTag, DropItem>{world}.each([&](Entity, DropTag&, DropItem& item) {
+            if (content.petal(item.configIndex).id != "sand" || item.rarity == Rarity::Unique)
+                return;
+            for (std::size_t i = 0; i < players.size(); ++i)
+                if (LootSystem::mayPickUp(item, players[i], 0)) sand[i] += item.quantity;
+        });
+        const bool secondMeetsFloor = maxHealth == 100000.0;
+        CHECK_EQ(sand[0], kills * 39);
+        CHECK_NEAR(sand[1], kills * (secondMeetsFloor ? 30 : 15), secondMeetsFloor ? 0 : 100);
+        CHECK_NEAR(sand[2], kills * 15, 100);
+        CHECK_EQ(sand[3], 0);
+        CHECK_EQ(world.get<PlayerProgress>(players[0]).totalXp, kills * 1300.0);
+        CHECK_EQ(world.get<PlayerProgress>(players[1]).totalXp,
+                 kills * (secondMeetsFloor ? 1000.0 : 500.0));
+        CHECK_EQ(world.get<PlayerProgress>(players[2]).totalXp, kills * 500.0);
+        CHECK_EQ(world.get<PlayerProgress>(players[3]).totalXp, 0.0);
     }
 }
 TEST(centipede_segments_drop_leaf_and_convert_it_with_mana_orb){
@@ -168,7 +229,9 @@ TEST(computer_hyper_actual_kills_share_one_eternal_budget_and_standard_super_tai
     for(int bonus=1;bonus<=3;++bonus){
         int maximum=0;const auto result=kills(id,Rarity::Apex,300,false,bonus,&maximum);int eternal=0,super=0;
         for(const auto&[key,n]:result){if(key.second==8)eternal+=n;if(key.second==7)super+=n;CHECK(key.second<=8);}
-        CHECK_NEAR(eternal/300.0,bonus==1?.35:bonus==2?.525:.7,.15);
+        const double trialScale = static_cast<double>(bonusLootTrialsForRarity(Rarity::Apex,bonus)) /
+            baseLootTrialsForRarity(Rarity::Apex);
+        CHECK_NEAR(eternal/300.0,expectedHyperEternals(id)*1.3*trialScale,.18);
         CHECK(super/300.0<4.0); // Previously glitch 60, glitch_flower 107 at base bonus.
         CHECK(maximum<10);
         std::printf("  COMPUTER_H %s bonus=%d meanE=%.4f meanS=%.4f maxE=%d\n",id,bonus,eternal/300.0,super/300.0,maximum);
