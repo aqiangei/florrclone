@@ -2815,7 +2815,11 @@ void MobAiSystem::prepareTargets(const World& world, const Terrain& terrain, con
 
 void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& grid,
                       const std::vector<RealmPoint>& activePlayers,
-                      double nowMillis, double dt, CommandBuffer& commands) {
+                      double nowMillis, double dt, CommandBuffer& commands,
+                      const SpatialGrid* playerGrid) {
+    // Wild scans only read flowers. Use a view with the same positions,
+    // footprints and bucket order but without the pets' prey candidates.
+    const SpatialGrid& playerTargets = playerGrid ? *playerGrid : grid;
     activePlayersIndex_.rebuild(activePlayers);
     sleepObservers_.rebuild(activePlayers);
     wideObservers_.clear();
@@ -2874,7 +2878,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
     });
     const bool hasBaits = !baitGrid_.empty();
     mobs_.collect(stepList_);
-    prepareTargets(world, terrain, grid, nowMillis);
+    prepareTargets(world, terrain, playerTargets, nowMillis);
     for (std::size_t index = 0; index < stepList_.size(); ++index) {
         const Entity self = stepList_[index];
         if (!world.isAlive(self) || world.tryGet<Dead>(self) != nullptr) continue;
@@ -2968,7 +2972,7 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             continue;
         }
         const auto* plan = targetPlans_.empty() ? nullptr : &targetPlans_[index];
-        steerMob(world, terrain, grid, self, *transform, *motion, *body, *kind, *ai, drive,
+        steerMob(world, terrain, playerTargets, self, *transform, *motion, *body, *kind, *ai, drive,
                  nowMillis, dt, commands, plan);
         if (drive.laysWeb) layWeb(world, self, nowMillis, commands);
         if (drive.dropsProjectile) dropProjectile(world, self, nowMillis, commands);

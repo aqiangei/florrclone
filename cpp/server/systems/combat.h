@@ -196,6 +196,13 @@ struct ShotLanding {
     Vec2 at;
 };
 
+struct ContactBodyPlacement {
+    Entity entity;
+    Realm realm;
+    Vec2 position;
+    double radius;
+};
+
 class CombatSystem {
 public:
     CombatSystem();
@@ -227,7 +234,9 @@ public:
     /// Resolves body and petal contact from the pre-mob-movement world, which
     /// is where the TypeScript player pipeline performs those collisions.
     void runContactPhase(World& world, const SpatialGrid& grid,
-                         const ContentRegistry& content, double nowMillis);
+                         const ContentRegistry& content, double nowMillis,
+                         const std::vector<ContactBodyPlacement>* placements = nullptr);
+    void sizeContactGrid(const Terrain& terrain) { hostileTargets_.sizeToRealms(terrain); }
 
     /// Resolves post-movement projectiles/ground fields and closes the tick.
     void runWorldPhase(World& world, const SpatialGrid& grid,
@@ -664,7 +673,8 @@ private:
     void dischargeOnContact(World& world, const SpatialGrid& grid, const MeleeSource& source,
                             double nowMillis);
     void gatherPetals(World& world, const ContentRegistry& content, double nowMillis);
-    void resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry, double nowMillis);
+    void resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
+                      double nowMillis, const SpatialGrid& hostileTargets);
     /// A petal swinging at another flower, which is a different collision from
     /// the petal-vs-mob one beside it: gated by the arena/corruption rule
     /// rather than by the faction alone, throttled per victim, costing the
@@ -856,6 +866,7 @@ private:
         bool hostileBody = false;
     };
     std::vector<MeleeTarget> meleeTargets_;
+    SpatialGrid hostileTargets_;
 
     /// A strike's own broadphase answer and the two lists it builds from it.
     /// Separate from candidates_ because a contact strike is thrown from INSIDE

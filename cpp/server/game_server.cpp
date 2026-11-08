@@ -623,6 +623,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // the default world until it is told what shape each realm really is.
     grid_.sizeToRealms(*terrain_);
     mobTargetGrid_.sizeToRealms(*terrain_);
+    playerTargetGrid_.sizeToRealms(*terrain_);
     pickupGrid_.sizeToRealms(*terrain_);
     snapshotGrid_.sizeToRealms(*terrain_);
 
@@ -632,6 +633,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     mobAi_ = std::make_unique<MobAiSystem>(world_, config.worldSeed ^ 0x9E3779B9ull);
     petals_ = std::make_unique<PetalSystem>();
     combat_ = std::make_unique<CombatSystem>();
+    combat_->sizeContactGrid(*terrain_);
     spawning_ = std::make_unique<SpawnSystem>();
     spawning_->sizePlacementGrids(*terrain_);
     if (config.loadShedding) {
@@ -1563,6 +1565,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
     }
     grid_.clear();
     mobTargetGrid_.clear();
+    playerTargetGrid_.clear();
     // Every body but the projectiles, which combat files in a broadphase of
     // its own (CombatSystem::fileShots): nothing else that asks this grid
     // wants a shot, and a flower on a full loadout of gas would otherwise put
@@ -1575,13 +1578,17 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // Loot only uses the later grid. Its stationary drops cannot take part
     // in the contact and AI queries that run against this one.
     afterPlayers.without<ProjectileTag, Intangible, DropTag>();
+    contactBodies_.clear();
     afterPlayers.each([&](Entity e, Transform& transform, Body& body) {
         grid_.insert(e, transform.realm, transform.position, body.radius);
+        contactBodies_.push_back({e, transform.realm, transform.position, body.radius});
         // Wild mobs look for flowers; summoned mobs look for wild mobs or
         // training posts. Both scans used to walk every petal and summon in
         // a crowded cell before finding those candidates. Use the same
         // cells and insertion order to preserve equal-score target choices.
-        if (world_.has<PlayerTag>(e) ||
+        const bool isPlayer = world_.has<PlayerTag>(e);
+        if (isPlayer) playerTargetGrid_.insert(e, transform.realm, transform.position, body.radius);
+        if (isPlayer ||
             ((world_.has<MobTag>(e) || world_.has<Npc>(e)) && !world_.has<Pet>(e))) {
             mobTargetGrid_.insert(e, transform.realm, transform.position, body.radius);
         }
@@ -1592,11 +1599,11 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // the player pipeline, before moveEnemies(). Keep that temporal boundary:
     // a mob cannot escape a petal it was already touching by moving first.
     combat_->beginTick(world_, nowMillis, dt, events_);
-    combat_->runContactPhase(world_, grid_, content(), nowMillis);
+    combat_->runContactPhase(world_, grid_, content(), nowMillis, &contactBodies_);
     markTickPhase("contact");
 
     mobAi_->run(world_, *terrain_, mobTargetGrid_, activePlayers_, nowMillis,
-                net::kTickSeconds, commands_);
+                net::kTickSeconds, commands_, &playerTargetGrid_);
     markTickPhase("mob ai");
     movement_->runWorldPhase(world_, *terrain_, nowMillis, net::kTickSeconds);
     markTickPhase("mob movement");
@@ -1855,7 +1862,7 @@ void GameServer::replicate(double nowMillis) {
         // Let reliable messages and earlier snapshots drain before building
         // another delta. ClientView still describes the last queued snapshot
         // so the next one can carry all state changes since then.
-        if (connection->outboundBacklog() >= kSnapshotBacklogLimit) {
+        if (connection->snapshotBacklog() >= kSnapshotBacklogLimit) {
             if (viewpointOf(session) == session.entity)
                 deferredPickupViews_.emplace(session.connection, &views_.at(session.connection));
             continue;

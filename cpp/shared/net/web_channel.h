@@ -107,6 +107,7 @@ bool send(int channel, const void* data, int size);
 /// backpressure signal: the caller stops feeding a channel whose transport is
 /// already behind, exactly as a native socket's EAGAIN makes it stop.
 std::size_t buffered(int channel);
+std::size_t unacknowledged(int channel);
 
 void close(int channel);
 

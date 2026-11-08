@@ -2196,7 +2196,8 @@ void CombatSystem::beginTick(World& world, double nowMillis, double dt, EventQue
 }
 
 void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
-                                   const ContentRegistry& content, double nowMillis) {
+                                   const ContentRegistry& content, double nowMillis,
+                                   const std::vector<ContactBodyPlacement>* placements) {
     melee_.clear();
     auras_.clear();
     mobContactedPlayers_.clear();
@@ -2208,9 +2209,21 @@ void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
     resolveAuras(world, grid, nowMillis);
     gatherMeleeTargets(world);
     gatherContact(world, content);
+    if (placements) {
+        // Preserve the full grid's pre-aura geometry and bucket order. Only
+        // remove bodies that hostile sources already skip before any hit test.
+        hostileTargets_.clear();
+        for (const auto& body : *placements) {
+            const std::size_t slot = entityIndex(body.entity);
+            if (slot >= meleeTargets_.size()) continue;
+            const auto& target = meleeTargets_[slot];
+            if (target.entity != body.entity || target.hostileBody) continue;
+            hostileTargets_.insert(body.entity, body.realm, body.position, body.radius);
+        }
+    }
     gatherPetals(world, content, nowMillis);
     fileShots(world);
-    resolveMelee(world, grid, content, nowMillis);
+    resolveMelee(world, grid, content, nowMillis, placements ? hostileTargets_ : grid);
 }
 
 void CombatSystem::tickMobLightning(World& world, const SpatialGrid& grid,
@@ -2784,7 +2797,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
 }
 
 void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
-                                double nowMillis) {
+                                double nowMillis, const SpatialGrid& hostileTargets) {
     for (const MeleeSource& source : melee_) {
         if (!world.isAlive(source.attacker) || world.has<Dead>(source.attacker)) continue;
 
@@ -2797,7 +2810,8 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
         const double sourceHalf = squareMobHalfExtent(world, source.attacker);
         // Two peaceful player-side entities cannot damage each other.
         // Skip whole cells of allied shots around a crowded boss.
-        queryBodies(grid, source.realm, source.position, source.radius + kBroadphasePad,
+        queryBodies(source.isHostileBody ? hostileTargets : grid,
+                    source.realm, source.position, source.radius + kBroadphasePad,
                     candidates_, sourcePlayer,
                     !filedShots_.empty() && peacefulPlayerSide(world, source.attacker, sourcePlayer));
         bool ricochetHit = false;

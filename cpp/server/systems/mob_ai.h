@@ -683,7 +683,8 @@ public:
     /// nothing this pass creates exists until `commands` is flushed.
     void run(World& world, const Terrain& terrain, const SpatialGrid& grid,
              const std::vector<RealmPoint>& activePlayers,
-             double nowMillis, double dt, CommandBuffer& commands);
+             double nowMillis, double dt, CommandBuffer& commands,
+             const SpatialGrid* playerGrid = nullptr);
 
     /// Carries a mob's ring seeds on their seats, retires the ones that have
     /// been broken, and pays off the seeds it owes.

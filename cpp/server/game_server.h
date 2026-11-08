@@ -40,6 +40,7 @@ class MovementSystem;
 class MobAiSystem;
 class PetalSystem;
 class CombatSystem;
+struct ContactBodyPlacement;
 class SpawnSystem;
 class ModeSpawner;
 class LootSystem;
@@ -1519,6 +1520,8 @@ private:
     WorldMaps worldMaps_;
     SpatialGrid grid_;
     SpatialGrid mobTargetGrid_;
+    SpatialGrid playerTargetGrid_;
+    std::vector<ContactBodyPlacement> contactBodies_;
     SpatialGrid pickupGrid_;
     SpatialGrid snapshotGrid_;
     Rng rng_;

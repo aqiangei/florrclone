@@ -91,6 +91,7 @@ EM_JS(void, flix_net_init, (), {
         queued: 0,
         sender: null,
         bufferedFn: null,
+        unacknowledgedFn: null,
         closer: null,
         outstanding: 0,
       };
@@ -747,11 +748,31 @@ EM_JS(int, flix_ch_listen,
     channel.realIp = header("x-real-ip");
     channel.cfConnectingIp = header("cf-connecting-ip");
     channel.state = 1;
-    channel.sender = (bytes) => socket.write(encode(0x2, bytes));
+    // An upgraded reverse proxy can empty Node's socket while the browser
+    // is still behind. A WebSocket control Pong confirms receipt of every
+    // frame ahead of its Ping, through the proxy, without game messages.
+    const markerInterval = 16 * 1024;
+    let sent = 0;
+    let acknowledged = 0;
+    let marker = null;
+    let markedBytes = 0;
+    const mark = () => {
+      if (marker || sent - acknowledged < markerInterval || !socket.writable) return;
+      marker = crypto.randomBytes(8);
+      markedBytes = sent;
+      socket.write(encode(0x9, marker));
+    };
+    channel.sender = (bytes) => {
+      const frame = encode(0x2, bytes);
+      socket.write(frame);
+      sent += frame.length;
+      mark();
+    };
     // What Node is holding and has not handed to the kernel: the same question
     // bufferedAmount answers in the page, and the backpressure signal
     // writeAvailable() stops feeding.
     channel.bufferedFn = () => socket.writableLength || 0;
+    channel.unacknowledgedFn = () => sent - acknowledged;
     channel.closer = () => { try { socket.end(encode(0x8, Buffer.alloc(0))); } catch (e) { } };
     open.add(socket);
 
@@ -828,7 +849,14 @@ EM_JS(int, flix_ch_listen,
           try { socket.write(encode(0xa, payload)); } catch (e) { }
           continue;
         }
-        if (opcode === 0xa) continue;          // pong, to a ping this never sends
+        if (opcode === 0xa) {
+          if (marker && marker.equals(payload)) {
+            acknowledged = markedBytes;
+            marker = null;
+            mark();
+          }
+          continue;
+        }
 
         if (opcode === 0x0) {                  // continuation
           if (!fragments) return drop("continuation without a start", 1002);
@@ -1005,6 +1033,11 @@ EM_JS(double, flix_ch_buffered, (int id), {
   try { return channel.bufferedFn(); } catch (e) { return 0; }
 });
 
+EM_JS(double, flix_ch_unacknowledged, (int id), {
+  const channel = Module.flixNet.get(id);
+  return channel && channel.unacknowledgedFn ? channel.unacknowledgedFn() : 0;
+});
+
 EM_JS(void, flix_ch_close, (int id), {
   const net = Module.flixNet;
   const slot = net.get(id);
@@ -1086,6 +1119,10 @@ bool send(int channel, const void* data, int size) {
 std::size_t buffered(int channel) {
     const double bytes = flix_ch_buffered(channel);
     return bytes > 0 ? static_cast<std::size_t>(bytes) : 0;
+}
+
+std::size_t unacknowledged(int channel) {
+    return static_cast<std::size_t>(flix_ch_unacknowledged(channel));
 }
 
 void close(int channel) { flix_ch_close(channel); }
