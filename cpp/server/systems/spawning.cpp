@@ -1034,6 +1034,10 @@ void SpawnSystem::run(World& world, const Terrain& terrain, const ContentRegistr
                       CommandBuffer& commands) {
     bind(world);
     rebuildZones(content);
+    // Stocking only appends. Waking can reorder the records, so discard the
+    // indices from the preceding pass before another placement query.
+    latentPlacementGrid_.clear();
+    indexedLatentZones_.assign(zones_.size(), false);
     scatterBossClocks(nowMillis);
     gatherViewers(world, players);
 
@@ -1175,6 +1179,7 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
     censusMobs_.clear();
 
     mobPlacements_.clear();
+    placementGrid_.clear();
     // Recounted from the world rather than tracked through every death: a mob
     // dies in combat, is reaped by the runtime and is never reported here, so
     // a running total would drift downward forever and its band would stop
@@ -1257,9 +1262,8 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
             // mob or something an operator conjured has no band, and is simply
             // destroyed as it always was.
             if (sleeps) {
-                SpawnZone& zone = zones_[ambient.zone];
-                zone.latent.push_back(
-                    LatentMob{transform.position, nowMillis, type.configIndex, type.rarity});
+                addLatent(ambient.zone,
+                          LatentMob{transform.position, nowMillis, type.configIndex, type.rarity});
                 ++census_.demotedTotal;
                 sleepers_.push_back(e);
             }
@@ -1276,7 +1280,7 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         }
         // The placement record the stocking pass spaces its next spawns
         // against.
-        mobPlacements_.push_back(MobPlacement{transform.position, body.radius, transform.realm});
+        notePlacement(transform.realm, transform.position, body.radius);
     });
 
     // A connected chain leaves together when its root is culled.
@@ -1323,9 +1327,10 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
 }
 
 bool SpawnSystem::crowdedAt(Realm realm, Vec2 position, double halfSize, double extraGap,
-                            const SpawnZone& zone) const {
-    for (const MobPlacement& mob : mobPlacements_) {
-        if (mob.realm != realm) continue;
+                            std::uint16_t zoneIndex) {
+    placementGrid_.query(realm, position, halfSize + extraGap, nearbyPlacements_);
+    for (const Entity key : nearbyPlacements_) {
+        const MobPlacement& mob = mobPlacements_[static_cast<std::size_t>(key) - 1];
         const double reach = halfSize + mob.radius + extraGap;
         if (distanceSq(mob.position, position) < reach * reach) return true;
     }
@@ -1335,18 +1340,50 @@ bool SpawnSystem::crowdedAt(Realm realm, Vec2 position, double halfSize, double 
     // keeps a stocked band from settling into clumps.
     const double reach = halfSize + kPreliminarySpawnRadius + extraGap;
     const double reachSq = reach * reach;
-    for (const LatentMob& record : zone.latent) {
-        if (distanceSq(record.position, position) < reachSq) return true;
+    const auto& latent = zones_[zoneIndex].latent;
+    constexpr std::size_t minIndexedPlacements = 96;
+    if (latent.size() < minIndexedPlacements) {
+        for (const LatentMob& record : latent) {
+            if (distanceSq(record.position, position) < reachSq) return true;
+        }
+        return false;
+    }
+    if (!indexedLatentZones_[zoneIndex]) {
+        for (std::size_t i = 0; i < latent.size(); ++i)
+            latentPlacementGrid_.insert(makeEntity(static_cast<std::uint32_t>(i + 1), zoneIndex),
+                                        realm, latent[i].position);
+        indexedLatentZones_[zoneIndex] = true;
+    }
+    const Vec2 extent{reach, reach};
+    latentPlacementGrid_.queryPointBuckets(realm, position - extent, position + extent, nearbyPlacements_);
+    for (const Entity key : nearbyPlacements_) {
+        if (entityGeneration(key) != zoneIndex) continue;
+        if (distanceSq(latent[entityIndex(key) - 1].position, position) < reachSq) return true;
     }
     return false;
+}
+
+void SpawnSystem::notePlacement(Realm realm, Vec2 position, double radius) {
+    mobPlacements_.push_back({position, radius});
+    // The grid refers to the placement record, whose position stays fixed
+    // between population passes. Slot zero is reserved by SpatialGrid.
+    placementGrid_.insert(static_cast<Entity>(mobPlacements_.size()), realm, position, std::abs(radius));
+}
+
+void SpawnSystem::addLatent(std::uint16_t zoneIndex, LatentMob record) {
+    auto& zone = zones_[zoneIndex];
+    zone.latent.push_back(record);
+    if (indexedLatentZones_[zoneIndex]) {
+        latentPlacementGrid_.insert(makeEntity(static_cast<std::uint32_t>(zone.latent.size()), zoneIndex),
+                                    zone.realm, record.position);
+    }
 }
 
 void SpawnSystem::noteLiveBandMob(World& world, Entity e, std::uint16_t zone) {
     const Transform* transform = world.tryGet<Transform>(e);
     if (transform == nullptr) return;
     const Body* body = world.tryGet<Body>(e);
-    mobPlacements_.push_back(
-        MobPlacement{transform->position, body != nullptr ? body->radius : 0.0, transform->realm});
+    notePlacement(transform->realm, transform->position, body != nullptr ? body->radius : 0.0);
     if (zone < zones_.size()) censusMobs_.push_back(CensusMob{e, transform->position, zone});
 }
 
@@ -2301,7 +2338,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
                           kPreliminarySpawnRadius)) {
             continue;
         }
-        if (crowdedAt(zone.realm, candidate, kPreliminarySpawnRadius, kMinMobSpawnSpacing, zone)) {
+        if (crowdedAt(zone.realm, candidate, kPreliminarySpawnRadius, kMinMobSpawnSpacing, zoneIndex)) {
             continue;
         }
         at = candidate;
@@ -2415,7 +2452,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         const double delay = slot == Slot::Killed && seenBy(viewers, zone.realm, at, 0.0)
                                  ? rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis)
                                  : 0.0;
-        zone.latent.push_back(LatentMob{at, nowMillis + delay, type, rarity});
+        addLatent(zoneIndex, LatentMob{at, nowMillis + delay, type, rarity});
         return true;
     }
 

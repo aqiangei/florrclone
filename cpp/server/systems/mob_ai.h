@@ -1123,6 +1123,8 @@ private:
     /// top of the tick rather than from wherever the pet pass has since
     /// carried it.
     std::vector<Candidate> petList_;
+    SpatialGrid baitGrid_;
+    std::vector<Entity> nearbyBaits_;
     std::vector<Entity> chainScratch_;
     std::vector<Entity> chainHeads_;
     std::unordered_map<Entity, Entity> followerOf_;

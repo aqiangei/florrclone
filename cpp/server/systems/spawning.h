@@ -70,6 +70,7 @@
 #include "shared/game/difficulty.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/rarity.h"
+#include "shared/game/spatial.h"
 #include "shared/game/terrain.h"
 
 namespace flix {
@@ -451,6 +452,11 @@ public:
     /// anything. It does not shrink the map's population, only how much of it
     /// is awake at once.
     int mobCap = kMaxLiveMobs;
+
+    void sizePlacementGrids(const Terrain& terrain) {
+        placementGrid_.sizeToRealms(terrain);
+        latentPlacementGrid_.sizeToRealms(terrain);
+    }
 
     /// Assigns the wire id for every entity this system creates.
     ///
@@ -931,7 +937,7 @@ private:
 
     /// True when a body of `halfSize` at `position` would touch a mob the last
     /// census saw, or a record this band already holds, with `extraGap` of
-    /// clearance on top. The one scan behind every spacing test there is.
+    /// clearance on top.
     ///
     /// The live half is world-wide and the latent half is the band's own,
     /// which is the one seam in it: two records either side of a band boundary
@@ -939,7 +945,9 @@ private:
     /// mobs nobody is looking at yet, and it buys a stocking pass that costs
     /// the band's own population rather than the map's.
     bool crowdedAt(Realm realm, Vec2 position, double halfSize, double extraGap,
-                   const SpawnZone& zone) const;
+                   std::uint16_t zoneIndex);
+    void notePlacement(Realm realm, Vec2 position, double radius);
+    void addLatent(std::uint16_t zoneIndex, LatentMob record);
 
     /// True when `position` is inside somebody's viewport, grown by `margin`.
     bool seenBy(const std::vector<Viewer>& viewers, Realm realm, Vec2 position,
@@ -1079,8 +1087,12 @@ private:
     /// arena or maze mob alive: those realms are populated whole, so "near a
     /// player" there means "someone is in here".
     std::array<bool, kMaxRealms> realmOccupied_{};
-    struct MobPlacement { Vec2 position; double radius = 0; Realm realm = Realm::Overworld; };
+    struct MobPlacement { Vec2 position; double radius; };
     std::vector<MobPlacement> mobPlacements_;
+    SpatialGrid placementGrid_;
+    std::vector<Entity> nearbyPlacements_;
+    SpatialGrid latentPlacementGrid_;
+    std::vector<bool> indexedLatentZones_;
     /// Where each of this pass's dead fell, and which band is owed it.
     /// Collected before any of it is spent, because spending it creates
     /// entities and that moves the very rows the walk is holding.

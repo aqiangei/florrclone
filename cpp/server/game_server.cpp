@@ -633,6 +633,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     petals_ = std::make_unique<PetalSystem>();
     combat_ = std::make_unique<CombatSystem>();
     spawning_ = std::make_unique<SpawnSystem>();
+    spawning_->sizePlacementGrids(*terrain_);
     if (config.loadShedding) {
         petals_->volleyEntityLimit = 96;
         std::printf("[capacity] load shedding enabled; 20 TPS, no player cap\n");

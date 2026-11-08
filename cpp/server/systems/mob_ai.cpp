@@ -2866,16 +2866,13 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
     // components its type calls for on the first tick it thinks, and that --
     // like a volley -- is a structural change, which relocates the very
     // columns an in-place walk would be holding.
-    SpatialGrid baitGrid;
-    bool hasBaits = false;
+    baitGrid_.clear();
     Query<HoneyBait, Transform, Health> baitQuery{world};
     baitQuery.each([&](Entity e, HoneyBait&, Transform& at, Health& health) {
-        if (health.current > 0 && !world.has<Dead>(e)) {
-            hasBaits = true;
-            baitGrid.insert(e, at.realm, at.position, 0);
-        }
+        if (health.current > 0 && !world.has<Dead>(e))
+            baitGrid_.insert(e, at.realm, at.position);
     });
-    std::vector<Entity> nearbyBaits;
+    const bool hasBaits = !baitGrid_.empty();
     mobs_.collect(stepList_);
     prepareTargets(world, terrain, grid, nowMillis);
     for (std::size_t index = 0; index < stepList_.size(); ++index) {
@@ -2947,19 +2944,19 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             continue;
         }
         // Honey is a local, visible decoy; never scan every player's bait for every mob.
-        nearbyBaits.clear();
+        nearbyBaits_.clear();
         if (hasBaits && ai->kind != AiKind::Stationary && ai->kind != AiKind::Sandstorm &&
             !world.has<Pet>(self) && drive.chaseSpeed > 0.0)
-            baitGrid.query(transform->realm, transform->position, 600.0, nearbyBaits);
+            baitGrid_.query(transform->realm, transform->position, 600.0, nearbyBaits_);
         Entity lure = NULL_ENTITY; double nearest = 600.0 * 600.0;
-        for (Entity candidate : nearbyBaits) {
+        for (Entity candidate : nearbyBaits_) {
             const auto& baitAt = world.get<Transform>(candidate);
             const double d = distanceSq(transform->position, baitAt.position);
             if (d < nearest && !terrain.segmentBlocked(transform->position, baitAt.position, transform->realm)) {
                 lure = candidate; nearest = d;
             }
         }
-        const auto* previousTarget = world.tryGet<Transform>(ai->target);
+        const auto* previousTarget = lure != NULL_ENTITY ? world.tryGet<Transform>(ai->target) : nullptr;
         if (lure != NULL_ENTITY && (!previousTarget || world.has<HoneyBait>(ai->target) ||
             previousTarget->realm != transform->realm ||
             nearest * (.28 * .28) < distanceSq(transform->position, previousTarget->position))) {
