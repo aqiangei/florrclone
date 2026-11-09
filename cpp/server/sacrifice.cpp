@@ -178,19 +178,6 @@ void GameServer::offerSacrifice(Session& session, Entity corpse) {
     const Realm realm = transform->realm;
     SpawnSystem::Sacrifice plan =
         spawning_->planSacrifice(world_, content(), tier, position, realm, rng_);
-    // A ritual still drawing its pentagram is that tier's boss already, as
-    // far as a second sacrifice in the same map is concerned: two would both
-    // summon, and the later would be culled as the biome's second.
-    if (plan.outcome == SpawnSystem::SacrificeOutcome::Summoned &&
-        (plan.rarity == Rarity::Unique || plan.rarity == Rarity::Apex)) {
-        Query<SacrificeRitual, Transform> rituals{world_};
-        rituals.each([&](Entity, SacrificeRitual& ritual, Transform& at) {
-            if (ritual.mob == NULL_ENTITY && ritual.rarity == plan.rarity && at.realm == realm) {
-                plan.outcome = SpawnSystem::SacrificeOutcome::Taken;
-            }
-        });
-    }
-
     net::Connection* connection = listener_.find(session.connection);
     const std::string petalName = std::string(rarityLabel(tier)) + " " + content().petal(petal).name;
     if (plan.outcome != SpawnSystem::SacrificeOutcome::Summoned) {
@@ -205,8 +192,7 @@ void GameServer::offerSacrifice(Session& session, Entity corpse) {
                       " went unanswered: no Unique or Apex can stand in a Prestige biome.";
                 break;
             case SpawnSystem::SacrificeOutcome::Taken:
-                why = "Your " + petalName + " went unanswered: an " +
-                      rarityLabel(ladderRarity(tier)) + " already roams this biome.";
+                why = "此区域的同阶 Boss 名额已被现存怪物或正在进行的血祭占用。血祭已保留。";
                 break;
             default:
                 why = "Your " + petalName + " went unanswered: nothing lives here.";
@@ -233,6 +219,9 @@ void GameServer::offerSacrifice(Session& session, Entity corpse) {
     ritual.radius = content().mobStats(plan.mobIndex, plan.rarity).radius *
                     kSacrificeRitualRadiusScale;
     ritual.ownerConnection = session.connection;
+    ritual.ownerUserId = session.userId;
+    ritual.offeredRarity = tier;
+    ritual.offeredSlot = static_cast<std::uint8_t>(slot);
     const Entity e = world_.create();
     // Each ritual turned its own way: the star's points fall where they fall.
     world_.add<Transform>(e, Transform{position, sacrificeRng_.angle(), realm});
@@ -245,7 +234,10 @@ void GameServer::offerSacrifice(Session& session, Entity corpse) {
     world_.add<NetId>(e, NetId{netIds_.next()});
 
     std::printf("[SACRIFICE] %s spent a %s\n", session.username.c_str(), petalName.c_str());
-    if (connection != nullptr) sendProfile(session, *connection);
+    if (connection != nullptr) {
+        sendNotice(*connection, net::NoticeSeverity::Info, "血祭已开始，仪式完成后召唤怪物。");
+        sendProfile(session, *connection);
+    }
 }
 
 void GameServer::announceSacrificeSummon(Entity mob, Realm realm) {
@@ -334,6 +326,26 @@ void GameServer::serviceSacrificeRituals(double nowMillis) {
                                                          at.position, at.realm, nowMillis, rng_);
             // Re-fetched: the spawn created entities, which can move this row.
             if (mob == NULL_ENTITY) {
+                const auto failed = world_.get<SacrificeRitual>(e);
+                if (!failed.ownerUserId.empty()) {
+                    PlayerRecord& record = database_.progress(failed.ownerUserId);
+                    const std::size_t slot = failed.offeredSlot;
+                    if (slot < record.loadout.size() && !record.loadout[slot]) {
+                        record.loadout[slot] = StoredItem{"petal", failed.offeredRarity, kSacrificePetalId};
+                    } else {
+                        record.addItem(failed.offeredRarity, std::string("petal_") + kSacrificePetalId, 1);
+                    }
+                    database_.markDirty();
+                    for (auto& [connectionId, session] : sessions_) {
+                        if (session.userId != failed.ownerUserId) continue;
+                        if (session.playing()) applyAccountToSession(session);
+                        if (auto* connection = listener_.find(connectionId)) {
+                            sendNotice(*connection, net::NoticeSeverity::Warning,
+                                       "血祭未能召唤，花瓣已退回。");
+                            sendProfile(session, *connection);
+                        }
+                    }
+                }
                 commands_.destroy(e);
                 continue;
             }

@@ -36,7 +36,7 @@ namespace flix {
 
 struct PlayerTag {};
 struct WavePlayer {};
-struct WaveEnemy { bool canDrop = true; };
+struct WaveEnemy { bool canDrop = true; std::uint64_t round = 0; };
 struct MobTag {};
 struct GhostTag {};
 struct PetalTag {};
@@ -78,6 +78,7 @@ struct Body {
     /// than the area, so a boss shrugs off what launches a ladybug -- and
     /// kAnchoredMassScale times that for a mob that never moves.
     double mass = 1;
+    bool wideMobWallHull = false;
 };
 
 /// What a body weighs in a momentum split -- a knockback, a contact push, a
@@ -332,12 +333,13 @@ struct Afflictions {
 
 /// A killing blow the Second Chance talent turned into 1 HP.
 ///
-/// Only the lockout is stored: the tier (and therefore the invulnerability
+/// The tier (and therefore the invulnerability
 /// window and the lockout length) is read from the player's own skill tree at
 /// the moment the blow lands. Skills are disabled inside the PvP arena, so the
 /// revive must not fire there either.
 struct SecondChance {
     double readyAtMillis = 0;
+    double activeUntilMillis = 0;
 };
 
 /// A flower a worn bandage kept standing through a killing blow, or a mob
@@ -1135,6 +1137,7 @@ struct Spawner {
 
 struct PetalInstance {
     std::uint8_t dominoPips = 0;
+    std::uint8_t diceFace = 0;
     // A placed Dark Mark stays over its corpse while it charges. Ordinary
     // petal replication carries its position; no message layout changes.
     Entity markTarget = NULL_ENTITY;
@@ -1475,6 +1478,9 @@ struct SacrificeRitual {
     Entity mob = NULL_ENTITY;
     /// Who spent it, for the notices: their connection, or 0.
     std::uint32_t ownerConnection = 0;
+    std::string ownerUserId;
+    Rarity offeredRarity = Rarity::Common;
+    std::uint8_t offeredSlot = 0;
 };
 
 /// How long the pentagram takes to draw before the mob is summoned.

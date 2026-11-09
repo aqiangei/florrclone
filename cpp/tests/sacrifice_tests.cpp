@@ -67,16 +67,19 @@ bool overworldBandPoint(const GameServer& server, bool rough, Vec2& out) {
 }
 
 /// Wears an apex sacrifice in slot 0, the way a player does.
-bool wearSacrifice(Harness& h, NetClient& client, const char* account, std::uint16_t sacrifice) {
+bool wearSacrifice(Harness& h, NetClient& client, const char* account, std::uint16_t sacrifice,
+                   NetClient* peer = nullptr) {
     if (!h.server.grantAdmin(client.sessionToken())) return false;
-    client.sendChat(std::string("/admin give ") + account + " sacrifice apex 1");
-    if (!h.stepUntil({&client}, [&] {
+    std::vector<NetClient*> clients{&client};
+    if (peer) clients.push_back(peer);
+    client.sendChat(std::string("/admin give ") + account + " " + kSacrificePetalId + " apex 1");
+    if (!h.stepUntil(clients, [&] {
             return client.profile().stackCount(sacrifice, Rarity::Apex) > 0;
         })) {
         return false;
     }
     client.setLoadoutSlot(0, sacrifice, Rarity::Apex);
-    return h.stepUntil({&client}, [&] {
+    return h.stepUntil(clients, [&] {
         return !client.profile().loadout.empty() &&
                client.profile().loadout[0].petalIndex == sacrifice;
     });
@@ -161,6 +164,54 @@ TEST(dying_with_a_sacrifice_on_rough_ground_summons_an_apex_there_and_spends_it)
     CHECK(world.isAlive(ritual));
     world.add<Dead>(answered.mob, Dead{NULL_ENTITY});
     CHECK(h.stepUntil({&alice}, [&] { return !world.isAlive(ritual); }, 10));
+}
+
+TEST(contended_apex_sacrifices_reserve_one_slot_and_refund_if_the_summon_fails) {
+    Harness h("sacrifice-contended", {}, flix::testsupport::dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+    const auto petal = content().petalIndex(kSacrificePetalId);
+    NetClient alice, bob;
+    CHECK(loginNew(h, alice, "alice", "hunter2!"));
+    CHECK(loginNew(h, bob, "bob", "hunter2!"));
+    alice.joinGame(1280, 720, {}, "alice");
+    bob.joinGame(1280, 720, {}, "bob");
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return alice.status() == NetClient::Status::Playing && bob.status() == NetClient::Status::Playing;
+    }));
+    CHECK(wearSacrifice(h, alice, "alice", petal, &bob));
+    CHECK(wearSacrifice(h, bob, "bob", petal, &alice));
+
+    World& world = h.server.world();
+    const Entity a = soleBody(world, "alice");
+    const Entity b = soleBody(world, "bob");
+    Vec2 at;
+    if (a == NULL_ENTITY || b == NULL_ENTITY || !overworldBandPoint(h.server, true, at)) {
+        CHECK(false);
+        return;
+    }
+    world.get<Transform>(a).position = at;
+    world.get<Transform>(b).position = at;
+    kill(world, a);
+    kill(world, b);
+    CHECK(h.stepUntil({&alice, &bob}, [&] { return ritualsIn(world).size() == 1; }, 10));
+    const auto rituals = ritualsIn(world);
+    if (rituals.size() != 1) return;
+    const Entity ritual = rituals.front();
+    CHECK(alice.profile().loadout[0].empty() != bob.profile().loadout[0].empty());
+
+    // Another live Apex appears during the pentagram (for example from an
+    // operator). Completing the accepted ritual must not lose the offering.
+    const Entity blocker = world.create();
+    world.add<MobTag>(blocker);
+    world.add<Transform>(blocker, Transform{at, 0.0, Realm::Overworld});
+    world.add<Body>(blocker, Body{30.0, 1.0});
+    world.add<Health>(blocker, Health{100.0, 100.0});
+    world.add<AmbientMob>(blocker);
+    world.add<MobType>(blocker, MobType{content().mobIndex("bee"), Rarity::Apex, 1.0});
+    CHECK(h.stepUntil({&alice, &bob}, [&] { return !world.isAlive(ritual); }, 120));
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return !alice.profile().loadout[0].empty() && !bob.profile().loadout[0].empty();
+    }, 10));
 }
 
 TEST(a_restart_during_a_sacrifice_hands_the_apex_clock_back) {

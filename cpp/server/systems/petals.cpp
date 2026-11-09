@@ -1252,6 +1252,10 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
             }
             slotState.diceAttacking=attacking;
             slotState.counter=slotState.diceFace;
+            for (const Entity petal : live) {
+                if (auto* instance = world.tryGet<PetalInstance>(petal))
+                    instance->diceFace = static_cast<std::uint8_t>(slotState.diceFace);
+            }
         }
         else if (stats.spongeDamageDurationMillis > 0.0) slotState.counter = storedSpongeDamage;
         else if (stats.armorPerStack > 0.0) slotState.counter = bankedArmorStacks;
@@ -2849,20 +2853,29 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         if (config.id == "pharaoh_s_crown") {
             if (pharaohSummoned) continue;
             pharaohSummoned = true;
-            auto* crownState = world.tryGet<PetalSlotState>(player);
-            if (!crownState || nowMillis < crownState->nextPharaohSummonMillis) continue;
-            crownState->nextPharaohSummonMillis = nowMillis + 1000.0;
+            auto* state = world.tryGet<PetalSlotState>(player);
+            if (!state || nowMillis < state->nextPharaohSummonMillis) continue;
+            state->nextPharaohSummonMillis = nowMillis + 1000.0;
             const auto mob = registry.mobIndex("mummy_beetle");
-            auto* current = world.tryGet<PetalSlotState>(player);
             const auto* at = world.tryGet<Transform>(player);
-            if (mob != kInvalidIndex && current && at && countOwnedPets(world,*current) < kMaxPetEntitiesPerPlayer) {
-                const Vec2 position = at->position;
-                const auto slot = instance->slot;
-                // Eternal crown summons Super beetles; Hyper improves their
-                // combat strength by 50% without inflating pet count/frequency.
-                const double strength = ladderRarity(instance->rarity) == Rarity::Apex ? 1.5 : 1.0;
-                summonPets(world,registry,player,slot,mob,Rarity::Super,1,position,*current,strength,nowMillis+6000.0);
+            if (mob == kInvalidIndex || !at || countOwnedPets(world, *state) >= kMaxPetEntitiesPerPlayer)
+                continue;
+
+            const PetalInstance* crown = instance;
+            if (!isHyperPetal(crown->rarity)) {
+                for (const Entity candidate : actionList_) {
+                    const auto* other = world.tryGet<PetalInstance>(candidate);
+                    if (other && other->configIndex == instance->configIndex &&
+                        other->slot < kLoadoutSlots && isHyperPetal(other->rarity) &&
+                        world.has<Transform>(candidate) && !world.has<Dead>(candidate)) {
+                        crown = other;
+                        break;
+                    }
+                }
             }
+            const auto summonTier = isHyperPetal(crown->rarity) ? Rarity::Unique : Rarity::Super;
+            summonPets(world, registry, player, crown->slot, mob, summonTier, 1, at->position,
+                       *state, 1.0, nowMillis + 6000.0);
             continue;
         }
 

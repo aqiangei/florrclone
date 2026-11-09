@@ -1195,8 +1195,10 @@ void WorldRenderer::ingestEvents(WorldView& view) {
         spawn.distance = kDropSpawnNear + randomUnit() * kDropSpawnSpread;
         spawn.rotation = (randomUnit() - 0.5) * kTau;
         dropSpawns_[entity.netId] = spawn;
-        for (int i = 0; i < kDropBurstCount && dropSparkles_.size() < kMaxDropSparkles; ++i) {
-            pushDropGrain(entity.position, entity.rarity, kMaxDropSparkles);
+        if (sparklingRarity(entity.rarity)) {
+            for (int i = 0; i < kDropBurstCount && dropSparkles_.size() < kMaxDropSparkles; ++i) {
+                pushDropGrain(entity.position, entity.rarity, kMaxDropSparkles);
+            }
         }
     }
     for (auto it = knownDrops_.begin(); it != knownDrops_.end();) {
@@ -2902,14 +2904,20 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
     // From here it is the petal itself, which flashes when it is struck; the
     // two glows above are light, not petal.
     const ScopedColorTint flash(canvas, hitTint(entity.netId));
-    canvas.rotate(static_cast<float>(rotation));
+    const bool rollingDice = config && config->id == "dice" && diameter >= 8.0 &&
+        entity.ownerNetId != 0 && !entity.isRingPetal() && !entity.isLoosePetal();
+    if (!rollingDice) canvas.rotate(static_cast<float>(rotation));
     // Both axes: a petal that declares an X offset is drawn off it in the
     // browser build too, and dropping one of the two silently moves it.
     if (config && (config->visualOffsetX != 0 || config->visualOffsetY != 0)) {
         canvas.translate(static_cast<float>(config->visualOffsetX * zoom),
                          static_cast<float>(config->visualOffsetY * zoom));
     }
-    if (config && config->id == "domino" && entity.petalVariant < 49) {
+    if (rollingDice) {
+        const int face = entity.petalVariant >= 1 && entity.petalVariant <= 6
+            ? entity.petalVariant : 1;
+        ui::drawRollingDice(canvas, face, entity.petalAgeSeconds, diameter);
+    } else if (config && config->id == "domino" && entity.petalVariant < 49) {
         SpriteCache::drawDomino(canvas, diameter, entity.petalVariant);
     } else if (config && config->id == "dust") {
         SpriteCache::drawDustGrain(canvas, diameter);
@@ -3683,6 +3691,25 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
 
     static const std::string kNoId;
     const std::string& id = config ? config->id : kNoId;
+    // The loaded sting uses the same artwork, calibre and muzzle as the shot.
+    if (sprites_ && config && config->stingerShooter && !config->hideRotation &&
+        config->projectile.present && !mob.unloaded) {
+        const auto ammo = config->projectile.ammoPetalIndex;
+        if (ammo < content_->petalCount() && sprites_->petalDrawable(ammo)) {
+            const auto& petal = content_->petal(ammo);
+            const auto stats = content_->petalStats(ammo, mob.rarity);
+            const double radius = mobShotRadius(stats.size, mobShotOwnerScale(mob.radius));
+            const double heading = mob.angle + kPi;
+            const double distance = stingerMuzzleDistance(mob.radius, radius) * diameter /
+                                    (mob.radius * 2.0);
+            const Vec2 muzzle = art + Vec2::fromAngle(heading, distance);
+            const double angle = heading -
+                (petal.id == "mecha_missile" ? std::atan2(1124.0, 747.0) : 0.0);
+            sprites_->drawPetal(canvas, ammo, mob.rarity, muzzle.x, muzzle.y,
+                                radius * kProjectileArtPerRadius * petalArtScale(&petal) * zoom,
+                                angle, timeSeconds);
+        }
+    }
     if (id == "garbage") {
         // Keep the original sack behind its deterministic visible contents.
         // Stable poses and softened colours avoid a flashing pile of icons.

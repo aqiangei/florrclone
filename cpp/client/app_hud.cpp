@@ -363,17 +363,41 @@ void App::drawHud(Canvas& canvas, double time) {
     // and all, and a ring around it is not part of that picture.
     drawHudFlower(canvas, self.netId, kFlowerCentreX, kFlowerCentreY, kHudFlowerRadius, time);
 
-    drawSquadHud(canvas, time);
+    double hudBottom = std::max(kHudXpY + manaOffset + kHudXpHeight + kHudXpPad,
+                                kFlowerCentreY + kHudFlowerBody);
+    const bool chinese = ui::language() == ui::Language::Zh;
+    const auto status = [&](double millis, const char* name, std::uint32_t color) {
+        if (!(millis > 0.0)) return;
+        const int tenths = static_cast<int>(std::ceil(millis / 100.0));
+        const std::string caption = std::string(name) + "  " + std::to_string(tenths / 10) +
+                                    "." + std::to_string(tenths % 10) + "s";
+        TextStyle style = levelLabel;
+        style.size = 13.0;
+        style.align = Align::Left;
+        style.fill = color;
+        const double width = measure(caption, style.size) + 14.0;
+        canvas.beginPath();
+        canvas.roundRect(kHudXpX, hudBottom + 4.0, width, 18.0, 5.0);
+        setFill(canvas, 0x25222B, 0.9);
+        canvas.fill();
+        text(canvas, caption, kHudXpX + 7.0, hudBottom + 13.0, style);
+        hudBottom += 22.0;
+    };
+    status(self.secondChanceMillis, chinese ? "SC · 无敌" : "SC · Invulnerable", 0xFFE2A4);
+    status(self.secondChanceCooldownMillis, chinese ? "SC · 冷却" : "SC · Cooldown", 0xD8DCED);
+    status(self.bandageMillis, chinese ? "BDG · 不死" : "BDG · Undead", 0xB8EDAC);
+    drawSquadHud(canvas, time, hudBottom);
 
     canvas.restore();
 
     drawMinimap(canvas);
     drawOnlineRoster(canvas);
 
+    const double waveBarBottom = drawWaveBar(canvas);
     const double bossBarsBottom = drawBossBars(canvas, altHeld);
     // Under the boss bars, which share the top of the screen with it and are
     // what the player is fighting.
-    drawAdminAnnouncement(canvas, bossBarsBottom);
+    drawAdminAnnouncement(canvas, std::max(waveBarBottom, bossBarsBottom));
 
     // Over the HUD and under everything the menu system paints. A panel is the
     // one thing that takes the controls away, and it takes them away entirely
@@ -420,7 +444,7 @@ void App::drawHudFlower(Canvas& canvas, std::uint32_t netId, double centreX, dou
     canvas.restore();
 }
 
-void App::drawSquadHud(Canvas& canvas, double time) {
+void App::drawSquadHud(Canvas& canvas, double time, double hudBottom) {
     const SquadState& squad = net_.squad();
     if (!squad.inSquad) return;
 
@@ -449,11 +473,6 @@ void App::drawSquadHud(Canvas& canvas, double time) {
     tag.fill = 0x27DADEu;
     tag.baseline = Baseline::Alphabetic;
 
-    // Where the main HUD actually ends: the XP bar's plate, or the bottom of
-    // the avatar, whichever hangs further down.
-    const double hudBottom =
-        std::max(kHudXpY + (net_.view().self().maxMana > 0.0 ? 20.0 : 0.0) +
-                     kHudXpHeight + kHudXpPad, kFlowerCentreY + kHudFlowerBody);
     double centreY = hudBottom + 78.0 * kScale;
     TextStyle codeStyle=label;
     codeStyle.align=Align::Left;codeStyle.size=12;
@@ -553,6 +572,47 @@ NearbyNpc App::nearbyNpc(Vec2 self) const {
         nearestGap = gap;
     }
     return nearest;
+}
+
+double App::drawWaveBar(Canvas& canvas) {
+    const auto& self = net_.view().self();
+    if (self.wave.durationMillis == 0) return 0.0;
+
+    const bool chinese = ui::language() == ui::Language::Zh;
+    std::string caption = self.wave.round == 0 ? (chinese ? "Wave 准备" : "Wave Ready") :
+        (chinese ? "第 " + std::to_string(self.wave.round) + " 波" :
+                   "Wave " + std::to_string(self.wave.round));
+    std::uint32_t colour = 0x5D97D6;
+    switch (self.wave.theme) {
+        case net::WaveTheme::Bubble:
+            caption += chinese ? " · 泡泡奖励波" : " · Bubble Bonus";
+            colour = 0x438EB0;
+            break;
+        case net::WaveTheme::Sandstorm:
+            caption += chinese ? " · 沙尘暴奖励波" : " · Sandstorm Bonus";
+            colour = 0xAF7B3A;
+            break;
+        case net::WaveTheme::EternalBoss:
+        case net::WaveTheme::HyperBoss:
+            caption += chinese ? " · 首领" : " · Boss";
+            colour = self.wave.theme == net::WaveTheme::HyperBoss ? 0xA54265 : 0x7456A5;
+            break;
+        case net::WaveTheme::Normal:
+            break;
+    }
+    caption += " · " + std::to_string(static_cast<int>(std::ceil(self.waveRemainingMillis / 1000.0))) + "s";
+
+    const double centre = window_.width() * 0.5;
+    const double width = std::max(1.0, std::min(340.0, window_.width() - 24.0));
+    constexpr double y = 18.0, height = 28.0;
+    const double ratio = std::clamp(self.waveRemainingMillis / self.wave.durationMillis, 0.0, 1.0);
+    hudBar(canvas, centre - width * 0.5, y, width, height, width * ratio, colour, 3.0);
+    TextStyle style;
+    style.size = 17.0;
+    style.align = Align::Centre;
+    style.baseline = Baseline::Middle;
+    text(canvas, caption, centre, y + height * 0.5, style);
+    return y + height + 3.0;
 }
 
 double App::drawBossBars(Canvas& canvas, bool altHeld) {
@@ -683,12 +743,13 @@ void App::drawWaveResult(Canvas& canvas) {
     if (width <= 0.0) return;
     const double x = canvas.width() * 0.5;
     const double top = std::min(80.0, canvas.height() * 0.14);
+    const bool hasRewardDetail = !result.lines[3].empty();
 
     canvas.save();
     canvas.setGlobalAlpha(static_cast<float>(clamp(std::min(age / 0.18, (8.0 - age) / 0.45), 0.0, 1.0)));
     canvas.beginPath();
     canvas.roundRect(static_cast<float>(x - width * 0.5), static_cast<float>(top),
-                     static_cast<float>(width), 106.0f, 10.0f);
+                     static_cast<float>(width), hasRewardDetail ? 130.0f : 106.0f, 10.0f);
     setFill(canvas, 0x242019, 0.97);
     canvas.fill();
     setStroke(canvas, 0xD6AF54, 0.95);
@@ -708,6 +769,12 @@ void App::drawWaveResult(Canvas& canvas) {
     style.size = 14.0;
     style.fill = 0xD9C7A6;
     text(canvas, result.lines[2], x, top + 82.0, style);
+    if (hasRewardDetail) {
+        style.size = std::min(14.0, 14.0 * (width - 20.0) /
+                                     std::max(1.0, measure(result.lines[3], 14.0)));
+        style.fill = 0xF4D486;
+        text(canvas, result.lines[3], x, top + 107.0, style);
+    }
     canvas.restore();
 }
 

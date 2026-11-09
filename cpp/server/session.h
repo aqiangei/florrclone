@@ -8,6 +8,7 @@
 // those three lifetimes separate is what makes "leave to menu" and "reconnect"
 // ordinary operations rather than special cases.
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -17,6 +18,7 @@
 #include "server/admin_tiers.h"
 #include "server/db.h"
 #include "shared/core/entity.h"
+#include "shared/game/constants.h"
 #include "shared/game/realm.h"
 #include "shared/net/protocol.h"
 
@@ -43,6 +45,14 @@ struct Session {
     /// named (clientAddress, server/account_limits.h). What every abuse limit
     /// is keyed on.
     std::string clientAddress;
+
+    struct PracticeTrial {
+        Entity player = NULL_ENTITY;
+        Entity dummy = NULL_ENTITY;
+        double endsAt = 0.0;
+        double damage = 0.0;
+        std::array<std::uint32_t, kLoadoutActiveSlots> loadout{};
+    } practiceTrial;
 
     bool splitCreatedSoloSquad = false;
     bool pyramidMapRevealed = false;

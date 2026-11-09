@@ -1,6 +1,7 @@
 #include "test.h"
 
 #include "server/systems/movement.h"
+#include "server/systems/spawning.h"
 #include "server/workers.h"
 #include "server_harness.h"
 #include "test_data.h"
@@ -407,6 +408,52 @@ TEST(knockback_cannot_put_a_mob_through_a_wall) {
     CHECK(!fx.terrain.blocked(at, Realm::Overworld));
     CHECK(at.x <= kWallWest - kMobWallRadius + 1e-6);
     CHECK(at.x > kWallWest - 1.0);
+}
+
+TEST(fire_ants_in_deep_tunnels_keep_their_hull_out_of_walls) {
+    Fixture fx;
+    WorldMaps maps;
+    std::string error;
+    if (!maps.load(testsupport::dataDir(), &fx.terrain, error)) { CHECK(false); return; }
+    bool found = false;
+    const Realm realm = maps.realmOfId("ant_hell", found);
+    if (!found) { CHECK(false); return; }
+    const auto& registry = testsupport::shippedContent();
+    const auto antType = registry.mobIndex("soldier_fire_ant");
+    SpawnSystem spawn;
+    spawn.worldMaps = &maps;
+    Rng rng{42};
+    int cases = 0;
+    for (int y = 98; y < 118 && cases < 12; ++y) {
+        for (int x = 8; x < 61 && cases < 12; ++x) {
+            const Vec2 floor = Terrain::tileCenter(x, y);
+            const Vec2 wall = Terrain::tileCenter(x + 1, y);
+            if (fx.terrain.resolveWall(floor, 108.0, realm).collided ||
+                !fx.terrain.blocked(wall, realm)) continue;
+            const Vec2 nearFace = fx.terrain.resolveCircle(wall, kMobWallRadius, realm);
+            if (distance(floor, nearFace) > kTileSize || nearFace.x <= floor.x ||
+                !fx.terrain.resolveWall(nearFace, 100.0, realm).collided) continue;
+            const auto e = spawn.spawnMob(fx.world, fx.terrain, registry, antType, Rarity::Super,
+                                          nearFace, realm, 0.0, rng);
+            if (e == NULL_ENTITY) continue;
+            const auto& body = fx.world.get<Body>(e);
+            CHECK(body.wideMobWallHull);
+            const double hull = mobWallRadius(&body);
+            const Vec2 placed = fx.positionOf(e);
+            CHECK(!fx.terrain.resolveWall(placed, hull, realm).unresolved);
+            fx.world.get<Motion>(e).velocity = {1600.0, 0.0};
+            fx.world.get<Knockback>(e).impulse = {500.0, 0.0};
+            fx.step(12);
+            const Vec2 after = fx.positionOf(e);
+            CHECK(!fx.terrain.resolveWall(after, hull, realm).unresolved);
+            CHECK(!fx.terrain.blocked(after, realm));
+            CHECK(!fx.terrain.segmentBlocked(placed, after, realm));
+            fx.world.destroy(e);
+            ++cases;
+        }
+    }
+    CHECK(cases >= 4);
+    std::printf("[fire ants] %d deep wall faces tested\n", cases);
 }
 
 TEST(a_nonsense_impulse_is_dropped_rather_than_propagated) {
@@ -1507,8 +1554,28 @@ TEST(wax_barrier_displaces_surrounding_mobile_mobs_without_changing_moon_mass_co
         fx.step(1,0);
         const double slabMove=3000-fx.positionOf(slab).x,mobMove=fx.positionOf(mob).x-3040;
         CHECK(mobMove>0);CHECK(slabMove>=0);
-        if(std::string(id)=="wax")CHECK(mobMove>slabMove*2);
+        if(std::string(id)=="wax"){
+            CHECK(mobMove>slabMove*2);
+            CHECK_NEAR(distance(fx.positionOf(slab), fx.positionOf(mob)), 60.0, 1e-5);
+        }
         else CHECK(slabMove>mobMove*2);
+    }
+}
+
+TEST(wax_pushes_back_on_the_first_overlap_from_a_player) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    for (const Vec2 offset : {Vec2{53.0, 0.0}, Vec2{35.0, 40.0}}) {
+        Fixture fx;
+        const Vec2 at{3000, 3000};
+        const Entity slab = fx.spawnLoose(at, 30.0);
+        PetalInstance instance;
+        instance.configIndex = content().petalIndex(kWaxPetalId);
+        fx.world.add<PetalInstance>(slab, instance);
+        const Entity player = fx.spawnPlayer(at + offset);
+        fx.step(1, 0);
+        CHECK(distance(fx.positionOf(slab), at) > 0.0);
+        CHECK_NEAR(distance(fx.positionOf(slab), fx.positionOf(player)), 30.0 + kPlayerBaseRadius, 1e-5);
     }
 }
 

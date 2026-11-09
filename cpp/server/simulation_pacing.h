@@ -12,6 +12,7 @@ class SimulationPacing {
 public:
     int ticksPerSecond() const { return kRates[tier_]; }
     double intervalMillis() const { return 1000.0 / ticksPerSecond(); }
+    double meanWorkMillis() const { return meanWorkMillis_; }
 
     double advance(double wallMillis) {
         if (!initialized_) {

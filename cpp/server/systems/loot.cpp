@@ -408,10 +408,7 @@ Entity LootSystem::spawnDrop(World& world, std::uint16_t petalIndex, Rarity rari
     world.add<DropItem>(e, std::move(item));
 
     world.add<Lifetime>(e, Lifetime{kDropLifetimeByRarity[static_cast<std::size_t>(rarityIndex(rarity))]});
-    // Hidden loot still has a world body and a net id for its pickup cue.
-    // Without Replicated, it never enters the ground snapshot candidates.
-    if (rarityIndex(rarity) >= rarityIndex(Rarity::Ultra))
-        world.add<Replicated>(e, Replicated{net::EntityKind::Drop, 0, petalIndex, rarity, 0});
+    world.add<Replicated>(e, Replicated{net::EntityKind::Drop, 0, petalIndex, rarity, 0});
     if (netIds != nullptr) world.add<NetId>(e, NetId{netIds->next()});
     return e;
 }

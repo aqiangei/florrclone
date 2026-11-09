@@ -5,6 +5,7 @@
 
 #include "server_harness.h"
 #include "server/db.h"
+#include "server/practice_board.h"
 #include "server/systems/spawning.h"
 #include "server/systems/combat.h"
 #include "server/systems/dungeons.h"
@@ -101,12 +102,12 @@ TEST(jurassic_links_both_jungles_and_stocks_all_six_species) {
     bool found = false;
     const Realm realm = maps.realmOfId("jurassic", found);
     CHECK(found);
-    for (const int row : {9, 20}) {
-        const auto a = Terrain::tileCenter(16, row);
+    for (const int row : {9, 14, 20}) {
+        const auto a = Terrain::tileCenter(row == 14 ? 14 : 16, row);
         const auto b = Terrain::tileCenter(24, row);
         CHECK(!terrain.segmentBlocked(a, b, realm));
     }
-    CHECK(terrain.segmentBlocked(Terrain::tileCenter(16, 14), Terrain::tileCenter(24, 14), realm));
+    CHECK(terrain.segmentBlocked(Terrain::tileCenter(16, 12), Terrain::tileCenter(24, 12), realm));
 
     World world;
     CommandBuffer commands{world};
@@ -128,6 +129,10 @@ TEST(jurassic_links_both_jungles_and_stocks_all_six_species) {
     }
     CHECK_EQ(species.size(), std::size_t(6));
     CHECK(species.count("jurassic_tyrannosaurus"));
+    CHECK(content.mob(content.mobIndex("jurassic_raptor")).jump.present);
+    CHECK(content.mob(content.mobIndex("jurassic_tyrannosaurus")).crabStrafe);
+    CHECK_EQ(content.mob(content.mobIndex("jurassic_pteranodon")).projectile.ammoPetalIndex,
+             content.petalIndex("wing"));
     std::printf("[jurassic] %zu stocked monsters, %zu species\n", sites.size(), species.size());
 }
 
@@ -150,7 +155,11 @@ TEST(jurassic_feedback_bone_stats_and_moon_rock_price) {
     std::string error;
     CHECK(loadContent(dataDir(), error));
     CHECK_NEAR(shopPrice("basic", Rarity::Super), 4188.0, 1e-9);
-    CHECK_NEAR(shopPrice("moon_rock", Rarity::Super), 5690.0, 1e-9);
+    const auto moon = registry.petalIndex("moon_rock");
+    CHECK_NEAR(shopPrice(moon, Rarity::Ultra), 9000.0, 1e-9);
+    CHECK_NEAR(shopPrice(moon, Rarity::Super), 45000.0, 1e-9);
+    CHECK_NEAR(shopOfferPrice(moon, Rarity::Super, 30), 31500.0, 1e-9);
+    CHECK(!shopSellsRarity(Rarity::Unique));
 }
 
 TEST(guild_deputy_can_invite_but_cannot_manage_or_transfer) {
@@ -623,6 +632,132 @@ TEST(prestige_jungle_and_sewers_box_wake_local_mobs_at_the_shared_ambient_limit)
     CHECK(boxNearby > 0);
     CHECK(spawner.census().mobs <= kMaxLiveMobs);
     std::printf("[sewers] %d mobs near the box at the ambient budget\n", boxNearby);
+}
+
+TEST(jungle_refills_near_a_stationary_viewer_after_kills) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    for (const char* mapId : {"jungle", "prestige_jungle"}) {
+        bool found = false;
+        const Realm realm = maps.realmOfId(mapId, found);
+        CHECK(found);
+        if (!found) return;
+        const Vec2 at = terrain.resolveCircle({25217, 3577}, kPlayerBaseRadius, realm);
+        World world;
+        SpawnSystem spawner;
+        spawner.worldMaps = &maps;
+        CommandBuffer commands{world};
+        Rng rng{42};
+        const auto tick = [&](double now) {
+            spawner.run(world, terrain, shippedContent(), {{at, realm}}, rng, now,
+                        net::kTickSeconds, commands);
+            commands.flush();
+        };
+        const auto nearby = [&] {
+            std::vector<Entity> entities;
+            Query<AmbientMob, Transform, MobType> mobs{world};
+            mobs.without<Dead>();
+            mobs.each([&](Entity e, AmbientMob& ambient, Transform& where, MobType& type) {
+                if (ambient.zone != kInvalidIndex && where.realm == realm &&
+                    rarityIndex(type.rarity) < rarityIndex(Rarity::Unique) &&
+                    std::abs(where.position.x - at.x) <= 1200 &&
+                    std::abs(where.position.y - at.y) <= 820) entities.push_back(e);
+            });
+            return entities;
+        };
+        for (int i = 0; i < 12; ++i) tick(50'000 + i * 500);
+        const auto cleared = nearby();
+        CHECK(!cleared.empty());
+        for (const Entity e : cleared) world.add<Dead>(e);
+        tick(56'000);
+        for (const Entity e : cleared) world.destroy(e);
+        for (int i = 1; i <= 13; ++i) tick(56'000 + i * 500);
+        const auto refilled = nearby();
+        CHECK(!refilled.empty());
+        CHECK(spawner.census().mobs <= kMaxLiveMobs);
+        std::printf("[stationary %s] cleared %zu, refilled %zu after 6.5 seconds\n",
+                    mapId, cleared.size(), refilled.size());
+    }
+}
+
+TEST(authored_maps_wake_blocked_ambient_records_without_viewer_movement) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    World world;
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    spawner.sizePlacementGrids(terrain);
+    CommandBuffer commands{world};
+    Rng rng{42};
+    double now = 50'000.0;
+    const auto tick = [&](const std::vector<RealmPoint>& viewers) {
+        spawner.run(world, terrain, shippedContent(), viewers, rng, now,
+                    net::kTickSeconds, commands);
+        commands.flush();
+        now += kPopulationIntervalMillis;
+    };
+    for (int pass = 0; pass < 5; ++pass) tick({});
+    for (const char* id : {"garden", "desert", "computer", "ocean", "jungle", "prestige_jungle",
+                           "hel", "ant_hell", "sewers", "prestige_sewers", "pyramid", "jurassic"}) {
+        bool found = false;
+        const Realm realm = maps.realmOfId(id, found);
+        const auto* map = maps.forRealm(realm);
+        CHECK(found && map != nullptr);
+        if (!found || map == nullptr) continue;
+        std::vector<SpawnSystem::LatentSite> sites;
+        spawner.latentSites(realm, sites);
+        // Probe a point with open ground in the same band around it.
+        const bool narrow = map->biome() == "pyramid";
+        const auto probe = std::find_if(sites.begin(), sites.end(), [&](const auto& site) {
+            if (shippedContent().mob(site.mobIndex).segmentCount > 0 || terrain.blocked(site.position, realm))
+                return false;
+            return std::any_of(map->elements().begin(), map->elements().end(), [&](const auto& band) {
+                if (!band.isSpawnBand() || band.singular || band.forceRarity >= 0 ||
+                    band.difficulty != site.difficulty || !band.contains(site.position)) return false;
+                int clear = 0;
+                for (int i = 0; i < 8; ++i) {
+                    const Vec2 at = site.position + Vec2::fromAngle(i * kPi / 4.0, narrow ? 400.0 : 600.0);
+                    if (band.contains(at) && !terrain.segmentBlocked(site.position, at, realm)) ++clear;
+                }
+                return clear >= (narrow ? 1 : 6);
+            });
+        });
+        CHECK(probe != sites.end());
+        if (probe == sites.end()) continue;
+        const Vec2 standing = probe->position;
+        tick({{standing, realm}});
+        std::vector<Entity> cleared;
+        Query<AmbientMob, Transform, MobType> nearby{world};
+        nearby.without<Dead>();
+        nearby.each([&](Entity mob, AmbientMob& ambient, Transform& at, MobType& type) {
+            if (ambient.zone != kInvalidIndex && at.realm == realm &&
+                rarityIndex(type.rarity) < rarityIndex(Rarity::Super) &&
+                distanceSq(at.position, standing) <= kRespawnScatter * kRespawnScatter)
+                cleared.push_back(mob);
+        });
+        for (const Entity mob : cleared) world.add<Dead>(mob);
+        tick({{standing, realm}});
+        for (const Entity mob : cleared) world.destroy(mob);
+        // Relocation checks a rotating, bounded set of blocked records. Allow
+        // more than one pass through a congested band while the viewer stays put.
+        double clearedAfter = 0.0;
+        for (int pass = 1; pass <= 12 || (pass <= 24 && clearedAfter == 0.0); ++pass) {
+            tick({{standing, realm}});
+            sites.clear();
+            spawner.latentSites(realm, sites);
+            const bool held = std::any_of(sites.begin(), sites.end(), [&](const auto& site) {
+                return distanceSq(site.position, standing) == 0.0;
+            });
+            if (!held && clearedAfter == 0.0) clearedAfter = pass * kPopulationIntervalMillis / 1000.0;
+        }
+        std::printf("[ambient wake] %s: cleared after %.1fs stationary (0 means held; %zu nearby mobs cleared)\n",
+                    id, clearedAfter, cleared.size());
+        CHECK(clearedAfter > 0.0);
+    }
 }
 
 TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
@@ -1171,6 +1306,12 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
     CHECK(h.stepUntil({&host, &guest}, [&] {
         return world.has<WavePlayer>(guestBody) && guest.view().realm() == arena;
     }));
+    CHECK(host.view().self().wave.durationMillis == 30000);
+    const Vec2 rescuePoint = world.get<Transform>(hostBody).position;
+    world.get<Transform>(guestBody).position = rescuePoint;
+    world.get<Health>(guestBody).current = 0.0;
+    world.add<Dead>(guestBody);
+    CHECK(h.stepUntil({&host, &guest}, [&] { return isStanding(world, guestBody); }, 140));
     guest.sendChat("/wave leave");
     CHECK(h.stepUntil({&host, &guest}, [&] {
         return !world.has<WavePlayer>(guestBody) && guest.view().realm() == origin;
@@ -1188,14 +1329,14 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
             CHECK(h.stepUntil({&host, &guest}, [&] { return world.has<WavePlayer>(hostBody); }));
         }
         world.get<Health>(hostBody).invulnerableUntilMillis = std::numeric_limits<double>::infinity();
-        h.clock += 15000.0;
-        bool sawHyper = false;
+        h.clock += 30000.0;
+        bool sawEternal = false;
         for (int wave = 1; wave <= wavesPerRun; ++wave) {
             total += 7500.0;
             CHECK(h.stepUntil({&host, &guest}, [&] {
                 for (const Entity enemy : Query<WaveEnemy>{world}.collect()) {
                     if (!isStanding(world, enemy)) continue;
-                    if (world.get<MobType>(enemy).rarity == Rarity::Apex) sawHyper = true;
+                    if (world.get<MobType>(enemy).rarity == Rarity::Unique) sawEternal = true;
                     world.get<Bounty>(enemy).credit(hostBody, world.get<Health>(enemy).max);
                     world.add<Dead>(enemy);
                 }
@@ -1203,7 +1344,7 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
             }, 850));
             CHECK_NEAR(host.profile().stars, total, 1e-9);
         }
-        CHECK(sawHyper);
+        CHECK(sawEternal);
         const auto noticeBefore = host.waveResultNotice().sequence;
         host.sendChat("/wave leave");
         CHECK(h.stepUntil({&host, &guest}, [&] {
@@ -1267,16 +1408,17 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     int hostAwards = 0;
     int guestAwards = 0;
     std::map<Entity, std::string> summaries;
-    dungeon.waveAward = [&](Entity player, std::uint64_t round) {
+    dungeon.waveAward = [&](Entity player, std::uint64_t round, bool bonus) -> DungeonSystem::WaveAward {
+        CHECK_EQ(bonus, round == 7 || round == 13);
         if (player == members[3]) {
             CHECK_EQ(round, std::uint64_t(1));
             ++guestAwards;
-            return 7500;
+            return {7500, false};
         }
         CHECK(player == members[0]);
         ++hostAwards;
         CHECK_EQ(round, static_cast<std::uint64_t>(hostAwards));
-        return round <= 20 ? 7500 : 0;
+        return {round <= 20 ? 7500 : 0, round >= 20, round == 7};
     };
     dungeon.waveSummary = [&](Entity player, const std::string& text) { summaries[player] = text; };
     const Realm realm = world.get<Transform>(members[0]).realm;
@@ -1287,102 +1429,106 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     commands.flush();
     CHECK(spawner.bossCooldownLeft(Rarity::Apex, realm, 16000.0) > 0.0);
     CHECK_EQ(spawner.census().mobs, 0);
-    tick(16000.0);
+    tick(30999.0);
+    CHECK(Query<WaveEnemy>{world}.collect().empty());
+    CHECK_EQ(dungeon.waveHudFor(world, members[0], 30999.0).remainingMillis, 1u);
+    tick(31000.0);
     CHECK(Query<WaveEnemy>{world}.collect().empty());
     CHECK(dungeon.inWave(world, members[0]));
     spawner.mobCap = kMaxLiveMobs;
 
-    int peakLive = 0;
+    double now = 31100.0;
     int total = 0;
-    for (int round = 1; round <= 21; ++round) {
-        // A successful session can pass the old ten-minute limit.
-        double now = 16100.0 + (round - 1) * 32000.0;
-        const int expected = 54 + 7 * std::min(round - 1, 12);
-        int seen = 0, elites = 0, eternals = 0, hypers = 0;
-        bool firstBatch = true;
-        for (int batch = 0; batch < 20 && seen < expected; ++batch, now += 650.0) {
+    for (int wave = 1; wave <= 21; ++wave) {
+        const bool boss = wave % 5 == 0;
+        const int expected = boss ? 1 : 24 + 2 * std::min(wave - 1, 8);
+        const auto theme = wave % 10 == 0 ? net::WaveTheme::HyperBoss :
+                           boss ? net::WaveTheme::EternalBoss :
+                           wave == 7 ? net::WaveTheme::Bubble :
+                           wave == 13 ? net::WaveTheme::Sandstorm : net::WaveTheme::Normal;
+        int seen = 0;
+        const double start = now;
+        for (; now - start <= 42000.0; now += 2800.0) {
             tick(now);
+            const auto hud = dungeon.waveHudFor(world, members[0], now);
+            CHECK_EQ(hud.round, static_cast<unsigned>(wave));
+            CHECK_EQ(static_cast<int>(hud.theme), static_cast<int>(theme));
             const auto mobs = Query<WaveEnemy>{world}.collect();
-            if (firstBatch) {
-                CHECK_EQ(mobs.size(), std::size_t(12));
-                if (round == 2) CHECK(isStanding(world, members[1]));
-                firstBatch = false;
-            }
-            CHECK(mobs.size() <= 60);
-            peakLive = std::max(peakLive, static_cast<int>(mobs.size()));
-            for (std::size_t i = 0; i < mobs.size(); ++i) {
-                const Entity mob = mobs[i];
+            if (seen == 0) CHECK_EQ(mobs.size(), static_cast<std::size_t>(boss ? 1 : 3));
+            CHECK(mobs.size() <= 3);
+            if (wave == 2) CHECK(isStanding(world, members[1]));
+            for (const Entity mob : mobs) {
                 const auto& at = world.get<Transform>(mob);
                 const auto& hp = world.get<Health>(mob);
                 const auto& body = world.get<Body>(mob);
                 const auto& type = world.get<MobType>(mob);
+                CHECK_EQ(world.get<WaveEnemy>(mob).round, static_cast<std::uint64_t>(wave));
                 CHECK(at.realm == realm);
                 CHECK(!terrain.resolveWall(at.position, body.radius, realm).collided);
                 CHECK_EQ(world.get<Bounty>(mob).xp, 0.0);
                 CHECK(CombatSystem::canDamage(world, members[0], mob));
-                CHECK(body.radius <= 92.0);
-                if (round == 1)
-                    CHECK_NEAR(hp.max, content.mobStats(type.configIndex, type.rarity).health * 1.12, 1e-6);
-                if (type.rarity == Rarity::Apex) {
+                for (const auto other : mobs) {
+                    if (other == mob) continue;
+                    CHECK(distance(at.position, world.get<Transform>(other).position) >=
+                          body.radius + world.get<Body>(other).radius);
+                }
+                if (boss) {
                     CHECK_EQ(type.configIndex, content.mobIndex("beetle"));
-                    CHECK(hp.max > content.mobStats(type.configIndex, Rarity::Super).health * 2.0);
-                    CHECK(hp.max < content.mobStats(type.configIndex, Rarity::Apex).health);
+                    CHECK(type.rarity == (wave % 10 == 0 ? Rarity::Apex : Rarity::Unique));
+                    CHECK(body.radius > 92.0);
+                } else if (wave == 7 || wave == 13) {
+                    CHECK_EQ(type.configIndex, content.mobIndex(wave == 7 ? "bubble" : "sandstorm"));
                 }
-                if (round == 1 || round == 21) {
-                    for (std::size_t j = 0; j < i; ++j) {
-                        CHECK(distance(at.position, world.get<Transform>(mobs[j]).position) >=
-                              body.radius + world.get<Body>(mobs[j]).radius);
-                    }
-                    for (int j = 0; j < 4; ++j) {
-                        CHECK(distance(at.position, world.get<Transform>(members[j]).position) >=
-                              body.radius + world.get<Body>(members[j]).radius + 150.0);
-                    }
-                }
-                if (round == 21)
-                    CHECK(hp.max > content.mobStats(type.configIndex, type.rarity).health * 2.0);
-            }
-
-            // Let monsters fill the room before clearing them, including the
-            // reinforcement cap once the wave has more than 60 in reserve.
-            if (mobs.size() < static_cast<std::size_t>(std::min(60, expected - seen))) continue;
-            for (const Entity mob : mobs) {
-                const double hp = world.get<Health>(mob).max;
-                world.get<Bounty>(mob).credit(members[0], hp);
-                world.get<Bounty>(mob).credit(members[2], hp * 0.005); // Below participation floor.
-                if (round == 1) world.get<Bounty>(mob).credit(members[3], hp * 0.01);
-                elites += world.get<MobType>(mob).rarity == Rarity::Super;
-                eternals += world.get<MobType>(mob).rarity == Rarity::Unique;
-                hypers += world.get<MobType>(mob).rarity == Rarity::Apex;
+                // Hold the final batch to near its deadline; 21 clears exceed ten minutes.
+                if (seen + static_cast<int>(mobs.size()) == expected && now - start < 42000.0) continue;
+                world.get<Bounty>(mob).credit(members[0], hp.max);
+                world.get<Bounty>(mob).credit(members[2], hp.max * 0.005);
+                if (wave == 1) world.get<Bounty>(mob).credit(members[3], hp.max * 0.01);
                 world.add<Dead>(mob);
             }
-            seen += static_cast<int>(mobs.size());
-            if (round == 1) {
-                world.get<Health>(members[1]).current = 0.0;
-                world.add<Dead>(members[1]);
+            if (!mobs.empty() && world.has<Dead>(mobs.front())) {
+                seen += static_cast<int>(mobs.size());
+                if (wave == 1 && seen == expected) {
+                    world.get<Health>(members[1]).current = 0.0;
+                    world.add<Dead>(members[1]);
+                }
+                if (seen == expected) {
+                    now += 50.0;
+                    tick(now);
+                    for (const auto mob : mobs) world.destroy(mob);
+                    break;
+                }
+                tick(now + 50.0);
+                for (const auto mob : mobs) world.destroy(mob);
             }
-            tick(now + 50.0);
-            for (const Entity mob : mobs) world.destroy(mob);
         }
         CHECK_EQ(seen, expected);
-        CHECK_EQ(hypers, round % 5 == 0 ? 1 : 0);
-        CHECK_EQ(eternals, round % 5 == 0 ? 1 : 0);
-        if (round == 5) CHECK_EQ(elites, 5);
-        if (round == 21) CHECK(elites > 10);
         total += seen;
         CHECK(dungeon.inWave(world, members[0]));
     }
-    CHECK_EQ(peakLive, 60);
     CHECK_EQ(hostAwards, 21);
     CHECK_EQ(guestAwards, 1);
     CHECK(spawner.bossSpawns.empty());
     CHECK(summaries.empty());
-    std::printf("[wave] %d enemies in 21 waves, peak %d, paid each of the first 20 clears\n", total, peakLive);
+    std::printf("[wave] %d enemies in 21 waves, paid each of the first 20 clears\n", total);
 
-    dungeon.waveCommand(world, terrain, members[0], "leave", rng, 670000.0);
+    dungeon.waveCommand(world, terrain, members[0], "leave", rng, now);
     CHECK(summaries[members[0]].find("通关 21 波 · 本局 +150000 星星") != std::string::npos);
-    tick(673000.0);
-    tick(854000.0);
+    CHECK(summaries[members[0]].find("已领满每日 150,000 星星") != std::string::npos);
+    CHECK(summaries[members[0]].find("+1 限时锤") != std::string::npos);
+    const auto survivors = Query<WaveEnemy>{world}.collect();
+    CHECK(!survivors.empty());
+    tick(now + 45000.0);
+    CHECK_EQ(dungeon.waveHudFor(world, members[1], now + 45000.0).round, 23u);
+    bool overlapped = false;
+    for (const auto enemy : Query<WaveEnemy>{world}.collect()) {
+        if (world.get<WaveEnemy>(enemy).round == 23) overlapped = true;
+    }
+    CHECK(overlapped);
+    for (const auto enemy : survivors) CHECK(isStanding(world, enemy));
+    tick(now + 181000.0);
     CHECK(summaries[members[1]].find("连续 3 分钟未推进") != std::string::npos);
+    CHECK(summaries[members[1]].find("至少一只怪造成 1% 伤害") != std::string::npos);
     for (const Entity e : members) {
         CHECK(world.get<Transform>(e).realm == Realm::Overworld);
         CHECK(!world.has<WavePlayer>(e));
@@ -1416,11 +1562,142 @@ TEST(wave_stars_accumulate_per_wave_to_the_daily_cap_across_reloads) {
     Database restarted;
     CHECK(restarted.load(path, error));
     restarted.setClock(waveStarNow);
-    CHECK_EQ(restarted.awardWaveStars("wave-account"), 6000);
-    CHECK_EQ(restarted.awardWaveStars("wave-account"), 0);
+    bool reachedDailyCap = false;
+    CHECK_EQ(restarted.awardWaveStars("wave-account", &reachedDailyCap), 6000);
+    CHECK(reachedDailyCap);
+    CHECK_EQ(restarted.awardWaveStars("wave-account", &reachedDailyCap), 0);
+    CHECK(reachedDailyCap);
     CHECK_NEAR(restarted.progress("wave-account").stars, 150000.0, 1e-9);
     CHECK_EQ(restarted.awardWaveStars("other-account"), 7500);
     waveStarClock += 86400000ll;
     CHECK_EQ(restarted.awardWaveStars("wave-account"), 7500);
+    CHECK(restarted.awardWaveBonusHammer("wave-account"));
+    CHECK(!restarted.awardWaveBonusHammer("wave-account"));
+    CHECK_EQ(restarted.progress("wave-account").itemCount(Rarity::Unique, "petal_timed_mjolnir"), 1);
+    CHECK(restarted.save());
+    Database hammerReload;
+    hammerReload.setClock(waveStarNow);
+    CHECK(hammerReload.load(path, error));
+    CHECK(!hammerReload.awardWaveBonusHammer("wave-account"));
+    waveStarClock += 86400000ll;
+    CHECK(hammerReload.awardWaveBonusHammer("wave-account"));
     CHECK_NEAR(restarted.progress("wave-account").stars, 157500.0, 1e-9);
+}
+
+
+TEST(practice_history_is_private_persistent_and_shared_per_score) {
+    const std::string dir = tempDir("flix-practice-history-" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    const std::string path = dir + "/inventory.json";
+    seedUser(path, "tester_one", "password7");
+    seedUser(path, "tester_two", "password7");
+    std::string error;
+    Database db;
+    if (!db.load(path, error)) { CHECK(false); return; }
+    const auto* first = db.findUser("tester_one");
+    const auto* second = db.findUser("tester_two");
+    if (!first || !second) { CHECK(false); return; }
+    const std::string owner = first->id, viewer = second->id;
+    const std::string basic = R"([{"slot":1,"petal":"basic","tier":0}])";
+    const std::string leaf = R"([{"slot":2,"petal":"leaf","tier":0}])";
+    savePracticeScore(db, owner, basic, 1000.0);
+    savePracticeScore(db, viewer, leaf, 500.0);
+    const auto before = practiceBoardView(db, viewer, false);
+    CHECK_EQ(before["rank"].asInt(), 2);
+    CHECK(before["public"].items().empty());
+    CHECK_EQ(before["own"].size(), 1u);
+    const auto ownerView = practiceBoardView(db, owner, false);
+    CHECK_EQ(ownerView["own"].size(), 1u);
+    if (ownerView["own"].items().empty()) return;
+    const auto id = static_cast<std::uint32_t>(ownerView["own"][std::size_t(0)]["id"].asDouble());
+    sharePracticeScore(db, owner, id, true);
+    savePracticeScore(db, owner, basic, 1300.0);
+    savePracticeScore(db, owner, leaf, 1500.0);
+    CHECK(db.save());
+    Database reloaded;
+    CHECK(reloaded.load(path, error));
+    const auto fromOther = practiceBoardView(reloaded, viewer, false);
+    CHECK_EQ(fromOther["rank"].asInt(), 2);
+    CHECK_EQ(fromOther["public"].size(), 1u);
+    if (fromOther["public"].items().empty()) return;
+    CHECK_EQ(fromOther["public"][std::size_t(0)]["damage"].asDouble(), 1000.0);
+    CHECK_EQ(fromOther["own"][std::size_t(0)]["damage"].asDouble(), 500.0);
+    sharePracticeScore(reloaded, owner, id, false);
+    CHECK(practiceBoardView(reloaded, viewer, false)["public"].items().empty());
+    CHECK_EQ(practiceBoardView(reloaded, owner, false)["own"].size(), 3u);
+}
+
+
+TEST(practice_history_round_trips_real_timed_trial_and_publication) {
+    Harness h("practice-trial", [](const std::string& path) {
+        seedUser(path, "trial_owner", "password7");
+        seedUser(path, "trial_viewer", "password7");
+    }, dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+    NetClient owner, viewer;
+    if (!logIn(h, owner, "trial_owner") || !join(h, owner, "trial_owner", false) ||
+        !logIn(h, viewer, "trial_viewer") || !join(h, viewer, "trial_viewer", false)) {
+        CHECK(false);
+        return;
+    }
+    auto& world = h.server.world();
+    const auto player = bodyNamed(world, "trial_owner");
+    bool found = false;
+    const auto jungle = h.server.worldMaps().realmOfId("jungle", found);
+    if (!found || player == NULL_ENTITY) { CHECK(false); return; }
+    const auto dummyType = shippedContent().mobIndex("target_dummy");
+    Entity dummy = NULL_ENTITY;
+    const auto testPoint = Vec2{12148.17, 8225.17};
+    GameServerPeer::markTeleport(h.server, player, jungle, testPoint + Vec2{0, 230});
+    CHECK(h.stepUntil({&owner, &viewer}, [&] {
+        Query<Npc, Transform>{world}.each([&](Entity e, Npc& npc, Transform& at) {
+            if (npc.configIndex == dummyType && npc.rarity == Rarity::Super && at.realm == jungle) {
+                dummy = e;
+            }
+        });
+        return dummy != NULL_ENTITY;
+    }));
+    if (dummy == NULL_ENTITY) return;
+    const auto* ownerSession = GameServerPeer::sessionOf(h.server, "trial_owner");
+    if (!ownerSession) { CHECK(false); return; }
+    owner.requestPracticeBoard(false, net::PracticeBoardAction::Start);
+    CHECK(h.stepUntil({&owner, &viewer}, [&] { return ownerSession->practiceTrial.player == player; }));
+    if (ownerSession->practiceTrial.player != player) return;
+    auto& combat = GameServerPeer::practiceCombat(h.server);
+    combat.applyDamage(world, dummy, player, 1000.0,
+                       GameServerPeer::practiceClock(h.server), DamageKind::Reflect);
+    h.clock += 10000;
+    h.step(4, {&owner, &viewer});
+    owner.requestPracticeBoard(false);
+    viewer.requestPracticeBoard(false);
+    CHECK(h.stepUntil({&owner, &viewer}, [&] {
+        return !owner.practiceBoard().pending && !viewer.practiceBoard().pending;
+    }));
+    CHECK_EQ(owner.practiceBoard().own.size(), 1u);
+    CHECK(viewer.practiceBoard().own.empty());
+    CHECK(viewer.practiceBoard().published.empty());
+    if (owner.practiceBoard().own.empty()) return;
+    const auto& row = owner.practiceBoard().own.front();
+    const auto id = row.id;
+    CHECK(!row.published);
+    CHECK(row.damage > 0.0);
+    owner.requestPracticeBoard(false, net::PracticeBoardAction::Publish, id);
+    CHECK(h.stepUntil({&owner, &viewer}, [&] {
+        return !owner.practiceBoard().pending && !owner.practiceBoard().own.empty() &&
+            owner.practiceBoard().own.front().published;
+    }));
+    viewer.requestPracticeBoard(false);
+    CHECK(h.stepUntil({&owner, &viewer}, [&] {
+        return !viewer.practiceBoard().pending && viewer.practiceBoard().published.size() == 1;
+    }));
+    CHECK(viewer.practiceBoard().own.empty());
+    owner.requestPracticeBoard(false, net::PracticeBoardAction::Hide, id);
+    CHECK(h.stepUntil({&owner, &viewer}, [&] {
+        return !owner.practiceBoard().pending && !owner.practiceBoard().own.empty() &&
+            !owner.practiceBoard().own.front().published;
+    }));
+    viewer.requestPracticeBoard(false);
+    CHECK(h.stepUntil({&owner, &viewer}, [&] {
+        return !viewer.practiceBoard().pending && viewer.practiceBoard().published.empty();
+    }));
 }

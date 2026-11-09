@@ -2,6 +2,7 @@
 #include "server/hyper_board.h"
 #include "server/hyper_forge.h"
 #include "server/playtime_board.h"
+#include "server/practice_board.h"
 namespace flix::shards {
 inline Json publicShardView(const Database& db,const Json& input) {
     Json result=Json::object();const auto action=input["kind"].asString();
@@ -13,6 +14,10 @@ inline Json publicShardView(const Database& db,const Json& input) {
         result["remaining"]=double(std::max<std::int64_t>(0,state.protectedUntil-db.nowMillis()));
         result["cost"]=hyperForgeCost(state.claims,material);
         result["held"]=hyperHoldingCount(db,input["account"].asString());
+    } else if (action == "practice") {
+        auto board = practiceBoardView(db, input["account"].asString(), input["includeAdmins"].asBool());
+        board["own"] = Json::array();
+        return board;
     } else if(action=="leaderboard") {
         result["playtime"] = Json::array();
         for (const auto& entry : playtimeBoard(db, input["includeAdmins"].asBool())) {

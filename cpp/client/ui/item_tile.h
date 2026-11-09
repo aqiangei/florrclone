@@ -75,6 +75,9 @@ inline constexpr double kItemTileIconScale = 0.833;
 /// `Renderer::HSV(RARITY_COLORS[rarity], 0.8)`.
 inline constexpr double kItemTilePlateShade = 0.8;
 
+/// Paints the current face as a cube at the canvas origin.
+void drawRollingDice(Canvas& canvas, int face, double seconds, double diameter);
+
 /// Draws a petal the way gardn does: one icon at the size gardn draws it, or
 /// `count` of them spaced evenly on a ring and each turned to face outward.
 ///

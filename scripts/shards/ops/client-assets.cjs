@@ -49,6 +49,13 @@ function configure(base,{release,assetHost,assetPort=8088,downloadQueue=false,en
   const directReply={ok:true,ticket:'direct-download',state:'ready',ahead:0,active:0,assetBase};
   if(assetHashes)directReply.assets=Object.fromEntries(assetNames.map(name=>[name,cacheAssetPath(name,assetHashes)]));
   if(assetMirror)directReply.wasmMirror=mirrorAssetUrl(assetMirror,assetHashes);
+  const startupRouting=downloadQueue?{queue:true}:{
+    assetBase:'/client-assets/'+version+'/',
+    assets:directReply.assets,
+    wasmMirror:directReply.wasmMirror,
+  };
+  const routingToken=Buffer.from(JSON.stringify(startupRouting)).toString('base64url');
+  const embedRouting=`sub_filter 'FLIX_CLIENT_ASSET_ROUTING' '${routingToken}';`;
   const queueRoutes=downloadQueue?`
     location ^~ /download-queue/ {
         if (-f /var/www/florrclone-maintenance/enabled) { return 503; }
@@ -110,12 +117,14 @@ function configure(base,{release,assetHost,assetPort=8088,downloadQueue=false,en
         root ${release};
         index index.html;
         default_type text/html;
+        ${embedRouting}
         add_header Cache-Control "no-store" always;
     }
     location = /index.html {
         if (-f /var/www/florrclone-maintenance/enabled) { return 503; }
         root ${release};
         default_type text/html;
+        ${embedRouting}
         add_header Cache-Control "no-store" always;
     }
 

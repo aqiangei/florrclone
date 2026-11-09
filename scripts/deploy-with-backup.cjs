@@ -360,9 +360,9 @@ async function main(){
     if(candidateBackgroundSave) {
       const pid=ssh('systemctl show '+service+' -p MainPID --value').trim();
       assert.match(pid,/^[1-9][0-9]*$/);
-      ssh('for attempt in $(seq 1 20); do journalctl --boot -u '+service+' _PID='+pid+
-        ' -n 1 -o cat --grep '+q('\\[persist-worker\\] saved generation=')+
-        ' | grep -q generation= && exit 0; sleep 1; done; exit 1');
+      ssh('for attempt in $(seq 1 75); do journalctl --boot -u '+service+' _PID='+pid+
+        ' --no-pager -o cat --grep '+q('\\[persist-worker\\] saved generation=')+
+        ' | tail -1 | grep -q generation= && exit 0; sleep 1; done; exit 1');
     }
     for(const file of ['','bundle.js','bundle.wasm','bundle.js.bin','bundle.wasm.bin'])
       ssh('curl -fsS -o /dev/null '+q(backend+'/'+file));

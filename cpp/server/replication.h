@@ -72,6 +72,8 @@ public:
         std::uint8_t bestRarity = 0xFF;
         std::uint32_t arenaScore = 0;
         std::uint8_t shield = 0;
+        std::uint8_t petalVariant = 255;
+        bool rollingDice = false;
         /// A hash of the equipped skin id, not the id itself.
         ///
         /// One Tracked exists per entity per viewer -- mobs, petals, drops and
@@ -93,6 +95,8 @@ public:
         float mana = 0, maxMana = 0;
         std::uint32_t splitNetId = 0;
         float splitMana = 0, splitMaxMana = 0;
+        float secondChanceMillis = 0, secondChanceCooldownMillis = 0, bandageMillis = 0;
+        net::WaveHud wave;
         double totalXp = 0;
         std::uint16_t level = 0;
         double stars = 0;
@@ -316,6 +320,7 @@ public:
         /// their own screen's, and it keeps culling their own stream.
         std::optional<Vec2> viewport;
         Entity splitOther = NULL_ENTITY;
+        net::WaveHud wave;
         bool loadShedding = false;
         /// All current replicated centres, shared read-only by workers.
         const SpatialGrid* entityGrid = nullptr;

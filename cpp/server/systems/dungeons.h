@@ -36,6 +36,7 @@
 #include "shared/game/map_elements.h"
 #include "shared/game/realm.h"
 #include "shared/game/terrain.h"
+#include "shared/net/protocol.h"
 
 namespace flix {
 
@@ -73,10 +74,15 @@ public:
     std::string waveCommand(World& world, const Terrain& terrain, Entity player,
                             const std::string& action, Rng& rng, double nowMillis);
     bool inWave(const World& world, Entity player) const;
+    net::WaveHud waveHudFor(const World& world, Entity player, double nowMillis) const;
     bool waveExterior(const World& world, Entity player, Realm& realm) const;
-    std::function<void(Entity, const std::string&)> waveNotice;
     std::function<void(Entity, const std::string&)> waveSummary;
-    std::function<int(Entity, std::uint64_t)> waveAward;
+    struct WaveAward {
+        int stars = 0;
+        bool dailyCapReached = false;
+        bool bonusHammer = false;
+    };
+    std::function<WaveAward(Entity, std::uint64_t, bool)> waveAward;
     std::function<void(Entity)> waveRevived;
 
     /// True when `realm` is one of the dungeon copies.
@@ -124,17 +130,24 @@ private:
         Realm returnRealm = Realm::Overworld;
         Vec2 returnAt;
         std::uint64_t starsEarned = 0;
-        bool foughtRound = false;
+        bool qualifiedForStars = false;
+        unsigned bonusHammers = 0;
+        bool dailyCapReached = false;
+    };
+    struct WaveRound {
+        std::uint64_t number = 0;
+        int size = 0;
+        int queued = 0;
+        std::vector<Entity> enemies;
+        std::array<Entity, 4> participants{};
     };
     struct WaveRoom {
         Realm realm = Realm::Overworld;
         std::string code;
         std::vector<WaveMember> members;
-        std::vector<Entity> enemies;
+        std::vector<WaveRound> rounds;
         std::uint64_t round = 0;
         std::uint64_t cleared = 0;
-        int roundSize = 0;
-        int queued = 0;
         double readyAtMillis = 0.0;
         double nextBatchMillis = 0.0;
         double lastProgressMillis = 0.0;

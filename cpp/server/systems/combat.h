@@ -394,6 +394,7 @@ public:
     static constexpr int kPracticeSeconds = net::kPracticeWindowSeconds;
     std::vector<PracticeDamage> practiceDamage(Entity player, double nowMillis, Entity dummy = NULL_ENTITY) const;
     void resetPracticeDamage(Entity player) { practiceDamage_.erase(player); }
+    std::function<void(Entity, Entity, double, double)> onPracticeHit;
 
     /// Whether `source` is allowed to hurt `victim` at all: different sides,
     /// or the same side with friendly fire on. Two things resolving to the

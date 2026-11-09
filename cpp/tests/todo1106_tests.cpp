@@ -722,12 +722,15 @@ TEST(todo1107_map_scale_and_density_use_original_physical_units) {
     CHECK_EQ(kMaxLiveMobs, 3000);
 }
 
-TEST(jungle_ladybug_tracks_a_lit_bulb) {
+TEST(jungle_ladybug_acquires_players_and_a_bulb_extends_its_range) {
     const auto& c = shippedContent();
     const auto index = c.mobIndex("jungle_ladybug");
     CHECK(index != kInvalidIndex);
     const auto stats = c.mobStats(index, Rarity::Rare);
-    for (const bool lit : {false, true}) {
+    CHECK(stats.ai == AiKind::Hostile);
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        const bool lit = scenario == 2;
+        const double distanceFactor = scenario == 0 ? 1.0 : 1.55;
         World world;
         Terrain terrain;
         SpatialGrid grid;
@@ -749,7 +752,7 @@ TEST(jungle_ladybug_tracks_a_lit_bulb) {
         const auto mob = world.create();
         world.add<MobTag>(mob);
         world.add<MobType>(mob, MobType{index, Rarity::Rare, 1});
-        world.add<Transform>(mob, Transform{observer.position - Vec2{stats.aggroRange, 0}, 0});
+        world.add<Transform>(mob, Transform{observer.position - Vec2{stats.aggroRange * distanceFactor, 0}, 0});
         world.add<Motion>(mob);
         world.add<Health>(mob, Health{stats.health, stats.health});
         world.add<Body>(mob, Body{stats.radius, stats.mass});
@@ -761,7 +764,7 @@ TEST(jungle_ladybug_tracks_a_lit_bulb) {
 
         ai.run(world, terrain, grid, {{observer.position, observer.realm}}, 7000, .05, commands);
         commands.flush();
-        CHECK_EQ(world.get<MobAi>(mob).target, lit ? player : NULL_ENTITY);
+        CHECK_EQ(world.get<MobAi>(mob).target, scenario == 1 ? NULL_ENTITY : player);
     }
 }
 

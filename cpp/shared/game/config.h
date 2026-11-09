@@ -1282,9 +1282,9 @@ inline constexpr const char* kMoonPetalId = "moon";
 /// place on the ring, and is never sprung toward an orbit point or bent toward
 /// a mob. Wax swings at nothing; the moon, which has damage, hits the mobs
 /// pressed against it as a ring petal would (never flowers). It is a BODY -- flowers, mobs, NPCs and other
-/// loose petals cannot pass through it, though like two mobs they can lean a
-/// little way into it and are eased back out (kLoosePetalContactStiffness) --
-/// and it gives way to whatever pushes it, by mass (kLoosePetalMass). Mobs
+/// loose petals cannot pass through it. Wax separates from players and
+/// ordinary solid mobs on contact; other loose bodies ease back out.
+/// It gives way to whatever pushes it, by mass (kLoosePetalMass). Mobs
 /// that touch it bite it, which is the only thing that wears its health down.
 ///
 /// By id for the reason petalIsClickToUse is: the server, the wire and the

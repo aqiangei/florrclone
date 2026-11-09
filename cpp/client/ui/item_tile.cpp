@@ -336,9 +336,10 @@ double smootherStep(double t) {
     return t * t * t * (t * (6.0 * t - 15.0) + 10.0);
 }
 
-// Project each face and pip through the same rotating cube, rather than
-// rotating a flat square. No bitmap bake: the orientation changes every frame.
-void drawDiceIcon(Canvas& canvas, int front, double seconds, double diameter) {
+} // namespace
+
+// Project each face and pip through the same rotating cube.
+void drawRollingDice(Canvas& canvas, int front, double seconds, double diameter) {
     struct V { double x,y,z; };
     // A short roll followed by a readable hold. Full turns end at the same
     // front face, so the settled art shows the actual counter, not a random pip.
@@ -348,10 +349,13 @@ void drawDiceIcon(Canvas& canvas, int front, double seconds, double diameter) {
     const double yaw = -.28 + kTau * 3 * turn;
     const double pitch = .30 + kTau * 2 * turn;
     const double roll = .08 + .16 * std::sin(kTau * turn);
+    const double sy = std::sin(yaw), cy = std::cos(yaw);
+    const double sp = std::sin(pitch), cp = std::cos(pitch);
+    const double sr = std::sin(roll), cr = std::cos(roll);
     const auto rotate=[&](V p){
-        V a{p.x,p.y*std::cos(pitch)-p.z*std::sin(pitch),p.y*std::sin(pitch)+p.z*std::cos(pitch)};
-        V b{a.x*std::cos(yaw)+a.z*std::sin(yaw),a.y,-a.x*std::sin(yaw)+a.z*std::cos(yaw)};
-        return V{b.x*std::cos(roll)-b.y*std::sin(roll),b.x*std::sin(roll)+b.y*std::cos(roll),b.z};
+        V a{p.x,p.y*cp-p.z*sp,p.y*sp+p.z*cp};
+        V b{a.x*cy+a.z*sy,a.y,-a.x*sy+a.z*cy};
+        return V{b.x*cr-b.y*sr,b.x*sr+b.y*cr,b.z};
     };
     const auto project=[&](V p){p=rotate(p);double k=diameter*.25*4/(4-p.z);return Vec2{p.x*k,p.y*k};};
     struct Face { V a,b,c,d,normal; int value; double depth; };
@@ -370,7 +374,7 @@ void drawDiceIcon(Canvas& canvas, int front, double seconds, double diameter) {
     for(const auto& f:faces){
         if(f.depth<=0)continue;
         const auto n=rotate(f.normal);const int shade=static_cast<int>(205+std::clamp(n.z*.5-n.y*.2,0.0,1.0)*50);
-        setFill(canvas,static_cast<std::uint32_t>((shade<<16)|(shade<<8)|shade));setStroke(canvas,0x7E858Bu);canvas.setLineWidth(1.8);canvas.setLineJoin("round");
+        setFill(canvas,static_cast<std::uint32_t>((shade<<16)|(shade<<8)|shade));setStroke(canvas,0x7E858Bu);canvas.setLineWidth(std::clamp(diameter * .06, .55, 1.8));canvas.setLineJoin("round");
         const std::array<Vec2,4> corners{{project(f.a),project(f.b),project(f.c),project(f.d)}};
         const auto toward=[](Vec2 a,Vec2 b){return Vec2{a.x+(b.x-a.x)*.14,a.y+(b.y-a.y)*.14};};
         canvas.beginPath();
@@ -379,12 +383,28 @@ void drawDiceIcon(Canvas& canvas, int front, double seconds, double diameter) {
             canvas.quadraticCurveTo(c.x,c.y,after.x,after.y);
             auto before=toward(corners[(i+1)%4],c);canvas.lineTo(before.x,before.y);}
         canvas.closePath();canvas.fill();canvas.stroke();
-        const auto dot=[&](double u,double v){canvas.beginPath();for(int i=0;i<16;++i){double a=kTau*i/16,du=u+.065*std::cos(a),dv=v+.065*std::sin(a);
-          const V p{f.a.x+(f.b.x-f.a.x)*du+(f.d.x-f.a.x)*dv,f.a.y+(f.b.y-f.a.y)*du+(f.d.y-f.a.y)*dv,f.a.z+(f.b.z-f.a.z)*du+(f.d.z-f.a.z)*dv};
-          auto q=project(p);if(i==0)canvas.moveTo(q.x,q.y);else canvas.lineTo(q.x,q.y);}canvas.closePath();setFill(canvas,0x303942u);canvas.fill();};
+        canvas.beginPath();
+        constexpr double diagonal = .046;
+        constexpr std::array<Vec2, 8> pip{{{.065,0},{diagonal,diagonal},{0,.065},{-diagonal,diagonal},
+            {-.065,0},{-diagonal,-diagonal},{0,-.065},{diagonal,-diagonal}}};
+        const auto dot = [&](double u, double v) {
+            for (std::size_t i = 0; i < pip.size(); ++i) {
+                const double du = u + pip[i].x;
+                const double dv = v + pip[i].y;
+                const Vec2 point = project({f.a.x+(f.b.x-f.a.x)*du+(f.d.x-f.a.x)*dv,
+                    f.a.y+(f.b.y-f.a.y)*du+(f.d.y-f.a.y)*dv,
+                    f.a.z+(f.b.z-f.a.z)*du+(f.d.z-f.a.z)*dv});
+                if (i == 0) canvas.moveTo(point.x, point.y);
+                else canvas.lineTo(point.x, point.y);
+            }
+            canvas.closePath();
+        };
         if(f.value%2)dot(.5,.5);if(f.value>=2){dot(.25,.25);dot(.75,.75);}if(f.value>=4){dot(.75,.25);dot(.25,.75);}if(f.value==6){dot(.25,.5);dot(.75,.5);}
+        setFill(canvas,0x303942u);canvas.fill();
     }
 }
+
+namespace {
 
 /// See setViewerSkills.
 const SkillSet* viewerSkills = nullptr;
@@ -647,7 +667,7 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
                 canvas.save();
                 if(diceCount>1){const double angle=kTau*i/diceCount;
                     canvas.translate(std::cos(angle)*iconCap*.22,std::sin(angle)*iconCap*.22);}
-                drawDiceIcon(canvas,tile.diceFace,tile.timeSeconds,iconCap*(diceCount>1?.42:.72));
+                drawRollingDice(canvas,tile.diceFace,tile.timeSeconds,iconCap*(diceCount>1?.42:.72));
                 canvas.restore();
             }
         }else drawPetalCluster(canvas, sprites, tile.petalIndex, tile.rarity, stats.size, copies,

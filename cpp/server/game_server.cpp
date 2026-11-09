@@ -4,6 +4,7 @@
 #include "server/playtime_board.h"
 #include "server/shop_lock.h"
 #include "server/timed_hammers.h"
+#include "server/practice_board.h"
 #include "server/daily_drop_bonus.h"
 #include "server/game_server.h"
 #include "shared/game/assembler.h"
@@ -26,6 +27,9 @@
 #include <optional>
 #include <random>
 #include <utility>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "server/admin_db_key.h"
 #include "server/auto_update.h"
@@ -53,6 +57,20 @@
 #include "shared/game/skills.h"
 
 namespace flix {
+
+#ifdef __EMSCRIPTEN__
+EM_JS(double, tickProbeThreadCpuMillis, (), {
+    if (typeof process === 'undefined' || typeof process.threadCpuUsage !== 'function') return -1;
+    const cpu = process.threadCpuUsage();
+    return (cpu.user + cpu.system) / 1000;
+});
+#else
+static double tickProbeThreadCpuMillis() { return -1; }
+#endif
+
+static double tickProbeCpuElapsed(double start) {
+    return start < 0.0 ? -1.0 : std::max(0.0, tickProbeThreadCpuMillis() - start);
+}
 
 double monotonicMillis() {
     using clock = std::chrono::steady_clock;
@@ -639,6 +657,13 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     mobAi_ = std::make_unique<MobAiSystem>(world_, config.worldSeed ^ 0x9E3779B9ull);
     petals_ = std::make_unique<PetalSystem>();
     combat_ = std::make_unique<CombatSystem>();
+    combat_->onPracticeHit = [this](Entity player, Entity dummy, double amount, double nowMillis) {
+        const auto* account = world_.tryGet<PlayerAccount>(player);
+        auto* session = account ? sessionFor(account->connection) : nullptr;
+        if (!session || session->practiceTrial.player != player) return;
+        auto& trial = session->practiceTrial;
+        if (trial.dummy == dummy && nowMillis < trial.endsAt) trial.damage += amount;
+    };
     combat_->sizeContactGrid(*terrain_);
     spawning_ = std::make_unique<SpawnSystem>();
     spawning_->sizePlacementGrids(*terrain_);
@@ -706,33 +731,32 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         moveEntityToRealm(entity, realm, position);
     };
     dungeons_->admits = [this](Entity entity) { return botForEntity(entity) == nullptr; };
-    dungeons_->waveNotice = [this](Entity entity, const std::string& text) {
-        if (const Session* session = sessionForEntity(entity)) {
-            if (auto* connection = listener_.find(session->connection))
-                sendNotice(*connection, net::NoticeSeverity::Info, text);
-        }
-    };
     dungeons_->waveSummary = [this](Entity entity, const std::string& text) {
         if (const Session* session = sessionForEntity(entity)) {
             if (auto* connection = listener_.find(session->connection))
                 sendNotice(*connection, net::NoticeSeverity::WaveResult, text);
         }
     };
-    dungeons_->waveAward = [this](Entity entity, std::uint64_t cleared) {
+    dungeons_->waveAward = [this](Entity entity, std::uint64_t cleared, bool bonus) -> DungeonSystem::WaveAward {
         auto* session = sessionForEntity(entity);
-        if (!session || !session->authenticated() || session->entity != entity) return 0;
+        if (!session || !session->authenticated() || session->entity != entity) return {};
         auto* live = world_.tryGet<PlayerProgress>(entity);
-        const int stars = database_.awardWaveStars(session->userId);
-        if (stars <= 0) return 0;
-        if (live) {
+        bool reachedDailyCap = false;
+        const int stars = database_.awardWaveStars(session->userId, &reachedDailyCap);
+        const bool hammer = bonus && database_.awardWaveBonusHammer(session->userId);
+        if (stars <= 0 && !hammer) return {0, reachedDailyCap};
+        if (live && stars > 0) {
             live->stars += stars;
             database_.progress(session->userId).stars = live->stars;
         }
         session->profileDue = true;
-        if (auto* connection = listener_.find(session->connection))
-            sendNotice(*connection, net::NoticeSeverity::Good,
-                "Wave 第 " + std::to_string(cleared) + " 波通关 · +" + std::to_string(stars) + " 星星");
-        return stars;
+        if (auto* connection = listener_.find(session->connection)) {
+            std::string message = "Wave 第 " + std::to_string(cleared) + " 波通关";
+            if (stars > 0) message += " · +" + std::to_string(stars) + " 星星";
+            if (hammer) message += " · +1 永恒限时锤（1 小时）";
+            sendNotice(*connection, net::NoticeSeverity::Good, message);
+        }
+        return {stars, reachedDailyCap, hammer};
     };
     dungeons_->waveRevived = [this](Entity entity) {
         auto& health = world_.get<Health>(entity);
@@ -1022,7 +1046,19 @@ void GameServer::serviceSharedViews() {
         if(valid&&result["pending"].asBool()&&monotonicMillis()<work.deadline){++it;continue;}
         if(valid&&result["ok"].asBool()) {
             const auto& view=result["body"];ByteWriter w;
-            if(work.query["kind"].asString()=="titan") {
+            if (work.query["kind"].asString() == "practice") {
+                auto board = view;
+                // The current shard owns this player's recent writes. The
+                // authority may not have checkpointed them yet.
+                if (const auto* record = database_.findProgress(work.user)) {
+                    board["own"] = record->extra["practiceRecords"]["rows"];
+                    auto& rows = board["own"].items();
+                    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+                        return a["damage"].asDouble() > b["damage"].asDouble();
+                    });
+                }
+                writePracticeBoard(w, board);
+            } else if(work.query["kind"].asString()=="titan") {
                 w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanHolder));w.u16(work.query["petal"].asInt());
                 w.str(view["name"].asString());w.u32(static_cast<std::uint32_t>(view["remaining"].asDouble()));
                 w.u8(view["cost"].asInt());w.u8(std::min(255,view["held"].asInt()));
@@ -1120,7 +1156,7 @@ bool GameServer::serviceHyperBarrier() {
     return true;
 }
 
-bool GameServer::step() {
+bool GameServer::step(double timerLagMillis) {
     if(!running_.load()&&config_.authorityAuth&&(hyperBarrierFrozen_||!pendingHyper_.attempt.empty())) {
         if(serviceHyperBarrier())return !persistenceFrozen_;
     }
@@ -1180,8 +1216,12 @@ bool GameServer::step() {
         }
 
         const double tickStarted = monotonicMillis();
+        const double probeCpuStart = config_.tickProbe ? tickProbeThreadCpuMillis() : -1.0;
+        const double probeWallStart = config_.tickProbe ? std::chrono::duration<double, std::milli>(
+            std::chrono::system_clock::now().time_since_epoch()).count() : 0.0;
         tick(tickNow, worldNow);
         const double tookMillis = monotonicMillis() - tickStarted;
+        const double probeCpu = tickProbeCpuElapsed(probeCpuStart);
         debugTickAccumMillis_ += tookMillis;
         if (tookMillis > debugTickMaxMillis_) debugTickMaxMillis_ = tookMillis;
         ++debugTickSamples_;
@@ -1207,6 +1247,9 @@ bool GameServer::step() {
         const double earliest = monotonicMillis() + (rate < net::kTicksPerSecond ? 4.0 : 0.0);
         if (nextTickMillis_ < earliest) nextTickMillis_ = earliest;
 
+        if (config_.tickProbe)
+            recordTickProbe(tickNow, timerLagMillis, tickNow - now, tickLagMillis,
+                            tookMillis, probeCpu, probeWallStart, previousRate, rate);
         recordTickCadence(tickNow, tickLagMillis, tookMillis);
         if (tickNow >= nextDebugStatsMillis_ || rate != previousRate) {
             broadcastDebugStats();
@@ -1308,6 +1351,85 @@ void GameServer::recordTickCadence(double nowMillis, double lagMillis, double wo
     tickCadenceOverBudget_ = 0;
     tickCadenceMaxWorkMillis_ = 0;
     tickCadenceMaxLagMillis_ = 0;
+}
+
+void GameServer::recordTickProbe(double tickNow, double timerLag, double networkBefore, double startLag,
+                                 double work, double cpu, double wallStart, int previousRate, int rate) {
+    auto& window = tickProbeWindow_;
+    const bool hasWindow = tickCadenceStartMillis_ > 0.0;
+    if (hasWindow) {
+        ++window.targets[previousRate];
+        window.overNominal += work >= net::kTickMillis;
+        window.overTarget += work >= 1000.0 / previousRate;
+        window.late += startLag >= 50.0;
+        window.transitions += previousRate != rate;
+    }
+    const bool lagPeak = hasWindow && startLag > window.maxLag;
+    const bool workPeak = hasWindow && work > window.maxWork;
+    const bool transition = previousRate != rate;
+    const bool save = saveProbe_.periodic || saveProbe_.poll.wall >= 25.0;
+    if (lagPeak || workPeak || transition || save) {
+        Json frame = Json::object();
+        frame["tick"] = static_cast<double>(tick_);
+        frame["wallStartMs"] = wallStart;
+        frame["players"] = static_cast<double>(playerCount());
+        frame["timerLagMs"] = timerLag;
+        frame["networkBeforeMs"] = networkBefore;
+        frame["startLagMs"] = startLag;
+        frame["workMs"] = work;
+        frame["threadCpuMs"] = cpu;
+        frame["targetBefore"] = previousRate;
+        frame["targetAfter"] = rate;
+        frame["workEwmaMs"] = simulationPacing_.meanWorkMillis();
+        Json stages = Json::object();
+        double previous = tickStartedMillis_;
+        for (std::size_t i = 0; i < tickPhaseCount_; ++i) {
+            const auto& phase = tickPhases_[i];
+            stages[phase.name] = phase.endedMillis - previous;
+            previous = phase.endedMillis;
+        }
+        frame["stagesMs"] = std::move(stages);
+        frame["stageOtherMs"] = std::max(0.0, work - (previous - tickStartedMillis_));
+        const auto timingJson = [](const ProbeTiming& timing) {
+            Json result = Json::object();
+            result["wallMs"] = timing.wall;
+            result["threadCpuMs"] = timing.cpu;
+            return result;
+        };
+        Json persistence = Json::object();
+        persistence["periodic"] = saveProbe_.periodic;
+        persistence["capture"] = timingJson(saveProbe_.capture);
+        persistence["prune"] = timingJson(saveProbe_.prune);
+        persistence["request"] = timingJson(saveProbe_.request);
+        persistence["poll"] = timingJson(saveProbe_.poll);
+        persistence["other"] = timingJson(saveProbe_.other);
+        frame["save"] = std::move(persistence);
+        const auto line = frame.dump();
+        if (transition || save)
+            std::printf("[tick-probe-frame] %s %s\n", transition ? "transition" : "save", line.c_str());
+        if (lagPeak) {
+            window.maxLag = startLag;
+            window.lagTick = tick_;
+            window.lagFrame = line;
+        }
+        if (workPeak) {
+            window.maxWork = work;
+            window.workTick = tick_;
+            window.workFrame = line;
+        }
+    }
+    if (!hasWindow || tickNow - tickCadenceStartMillis_ < kTickCadenceLogMillis) return;
+    std::printf("[tick-probe-window] targets=20:%u,16:%u,13:%u,11:%u,10:%u over50=%u overTarget=%u late50=%u transitions=%u ewma=%.1f\n",
+                window.targets[20], window.targets[16], window.targets[13], window.targets[11],
+                window.targets[10], window.overNominal, window.overTarget, window.late,
+                window.transitions, simulationPacing_.meanWorkMillis());
+    if (window.lagTick == window.workTick) {
+        std::printf("[tick-probe-frame] window-lag-work %s\n", window.lagFrame.c_str());
+    } else {
+        std::printf("[tick-probe-frame] window-lag %s\n", window.lagFrame.c_str());
+        std::printf("[tick-probe-frame] window-work %s\n", window.workFrame.c_str());
+    }
+    window = {};
 }
 
 void GameServer::markTickPhase(const char* name) {
@@ -1457,14 +1579,39 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     // Housekeeping, ABOVE the idle gate: an account registered by somebody
     // sitting on the title screen is dirty in memory and would otherwise wait
     // for the next player to actually join before it reached the disk.
-    if (wallMillis >= nextPersistMillis_) {
-        nextPersistMillis_ = wallMillis + kPersistIntervalMillis * (config_.loadShedding ? 2.0 : 1.0);
-        captureLiveProgress();
-        database_.pruneExpiredSessions();
-        saveDatabase(true);
+    const bool checkpoint = wallMillis >= nextPersistMillis_;
+    const bool traceSave = config_.tickProbe;
+    const double saveStart = traceSave ? tickPhases_[tickPhaseCount_ - 1].endedMillis : 0.0;
+    const double saveCpu = traceSave ? tickProbeThreadCpuMillis() : -1.0;
+    if (traceSave) {
+        saveProbe_ = {};
+        saveProbe_.periodic = checkpoint;
     }
-    database_.pollBackgroundSave();
+    const auto measureSave = [&](ProbeTiming& timing, auto&& operation) {
+        if (!traceSave) { operation(); return; }
+        const double start = monotonicMillis();
+        const double cpuStart = tickProbeThreadCpuMillis();
+        operation();
+        timing.wall = monotonicMillis() - start;
+        timing.cpu = tickProbeCpuElapsed(cpuStart);
+    };
+    if (checkpoint) {
+        nextPersistMillis_ = wallMillis + kPersistIntervalMillis * (config_.loadShedding ? 2.0 : 1.0);
+        measureSave(saveProbe_.capture, [&] { captureLiveProgress(); });
+        measureSave(saveProbe_.prune, [&] { database_.pruneExpiredSessions(); });
+        measureSave(saveProbe_.request, [&] { saveDatabase(true); });
+    }
+    measureSave(saveProbe_.poll, [&] { database_.pollBackgroundSave(); });
     markTickPhase(database_.backgroundSaveEnabled() ? "save handoff" : "persist");
+    if (traceSave) {
+        const auto& trace = saveProbe_;
+        saveProbe_.other.wall = std::max(0.0, tickPhases_[tickPhaseCount_ - 1].endedMillis - saveStart
+            - trace.capture.wall - trace.prune.wall - trace.request.wall - trace.poll.wall);
+        const double totalCpu = tickProbeCpuElapsed(saveCpu);
+        if (totalCpu >= 0.0)
+            saveProbe_.other.cpu = std::max(0.0, totalCpu - std::max(0.0, trace.capture.cpu)
+                - std::max(0.0, trace.prune.cpu) - std::max(0.0, trace.request.cpu) - std::max(0.0, trace.poll.cpu));
+    }
 
     // Bot population is maintained on every tick, INCLUDING the idle ones the
     // gate below returns out of -- that is where the reference calls it, and
@@ -1686,6 +1833,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // A summoning shot -- the spaceship's -- is only SEEN landing by combat;
     // the summon is the ring's, made once combat has stopped walking the world.
     petals_->landShots(world_, content(), combat_->shotLandings(), terrain_.get());
+    servicePracticeTrials(nowMillis);
     markTickPhase("combat");
     spawning_->run(world_, *terrain_, content(), activePlayers_, rng_, nowMillis,
                    net::kTickSeconds, commands_);
@@ -1949,6 +2097,7 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
         // ended it on the spot.
         const Entity viewpoint = viewpointOf(session);
         frame.splitOther = viewpoint == session.entity ? session.splitOther : NULL_ENTITY;
+        frame.wave = dungeons_ ? dungeons_->waveHudFor(world_, viewpoint, frame.nowMillis) : net::WaveHud{};
         frame.viewport.reset();
         if (viewpoint != session.entity) {
             if (const PlayerLocation* own = world_.tryGet<PlayerLocation>(session.entity)) {
@@ -2297,7 +2446,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::RedeemCode:    handleRedeemCode(*session, connection, reader); break;
         case net::ClientMessage::SetSkin:       handleSetSkin(*session, connection, reader); break;
         case net::ClientMessage::RequestPracticeBoard:
-            if (session->playing() && spend(session->inventoryAllowance)) {
+            if (session->authenticated() && spend(session->inventoryAllowance)) {
                 handlePracticeBoard(*session, connection, reader);
             }
             break;
@@ -5670,88 +5819,85 @@ void GameServer::foldLookAlikeSkins() {
                 foldedInto.size(), rehomed);
 }
 
-void GameServer::handlePracticeBoard(const Session& session, net::Connection& connection,
-                                     ByteReader& reader) {
+void GameServer::servicePracticeTrials(double nowMillis) {
+    for (auto& entry : sessions_) {
+        auto& session = entry.second;
+        auto& trial = session.practiceTrial;
+        if (trial.player == NULL_ENTITY) continue;
+        const auto* player = world_.tryGet<Transform>(trial.player);
+        const auto* dummy = world_.tryGet<Transform>(trial.dummy);
+        const auto* equipped = world_.tryGet<Loadout>(trial.player);
+        const bool valid = session.playing() && session.entity == trial.player && !session.split() &&
+            player && dummy && equipped && isStanding(world_, trial.player) && player->realm == dummy->realm &&
+            distanceSq(player->position, dummy->position) <= 800.0 * 800.0 &&
+            practiceLoadoutKey(*equipped) == trial.loadout;
+        if (valid && nowMillis < trial.endsAt) continue;
+        if (valid) savePracticeScore(database_, session.userId, practiceLoadout(content(), *equipped), trial.damage);
+        if (auto* connection = listener_.find(session.connection)) {
+            if (valid && trial.damage > 0.0) {
+                sendNotice(*connection, net::NoticeSeverity::Good, "10 秒测试结束，成绩默认私密。");
+            } else {
+                sendNotice(*connection, net::NoticeSeverity::Info, valid ? "本次测试未造成伤害。" :
+                    "离开木桩、倒地或换装会取消本次测试。");
+            }
+        }
+        trial = {};
+    }
+}
+
+void GameServer::handlePracticeBoard(Session& session, net::Connection& connection, ByteReader& reader) {
     const bool includeAdmins = reader.boolean();
+    const auto action = static_cast<net::PracticeBoardAction>(reader.u8());
+    const auto id = reader.u32();
     if (!reader.ok()) return;
-    const auto* viewer = world_.tryGet<Transform>(session.entity);
-    if (!viewer || !combat_) return;
-
-    const auto type = content().mobIndex("target_dummy");
-    Entity target = NULL_ENTITY;
-    double closest = std::numeric_limits<double>::infinity();
-    Query<Npc, Transform>{world_}.each([&](Entity e, Npc& npc, Transform& at) {
-        if (npc.configIndex != type || at.realm != viewer->realm) return;
-        const double gap = distanceSq(at.position, viewer->position);
-        if (gap < closest) {
-            target = e;
-            closest = gap;
+    switch (action) {
+        case net::PracticeBoardAction::Start: {
+            const auto* at = world_.tryGet<Transform>(session.entity);
+            const auto* equipped = world_.tryGet<Loadout>(session.entity);
+            Entity target = NULL_ENTITY;
+            double closest = 500.0 * 500.0;
+            const auto type = content().mobIndex("target_dummy");
+            if (at && equipped && session.playing() && !session.split() &&
+                isStanding(world_, session.entity)) {
+                Query<Npc, Transform>{world_}.each([&](Entity e, Npc& npc, Transform& pos) {
+                    if (npc.configIndex != type || npc.rarity != Rarity::Super || pos.realm != at->realm) return;
+                    const double gap = distanceSq(at->position, pos.position);
+                    if (gap < closest && !terrain_->segmentBlocked(at->position, pos.position, at->realm)) {
+                        target = e;
+                        closest = gap;
+                    }
+                });
+            }
+            if (session.practiceTrial.player != NULL_ENTITY) {
+                sendNotice(connection, net::NoticeSeverity::Info, "已有一场木桩测试正在进行。");
+            } else if (target == NULL_ENTITY) {
+                sendNotice(connection, net::NoticeSeverity::Info, "请靠近丛林训练区的超级木桩，以单个角色开始测试。");
+            } else {
+                session.practiceTrial = {session.entity, target, clockMillis_ + net::kPracticeWindowSeconds * 1000.0,
+                                         0.0, practiceLoadoutKey(*equipped)};
+                sendNotice(connection, net::NoticeSeverity::Good, "10 秒木桩测试开始。保持配装并攻击超级木桩。");
+            }
+            break;
         }
-    });
-
-    ByteWriter w;
-    w.u8(static_cast<std::uint8_t>(net::ServerMessage::PracticeBoard));
-    w.boolean(target != NULL_ENTITY);
-    if (target == NULL_ENTITY) {
-        connection.send(w);
-        return;
+        case net::PracticeBoardAction::Publish:
+        case net::PracticeBoardAction::Hide:
+            sharePracticeScore(database_, session.userId, id, action == net::PracticeBoardAction::Publish);
+            break;
+        case net::PracticeBoardAction::Read:
+            break;
+        default:
+            return;
     }
-
-    struct Row {
-        std::string name;
-        double damage = 0.0;
-        std::vector<CombatSystem::PracticeDamage> sources;
-    };
-    std::unordered_map<std::string, Row> byAccount;
-    Query<PlayerAccount, Transform>{world_}.each([&](Entity e, PlayerAccount& account, Transform& at) {
-        if (at.realm != viewer->realm || account.connection == 0 ||
-            (account.admin && !includeAdmins)) return;
-        auto hits = combat_->practiceDamage(e, clockMillis_, target);
-        if (hits.empty()) return;
-        auto& row = byAccount[account.userId];
-        row.name = account.username;
-        for (const auto& hit : hits) {
-            row.damage += hit.amount;
-            auto existing = std::find_if(row.sources.begin(), row.sources.end(), [&](const auto& source) {
-                return hit.source == source.source && hit.petal == source.petal &&
-                       hit.rarity == source.rarity;
-            });
-            if (existing == row.sources.end()) row.sources.push_back(hit);
-            else existing->amount += hit.amount;
-        }
-    });
-    std::vector<const Row*> rows;
-    for (const auto& entry : byAccount) rows.push_back(&entry.second);
-    const auto shown = std::min<std::size_t>(rows.size(), net::kPracticeBoardRows);
-    std::partial_sort(rows.begin(), rows.begin() + shown, rows.end(), [](const Row* a, const Row* b) {
-        return a->damage == b->damage ? a->name < b->name : a->damage > b->damage;
-    });
-    w.u8(static_cast<std::uint8_t>(world_.get<Npc>(target).rarity));
-    w.u8(static_cast<std::uint8_t>(shown));
-    for (std::size_t i = 0; i < shown; ++i) {
-        const auto& row = *rows[i];
-        w.str(row.name);
-        w.f64(row.damage);
-        auto sources = row.sources;
-        std::sort(sources.begin(), sources.end(), [](const auto& a, const auto& b) {
-            return a.amount > b.amount;
-        });
-        const auto count = std::min<std::size_t>(sources.size(), net::kPracticeBoardSources);
-        if (sources.size() > count) {
-            double rest = 0;
-            for (std::size_t j = count - 1; j < sources.size(); ++j) rest += sources[j].amount;
-            sources[count - 1] = {net::PracticeSource::Other, kNoPetal, Rarity::Common, rest};
-        }
-        w.u8(static_cast<std::uint8_t>(count));
-        for (std::size_t j = 0; j < count; ++j) {
-            const auto& hit = sources[j];
-            w.u8(static_cast<std::uint8_t>(hit.source));
-            w.u16(hit.petal);
-            w.u8(static_cast<std::uint8_t>(hit.rarity));
-            w.f64(hit.amount);
-        }
+    ByteWriter out;
+    writePracticeBoard(out, practiceBoardView(database_, session.userId, includeAdmins));
+    connection.send(out);
+    if (config_.authorityHyper && action == net::PracticeBoardAction::Read) {
+        Json query = Json::object();
+        query["kind"] = "practice";
+        query["account"] = session.userId;
+        query["includeAdmins"] = includeAdmins;
+        queueSharedView(session, connection, std::move(query));
     }
-    connection.send(w);
 }
 
 void GameServer::handleLeaderboard(const Session& session, net::Connection& connection,
@@ -7319,8 +7465,7 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
         }
         const auto* at = world_.tryGet<Transform>(victim);
         const auto* hp = world_.tryGet<Health>(victim);
-        if (!corpse.playing() || !world_.has<Dead>(victim) || !at || !hp ||
-            world_.has<WavePlayer>(victim)) {
+        if (!corpse.playing() || !world_.has<Dead>(victim) || !at || !hp) {
             corpse.rescueHelper = NULL_ENTITY;
             continue;
         }
@@ -7357,7 +7502,7 @@ void GameServer::handleRespawn(Session& session) {
     if (!session.authenticated()) return;
     if (dungeons_ && dungeons_->inWave(world_, session.entity) && !isStanding(world_, session.entity)) {
         if (auto* connection = listener_.find(session.connection))
-            sendNotice(*connection, net::NoticeSeverity::Info, "队友仍在 Wave 中，下一波可重新加入。");
+            sendNotice(*connection, net::NoticeSeverity::Info, "队友靠近你 3 秒可救援，清完当前波也可复活。");
         return;
     }
     // A lent console is lent for one life. Dropping it here rather than on

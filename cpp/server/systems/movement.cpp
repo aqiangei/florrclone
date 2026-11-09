@@ -440,6 +440,7 @@ void MovementSystem::pushOutOfStationaryMobs(World& world, const Terrain& terrai
 
 void MovementSystem::collectLooseDiscs() {
     looseDiscs_.clear();
+    const ContentRegistry& registry = content();
     queries_->looseBodies.each([&](Entity e, LoosePetal&, Transform& transform, Body& body) {
         if (boundWorld_->has<PlantedMeteor>(e)) return;
         // A degenerate coordinate would put a NaN into every flower and mob it
@@ -453,6 +454,8 @@ void MovementSystem::collectLooseDiscs() {
         disc.radius = sanitizeCollisionRadius(body.radius);
         disc.mass = bodyMass(&body);
         disc.realm = transform.realm;
+        const auto* instance = boundWorld_->tryGet<PetalInstance>(e);
+        disc.wax = instance && registry.petal(instance->configIndex).id == kWaxPetalId;
         looseDiscs_.push_back(disc);
     });
 }
@@ -622,9 +625,10 @@ void MovementSystem::shoveLooseBodies(const Terrain& terrain, Transform& transfo
         // off-centre slides round it as it shoves. Dead centre has no line.
         const Vec2 out = gap > 1e-9 ? offset * (1.0 / gap) : Vec2{1.0, 0.0};
         // The slab's share of the push is the flower's mass over both.
+        const double overlap = reach - gap;
         softLooseContact(terrain, transform.realm, disc.position, disc.radius,
                          mass / (mass + disc.mass), transform.position, radius, true, out,
-                         loosePetalContactPush(reach - gap));
+                         disc.wax ? overlap : loosePetalContactPush(overlap));
     }
 }
 
@@ -643,7 +647,8 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
         // tick -- awake, finite, not flagged no_mob_collision (an ant hole is
         // a hole in the ground, and a slab slides over it as a mob does) --
         // so the slab meets the mobs the way they meet each other.
-        separationGrid_.query(disc.realm, disc.position, disc.radius + kFiledDrift,
+        const double padding = disc.wax ? waxRadiusPadding_[realmIndex(disc.realm)] : 0.0;
+        separationGrid_.query(disc.realm, disc.position, disc.radius + kFiledDrift + padding,
                               separationCandidates_);
         for (const Entity mob : separationCandidates_) {
             const std::uint32_t index = entityIndex(mob);
@@ -655,7 +660,8 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
             Transform* transform = world.tryGet<Transform>(mob);
             if (transform == nullptr) continue;
 
-            const double reach = disc.radius + entry.radius;
+            const double radius = disc.wax ? entry.fullRadius : entry.radius;
+            const double reach = disc.radius + radius;
             const Vec2 offset = transform->position - disc.position;
             const double gapSq = offset.lengthSq();
             if (gapSq >= reach * reach) continue;
@@ -664,24 +670,20 @@ void MovementSystem::collideLooseBodies(World& world, const Terrain& terrain) {
 
             // A mob that cannot walk -- a nest, a rock, a cactus -- is never
             // moved by anything, and a slab shoved into one is eased round it.
-            // Everything else gives way by mass. A mob meets walls as a point,
-            // as it does everywhere else.
+            // Everything else gives way by mass and keeps its own terrain hull.
             const bool anchored = anchoredAgainstKnockback(world, registry, mob);
             const double mobMass = bodyMass(world.tryGet<Body>(mob));
-            const auto* instance=world.tryGet<PetalInstance>(disc.entity);
-            const bool wax=instance && instance->configIndex<registry.petalCount() &&
-                registry.petal(instance->configIndex).id=="wax";
             // Wax is a deployable barrier. Its light carry-weight should not
             // make every monster flatten it; players can still push the slab.
-            const double slabShare=anchored ? 1.0 : wax ?
+            const double slabShare=anchored ? 1.0 : disc.wax ?
                 std::min(0.2,mobMass/(mobMass+disc.mass)) : mobMass/(mobMass+disc.mass);
             const Vec2 from = transform->position;
             softLooseContact(terrain, disc.realm, disc.position, disc.radius,
                              slabShare,
-                             transform->position, kMobWallRadius, !anchored, out,
-                             loosePetalContactPush(reach - gap));
+                             transform->position, entry.wallRadius, !anchored, out,
+                             disc.wax ? reach - gap : loosePetalContactPush(reach - gap));
             if (!anchored)
-                stopMobAtMeteors(terrain, disc.realm, from, transform->position, entry.radius);
+                stopMobAtMeteors(terrain, disc.realm, from, transform->position, entry.radius, entry.wallRadius);
         }
 
         // NPCs never give way, to a flower or to anything else.
@@ -800,7 +802,7 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
 }
 
 bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
-                                      Vec2& position, double radius) const {
+                                      Vec2& position, double radius, double wallRadius) const {
     const auto& meteors = meteorDiscs_[realmIndex(realm)];
     if (meteors.empty()) return false;
     const Vec2 intended = position - from;
@@ -816,7 +818,7 @@ bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 
         if (outward.lengthSq() == 0.0)
             outward = intended.lengthSq() > 0.0 ? (intended * -1.0).normalized() : Vec2{1.0, 0.0};
         const Vec2 edge = meteor.position + outward * reach;
-        stepCollide(terrain, realm, from, edge - from, kMobWallRadius, 1.0, true, true);
+        stepCollide(terrain, realm, from, edge - from, wallRadius, 1.0, true, true);
         blocked = true;
     }
 
@@ -845,14 +847,15 @@ bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 
 void MovementSystem::moveMobs(World& world, const Terrain& terrain,
                               double nowMillis, double dt) {
     const ContentRegistry& registry = content();
-    const auto moveMob = [&](Entity e, Transform& transform, Motion& motion) {
+    const auto moveMob = [&](Entity e, Transform& transform, Motion& motion, const Body& body) {
         if (const auto* ai = world.tryGet<MobAi>(e); ai && ai->sleeping) return;
         const bool anchored = anchoredAgainstKnockback(world, registry, e);
         if (anchored) motion.velocity = Vec2{0,0};
+        const double wallRadius = mobWallRadius(&body);
         double barrierRadius = 0.0;
         if (!anchored && !meteorDiscs_[realmIndex(transform.realm)].empty()) {
             const auto* type = world.tryGet<MobType>(e);
-            barrierRadius = sanitizeCollisionRadius(world.get<Body>(e).radius) *
+            barrierRadius = sanitizeCollisionRadius(body.radius) *
                 (type ? mobBodyContactScale(registry.mob(type->configIndex).id) : 1.0);
         }
         // The shove a petal or a blast queued. The TypeScript server wrote
@@ -887,10 +890,10 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
                     const Vec2 spend = kb->carry * (1.0 - kept);
                     const Vec2 from = transform.position;
                     const StepOutcome out = stepCollide(terrain, transform.realm,
-                                                        transform.position, spend, kMobWallRadius,
+                                                        transform.position, spend, wallRadius,
                                                         1.0, true, true);
                     const bool stopped = stopMobAtMeteors(terrain, transform.realm, from,
-                                                          transform.position, barrierRadius);
+                                                          transform.position, barrierRadius, wallRadius);
                     kb->carry = out.blocked || stopped ? Vec2{0, 0} : kb->carry * kept;
                 }
             }
@@ -911,8 +914,9 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         const Vec2 attempted = velocity * envScale;
         const Vec2 from = transform.position;
         StepOutcome out = stepCollide(terrain, transform.realm, transform.position, attempted,
-                                      kMobWallRadius, dt);
-        if (!anchored && stopMobAtMeteors(terrain, transform.realm, from, transform.position, barrierRadius)) {
+                                      wallRadius, dt, true, body.wideMobWallHull);
+        if (!anchored && stopMobAtMeteors(terrain, transform.realm, from, transform.position,
+                                          barrierRadius, wallRadius)) {
             out.blocked = true;
             out.displacement = transform.position - from;
         }
@@ -925,17 +929,17 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
     };
 
     if (!workers || !workerLimit || !workers->count() || queries_->mobs.count() < 256) {
-        queries_->mobs.each([&](Entity e, MobTag&, Transform& transform, Motion& motion, Body&) {
-            moveMob(e, transform, motion);
+        queries_->mobs.each([&](Entity e, MobTag&, Transform& transform, Motion& motion, Body& body) {
+            moveMob(e, transform, motion, body);
         });
         return;
     }
     constexpr std::size_t batchSize = 32;
     mobMovementBatches_.clear();
     queries_->mobs.chunks([&](std::size_t size, const Entity* entities, MobTag*, Transform* transforms,
-                              Motion* motions, Body*) {
+                              Motion* motions, Body* bodies) {
         for (std::size_t i = 0; i < size; i += batchSize) {
-            mobMovementBatches_.push_back({entities + i, transforms + i, motions + i,
+            mobMovementBatches_.push_back({entities + i, transforms + i, motions + i, bodies + i,
                                            std::min(batchSize, size - i)});
         }
     });
@@ -944,7 +948,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
     workers->run(mobMovementBatches_.size(), workerLimit, [&](std::size_t index, unsigned) {
         const auto& batch = mobMovementBatches_[index];
         for (std::size_t i = 0; i < batch.size; ++i)
-            moveMob(batch.entities[i], batch.transforms[i], batch.motions[i]);
+            moveMob(batch.entities[i], batch.transforms[i], batch.motions[i], batch.bodies[i]);
     });
 }
 
@@ -1214,6 +1218,7 @@ void MovementSystem::buildSeparationSet(World& world) {
     }
     separationSet_.clear();
     separationGrid_.clear();
+    waxRadiusPadding_.fill(0.0);
 
     const ContentRegistry& registry = content();
     queries_->mobBodies.each([&](Entity e, MobTag&, Transform& transform, Body& body,
@@ -1237,6 +1242,8 @@ void MovementSystem::buildSeparationSet(World& world) {
         entry.position = position;
         entry.realm = transform.realm;
         entry.radius = sanitizeCollisionRadius(body.radius);
+        entry.fullRadius = entry.radius;
+        entry.wallRadius = mobWallRadius(&body);
         entry.squareHalf = squareMobHalfExtent(world,e);
         entry.angle = transform.angle;
         if (const BodySegment* segment = world.tryGet<BodySegment>(e)) {
@@ -1250,7 +1257,7 @@ void MovementSystem::buildSeparationSet(World& world) {
             entry.noCollision = config.noMobCollision;
             entry.gardnChain = config.gardnChain;
         }
-        if(entry.squareHalf>0) entry.radius=entry.squareHalf*1.4142135623730951;
+        if(entry.squareHalf>0) entry.fullRadius = entry.radius = entry.squareHalf * 1.4142135623730951;
         if (const HoleTether* tether = world.tryGet<HoleTether>(e)) {
             if (tether->emerging) entry.emergingFrom = tether->hole;
         }
@@ -1261,7 +1268,11 @@ void MovementSystem::buildSeparationSet(World& world) {
         }
         separationSlot_[index] = static_cast<std::uint32_t>(separationSet_.size());
         separationSet_.push_back(entry);
-        if (!entry.noCollision) separationGrid_.insert(e, transform.realm, position, entry.radius);
+        if (!entry.noCollision) {
+            separationGrid_.insert(e, transform.realm, position, entry.radius);
+            auto& padding = waxRadiusPadding_[realmIndex(transform.realm)];
+            padding = std::max(padding, entry.fullRadius - entry.radius);
+        }
     });
 }
 
@@ -1368,9 +1379,9 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
         // push is stepped, not resolved in one go: it can be longer than a
         // point is allowed to plunge into a thin wall in one substep.
         Vec2 position = entry.position;
-        stepCollide(terrain, entry.realm, position, entry.push.clampedLength(std::max(cap, entry.petPushCap)), kMobWallRadius,
-                    1.0);
-        stopMobAtMeteors(terrain, entry.realm, entry.position, position, entry.radius);
+        stepCollide(terrain, entry.realm, position, entry.push.clampedLength(std::max(cap, entry.petPushCap)),
+                    entry.wallRadius, 1.0, true, entry.wallRadius > kMobWallRadius);
+        stopMobAtMeteors(terrain, entry.realm, entry.position, position, entry.radius, entry.wallRadius);
         transform->position = position;
     }
 }

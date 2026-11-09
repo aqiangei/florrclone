@@ -14,6 +14,7 @@
 // stops it -- except a carrot's (Projectile::bouncesOffWalls), which meets
 // walls as a body does and comes back off them.
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -144,10 +145,16 @@ inline constexpr double kMinCollisionRadius = 0.5;
 /// The radius a mob meets walls with: none. Its Body radius is what it fights
 /// and is shoved by; against terrain only its centre counts, so a mob against
 /// a wall overlaps it, and goes through any gap its centre fits through.
-/// Every mob-versus-wall resolution -- its step, a shove, separation, a trailing
-/// segment, a spawn -- uses this and never the Body radius, and so does every
-/// NPC's, an NPC being a mob standing on the players' map.
+/// Most mobs and NPCs retain this point hull. Fire ants in the ant tunnels
+/// use a wider hull, capped so a large tier can still pass a one-tile lane.
 inline constexpr double kMobWallRadius = kMinCollisionRadius;
+
+inline double mobWallRadius(const Body* body) {
+    constexpr double kAntTunnelHullLimit = 108.0;
+    return body && body->wideMobWallHull
+        ? std::clamp(body->radius, kMobWallRadius, kAntTunnelHullLimit)
+        : kMobWallRadius;
+}
 
 // ---------------------------------------------------------------------------
 // The step
@@ -283,6 +290,7 @@ private:
         double radius = 0;
         double mass = 1;
         Realm realm = Realm::Overworld;
+        bool wax = false;
     };
 
     /// A homing candidate, flattened out of the ECS once per tick. Projectiles
@@ -304,6 +312,8 @@ private:
         Vec2 position;
         Realm realm = Realm::Overworld;
         double radius = 0;
+        double fullRadius = 0;
+        double wallRadius = kMobWallRadius;
         double squareHalf = 0, angle = 0;
         /// The centipede this mob belongs to, NULL_ENTITY for anything else.
         Entity chainHead = NULL_ENTITY;
@@ -330,6 +340,7 @@ private:
     /// Not an index into the set. Fills the slot table for every entity that
     /// is not in this pass.
     static constexpr std::uint32_t kNoSeparationEntry = 0xFFFFFFFFu;
+    std::array<double, kMaxRealms> waxRadiusPadding_{};
 
     void bind(World& world);
     /// Spends whatever a bubble threw a moon with: its velocity decays under
@@ -371,7 +382,7 @@ private:
     void collideLooseBodies(World& world, const Terrain& terrain);
     void moveMobs(World& world, const Terrain& terrain, double nowMillis, double dt);
     bool stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
-                          Vec2& position, double radius) const;
+                          Vec2& position, double radius, double wallRadius = kMobWallRadius) const;
     void moveProjectiles(World& world, const Terrain& terrain, double dt);
 
     /// Pushes overlapping mobs apart. Runs once everything has moved, so a
@@ -444,6 +455,7 @@ private:
         const Entity* entities;
         Transform* transforms;
         Motion* motions;
+        const Body* bodies;
         std::size_t size;
     };
     std::vector<MobMovementBatch> mobMovementBatches_;

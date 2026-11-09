@@ -8,6 +8,7 @@
     <meta name="apple-mobile-web-app-title" content="florr.clone">
     <title>florrc.lone</title>
     <meta name="description" content="florr.io clone">
+    <meta name="florr-client-assets" content="FLIX_CLIENT_ASSET_ROUTING">
     <meta name="keywords" content="florr, florr.io, florr clone, flowrix, flowrix pro, flowrix.pro, florrclone cryodome, zorr, zorr.pro, gardn, io games, online game, multiplayer game, browser game, web game">
     <link rel="icon" type="image/x-icon" href="/favicon.ico?v=2">
     <style>
@@ -422,8 +423,15 @@
   try { new DecompressionStream('deflate-raw');canInflate=true; } catch (_) {}
   const recoveryToken=new URLSearchParams(location.search).get('_flix_recover');
   const ui=window.flixLoading;
-  let downloadTicket='',downloadBase='',queueHeartbeat=null,compileWatchdog=null;
-  let directAssets=null,wasmMirror='';
+  // The entry can provide static asset routes in this document. A standalone
+  // server serves the same files beside the page, without a bootstrap request.
+  let routing=null;
+  try {
+    const encoded=document.querySelector('meta[name="florr-client-assets"]').content;
+    routing=JSON.parse(atob(encoded.replace(/-/g,'+').replace(/_/g,'/')));
+  } catch (_) {}
+  let downloadTicket='',downloadBase=routing?.assetBase||'',queueHeartbeat=null,compileWatchdog=null;
+  let directAssets=routing?.assets,wasmMirror=routing?.wasmMirror;
   let admission=null;
   const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   const completedDownloads=new Set();
@@ -448,7 +456,6 @@
   };
   window.addEventListener('pagehide',event=>{if(!event.persisted)releaseDownload();});
   const enterDownloadQueue=()=>{
-    if(['localhost','127.0.0.1',''].includes(location.hostname))return Promise.resolve();
     if(admission)return admission;
     admission=(async()=>{
       ui.phase('正在加入下载队列','按进入顺序下载资源，请保持页面打开。');
@@ -474,7 +481,6 @@
       }else{
         queueHeartbeat=setInterval(()=>queueCall('status?ticket='+encodeURIComponent(downloadTicket)).catch(()=>{}),5000);
       }
-      ui.phase('正在下载游戏资源','资源下载完成后会自动进入。');
     })().finally(()=>{admission=null;});
     return admission;
   };
@@ -561,7 +567,7 @@
         if(response.status!==200)throw Error('HTTP '+response.status);
         const stream=resumableAssetBody(response,{
           controller,wait,
-          reopen:downloadBase?(offset,signal)=>assetResponse(url,signal,offset):null,
+          reopen:(offset,signal)=>assetResponse(url,signal,offset),
           progress:(received,expected)=>{
             if(name==='bundle.wasm'&&!quiet())
               ui.download(received,expected,/^[a-f0-9]{48}$/.test(downloadTicket));
@@ -634,7 +640,8 @@
     // fail() has already said why.
     runtime.catch(() => {});
     (async()=>{
-    await enterDownloadQueue();
+    if(routing?.queue===true)await enterDownloadQueue();
+    if(!quiet())ui.phase('正在下载游戏资源','资源下载完成后会自动进入。');
 
     // Started now, before the glue: compiling the module is the long pole, and
     // this way it runs against the download instead of after it.

@@ -83,12 +83,17 @@ TEST(hyper_top_contributor_gets_thirty_nine_trials_of_materials_below_hyper){
     CHECK_EQ(total-eternal,100*39*3);CHECK(eternal>20&&eternal<100);
 }
 
-TEST(digger_uses_the_reduced_base_health_across_rarities) {
+TEST(digger_uses_the_reduced_health_and_damage_across_rarities) {
     const auto id = data().mobIndex("digger");
     CHECK(id != kInvalidIndex);
     if (id == kInvalidIndex) return;
-    CHECK_NEAR(data().mob(id).health, 250, 1e-6);
-    CHECK_NEAR(data().mobStats(id, Rarity::Super).health, 250 * 1187000.0, 1e-3);
+    CHECK_NEAR(data().mobStats(id, Rarity::Common).health, 200.0, 1e-6);
+    CHECK_NEAR(data().mobStats(id, Rarity::Common).damage, 24.0, 1e-6);
+    const auto super = data().mobStats(id, Rarity::Super);
+    CHECK_NEAR(super.health, 200.0 * 1187000.0, 1e-3);
+    CHECK_NEAR(super.damage, 24.0 * kMobDamageScale[rarityIndex(Rarity::Super)], 1e-6);
+    CHECK_NEAR(data().mob(id).petHealthScale, 0.5, 1e-6);
+    CHECK_NEAR(data().mob(id).petDamageScale, 0.5, 1e-6);
 }
 
 TEST(super_farm_has_thirty_six_slots_and_refills_the_deepest_sewer_room){

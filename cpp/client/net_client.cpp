@@ -7,6 +7,7 @@
 #include "client/ui/chat_i18n.h"
 #include "client/web/reload.h"
 #include "shared/game/absorb.h"
+#include "shared/core/json.h"
 #include "shared/core/text.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/markup.h"
@@ -668,11 +669,13 @@ void NetClient::deleteSkin(const std::string& id) {
     send(w);
 }
 
-void NetClient::requestPracticeBoard(bool includeAdmins) {
+void NetClient::requestPracticeBoard(bool includeAdmins, net::PracticeBoardAction action, std::uint32_t id) {
     practiceBoard_.pending = true;
     ByteWriter w;
     beginMessage(w, net::ClientMessage::RequestPracticeBoard);
     w.boolean(includeAdmins);
+    w.u8(static_cast<std::uint8_t>(action));
+    w.u32(id);
     send(w);
 }
 
@@ -1721,29 +1724,30 @@ void NetClient::handleSetUsernameResult(ByteReader& reader) {
 
 void NetClient::handlePracticeBoard(ByteReader& reader) {
     PracticeBoard board;
-    board.hasDummy = reader.boolean();
-    if (board.hasDummy) {
-        board.rarity = clampRarity(reader.u8());
+    board.ownRank = reader.u32();
+    const auto read = [&](auto& rows, unsigned limit) {
         const auto count = reader.u8();
-        if (count > net::kPracticeBoardRows) return;
+        if (count > limit) return false;
+        rows.reserve(count);
         for (unsigned i = 0; i < count; ++i) {
             PracticeBoardRow row;
+            row.id = reader.u32();
             row.name = reader.str();
             row.damage = reader.f64();
-            const auto sources = reader.u8();
-            if (sources > net::kPracticeBoardSources) return;
-            for (unsigned j = 0; j < sources; ++j) {
-                PracticeBoardSource source;
-                source.kind = static_cast<net::PracticeSource>(reader.u8());
-                source.petal = reader.u16();
-                source.rarity = clampRarity(reader.u8());
-                source.damage = reader.f64();
-                row.sources.push_back(source);
+            row.atMillis = reader.f64();
+            row.published = reader.boolean();
+            const auto loadout = Json::parseOrNull(reader.str());
+            for (const auto& item : loadout.items()) {
+                if (row.loadout.size() == kLoadoutActiveSlots) break;
+                row.loadout.push_back({item["slot"].asInt(), item["petal"].asString(),
+                                       clampRarity(item["tier"].asInt())});
             }
-            board.rows.push_back(std::move(row));
+            rows.push_back(std::move(row));
         }
-    }
-    if (reader.ok()) practiceBoard_ = std::move(board);
+        return reader.ok();
+    };
+    if (read(board.own, net::kPracticeHistoryLimit) && read(board.published, net::kPracticeBoardRows))
+        practiceBoard_ = std::move(board);
 }
 
 void NetClient::handleLeaderboard(ByteReader& reader) {

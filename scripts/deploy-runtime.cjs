@@ -6,6 +6,8 @@ if (process.env.FLIX_LOAD_SHED === '1' ||
   process.argv.push('--load-shed');
 if (fs.existsSync(path.join(__dirname, 'server.background-save')))
   process.argv.push('--background-save');
+if (fs.existsSync(path.join(__dirname, 'server.tick-probe')))
+  process.argv.push('--tick-probe');
 // Keep the WASM backend private behind the existing Nginx frontend.
 const net = require('node:net');
 const http = require('node:http');

@@ -554,6 +554,7 @@ void CombatSystem::recordPracticeDamage(const World& world, Entity dummy, Entity
     const Entity player = creditedPlayer(world, source);
     if (player == NULL_ENTITY) return;
 
+    if (onPracticeHit) onPracticeHit(player, dummy, amount, nowMillis);
     auto& target = practiceDamage_[player];
     if (target.dummy != NULL_ENTITY && target.dummy != dummy) {
         if (world.isAlive(target.dummy) && nowMillis - target.lastHitMillis < 1000.0 * kPracticeSeconds) return;
@@ -1615,6 +1616,7 @@ bool CombatSystem::trySecondChance(World& world, Entity victim, double nowMillis
     SecondChance& lockout = world.ensure<SecondChance>(victim);
     if (nowMillis < lockout.readyAtMillis) return false;
     lockout.readyAtMillis = nowMillis + effect[1];
+    lockout.activeUntilMillis = nowMillis + effect[0];
 
     Health& health = world.get<Health>(victim);
     health.current = 1.0;
@@ -1622,7 +1624,7 @@ bool CombatSystem::trySecondChance(World& world, Entity victim, double nowMillis
     // runs alongside the 50 ms post-hit one (hitCooldownUntilMillis) rather
     // than adding to it; every tier is longer, so the talent's is what holds.
     health.invulnerableUntilMillis = std::max(health.invulnerableUntilMillis,
-                                              nowMillis + effect[0]);
+                                              lockout.activeUntilMillis);
     return true;
 }
 
@@ -1788,7 +1790,7 @@ void bounceOffMob(World& world, const Terrain* terrain, Entity player, Entity mo
             Transform* mobTransform = mobGivesWay ? world.tryGet<Transform>(mob) : nullptr;
             if (refused > 0.0 && mobTransform != nullptr) {
                 stepCollide(*terrain, mobTransform->realm, mobTransform->position,
-                            direction * -refused, kMobWallRadius, 1.0, true, true);
+                            direction * -refused, mobWallRadius(world.tryGet<Body>(mob)), 1.0, true, true);
             }
         }
     }
@@ -1856,7 +1858,7 @@ void yieldToFlower(World& world, const Terrain* terrain, Entity mob, Entity flow
         transform->position -= direction * share;
     } else {
         stepCollide(*terrain, transform->realm, transform->position, direction * -share,
-                    kMobWallRadius, 1.0, true, true);
+                    mobWallRadius(world.tryGet<Body>(mob)), 1.0, true, true);
     }
 }
 

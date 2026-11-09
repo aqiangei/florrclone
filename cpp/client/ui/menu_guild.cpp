@@ -102,7 +102,8 @@ constexpr std::size_t kUsernameLimit = 24;
 
 // --- the roster band ----------------------------------------------------------
 
-constexpr double kRowPitch = 32.4;
+constexpr double kRowPitch = 39.0;
+constexpr double kRosterLineOffset = 8.5;
 /// The band's top edge to the first row's top, and the margin the rows are
 /// clipped to at either end of the band.
 constexpr double kRowLead = 9.0;
@@ -111,8 +112,6 @@ constexpr double kDetailTextSize = 14.0;
 /// Column starts, from the card's left edge.
 constexpr double kDotX = 27.0;
 constexpr double kNameX = 45.0;
-constexpr double kLocationX = 235.0;
-constexpr double kLeaderX = 375.0;
 /// The presence dot: a 9-radius disc under a 2-unit ring a shade darker, so 20
 /// units across outside the ring and 16 of colour inside it.
 constexpr double kDotRadius = 9.0;
@@ -620,16 +619,6 @@ bool GuildPanel::render(MenuContext& ctx) {
             if (hovered) fillRound(canvas, row, 4.0, kPaper, 0.08);
 
             presenceDot(canvas, panel.x + kDotX, midY, member.online);
-            const std::string badge = isDeputy ? (zh ? "（副会长）" : " (Deputy)") : "";
-            const double nameWidth = kLocationX - kNameX - 8.0 - measure(badge, kNameTextSize);
-            text(canvas, ellipsize(member.name, kNameTextSize, nameWidth) + badge,
-                 panel.x + kNameX, textY, cardText(kNameTextSize));
-            if (isLeader) {
-                // On the true middle: parentheses reach below the baseline,
-                // so the label already looks centred there and the nudge that
-                // seats the letters would set it a unit low.
-                text(canvas, "(Leader)", panel.x + kLeaderX, midY, cardText(kDetailTextSize));
-            }
 
             // Keep the invitation visible without first selecting the name.
             double buttonRight = panel.right() - kRowButtonRight;
@@ -657,11 +646,20 @@ bool GuildPanel::render(MenuContext& ctx) {
                 regions.push_back({squad, GuildAction::SquadOne, member.name});
                 buttonRight = squad.x - 6.0;
             }
-            if (!member.location.empty()) {
-                const double locationX = panel.x + kLocationX;
-                const double locationRight = isLeader ? panel.x + kLeaderX : buttonRight;
-                text(canvas, ellipsize(member.location, kDetailTextSize, locationRight - locationX - 4.0),
-                     locationX, textY, cardText(kDetailTextSize));
+            const double nameX = panel.x + kNameX;
+            const double labelWidth = std::max(1.0, buttonRight - nameX - 6.0);
+            const std::string badge = isLeader ? (zh ? "（会长）" : " (Leader)")
+                                      : isDeputy ? (zh ? "（副会长）" : " (Deputy)") : "";
+            const double nameWidth = labelWidth - measure(badge, kNameTextSize);
+            text(canvas, ellipsize(member.name, kNameTextSize, nameWidth) + badge,
+                 nameX, textY - (member.online ? kRosterLineOffset : 0.0), cardText(kNameTextSize));
+            if (member.online) {
+                const std::string location = member.location.empty()
+                    ? (zh ? "大厅" : "Lobby") : member.location;
+                const double mapSize = kDetailTextSize * std::min(1.0,
+                    labelWidth / std::max(1.0, measure(location, kDetailTextSize)));
+                textAtAlpha(canvas, location, nameX, textY + kRosterLineOffset,
+                            cardText(mapSize), 0.9);
             }
         }
         contentHeight = kRowLead * 2 + static_cast<double>(sorted.size()) * kRowPitch;

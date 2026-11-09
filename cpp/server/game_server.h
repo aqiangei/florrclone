@@ -139,6 +139,7 @@ struct ServerConfig {
     bool loadShedding = false;
     bool adaptivePacing = true;
     bool backgroundSave = false;
+    bool tickProbe = false;
     /// The `/admin db` key to use as is, instead of the one in the key file
     /// beside the database. Empty means the file. Only the offline page sets
     /// it: its server is a browser tab with no file anybody can open, and a
@@ -165,7 +166,7 @@ public:
     /// the emscripten build cannot own the loop -- blocking the Node event
     /// loop is what would stop every WebSocket message from ever arriving --
     /// and drives this from a timer callback instead.
-    bool step();
+    bool step(double timerLagMillis = -1.0);
 
     /// step()'s network half alone, with nothing ticked: every message that
     /// has arrived is handled and whatever that answered leaves now. The
@@ -414,7 +415,8 @@ private:
     void handlePublishSkin(Session&, net::Connection&, ByteReader&);
     void handleEquipSkin(Session&, net::Connection&, ByteReader&);
     void handleDeleteSkin(Session&, net::Connection&, ByteReader&);
-    void handlePracticeBoard(const Session&, net::Connection&, ByteReader&);
+    void handlePracticeBoard(Session&, net::Connection&, ByteReader&);
+    void servicePracticeTrials(double nowMillis);
     void handleLeaderboard(const Session&, net::Connection&, ByteReader&);
     void handleNotifications(net::Connection&, ByteReader&);
     void handleUsePetal(Session&, ByteReader&);
@@ -1781,6 +1783,23 @@ private:
     double nextDebugStatsMillis_ = 0;
 
     void recordTickCadence(double nowMillis, double lagMillis, double workMillis);
+    void recordTickProbe(double tickNow, double timerLag, double networkBefore, double startLag,
+                         double work, double cpu, double wallStart, int previousRate, int rate);
+    struct ProbeTiming {
+        double wall = 0.0;
+        double cpu = -1.0;
+    };
+    struct SaveProbe {
+        bool periodic = false;
+        ProbeTiming capture, prune, request, poll, other;
+    } saveProbe_;
+    struct TickProbeWindow {
+        std::array<unsigned, 21> targets{};
+        unsigned overNominal = 0, overTarget = 0, late = 0, transitions = 0;
+        double maxLag = -1.0, maxWork = -1.0;
+        std::uint32_t lagTick = 0, workTick = 0;
+        std::string lagFrame, workFrame;
+    } tickProbeWindow_;
     double tickCadenceStartMillis_ = 0;
     double tickCadenceMaxWorkMillis_ = 0;
     double tickCadenceMaxLagMillis_ = 0;

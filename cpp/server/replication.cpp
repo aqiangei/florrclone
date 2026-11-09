@@ -1,6 +1,7 @@
 #include "server/replication.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 #include "server/systems/petals.h"
@@ -353,6 +354,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
 
     // --- gather what is in view ------------------------------------------
     candidates_.clear();
+    constexpr double kNearbyLootReach = 700.0;
+    std::array<Candidate, 48> nearbyLoot{};
+    std::size_t nearbyLootCount = 0;
+    const auto nearer = [](const Candidate& a, const Candidate& b) {
+        if (a.selectionKey != b.selectionKey) return a.selectionKey < b.selectionKey;
+        return a.netId < b.netId;
+    };
     // The connection behind the viewer's body, which is what a drop's
     // reservation is keyed by -- a body dies, a claim does not. Read once
     // rather than per candidate entity.
@@ -380,6 +388,23 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // -- but only within the viewer's realm: a party member in the maze has
         // no position that means anything on an overworld screen.
         const double distanceSq = flix::distanceSq(transform.position, centre);
+        if (drop && world.get<Replicated>(e).rarity < Rarity::Ultra) {
+            if (distanceSq > kNearbyLootReach * kNearbyLootReach) return;
+            // Keep only the nearest low-tier stacks. High tiers and the
+            // observer keep their existing priority in the snapshot.
+            const Candidate candidate{e, id.value, distanceSq};
+            auto end = nearbyLoot.begin() + nearbyLootCount;
+            if (nearbyLootCount < nearbyLoot.size()) {
+                *end = candidate;
+                ++nearbyLootCount;
+                std::push_heap(nearbyLoot.begin(), end + 1, nearer);
+            } else if (nearer(candidate, nearbyLoot.front())) {
+                std::pop_heap(nearbyLoot.begin(), end, nearer);
+                *(end - 1) = candidate;
+                std::push_heap(nearbyLoot.begin(), end, nearer);
+            }
+            return;
+        }
         // The observer and nearby claimable loot must survive a full
         // snapshot even if a barrage fills the remaining entity budget.
         const double selectionKey = e == viewer ? -2.0 :
@@ -416,15 +441,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             [&](Entity e, NetId& id, Replicated&, Transform& at) { gather(e, id, at); });
     }
 
+    candidates_.insert(candidates_.end(), nearbyLoot.begin(), nearbyLoot.begin() + nearbyLootCount);
     if (candidates_.size() > maxEntities) {
         // After the observer and visible loot, nearest wins.
         std::nth_element(candidates_.begin(),
                          candidates_.begin() + static_cast<std::ptrdiff_t>(maxEntities),
                          candidates_.end(),
-                         [](const Candidate& a, const Candidate& b) {
-                             if (a.selectionKey != b.selectionKey) return a.selectionKey < b.selectionKey;
-                             return a.netId < b.netId;
-                         });
+                         nearer);
         candidates_.resize(maxEntities);
     }
     // In net id order, so each record can name its entity by the gap from the
@@ -467,6 +490,16 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         }
     }
     self.level = 1;
+    self.wave = frame.wave;
+    const auto remainingMillis = [&](double until) {
+        return static_cast<float>(std::max(0.0, until - frame.nowMillis));
+    };
+    if (const auto* secondChance = world.tryGet<SecondChance>(viewer)) {
+        self.secondChanceMillis = remainingMillis(secondChance->activeUntilMillis);
+        self.secondChanceCooldownMillis = remainingMillis(secondChance->readyAtMillis);
+    }
+    if (const auto* bandage = world.tryGet<Undead>(viewer))
+        self.bandageMillis = remainingMillis(bandage->untilMillis);
     if (const PlayerProgress* progress = world.tryGet<PlayerProgress>(viewer)) {
         self.totalXp = progress->totalXp;
         self.level = static_cast<std::uint16_t>(progress->level);
@@ -488,6 +521,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         self.splitMaxMana != last.splitMaxMana) {
         selfMask |= net::SelfSplitMana;
     }
+    if (self.secondChanceMillis != last.secondChanceMillis ||
+        self.secondChanceCooldownMillis != last.secondChanceCooldownMillis ||
+        self.bandageMillis != last.bandageMillis) selfMask |= net::SelfCombatTimers;
+    if (self.wave != last.wave) selfMask |= net::SelfWave;
     out.u8(selfMask);
     if (selfMask & net::SelfHealth) {
         out.f32(self.health);
@@ -506,6 +543,17 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         out.u32(self.splitNetId);
         out.f32(self.splitMana);
         out.f32(self.splitMaxMana);
+    }
+    if (selfMask & net::SelfCombatTimers) {
+        out.f32(self.secondChanceMillis);
+        out.f32(self.secondChanceCooldownMillis);
+        out.f32(self.bandageMillis);
+    }
+    if (selfMask & net::SelfWave) {
+        out.u32(self.wave.round);
+        out.u16(self.wave.remainingMillis);
+        out.u16(self.wave.durationMillis);
+        out.u8(static_cast<std::uint8_t>(self.wave.theme));
     }
     view.self = self;
     view.selfSent = true;
@@ -651,6 +699,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             out.u8(visuals.shield);
             out.str(skinIdOf(visuals));
         }
+        const PetalInstance* petalInstance = nullptr;
         if (info.kind == net::EntityKind::Petal) {
             // Petals are placed on an absolute ring around the owner's SERVER
             // position every tick, while the owner is drawn at its own eased
@@ -668,8 +717,9 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             std::uint32_t ownerNetId = 0;
             if (const NetId* ownerId = world.tryGet<NetId>(owner)) ownerNetId = ownerId->value;
             out.u32(ownerNetId);
-            const auto* instance = world.tryGet<PetalInstance>(candidate.entity);
-            out.u8(instance ? instance->dominoPips : 255); // v93 per-reload petal variant
+            petalInstance = world.tryGet<PetalInstance>(candidate.entity);
+            out.u8(petalInstance ? (petalInstance->diceFace != 0 ? petalInstance->diceFace : petalInstance->dominoPips)
+                            : 255); // Domino pips or the current Dice face.
         }
         if (info.kind == net::EntityKind::Npc) {
             // Which of its mob's recipes an assembler makes; 0 for any other.
@@ -698,6 +748,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         tracked.bestRarity = static_cast<std::uint8_t>(visuals.bestRarity);
         tracked.arenaScore = visuals.arenaScore;
         tracked.shield = visuals.shield;
+        if (petalInstance && (petalInstance->diceFace != 0 || content().petal(info.typeIndex).id == "dice")) {
+            tracked.rollingDice = true;
+            tracked.petalVariant = petalInstance->diceFace;
+        }
         tracked.skinIdHash = skinIdHash(skinIdOf(visuals));
         view.tracked.emplace(candidate.netId, tracked);
     }
@@ -737,6 +791,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             computePlayerVisuals(world, candidate.entity, frame.nowMillis);
 
         std::uint16_t mask = 0;
+        const auto* dice = tracked.rollingDice ? world.tryGet<PetalInstance>(candidate.entity) : nullptr;
+        if (dice && dice->diceFace != tracked.petalVariant) mask |= net::FieldPetalVariant;
         const auto* stack = world.tryGet<DropItem>(candidate.entity);
         if (stack && stack->quantity != tracked.dropQuantity) mask |= net::FieldDropQuantity;
         if (distanceSq(transform.position, tracked.position) >
@@ -837,6 +893,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
             tracked.arenaScore = visuals.arenaScore;
             tracked.shield = visuals.shield;
             tracked.skinIdHash = skinIdHash(skinIdOf(visuals));
+        }
+        if (mask & net::FieldPetalVariant) {
+            out.u8(dice->diceFace);
+            tracked.petalVariant = dice->diceFace;
         }
         ++updateCount;
     }

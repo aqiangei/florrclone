@@ -220,6 +220,10 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
     double mana = self_.mana, maxMana = self_.maxMana;
     std::uint32_t splitNetId = self_.splitNetId;
     double splitMana = self_.splitMana, splitMaxMana = self_.splitMaxMana;
+    double secondChanceMillis = self_.secondChanceMillis;
+    double secondChanceCooldownMillis = self_.secondChanceCooldownMillis;
+    double bandageMillis = self_.bandageMillis;
+    auto wave = self_.wave;
     double totalXp = self_.totalXp, stars = self_.stars;
     int level = self_.level;
     if (selfMask & net::SelfHealth) {
@@ -239,6 +243,17 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
         splitNetId = reader.u32();
         splitMana = reader.f32();
         splitMaxMana = reader.f32();
+    }
+    if (selfMask & net::SelfCombatTimers) {
+        secondChanceMillis = reader.f32();
+        secondChanceCooldownMillis = reader.f32();
+        bandageMillis = reader.f32();
+    }
+    if (selfMask & net::SelfWave) {
+        wave.round = reader.u32();
+        wave.remainingMillis = reader.u16();
+        wave.durationMillis = reader.u16();
+        wave.theme = static_cast<net::WaveTheme>(reader.u8());
     }
 
     // The viewer's own reloading and damaged slots, in wire order with the rest
@@ -360,6 +375,7 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
         std::uint32_t arenaScore;
         double shieldFraction;
         std::string equippedSkinId;
+        std::uint8_t petalVariant;
     };
     std::vector<Update> updates;
     updates.reserve(updateCount);
@@ -392,6 +408,7 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
             u.shieldFraction = reader.u8() / 255.0;
             u.equippedSkinId = reader.str();
         }
+        if (u.mask & net::FieldPetalVariant) u.petalVariant = reader.u8();
         updates.push_back(std::move(u));
         if (!reader.ok()) return false;
     }
@@ -444,6 +461,13 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
     self_.splitNetId = splitNetId;
     self_.splitMana = splitMana;
     self_.splitMaxMana = splitMaxMana;
+    self_.secondChanceMillis = secondChanceMillis;
+    self_.secondChanceCooldownMillis = secondChanceCooldownMillis;
+    self_.bandageMillis = bandageMillis;
+    if (selfMask & net::SelfWave) {
+        self_.wave = wave;
+        self_.waveRemainingMillis = wave.remainingMillis;
+    }
     self_.totalXp = totalXp;
     self_.level = level;
     self_.stars = stars;
@@ -548,6 +572,10 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
         // Revived can beat the snapshot that drops StateDead / FaceDeadEyes.
         // Keep the corpse pose off the viewer's flower until living state
         // arrives, otherwise a same-tick update paints X-eyes again.
+        if (u.mask & net::FieldPetalVariant) {
+            e.petalVariant = u.petalVariant;
+            e.petalAgeSeconds = 0.0;
+        }
         if (suppressSelfCorpse_ && u.netId == self_.netId) {
             const bool stillDead = (e.state & net::StateDead) != 0;
             e.state = static_cast<std::uint8_t>(e.state & ~net::StateDead);
@@ -674,6 +702,11 @@ void WorldView::interpolate(double nowMillis, double dtSeconds) {
     // second are enough to keep it honest and nowhere near enough to sweep a
     // wedge that turns through five revolutions smoothly.
     const double simulationDelta = dtSeconds * simulationPace_ / net::kTicksPerSecond;
+    self_.secondChanceMillis = std::max(0.0, self_.secondChanceMillis - simulationDelta * 1000.0);
+    self_.secondChanceCooldownMillis =
+        std::max(0.0, self_.secondChanceCooldownMillis - simulationDelta * 1000.0);
+    self_.bandageMillis = std::max(0.0, self_.bandageMillis - simulationDelta * 1000.0);
+    self_.waveRemainingMillis = std::max(0.0, self_.waveRemainingMillis - dtSeconds * 1000.0);
     for (double& remaining : self_.slotReloadRemainingMillis) {
         remaining = std::max(0.0, remaining - simulationDelta * 1000.0);
     }

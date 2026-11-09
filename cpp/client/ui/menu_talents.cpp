@@ -74,7 +74,7 @@ constexpr double kBadgeTipSize = 16.0;
 /// florrclone talent-wheel stage is an 880×880 viewBox. Nodes are projected
 /// with Nv(tier, phase, camera); only |phase−camera|<3 are shown.
 constexpr double kWheelSize = 880.0;
-constexpr double kCameraMax = 30.0;
+constexpr double kCameraMax = 27.25;
 constexpr double kPhaseVisible = 3.0;
 constexpr double kFlowerX = 440.0;
 constexpr double kFlowerY = 777.0;
@@ -82,7 +82,8 @@ constexpr double kFlowerRadius = 50.0;
 constexpr double kHubRadius = 20.0;
 /// Drag across the wheel: same coefficient as florrclone Mv(..., n=0).
 constexpr double kDragCamera = 0.0028;
-constexpr double kWheelCameraStep = 0.55;
+constexpr double kMouseWheelCameraStep = 0.90;
+constexpr double kTouchWheelCameraStep = 0.55;
 
 /// A node: a 38.5 disc in its rim colour under a 32.5 one in its fill. The
 /// cursor finds it within 32.5, and within 35.75 once it is already found.
@@ -170,23 +171,9 @@ struct Branch {
     std::vector<GridPoint> points;
 };
 
-/// Left to right. The long branches wear florr's shapes; what branches OFF
-/// them is ours, laid out for our forks:
-///   - Flower Health's zig-zag is mirrored so its rare tier stands at the
-///     bottom right, and Second Chance climbs away from it toward the
-///     middle;
-///   - Prestige stands alone just right of the flower;
-///   - Reload winds in the spiral (nine tiers, like florr's own);
-///   - Healing is four tiers up the start of a zig-zag;
-///   - Absorption's zig-zag is mirrored so legendary and mythic both stand
-///     on its left edge, a column clear of Healing: Magnetism hooks off
-///     legendary to the left and curls down and back in, and Duplicator
-///     climbs off mythic up-left above it.
-/// Checked across every scroll: no two nodes come closer than 92 (florr's own
-/// tree comes to 81), Magnetism's none closer than 116, and no connector
-/// crosses another.
+/// The florrclone client grid ([tier, phase] → {x,y}). After Poison,
+/// put damage branches together, followed by sustain, movement and Prestige.
 const std::vector<Branch>& branches() {
-    // Exact florrclone client grid ([tier, phase] → {x,y}). No flowrix zigZag/spiral.
     static const std::vector<Branch> kBranches = {
         {SkillId::PetalHealth,
          {{4, 1}, {5, 0.5}, {4, 0}, {6, 0}, {6, 1}, {8, 1}, {7, 0.5}, {8, 0}, {9, 0.5}}},
@@ -216,17 +203,17 @@ const std::vector<Branch>& branches() {
         {SkillId::Damage,
          {{4, 17}, {5, 16.5}, {6, 17}, {7, 16.5}, {8, 17}, {9, 16.5},
           {9.5, 17}, {9, 17.5}, {8, 18}, {7, 18}}},
-        {SkillId::Absorbing,
-         {{4, 19.5}, {5, 19}, {6, 19.5}, {7, 19}, {8, 19.5}, {9, 19},
-          {9.5, 19.5}, {9, 20}, {8, 20.5}, {7, 20.5}}},
-        {SkillId::MovementSpeed, {{4, 21.5}, {5.5, 22}, {7, 21.5}}},
-        {SkillId::Prestige, {{4, 23.5}}},
-        {SkillId::ManaRegen,
-         {{4, 28}, {5, 27.5}, {6, 28}, {7, 27.5}, {8, 28},
-          {9, 27.5}, {9, 28.5}, {8, 29}, {7, 29}}},
         {SkillId::PetDamage,
-         {{4, 25}, {5, 24.5}, {6, 25}, {7, 24.5}, {8, 25}, {9, 24.5},
-          {9.5, 25}, {9, 25.5}, {8, 26}, {7, 26}}},
+         {{4, 19.25}, {5, 18.75}, {6, 19.25}, {7, 18.75}, {8, 19.25}, {9, 18.75},
+          {9.5, 19.25}, {9, 19.75}, {8, 20.25}, {7, 20.25}}},
+        {SkillId::Absorbing,
+         {{4, 21.5}, {5, 21}, {6, 21.5}, {7, 21}, {8, 21.5}, {9, 21},
+          {9.5, 21.5}, {9, 22}, {8, 22.5}, {7, 22.5}}},
+        {SkillId::ManaRegen,
+         {{4, 23.75}, {5, 23.25}, {6, 23.75}, {7, 23.25}, {8, 23.75},
+          {9, 23.25}, {9, 24.25}, {8, 24.75}, {7, 24.75}}},
+        {SkillId::MovementSpeed, {{4, 25.5}, {5.5, 26}, {7, 25.5}}},
+        {SkillId::Prestige, {{4, 26.25}}},
     };
     return kBranches;
 }
@@ -734,7 +721,9 @@ bool TalentsPanel::render(MenuContext& ctx) {
                          (touch ? kTouchDragMultiplier : 1.0);
         dragLastX_ = mouse.x;
     }
-    if (live && panel.contains(mouse)) scrollTarget_ -= ctx.wheel() * kWheelCameraStep;
+    if (live && panel.contains(mouse)) {
+        scrollTarget_ -= ctx.wheel() * (touch ? kTouchWheelCameraStep : kMouseWheelCameraStep);
+    }
     scrollTarget_ = std::clamp(scrollTarget_, 0.0, kCameraMax);
     scroll_ += (scrollTarget_ - scroll_) * ease(dtMs, touch ? kScrollRate * 3.0 : kScrollRate);
 

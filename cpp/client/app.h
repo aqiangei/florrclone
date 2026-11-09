@@ -295,6 +295,7 @@ private:
     /// one under the other, name above each. Ultras are not bosses: they wear
     /// the ordinary bar under the body like every other mob. Returns the y
     /// under the last row, or 0 when there are none.
+    double drawWaveBar(Canvas&);
     double drawBossBars(Canvas&, bool altHeld);
     /// An admin's announcement as a banner at the top of the screen, starting
     /// below `clearOf` when something is already there, for eight seconds
@@ -328,7 +329,7 @@ private:
     /// HUD. Nothing at all when the player squads alone, which is the normal
     /// case and is why the block starts where the main HUD ends rather than
     /// reserving room for itself.
-    void drawSquadHud(Canvas&, double time);
+    void drawSquadHud(Canvas&, double time, double hudBottom);
     /// One HUD avatar: the flower `netId` belongs to, drawn at `radius` around
     /// (`centreX`, `centreY`) with its own colour, face, equipment and skin.
     /// Falls back to the plain yellow face when that body is not in the stream

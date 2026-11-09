@@ -5374,6 +5374,40 @@ TEST(a_run_of_mimics_copies_the_first_real_petal_each_at_its_own_tier) {
     }
 }
 
+TEST(sawblade_reloads_in_one_second_after_breaking_and_hits_harder_from_eternal) {
+    const auto& registry = testsupport::shippedContent();
+    const auto sawblade = registry.petalIndex("sawblade");
+    const auto blueberries = registry.petalIndex("magic_peas");
+    for (int tier = 0; tier < kLadderRarityCount; ++tier) {
+        const auto rarity = static_cast<Rarity>(tier);
+        CHECK_NEAR(registry.petalStats(sawblade, rarity).reloadMillis, 2000.0, 1e-9);
+    }
+    constexpr double combatReloadMillis = 1000.0;
+    for (const auto rarity : {Rarity::Super, Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
+        Rig rig(registry);
+        rig.equip(0, "sawblade", rarity);
+        rig.settleEquips();
+        const auto petals = rig.petals(0);
+        CHECK_EQ(petals.size(), std::size_t(1));
+        if (petals.empty()) continue;
+        const double contactDamage = rig.world.get<ContactDamage>(petals.front()).amount;
+        if (rarity == Rarity::Super) {
+            CHECK_NEAR(contactDamage, 87480.0, 1e-6);
+        } else {
+            const double lightning = registry.petalStats(blueberries, rarity).lightningDamagePerHit;
+            CHECK_NEAR(contactDamage, lightning * 0.6, 1e-6);
+        }
+        rig.damage(petals.front(), rig.healthOf(petals.front()));
+        const double brokenAt = rig.now + net::kTickMillis;
+        rig.tick();
+        CHECK_NEAR(rig.slot(0).reloadReadyAtMillis, brokenAt + combatReloadMillis, 1e-9);
+        rig.tick(static_cast<int>(combatReloadMillis / net::kTickMillis) - 1);
+        CHECK(rig.petals(0).empty());
+        rig.tick();
+        CHECK_EQ(rig.petals(0).size(), std::size_t(1));
+    }
+}
+
 TEST(a_mimic_beside_ram_fields_a_sawblade) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -6295,12 +6329,21 @@ TEST(pharaoh_crown_summons_in_a_crowd_without_stacking_or_extending_duration) {
     Rig rig(registry);
     const auto blocker = addMob(rig, rig.position(rig.player), "ladybug");
     rig.world.get<Body>(blocker).radius = 5000.0;
-    rig.equip(0, "pharaoh_s_crown", Rarity::Apex);
+    rig.equip(0, "pharaoh_s_crown", Rarity::Unique);
     rig.equip(1, "pharaoh_s_crown", Rarity::Apex);
 
     CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
     if (rig.petCount() != 1) return;
     const auto first = Query<Pet>{rig.world}.collect().front();
+    const auto& type = rig.world.get<MobType>(first);
+    CHECK_EQ(rig.world.get<Pet>(first).slot, 1u);
+    CHECK(type.rarity == Rarity::Unique);
+    const auto& mummy = registry.mob(type.configIndex);
+    const double superScale = petalStatScale(Rarity::Super);
+    CHECK_NEAR(rig.world.get<Health>(first).max,
+               3.0 * mummy.health * mummy.petHealthScale * superScale, 1e-6);
+    CHECK_NEAR(rig.world.get<ContactDamage>(first).amount,
+               3.0 * mummy.damage * mummy.petDamageScale * superScale, 1e-6);
     rig.tick(19);
     CHECK_EQ(rig.petCount(), 1u);
     rig.tick();
@@ -6308,6 +6351,15 @@ TEST(pharaoh_crown_summons_in_a_crowd_without_stacking_or_extending_duration) {
     rig.tick(100);
     CHECK_EQ(rig.petCount(), 6u);
     CHECK(!rig.world.isAlive(first));
+}
+
+TEST(pharaoh_crown_permanent_hyper_uses_the_hyper_summon_tier) {
+    Rig rig(testsupport::shippedContent());
+    rig.equip(0, "pharaoh_s_crown", Rarity::PermanentHyper);
+    CHECK(rig.tickUntil([&] { return rig.petCount() == 1; }, 140));
+    for (Entity pet : Query<Pet>{rig.world}.collect()) {
+        CHECK(rig.world.get<MobType>(pet).rarity == Rarity::Unique);
+    }
 }
 
 TEST(pharaoh_crown_waits_for_a_walkable_center_before_using_its_fallback) {

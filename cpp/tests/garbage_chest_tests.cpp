@@ -49,9 +49,10 @@ TEST(garbage_cpp_is_rarer_but_visible_cpp_still_really_drops) {
     }
     for(auto tier:{Rarity::Ultra,Rarity::Super,Rarity::Unique,Rarity::Apex}) {
         const auto a=c.petalStats(cpp,tier), b=c.petalStats(c.petalIndex("sawblade"),tier);
-        CHECK(a.damage>=b.damage && a.damage<=b.damage*1.06);
+        CHECK_NEAR(a.damage / b.damage, 42.0 / (tier >= Rarity::Unique ? 54.0 : 40.0), 1e-9);
         CHECK(a.health>=b.health && a.health<=b.health*1.13);
-        CHECK_NEAR(a.reloadMillis,b.reloadMillis,1e-9);
+        CHECK_NEAR(a.reloadMillis,2500.0,1e-9);
+        CHECK_NEAR(b.reloadMillis,2000.0,1e-9);
     }
 }
 TEST(todo1107_garbage_rare_items_remain_visible_but_less_frequent) {

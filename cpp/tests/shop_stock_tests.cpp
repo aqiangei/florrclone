@@ -4,6 +4,49 @@
 using namespace flix;
 using namespace flix::testsupport;
 
+TEST(shop_stock_locked_moon_rock_uses_the_new_discounted_price) {
+    const auto rotation = shopRotation(shopClockNow()) - 1;
+    Harness h("shop-moon-rock", [&](const std::string& path) {
+        seedUser(path, "buyer", "password");
+        Database db;
+        std::string error;
+        CHECK(db.load(path, error));
+        auto& record = db.progress(db.findUser("buyer")->id);
+        record.stars = 35000;
+        record.extra["lockedShopRotation"] = static_cast<double>(rotation);
+        record.extra["lockedShopOffersRotation"] = static_cast<double>(rotation);
+        Json row = Json::object();
+        row["petalType"] = "moon_rock";
+        row["rarity"] = rarityName(Rarity::Super);
+        row["discountPercent"] = 30;
+        row["price"] = 3982;  // An old cached seven-tenths price.
+        record.extra["lockedShopOffers"] = Json::array();
+        record.extra["lockedShopOffers"].push(row);
+        db.markDirty();
+        CHECK(db.save());
+    }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient buyer;
+    CHECK(loginAs(h, buyer, "buyer", "password"));
+    CHECK(h.stepUntil({&buyer}, [&] { return buyer.lockedShopOffers.size() == 1; }));
+    if (buyer.lockedShopOffers.size() != 1) return;
+    const auto moon = content().petalIndex("moon_rock");
+    CHECK_EQ(buyer.lockedShopOffers.front().petalIndex, moon);
+    CHECK_NEAR(buyer.lockedShopOffers.front().price, 31500.0, 1e-9);
+    const double starsBefore = buyer.profile().stars;
+    buyer.requestBuyPetal(moon, Rarity::Super, 0, 1);
+    CHECK(h.stepUntil({&buyer}, [&] { return buyer.shopOutcome().pending; }));
+    CHECK(buyer.shopOutcome().ok);
+    CHECK_EQ(buyer.profile().stackCount(moon, Rarity::Super), 1);
+    CHECK_NEAR(buyer.profile().stars, starsBefore - 31500.0, 1e-9);
+    buyer.shopOutcome().pending = false;
+    buyer.requestBuyPetal(moon, Rarity::Super, 0, 1);
+    CHECK(h.stepUntil({&buyer}, [&] { return buyer.shopOutcome().pending; }));
+    CHECK(!buyer.shopOutcome().ok);
+    CHECK_EQ(buyer.profile().stackCount(moon, Rarity::Super), 1);
+}
+
 TEST(shop_stock_unlimited_locked_offers_ignore_old_sold_out_records_and_keep_prices) {
     const auto rotation=shopRotation(shopClockNow())-1;
     Harness h("shop-unlimited-lock",[&](const std::string& path){

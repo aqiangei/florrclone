@@ -4,6 +4,7 @@
 #include "client/render/world_renderer.h"
 #include "client/world_view.h"
 #include "server/replication.h"
+#include "server/systems/loot.h"
 #include "server/systems/petals.h"
 #include "shared/game/components.h"
 
@@ -28,6 +29,7 @@ struct Fixture {
     Entity viewer = NULL_ENTITY;
     Entity splitOther = NULL_ENTITY;
     bool loadShedding = false;
+    net::WaveHud wave;
     /// The viewer's squadmates (Replicator::Frame::alwaysVisible), if any.
     std::vector<Entity> squad;
 
@@ -76,6 +78,7 @@ struct Fixture {
         frame.events = &events;
         frame.splitOther = splitOther;
         frame.loadShedding = loadShedding;
+        frame.wave = wave;
         frame.alwaysVisible = squad.empty() ? nullptr : &squad;
         replicator.build(world, viewer, view, frame, out);
 
@@ -152,6 +155,68 @@ TEST(split_mana_updates_privately_and_clears_on_merge) {
     fixture.tick(other, 5, 1200);
     CHECK_EQ(other.self().splitNetId, 0u);
     CHECK_NEAR(other.self().splitMaxMana, 0, 1e-6);
+}
+
+TEST(personal_combat_timers_replicate_count_down_and_clear) {
+    Fixture fixture;
+    const Entity player = fixture.viewer;
+    fixture.world.add<SecondChance>(player, SecondChance{31000.0, 2500.0});
+    fixture.world.add<Undead>(player, Undead{4500.0});
+    WorldView client;
+    fixture.tick(client, 1, 1000);
+    CHECK_NEAR(client.self().secondChanceMillis, 1500.0, 1e-6);
+    CHECK_NEAR(client.self().secondChanceCooldownMillis, 30000.0, 1e-6);
+    CHECK_NEAR(client.self().bandageMillis, 3500.0, 1e-6);
+    client.interpolate(1100, 0.1);
+    CHECK_NEAR(client.self().bandageMillis, 3400.0, 1e-6);
+    fixture.world.remove<Undead>(player);
+    fixture.tick(client, 2, 2500);
+    CHECK_EQ(client.self().secondChanceMillis, 0.0);
+    CHECK_EQ(client.self().bandageMillis, 0.0);
+    CHECK_NEAR(client.self().secondChanceCooldownMillis, 28500.0, 1e-6);
+    fixture.tick(client, 3, 31000);
+    CHECK_EQ(client.self().secondChanceCooldownMillis, 0.0);
+}
+
+TEST(wave_hud_replicates_lobby_theme_and_exit) {
+    Fixture fixture;
+    WorldView client;
+    fixture.wave = {0, 28500, 30000, net::WaveTheme::Normal};
+    fixture.tick(client, 1, 1000);
+    CHECK_EQ(client.self().wave.round, 0u);
+    CHECK_EQ(client.self().wave.durationMillis, 30000u);
+    client.interpolate(1100, 0.1);
+    CHECK_NEAR(client.self().waveRemainingMillis, 28400.0, 1e-6);
+    fixture.wave = {7, 44000, 45000, net::WaveTheme::Bubble};
+    fixture.tick(client, 2, 1150);
+    CHECK_EQ(client.self().wave.round, 7u);
+    CHECK(client.self().wave.theme == net::WaveTheme::Bubble);
+    fixture.wave = {};
+    fixture.tick(client, 3, 1200);
+    CHECK_EQ(client.self().wave.durationMillis, 0u);
+    CHECK_EQ(client.self().waveRemainingMillis, 0.0);
+}
+
+TEST(equipped_dice_replicates_a_new_face_without_respawning) {
+    Fixture fixture;
+    const Entity petal = fixture.world.create();
+    fixture.world.add<Transform>(petal, Transform{{1020, 1000}, 0.0});
+    fixture.world.add<NetId>(petal, NetId{fixture.ids.next()});
+    auto& rep = fixture.world.add<Replicated>(petal);
+    rep.kind = net::EntityKind::Petal;
+    auto& die = fixture.world.add<PetalInstance>(petal);
+    die.owner = fixture.viewer;
+    die.diceFace = 2;
+    const auto id = netIdOf(fixture.world, petal);
+    WorldView client;
+    fixture.tick(client, 1, 1000);
+    CHECK_EQ(client.entities().at(id).petalVariant, 2);
+    client.interpolate(1100, 0.1);
+    CHECK(client.entities().at(id).petalAgeSeconds > 0.0);
+    die.diceFace = 6;
+    fixture.tick(client, 2, 1150);
+    CHECK_EQ(client.entities().at(id).petalVariant, 6);
+    CHECK_EQ(client.entities().at(id).petalAgeSeconds, 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -757,6 +822,33 @@ TEST(claimable_loot_stays_visible_when_snapshot_entity_budget_is_full) {
     CHECK_EQ(client.entities().size(), std::size_t(10));
     CHECK(client.entities().count(netIdOf(f.world, f.viewer)) == 1);
     CHECK(client.entities().count(netIdOf(f.world, drop)) == 1);
+}
+
+TEST(nearby_low_tier_ground_loot_is_bounded_and_keeps_claims) {
+    Fixture f;
+    LootSystem loot;
+    const auto addDrop = [&](double x, Rarity rarity, std::vector<Entity> eligible = {}) {
+        const Entity entity = loot.spawnDrop(f.world, 2, rarity, {x, 1000},
+                                             Realm::Overworld, eligible);
+        f.world.add<NetId>(entity, NetId{f.ids.next()});
+        return netIdOf(f.world, entity);
+    };
+    const Entity other = f.addPlayer("other", {1001, 1000});
+    f.world.get<PlayerAccount>(other).connection = 2;
+    const auto reserved = addDrop(1001, Rarity::Rare, {other});
+    const auto farLow = addDrop(1800, Rarity::Rare);
+    const auto farUltra = addDrop(1800, Rarity::Ultra);
+    std::vector<std::uint32_t> nearby;
+    for (int i = 60; i > 0; --i) nearby.push_back(addDrop(1001 + i, Rarity::Rare));
+
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const auto& entities = client.entities();
+    CHECK_EQ(entities.count(reserved), std::size_t(0));
+    CHECK_EQ(entities.count(farLow), std::size_t(0));
+    CHECK_EQ(entities.count(farUltra), std::size_t(1));
+    for (std::size_t i = 0; i < nearby.size(); ++i)
+        CHECK_EQ(entities.count(nearby[i]), static_cast<std::size_t>(i >= 12));
 }
 
 TEST(events_are_scoped_to_what_the_client_can_see) {

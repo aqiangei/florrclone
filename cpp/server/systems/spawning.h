@@ -850,7 +850,7 @@ private:
     /// only those that have outrun what was woken for them (wakeAhead).
     void promoteLatent(World& world, const Terrain& terrain, const ContentRegistry& content,
                        const std::vector<Viewer>& seers, const std::vector<Viewer>& viewers,
-                       Rng& rng, double nowMillis);
+                       Rng& rng, double nowMillis, bool relocateBlocked);
     /// Between passes: wakes round every viewer that has moved further than
     /// half of kLatentWakeMargin from everywhere a wake was last done from.
     void wakeAhead(World& world, const Terrain& terrain, const ContentRegistry& content, Rng& rng,
@@ -903,7 +903,7 @@ private:
     /// True when a live wild `rarity` animal already stands anywhere in
     /// `realm`'s biome. Walks the live population, which is fine: it is only
     /// asked when a clock is ready and a super was just rolled.
-    bool topBossTaken(World& world, Rarity rarity, Realm realm);
+    bool topBossTaken(World& world, Rarity rarity, Realm realm, bool includeRituals = true);
 
     /// Despawns every unique or apex that is not the FIRST of its tier in its
     /// biome, with its body if it has one. Destroyed, not killed: no loot and
@@ -1090,6 +1090,7 @@ private:
     /// player" there means "someone is in here".
     std::array<bool, kMaxRealms> realmOccupied_{};
     Realm prestigeJungleRealm_ = Realm::Arena; // No world-map candidate can match until loaded.
+    Realm ordinaryJungleRealm_ = Realm::Arena;
     Realm prestigeSewersRealm_ = Realm::Arena;
     std::array<bool, kMaxRealms> inactivePyramidRealms_{};
     struct MobPlacement { Vec2 position; double radius; };
@@ -1124,8 +1125,10 @@ private:
         std::uint32_t index = 0;
         double distanceSq = 0.0;
         std::optional<double> facing;
+        bool blockedByPlayer = false;
     };
     std::vector<WakeCandidate> wakeList_;
+    std::size_t relocationCursor_ = 0;
     std::vector<Entity> doomed_;
     std::vector<Entity> scratchChildren_;
 };

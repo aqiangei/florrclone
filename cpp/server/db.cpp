@@ -1,6 +1,7 @@
 #include "server/db.h"
 #include "shared/game/daily_streak.h"
 #include "server/hyper_history.h"
+#include "server/timed_hammers.h"
 
 #include <algorithm>
 #include <chrono>
@@ -2130,24 +2131,40 @@ const PlayerRecord* Database::findProgress(const std::string& userId) const {
     return players_.find(userId);
 }
 
-int Database::awardWaveStars(const std::string& userId) {
+int Database::awardWaveStars(const std::string& userId, bool* reachedDailyCap) {
     constexpr int kStarsPerWave = 7500;
     constexpr int kDailyCap = 150000;
+    if (reachedDailyCap) *reachedDailyCap = false;
     const std::int64_t today = nowMillis() / 86400000;
     PlayerRecord& record = progress(userId);
     const Json& prior = std::as_const(record.extra)["waveStars"];
     const auto lastDay = static_cast<std::int64_t>(prior["day"].asDouble(-1.0));
     if (lastDay > today) return 0;
     const int earned = lastDay == today ? std::max(0, prior["earned"].asInt()) : 0;
-    if (earned >= kDailyCap) return 0;
+    if (earned >= kDailyCap) {
+        if (reachedDailyCap) *reachedDailyCap = true;
+        return 0;
+    }
 
     const int award = std::min(kStarsPerWave, kDailyCap - earned);
     auto& ledger = record.extra["waveStars"];
     ledger["day"] = static_cast<double>(today);
     ledger["earned"] = earned + award;
+    if (reachedDailyCap) *reachedDailyCap = earned + award >= kDailyCap;
     record.stars += award;
     markDirty();
     return award;
+}
+
+bool Database::awardWaveBonusHammer(const std::string& userId) {
+    const auto now = nowMillis();
+    const auto today = now / 86400000;
+    auto& record = progress(userId);
+    if (std::as_const(record.extra)["waveBonusHammerDay"].asDouble(-1.0) >= today) return false;
+    addHammerLease(record, static_cast<double>(now));
+    record.extra["waveBonusHammerDay"] = static_cast<double>(today);
+    markDirty();
+    return true;
 }
 
 DailyStreakResult Database::processDailyStreak(const std::string& userId) {

@@ -1,9 +1,11 @@
 #include "test.h"
+#include "test_data.h"
 #include "client/render/sprites.h"
+#include "client/render/world_renderer.h"
 #include "shared/game/config.h"
 using namespace flix;
 TEST(dice_art_is_visible_at_every_rarity){
-    ContentRegistry c;std::string error;CHECK(c.loadFiles("/data/mobs.json","/data/petals.json",error));
+    ContentRegistry c;std::string error;CHECK(c.loadFiles(testsupport::dataFile("mobs.json"),testsupport::dataFile("petals.json"),error));
     SpriteCache sprites;CHECK(sprites.build(c));
     for(const auto& w:sprites.warnings())if(w.find("dice")!=std::string::npos)std::printf("%s\n",w.c_str());
     const auto dice=c.petalIndex("dice");CHECK(sprites.petalDrawable(dice));
@@ -17,10 +19,60 @@ TEST(dice_art_is_visible_at_every_rarity){
 #include "client/ui/item_tile.h"
 #include "render_rig.h"
 TEST(equipped_dice_is_a_projected_cube_that_turns_over_time){
- std::string error;CHECK(loadContent("/data",error));SpriteCache sprites;CHECK(sprites.build(content()));
+ std::string error;CHECK(loadContent(testsupport::dataDir(),error));SpriteCache sprites;CHECK(sprites.build(content()));
  auto frame=[&](double time,int face){Canvas canvas=Canvas::createVirtual(120,120);ui::ItemTile tile;tile.petalIndex=content().petalIndex("dice");tile.rarity=Rarity::Apex;tile.diceFace=face;tile.timeSeconds=time;tile.showName=false;ui::drawItemTile(canvas,sprites,{10,10,100,100},tile);return canvas.getImageData(0,0,120,120);};
  CHECK_EQ(testsupport::differingPixels(frame(1.2,6),frame(1.5,6)),0);
  const auto first=frame(0,6);CHECK(testsupport::differingPixels(first,frame(.5,6))>200);CHECK(testsupport::differingPixels(first,frame(0,1))>40);
+}
+
+TEST(orbiting_dice_renders_its_replicated_face_and_rolls) {
+    const auto& registry = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(registry));
+    WorldRenderer renderer;
+    renderer.setContent(&registry);
+    renderer.setSprites(&sprites);
+    const auto frame = [&](double age, std::uint8_t face) {
+        RemoteEntity petal;
+        petal.netId = 2;
+        petal.kind = net::EntityKind::Petal;
+        petal.typeIndex = registry.petalIndex("dice");
+        petal.ownerNetId = 1;
+        petal.petalVariant = face;
+        petal.petalAgeSeconds = age;
+        WorldView view;
+        view.seedForTest(petal);
+        Canvas canvas = Canvas::createVirtual(160, 160);
+        renderer.draw(canvas, view, testsupport::frameCamera(160, {}), {}, 1.0);
+        return canvas.getImageData(0, 0, 160, 160);
+    };
+    CHECK(testsupport::differingPixels(frame(0.0, 6), frame(0.5, 6)) > 12);
+    CHECK(testsupport::differingPixels(frame(1.2, 6), frame(1.2, 1)) > 3);
+}
+
+TEST(loaded_stinger_mobs_show_ammo_behind_the_body_until_firing) {
+    const auto& registry = testsupport::shippedContent();
+    SpriteCache sprites;
+    CHECK(sprites.build(registry));
+    WorldRenderer renderer;
+    renderer.setContent(&registry);
+    renderer.setSprites(&sprites);
+    for (const char* id : {"hornet", "wasp", "hel_wasp", "mecha_wasp"}) {
+        const auto frame = [&](std::uint8_t state) {
+            RemoteEntity mob;
+            mob.netId = 1;
+            mob.kind = net::EntityKind::Mob;
+            mob.typeIndex = registry.mobIndex(id);
+            mob.radius = 30.0;
+            mob.state = state;
+            WorldView view;
+            view.seedForTest(mob);
+            Canvas canvas = Canvas::createVirtual(200, 200);
+            renderer.draw(canvas, view, testsupport::frameCamera(200, {}), {}, 1.0);
+            return canvas.getImageData(0, 75, 74, 50);
+        };
+        CHECK(testsupport::differingPixels(frame(0), frame(net::StateUnloaded)) > 20);
+    }
 }
 
 #include "shared/game/skills.h"

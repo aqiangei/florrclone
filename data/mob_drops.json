@@ -26410,7 +26410,7 @@
         "type": "petal",
         "itemType": "bone",
         "rarity": "common",
-        "probability": 0.42,
+        "probability": 0.48,
         "minQuantity": 1,
         "maxQuantity": 1
       }
@@ -26423,7 +26423,7 @@
         "type": "petal",
         "itemType": "wing",
         "rarity": "common",
-        "probability": 0.35,
+        "probability": 0.43,
         "minQuantity": 1,
         "maxQuantity": 1
       },
@@ -26444,7 +26444,7 @@
         "type": "petal",
         "itemType": "fang",
         "rarity": "common",
-        "probability": 0.22,
+        "probability": 0.3,
         "minQuantity": 1,
         "maxQuantity": 1
       },
@@ -26460,7 +26460,7 @@
         "type": "petal",
         "itemType": "meteor",
         "rarity": "common",
-        "probability": 0.025,
+        "probability": 0.035,
         "minQuantity": 1,
         "maxQuantity": 1
       }
@@ -26473,7 +26473,7 @@
         "type": "petal",
         "itemType": "bone",
         "rarity": "common",
-        "probability": 0.48,
+        "probability": 0.63,
         "minQuantity": 1,
         "maxQuantity": 1
       },

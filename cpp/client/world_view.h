@@ -265,6 +265,9 @@ struct SelfState {
     std::uint32_t splitNetId = 0;
     double splitMana = 0;
     double splitMaxMana = 0;
+    double secondChanceMillis = 0, secondChanceCooldownMillis = 0, bandageMillis = 0;
+    net::WaveHud wave;
+    double waveRemainingMillis = 0;
     double totalXp = 0;
     int level = 1;
     /// See PlayerProgress::stars: a balance the server keeps to 2^53, so the

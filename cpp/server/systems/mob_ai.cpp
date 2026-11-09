@@ -1664,7 +1664,10 @@ bool MobAiSystem::pursueTarget(World& world, Entity self, const MobType& type,
         // Held even while the target is a pet, and held whatever the mob's
         // chase speed is: the gap is the behaviour, not a consequence of being
         // slower than what it is shooting at.
-        const double standoff = shooterStandoff(drive.shotReach, body.radius, threatRadius);
+        const bool waveStinger = drive.stingerShooter && world.has<WaveEnemy>(self);
+        const double standardStandoff = shooterStandoff(drive.shotReach, body.radius, threatRadius);
+        const double standoff = waveStinger ? std::max(standardStandoff,
+            std::min(standardStandoff * 1.18, (drive.shotReach + threatRadius) * 0.90)) : standardStandoff;
         // How far into the hold the mob is: 0 out past the ease band, 1 on or
         // inside the ring.
         double held = 0.0;
@@ -1681,9 +1684,11 @@ bool MobAiSystem::pursueTarget(World& world, Entity self, const MobType& type,
         // its push is the bearing turned a quarter, {-y, x}. Faded in across
         // the ease band, as the closing speed fades out, so the hold does not
         // switch between a dive and a sidestep from one tick to the next.
-        if (drive.hornetStrafe && held > 0.0 && gap > 0.0) {
+        if ((drive.hornetStrafe || waveStinger) && held > 0.0 && gap > 0.0) {
             const Vec2 side{-toTarget.y / gap, toTarget.x / gap};
-            desired += side * (chaseSpeed * kHornetStrafeScale * held);
+            const double direction = waveStinger && entityIndex(self) % 2 != 0 ? -1.0 : 1.0;
+            const double strafe = drive.hornetStrafe ? kHornetStrafeScale : kHornetStrafeScale * 0.5;
+            desired += side * (direction * chaseSpeed * strafe * held);
         }
         // Off the BEARING and not off `desired`, which is now zero whenever the
         // mob is holding its ground: a shooter at its standoff still points at

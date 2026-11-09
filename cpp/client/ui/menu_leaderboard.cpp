@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <ctime>
 #include <string>
 
 #include "client/ui/content_i18n.h"
@@ -59,22 +60,17 @@ std::string formatXp(double xp) {
     return buffer;
 }
 
-/// Where a scrollbar drag started. This belongs on LeaderboardPanel beside the
-/// scroller, but menus.h is not this file's to change; there is exactly one
-/// panel instance, so one copy here is that state under another name.
-std::string practiceSourceLabel(const PracticeBoardSource& source) {
-    const auto& registry = content();
-    if (source.petal < registry.petalCount()) {
-        const auto& petal = registry.petal(source.petal);
-        return std::string(rarityTr(source.rarity)) + " " + petalNameTr(petal.id, petal.name.c_str());
-    }
-    switch (source.kind) {
-        case net::PracticeSource::Summon: return "召唤";
-        case net::PracticeSource::Poison: return "持续毒伤";
-        case net::PracticeSource::Reflect: return "反伤";
-        case net::PracticeSource::Field: return "范围效果";
-        default: return "其他伤害";
-    }
+double practiceRowHeight(const PracticeBoardRow& row) {
+    return kRowHeight + 18.0 * ((row.loadout.size() + 1) / 2);
+}
+
+std::string practiceDate(double millis) {
+    if (millis <= 0.0) return {};
+    const auto seconds = static_cast<std::time_t>(millis / 1000.0);
+    const auto* utc = std::gmtime(&seconds);
+    char buffer[28]{};
+    if (utc) std::strftime(buffer, sizeof buffer, "%Y-%m-%d %H:%M UTC", utc);
+    return buffer;
 }
 
 struct BarDrag {
@@ -117,14 +113,14 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     const auto& holdings = ctx.net.hyperBoard();
     const auto& practice = ctx.net.practiceBoard();
     const bool pending = damage_ ? practice.pending : ctx.net.leaderboardPending();
-    const std::size_t rowCount = damage_ ? practice.rows.size()
-                                         : (hyper_ ? holdings.size() : rows.size());
+    const std::size_t rowCount = hyper_ ? holdings.size() : rows.size();
     const Rect xpTab{panel.x+12, panel.y+50, 70, 28};
     const Rect hyperTab{panel.x+89, panel.y+50, 86, 28};
     const Rect timeTab{panel.x+182, panel.y+50, 105, 28};
     const Rect damageTab{panel.x+294, panel.y+50, 83, 28};
     const Rect prevPage{panel.right()-99, panel.y+50, 26, 28};
     const Rect nextPage{panel.right()-39, panel.y+50, 26, 28};
+    const Rect startTrial{panel.right()-113, panel.y+50, 100, 28};
 
     const Rect closeRect = closeButtonRect(panel);
     const Rect refreshRect{panel.right() - 140.0, panel.y + 10.0, 80.0, 30.0};
@@ -139,8 +135,11 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     scroll_.contentHeight = rowCount == 0 && !pending
                                 ? kRowHeight
                                 : kColumnHeader + static_cast<double>(rowCount) * kRowHeight;
-    if (damage_ && rowCount > 0) {
-        for (const auto& row : practice.rows) scroll_.contentHeight += row.sources.size() * 23.0;
+    if (damage_) {
+        scroll_.contentHeight = 2 * kColumnHeader;
+        for (const auto& row : practice.own) scroll_.contentHeight += practiceRowHeight(row);
+        for (const auto& row : practice.published) scroll_.contentHeight += practiceRowHeight(row);
+        if (practice.published.empty()) scroll_.contentHeight += kRowHeight;
     }
     // Clamped against the viewport ui::scrollbar measures, not against the
     // clipped view, so the thumb lands on the end of its track exactly when
@@ -180,6 +179,8 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
             if (nextPage.contains(mouse) && offset+kHyperBoardPageSize<ctx.net.hyperHoldingsTotal())
                 ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard, offset+kHyperBoardPageSize);
             scroll_.offset = 0;
+        } else if (damage_ && !pending && startTrial.contains(mouse)) {
+            ctx.net.requestPracticeBoard(ctx.settings.showAdminsOnLeaderboard, net::PracticeBoardAction::Start);
         } else if (refreshRect.contains(mouse)) {
             if (damage_) ctx.net.requestPracticeBoard(ctx.settings.showAdminsOnLeaderboard);
             else ctx.net.requestLeaderboard(ctx.settings.showAdminsOnLeaderboard,
@@ -237,6 +238,8 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
         pillButton(canvas, nextPage, ">", kLeaderboardSkin.border);
     }
 
+    if (damage_) pillButton(canvas, startTrial, "10 秒测试", kLeaderboardSkin.border);
+
     canvas.save();
     canvas.beginPath();
     canvas.roundRect(static_cast<float>(view.x), static_cast<float>(view.y),
@@ -251,47 +254,65 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
         label.baseline = Baseline::Middle;
         const double left = panel.x + 18.0;
         const double right = panel.right() - 28.0;
-        const std::string header = pending ? "正在读取木桩伤害…"
-            : !practice.hasDummy ? "当前地图没有木桩。可去丛林训练区。"
-            : std::string(rarityTr(practice.rarity)) + " 木桩 · 最近 10 秒";
+        const auto fit = [&](const std::string& value, double maxWidth, double size) {
+            return std::min(size, size * maxWidth / std::max(1.0, measure(value, size)));
+        };
+        const std::string header = pending ? "正在读取历史成绩…" :
+            practice.ownRank == 0 ? "我的历史 · 到丛林超级木桩开始测试" :
+            "我的历史 · 总排名 #" + std::to_string(practice.ownRank);
         text(canvas, header, left, y + 15.0, label);
         y += kColumnHeader;
-        if (practice.hasDummy && practice.rows.empty() && !pending) {
-            text(canvas, "暂无伤害。攻击附近的木桩后点刷新。", left, y + 15.0, label);
-        }
-        for (std::size_t i = 0; i < practice.rows.size(); ++i) {
-            const auto& row = practice.rows[i];
-            const double top = y;
-            y += kRowHeight + 23.0 * row.sources.size();
-            if (y < view.y || top > view.bottom()) continue;
-            setFill(canvas, kPaper, i % 2 == 0 ? 0.15 : 0.08);
-            canvas.fillRect(static_cast<float>(panel.x + 10.0), static_cast<float>(top),
-                            static_cast<float>(panel.w - 20.0), static_cast<float>(y - top));
-            label.align = Align::Left;
-            label.fill = rankColor(static_cast<int>(i) + 1);
-            const std::string name = std::to_string(i + 1) + ". " + row.name;
-            label.size = std::min(15.0, 15.0 * (right - left - 125.0) / std::max(1.0, measure(name, 15.0)));
-            text(canvas, name, left, top + kRowHeight * 0.5, label);
-            label.align = Align::Right;
-            label.size = 14.0;
-            label.fill = kPaper;
-            text(canvas, formatCompact(row.damage / net::kPracticeWindowSeconds) + " DPS",
-                 right, top + kRowHeight * 0.5, label);
-            for (std::size_t j = 0; j < row.sources.size(); ++j) {
-                const auto& source = row.sources[j];
-                const double sy = top + kRowHeight + j * 23.0 + 10.0;
-                const auto title = practiceSourceLabel(source);
+        const auto draw = [&](const auto& entries, bool own) {
+            for (std::size_t i = 0; i < entries.size(); ++i) {
+                const auto& row = entries[i];
+                const double top = y;
+                y += practiceRowHeight(row);
+                if (y < view.y || top > view.bottom()) continue;
+                setFill(canvas, kPaper, i % 2 == 0 ? 0.15 : 0.08);
+                canvas.fillRect(static_cast<float>(panel.x + 10), static_cast<float>(top),
+                                static_cast<float>(panel.w - 20), static_cast<float>(y - top));
                 label.align = Align::Left;
-                label.size = std::min(13.0, 13.0 * (right - left - 153.0) /
-                                      std::max(1.0, measure(title, 13.0)));
-                text(canvas, title, left + 18.0, sy, label);
-                label.size = 13.0;
+                label.fill = own ? kPaper : rankColor(static_cast<int>(i) + 1);
+                const auto name = own ? (row.published ? "已公开" : "私密配装") :
+                    std::to_string(i + 1) + ". " + row.name;
+                label.size = fit(name, (right - left) * 0.48, 15.0);
+                text(canvas, name, left, top + 12.0, label);
+                label.size = 11.0;
+                label.fill = kPaper;
+                textAtAlpha(canvas, practiceDate(row.atMillis), left, top + 29.0, label, 0.75);
+                const Rect share{right - 72.0, top + 7.0, 72.0, 24.0};
+                const double scoreRight = own ? share.x - 9.0 : right;
                 label.align = Align::Right;
-                const auto share = row.damage > 0.0 ? std::lround(100.0 * source.damage / row.damage) : 0;
-                text(canvas, formatCompact(source.damage / net::kPracticeWindowSeconds) +
-                     " DPS · " + std::to_string(share) + "%", right, sy, label);
+                label.size = 14.0;
+                text(canvas, formatCompact(row.damage / net::kPracticeWindowSeconds) + " DPS",
+                     scoreRight, top + 18.0, label);
+                if (own) {
+                    pillButton(canvas, share, row.published ? "设为私密" : "公开", kLeaderboardSkin.border);
+                    if (!pending && ctx.pressed() && view.contains(mouse) && share.contains(mouse))
+                        ctx.net.requestPracticeBoard(ctx.settings.showAdminsOnLeaderboard,
+                            row.published ? net::PracticeBoardAction::Hide : net::PracticeBoardAction::Publish, row.id);
+                }
+                const double half = (right - left) * 0.5;
+                label.align = Align::Left;
+                for (std::size_t j = 0; j < row.loadout.size(); ++j) {
+                    const auto& item = row.loadout[j];
+                    const auto& petal = content().petal(content().petalIndex(item.petal));
+                    const auto itemLabel = std::to_string(item.slot) + ". " + rarityTr(item.rarity) +
+                        " " + petalNameTr(item.petal, petal.name.c_str());
+                    label.size = fit(itemLabel, half - 9.0, 13.0);
+                    text(canvas, itemLabel, left + (j % 2) * half, top + kRowHeight + 18.0 * (j / 2) + 8.0, label);
+                }
             }
-        }
+        };
+        draw(practice.own, true);
+        label.align = Align::Left;
+        label.size = 14.0;
+        label.fill = kPaper;
+        text(canvas, "公开配装榜 · 超级木桩 10 秒", left, y + 15.0, label);
+        y += kColumnHeader;
+        if (practice.published.empty() && !pending)
+            text(canvas, "还没有玩家公开配装。", left, y + 15.0, label);
+        draw(practice.published, false);
     } else if (rowCount == 0) {
         TextStyle empty;
         empty.size = 14.0;
@@ -408,13 +429,13 @@ bool WavePanel::render(MenuContext& ctx) {
     panelClose(canvas, close, close.contains(mouse));
     TextStyle info;
     info.size = 14.0;
-    text(canvas, "最多四人，连续五波。", x, y + 54.0, info);
-    text(canvas, "房号发到个人聊天，开房 15 秒后开打。", x, y + 74.0, info);
+    text(canvas, "最多四人，无限波次。", x, y + 54.0, info);
+    text(canvas, "房号发到个人聊天，开房 30 秒后开打。", x, y + 74.0, info);
     pillButton(canvas, start, "创建房间", kLeaderboardSkin.border);
     pillButton(canvas, leave, "离开房间", kLeaderboardSkin.border);
     inputField(canvas, field, code_, "六位房号", typing, ctx.timeSeconds, &field_);
     pillButton(canvas, join, "加入", valid ? kLeaderboardSkin.border : 0x767676u);
-    text(canvas, "试炼怪不产出经验、星星或掉落。", x, y + 195.0, info);
+    text(canvas, "怪物有掉落，通关有星星，奖励波可领限时锤。", x, y + 195.0, info);
     return true;
 }
 

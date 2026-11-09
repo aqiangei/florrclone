@@ -71,6 +71,7 @@ void usage(const char* program) {
         "  --seed <number>    simulation random seed\n"
         "  --bots <n>         bot population (0 = off, -1 = auto fill to 14)\n"
         "  --load-shed        reduce ambient mobs, distant snapshots and volley load\n"
+        "  --tick-probe       log aligned tick, timer and save diagnostics\n"
         "  --no-slow-protection keep the 20 Hz target under load shedding\n"
 #ifdef __EMSCRIPTEN__
         "  --cert <path>      TLS certificate. Without it, cert.crt then\n"
@@ -224,22 +225,28 @@ EM_JS(void, flix_wake_on_arrival, (int on), {
     };
 });
 
-EM_JS(void, flix_start_loop, (), {
+EM_JS(void, flix_start_loop, (int probe), {
     const run = () => {
-        const delay = _flix_server_step();
+        const delay = _flix_server_step(-1);
         setTimeout(run, Math.max(1, Math.ceil(delay)));
     };
-    setTimeout(run, 1);
+    if (!probe) { setTimeout(run, 1); return; }
+    const schedule = delay => {
+        const wait = Math.max(1, Math.ceil(delay));
+        const due = performance.now() + wait;
+        setTimeout(() => schedule(_flix_server_step(Math.max(0, performance.now() - due))), wait);
+    };
+    schedule(1);
 });
 #endif
 
 } // namespace
 
 #ifdef __EMSCRIPTEN__
-extern "C" EMSCRIPTEN_KEEPALIVE double flix_server_step() {
+extern "C" EMSCRIPTEN_KEEPALIVE double flix_server_step(double timerLagMillis) {
     auto* running = g_wasmServer;
     if (flix_stop_signalled()) running->stop();
-    if (running->step()) return running->nextStepDelayMillis();
+    if (running->step(timerLagMillis)) return running->nextStepDelayMillis();
     flix_wake_on_arrival(0);
     g_wasmServer = nullptr;
     running->shutdown();
@@ -343,6 +350,7 @@ int main(int argc, char** argv) {
         else if (arg == "--load-shed") config.loadShedding = true;
         else if (arg == "--no-slow-protection") config.adaptivePacing = false;
         else if (arg == "--background-save") config.backgroundSave = true;
+        else if (arg == "--tick-probe") config.tickProbe = true;
         else if (arg == "--cert") config.certPath = next("--cert");
         else if (arg == "--key") config.keyPath = next("--key");
         else if (arg == "--web-root") config.webRoot = next("--web-root");
@@ -422,7 +430,7 @@ int main(int argc, char** argv) {
     flix_catch_stop_signals();
     g_wasmServer = server;
     flix_wake_on_arrival(1);
-    flix_start_loop();
+    flix_start_loop(config.tickProbe);
     return 0;
 #else
     flix::GameServer server;

@@ -10,6 +10,12 @@ const release='/opt/florrclone/releases/cpp-first';
 const next='/opt/florrclone/releases/cpp-next';
 const assetHost='example.com';
 const hashes=Object.fromEntries(assetNames.map((name,i)=>[name,String(i).repeat(64)]));
+const startupRouting=config=>{
+  const tokens=[...config.matchAll(/sub_filter 'FLIX_CLIENT_ASSET_ROUTING' '([A-Za-z0-9_-]+)';/g)];
+  assert.equal(tokens.length,2);
+  assert.equal(tokens[0][1],tokens[1][1]);
+  return JSON.parse(Buffer.from(tokens[0][1],'base64url'));
+};
 
 test('the four public asset digests come from the staged release bytes',()=>{
   const sum=assetNames.map(name=>hashes[name]+'  '+name).join('\n');
@@ -39,6 +45,7 @@ test('a new release shares only the unchanged client files',()=>{
 
 test('the stable route still checks queue tickets and allows Range requests',()=>{
   const config=configure(base,{release,assetHost,downloadQueue:true,assetHashes:hashes});
+  assert.deepEqual(startupRouting(config),{queue:true});
   for(const name of assetNames){
     const stable=cacheAssetPath(name,hashes);
     const start=config.indexOf('location = '+stable+' {');
@@ -59,6 +66,9 @@ test('direct mode advertises immutable assets and a separately pinned compressed
   assert.equal(reply.assetBase,'http://example.com:10000/client-assets/cpp-first/');
   for(const name of assetNames)assert.equal(reply.assets[name],cacheAssetPath(name,hashes));
   assert.equal(reply.wasmMirror,assetMirror+cacheAssetPath('bundle.wasm.bin',hashes));
+  assert.deepEqual(startupRouting(config),{
+    assetBase:'/client-assets/cpp-first/',assets:reply.assets,wasmMirror:reply.wasmMirror,
+  });
   assert.throws(()=>configure(base,{...opts,downloadQueue:true}));
   assert.throws(()=>configure(base,{...opts,assetMirror:'http://mirror.example/extra'}));
   assert.throws(()=>configure(base,{...opts,assetHashes:undefined}));

@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 109; // Simulation pace in DebugStats.
+inline constexpr std::uint16_t kProtocolVersion = 112; // Private Wave countdown and historical practice board.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -58,7 +58,8 @@ inline constexpr double kSnapshotMillis = 1000.0 / kSnapshotsPerSecond;
 enum class PracticeSource : std::uint8_t { Petal, Summon, Poison, Reflect, Field, Other };
 inline constexpr int kPracticeWindowSeconds = 10;
 inline constexpr std::uint8_t kPracticeBoardRows = 20;
-inline constexpr std::uint8_t kPracticeBoardSources = 6;
+inline constexpr std::uint8_t kPracticeHistoryLimit = 12;
+enum class PracticeBoardAction : std::uint8_t { Read, Start, Publish, Hide };
 
 enum class ClientMessage : std::uint8_t {
     Hello = 1,          ///< u16 protocolVersion, u32 contentHash
@@ -241,7 +242,7 @@ enum class ClientMessage : std::uint8_t {
     DailyDropBonus,     ///< u8 action: 0 query, 1 claim, 2 toggle shop lock; daily one-hour drop bonus (v78).
     DailyLoginClaim,    ///< no payload; idempotent daily login reward / refresh.
     AccountQQ,          ///< bool save, str value if saving; private account record only.
-    RequestPracticeBoard, ///< bool includeAdmins.
+    RequestPracticeBoard, ///< bool includeAdmins, u8 action, u32 own record id.
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -466,8 +467,7 @@ enum class ServerMessage : std::uint8_t {
     PyramidMapState,    ///< u8 realm, u8 revealed; visit-only, never saved (v74).
     DailyDropBonusState, ///< v93: bonus fields, i64 locked rotation, locked offers, i64 current rotation, current offers. Each list: u8 count, {u16 petal,u8 rarity,f64 price,u8 discount,u16 remaining (65535 unlimited)}.
     AccountQQ,          ///< bool saved, str current value; only to the authenticated owner.
-    PracticeBoard,      ///< bool hasDummy; if true, u8 tier, u8 rows, then
-                        ///< { str name, f64 damage, u8 sources, { u8 kind, u16 petal, u8 tier, f64 damage }* }*.
+    PracticeBoard,      ///< u32 own rank, then private and public ranked record lists.
 };
 
 // ---------------------------------------------------------------------------
@@ -697,6 +697,22 @@ enum SelfFields : std::uint8_t {
     SelfMana     = 1 << 1,   ///< f32 mana, f32 maxMana (0 max: no mana bar)
     SelfProgress = 1 << 2,   ///< f64 totalXp, u16 level, f64 stars
     SelfSplitMana = 1 << 3,  ///< u32 parked body id, f32 mana, f32 maxMana
+    SelfCombatTimers = 1 << 4, ///< f32 each: Second Chance, its cooldown, Bandage
+    SelfWave = 1 << 5,         ///< u32 round, u16 remaining and duration (ms), u8 theme
+};
+
+enum class WaveTheme : std::uint8_t { Normal, Bubble, Sandstorm, EternalBoss, HyperBoss };
+
+struct WaveHud {
+    std::uint32_t round = 0;
+    std::uint16_t remainingMillis = 0;
+    std::uint16_t durationMillis = 0;
+    WaveTheme theme = WaveTheme::Normal;
+
+    bool operator!=(const WaveHud& other) const {
+        return round != other.round || remainingMillis != other.remainingMillis ||
+               durationMillis != other.durationMillis || theme != other.theme;
+    }
 };
 
 /// What a networked entity is, which decides how the client draws it.
@@ -839,6 +855,7 @@ inline double readHealthFraction(ByteReader& in, bool wide) {
 // Version 70: Drop spawns append u32 quantity after state; update masks are u16.
 enum UpdateFields : std::uint16_t {
     FieldDropQuantity = 1 << 8, ///< u32 stack quantity, only when changed
+    FieldPetalVariant = 1 << 9, ///< u8 dice face, only when changed
     /// f32 x, f32 y -- or, with FieldPositionDelta, the move from the last
     /// position sent.
     FieldPosition = 1 << 0,

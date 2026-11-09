@@ -114,24 +114,25 @@ struct Profile {
 };
 
 /// One row of the account leaderboard.
-struct PracticeBoardSource {
-    net::PracticeSource kind = net::PracticeSource::Other;
-    std::uint16_t petal = kNoPetal;
+struct PracticeBoardItem {
+    int slot = 0;
+    std::string petal;
     Rarity rarity = Rarity::Common;
-    double damage = 0.0;
 };
 
 struct PracticeBoardRow {
+    std::uint32_t id = 0;
     std::string name;
     double damage = 0.0;
-    std::vector<PracticeBoardSource> sources;
+    double atMillis = 0.0;
+    bool published = false;
+    std::vector<PracticeBoardItem> loadout;
 };
 
 struct PracticeBoard {
     bool pending = false;
-    bool hasDummy = false;
-    Rarity rarity = Rarity::Common;
-    std::vector<PracticeBoardRow> rows;
+    std::uint32_t ownRank = 0;
+    std::vector<PracticeBoardRow> own, published;
 };
 
 struct LeaderboardRow {
@@ -488,7 +489,7 @@ struct AdminDashboardState {
 };
 
 struct WaveResultNotice {
-    std::array<std::string, 3> lines;
+    std::array<std::string, 4> lines;
     std::uint32_t sequence = 0;
 };
 
@@ -754,7 +755,8 @@ public:
     void deleteSkin(const std::string& id);
     /// `includeAdmins` is the "Show Admins on Leaderboard" switch: without it
     /// the server leaves admin accounts off the board.
-    void requestPracticeBoard(bool includeAdmins);
+    void requestPracticeBoard(bool includeAdmins, net::PracticeBoardAction action = net::PracticeBoardAction::Read,
+                              std::uint32_t id = 0);
     void requestLeaderboard(bool includeAdmins = false, std::uint32_t hyperOffset = 0);
     /// Asks for one page of the global notification feed, newest first.
     /// `beforeMillis` of 0 asks for the newest page; anything else pages back

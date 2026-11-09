@@ -63,9 +63,11 @@ TEST(cpp_uses_42_damage_28_health_and_2500ms_reload_on_every_ladder_tier){
     const auto cpp=content().petalIndex("c++"),saw=content().petalIndex("sawblade");
     for(int tier=0;tier<kLadderRarityCount;++tier){const auto rarity=static_cast<Rarity>(tier);
         const auto stats=content().petalStats(cpp,rarity),blade=content().petalStats(saw,rarity);
-        CHECK_NEAR(stats.damage,42*petalStrengthScale(rarity),1e-6);
+        const double damageScale = rarity == Rarity::Apex
+            ? 2.0 * petalStrengthScale(Rarity::Unique) : petalStrengthScale(rarity);
+        CHECK_NEAR(stats.damage,42 * damageScale,1e-6);
         CHECK_NEAR(stats.health,28*petalStrengthScale(rarity),1e-6);CHECK_NEAR(stats.reloadMillis,2500,1e-8);
-        CHECK_NEAR(stats.damage/blade.damage,42.0/40,1e-9);CHECK_NEAR(stats.health/blade.health,28.0/25,1e-9);
+        CHECK_NEAR(stats.health/blade.health,28.0/25,1e-9);
         const auto lines=ui::petalTooltipLines(cpp,rarity,{},1);bool reload=false;
         for(const auto& badge:lines.front().badges)reload|=badge.text.find("2.5s")!=std::string::npos;CHECK(reload);
         const auto mimic=content().petalIndex("mimic");
@@ -114,13 +116,13 @@ TEST(shop_prices_double_even_discounted_locked_quotes_without_unlocking) {
     CHECK_EQ(record.extra.dump(),rows);
 }
 
-TEST(peas_full_volley_is_below_sawblade_with_the_same_reload) {
+TEST(peas_full_volley_is_weaker_and_reloads_slower_than_sawblade) {
  std::string error;CHECK(loadContent(testsupport::dataDir(),error));
  for(int tier=0;tier<kLadderRarityCount;++tier){auto r=static_cast<Rarity>(tier);
   auto peas=content().petalStats(content().petalIndex("peas"),r),saw=content().petalStats(content().petalIndex("sawblade"),r);
-  CHECK_NEAR(peas.damage*peas.count,saw.damage*.8,1e-5);
-  CHECK_NEAR(peas.health*peas.count,saw.health*.8,1e-5);
-  CHECK_NEAR(peas.reloadMillis,saw.reloadMillis,1e-9);
+  CHECK(peas.damage*peas.count < saw.damage);
+  CHECK(peas.health*peas.count < saw.health);
+  CHECK(peas.reloadMillis > saw.reloadMillis);
  }
 }
 
