@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 113; // Whole-bag Eternal forge and petal recycling.
+inline constexpr std::uint16_t kProtocolVersion = 114; // Incompatible with clients that offered petal recycling.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -201,7 +201,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< OracleCraft's oracle is found; the tier only says
                         ///< WHICH one when two stand close. Never a roll, and
                         ///< all or nothing. (Version 55.)
-    Absorb,             ///< u8 recycle (0 XP, 1 stars), u16 stackCount, { u16 itemType, u8 rarity, u32 count }*
+    Absorb,             ///< u8 reserved (must be 0 for XP), u16 stackCount, { u16 itemType, u8 rarity, u32 count }*
                         ///< -- the craft window's Absorb side: every staged
                         ///< stack in ONE request, destroyed for XP
                         ///< (shared/game/absorb.h). All or nothing: one stack
@@ -425,7 +425,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< there -- so the client goes back to the title
                         ///< screen as if it had left. The Profile after it is
                         ///< the one a LeaveGame is answered with. (Version 57.)
-    AbsorbResult,       ///< u8 ok, f64 reward (XP or stars), u32 petalsAbsorbed, str reason
+    AbsorbResult,       ///< u8 ok, f64 XP, u32 petalsAbsorbed, str reason
                         ///< -- the answer to ClientMessage::Absorb. On a
                         ///< refusal nothing was taken and `reason` says why.
                         ///< The Profile follows it. (Version 58.)

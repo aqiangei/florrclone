@@ -557,12 +557,12 @@ void NetClient::requestAssemble(Rarity rarity, std::uint8_t recipe, std::uint16_
     send(w);
 }
 
-void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks, bool recycle) {
+void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks) {
     if (stacks.empty()) return;
     const std::size_t count = std::min<std::size_t>(stacks.size(), kMaxAbsorbStacks);
     ByteWriter w;
     beginMessage(w, net::ClientMessage::Absorb);
-    w.boolean(recycle);
+    w.u8(0); // reserved mode, XP only
     w.u16(static_cast<std::uint16_t>(count));
     for (std::size_t i = 0; i < count; ++i) {
         w.u16(stacks[i].petalIndex);

@@ -4,7 +4,6 @@
 #include "shared/game/absorb.h"
 #include "shared/game/components.h"
 #include "shared/game/constants.h"
-#include "shared/game/shop.h"
 
 using namespace flix;
 using flix::testsupport::awaitProfile;
@@ -250,40 +249,5 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     // Profile that followed already counts it.
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.totalXp == before + earnedXp && p.stackCount(rose, Rarity::Legendary) == 0u;
-    }));
-}
-
-TEST(recycling_for_stars_uses_listed_prices_and_is_atomic) {
-    Harness h("recycle-stars", [](const std::string& path) {
-        seedUser(path, "recycler", "secret1");
-        seedStack(path, "recycler", "petal_rose", Rarity::Super, 20);
-        seedStack(path, "recycler", "petal_rose", Rarity::Unique, 2);
-    });
-    CHECK(h.ready);
-    if (!h.ready) return;
-    NetClient client;
-    CHECK(loginAs(h, client, "recycler", "secret1"));
-    const auto rose = content().petalIndex("rose");
-    const double before = client.profile().stars;
-    const double beforeXp = client.profile().totalXp;
-    const auto send = [&](const std::vector<NetClient::AbsorbStack>& stacks) {
-        client.requestAbsorb(stacks, true);
-        CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }));
-        const auto reply = client.absorbOutcome();
-        client.absorbOutcome().pending = false;
-        return reply;
-    };
-    CHECK(!send({{rose, Rarity::Super, 5}, {rose, Rarity::Unique, 1}}).success);
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Super), 20u);
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Unique), 2u);
-    CHECK(!send({{rose, Rarity::Super, 11}, {rose, Rarity::Super, 10}}).success);
-    const auto result = send({{rose, Rarity::Super, 5}, {rose, Rarity::Super, 2}});
-    const double stars = std::floor(shopPrice(rose, Rarity::Super) * 7.0 / 10.0);
-    CHECK(result.success);
-    CHECK_EQ(result.reward, stars);
-    CHECK_EQ(result.absorbed, 7u);
-    CHECK(awaitProfile(h, client, [&](const Profile& profile) {
-        return profile.stars == before + stars && profile.totalXp == beforeXp &&
-               profile.stackCount(rose, Rarity::Super) == 13;
     }));
 }

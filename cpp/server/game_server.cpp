@@ -4586,11 +4586,10 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
         std::int64_t count = 0;
     };
     const auto mode = reader.u8();
-    const bool recycle = mode == 1;
     const int stackCount = reader.u16();
     std::vector<Stack> stacks;
     stacks.reserve(static_cast<std::size_t>(std::min(stackCount, kMaxAbsorbStacks)));
-    bool malformed = mode > 1 || stackCount <= 0 || stackCount > kMaxAbsorbStacks;
+    bool malformed = mode != 0 || stackCount <= 0 || stackCount > kMaxAbsorbStacks;
     for (int i = 0; i < stackCount && !malformed; ++i) {
         Stack stack;
         stack.petalIndex = reader.u16();
@@ -4624,7 +4623,7 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
         connection.send(w);
     };
     if (malformed) {
-        reply(false, 0, 0, "Nothing to absorb.");
+        reply(false, 0, 0, mode != 0 ? "花瓣回收换星已关闭。" : "Nothing to absorb.");
         return;
     }
 
@@ -4632,7 +4631,6 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
     // request one petal short destroys none of the others.
     PlayerRecord& record = liveRecord(session);
     double units = 0.0;
-    double totalListPrice = 0.0;
     std::int64_t absorbed = 0;
     for (const Stack& stack : stacks) {
         if (stack.petalIndex >= content().petalCount() || content().petal(stack.petalIndex).id == "timed_mjolnir" || stack.count <= 0 ||
@@ -4641,9 +4639,8 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
             return;
         }
         const PetalConfig& petal = content().petal(stack.petalIndex);
-        const double listPrice = recycle ? petalRecycleListPrice(stack.petalIndex, stack.rarity) : 0.0;
-        if (recycle ? listPrice <= 0.0 : !absorbable(petal, stack.rarity)) {
-            reply(false, 0, 0, petal.name + (recycle ? " 不可回收。" : " cannot be absorbed."));
+        if (!absorbable(petal, stack.rarity)) {
+            reply(false, 0, 0, petal.name + " cannot be absorbed.");
             return;
         }
         if (record.itemCount(stack.rarity, inventoryKey(stack.petalIndex)) < stack.count) {
@@ -4652,28 +4649,10 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
             return;
         }
         units += static_cast<double>(stack.count) * absorbUnits(stack.rarity);
-        totalListPrice += static_cast<double>(stack.count) * listPrice;
         absorbed += stack.count;
-    }
-    const double stars = petalRecycleStars(totalListPrice);
-    if (recycle && stars < 1.0) {
-        reply(false, 0, 0, "预计收益不足 1 星。");
-        return;
     }
     for (const Stack& stack : stacks) {
         takeFromInventory(record, stack.petalIndex, stack.rarity, static_cast<int>(stack.count));
-    }
-
-    if (recycle) {
-        const auto* live = session.playing() ? world_.tryGet<PlayerProgress>(session.entity) : nullptr;
-        record.stars = (live ? live->stars : record.stars) + stars;
-        for (const auto body : bodiesOf(session)) {
-            if (auto* progress = world_.tryGet<PlayerProgress>(body)) progress->stars = record.stars;
-        }
-        database_.markDirty();
-        reply(true, stars, absorbed, "");
-        sendProfile(session, connection);
-        return;
     }
 
     // Priced by the tree the flower is playing on -- the maze's in the maze,

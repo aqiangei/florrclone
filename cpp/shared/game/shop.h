@@ -85,17 +85,6 @@ inline bool shopSellsPetal(std::uint16_t petalIndex) {
     return true;
 }
 
-// Whole stars are rounded once for the entire exchange. Use the listed
-// price so a shop rotation cannot silently change the value of a staged bag.
-inline double petalRecycleListPrice(std::uint16_t index, Rarity rarity) {
-    return shopSellsRarity(rarity) && shopSellsPetal(index) &&
-           petalComesAt(content().petal(index), rarity) ? shopPrice(index, rarity) : 0.0;
-}
-
-inline double petalRecycleStars(double totalListPrice) {
-    return std::floor(totalListPrice / 10.0);
-}
-
 // ---------------------------------------------------------------------------
 // The rotating store
 // ---------------------------------------------------------------------------

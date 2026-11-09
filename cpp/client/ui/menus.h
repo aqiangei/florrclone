@@ -1009,8 +1009,6 @@ private:
     std::string refusal_;
     double refusalUntil_ = 0;
     bool switchPressed_ = false;
-    bool recycle_ = false;
-    double lastRecycledStars_ = 0.0;
 };
 
 /// The oracle: what the craft card becomes while the flower stands at an
