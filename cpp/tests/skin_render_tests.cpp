@@ -124,6 +124,18 @@ const RemoteEntity* flowerOf(const NetClient& other, std::uint32_t netId) {
     return it == other.view().entities().end() ? nullptr : &it->second;
 }
 
+void seedPublicSkin(const std::string& path, const char* author) {
+    Database db;
+    std::string error;
+    if (!db.load(path, error)) return;
+    auto skin = magentaDiscSkin("sk_test");
+    skin.author = author;
+    skin.published = true;
+    db.rawTable("customSkins")[skin.id] = skinToJson(skin);
+    db.markDirty();
+    db.save();
+}
+
 bool joinAs(Harness& h, NetClient& client, const char* name) {
     if (!connectClient(h, client)) return false;
     client.requestRegister(name, "hunter2!");
@@ -141,7 +153,8 @@ bool joinAs(Harness& h, NetClient& client, const char* name) {
 
 TEST(a_published_skin_is_worn_on_the_wearers_body_for_everyone) {
     // No bots: this test says "that flower over there is the other player".
-    Harness h("skin-equip", {}, flix::testsupport::dataDir(), 0);
+    Harness h("skin-equip", [](const std::string& path) { seedPublicSkin(path, "skinner"); },
+              flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient author;
@@ -150,13 +163,7 @@ TEST(a_published_skin_is_worn_on_the_wearers_body_for_everyone) {
     CHECK(joinAs(h, watcher, "onlooker"));
     const std::uint32_t authorNetId = author.view().self().netId;
 
-    SkinShape body;
-    body.t = SkinShapeType::Circle;
-    body.r = 20;
-    body.fill = "#e011cc";
-    author.publishSkin("mine", {body}, true);
-    // The catalog is broadcast, so the WATCHER learns the skin too -- which is
-    // what lets it draw a wearer it has never authored anything for.
+    // Both clients learn the same existing public catalog on login.
     CHECK(h.stepUntil({&author, &watcher}, [&] {
         return !author.skinCatalog().empty() && !watcher.skinCatalog().empty();
     }));
@@ -184,17 +191,13 @@ TEST(a_published_skin_is_worn_on_the_wearers_body_for_everyone) {
 TEST(a_worn_skin_survives_a_respawn) {
     // The body is rebuilt from the account row when a player dies, so a skin
     // that lives only on the old entity comes back a plain flower.
-    Harness h("skin-respawn", {}, flix::testsupport::dataDir(), 0);
+    Harness h("skin-respawn", [](const std::string& path) { seedPublicSkin(path, "reborn"); },
+              flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient client;
     CHECK(joinAs(h, client, "reborn"));
 
-    SkinShape body;
-    body.t = SkinShapeType::Circle;
-    body.r = 20;
-    body.fill = "#e011cc";
-    client.publishSkin("mine", {body}, true);
     CHECK(h.stepUntil({&client}, [&] { return !client.skinCatalog().empty(); }));
     const std::string id = client.skinCatalog().front().id;
     client.equipSkin(id);
@@ -215,12 +218,12 @@ TEST(a_worn_skin_survives_a_respawn) {
 }
 
 TEST(public_builtin_skins_replace_custom_skins_and_survive_rejoining) {
-    Harness h("builtin-skins", {}, flix::testsupport::dataDir(), 0);
+    Harness h("builtin-skins", [](const std::string& path) { seedPublicSkin(path, "visitor"); },
+              flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient player;
     if (!joinAs(h, player, "visitor")) { CHECK(false); return; }
-    player.publishSkin("mine", magentaDiscSkin("").shapes, true);
     if (!h.stepUntil({&player}, [&] { return !player.skinCatalog().empty(); })) {
         CHECK(false); return;
     }

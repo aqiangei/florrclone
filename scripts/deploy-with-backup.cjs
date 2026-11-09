@@ -103,6 +103,23 @@ async function main(){
     const preserveSave=process.env.FLORR_PRESERVE_SAVE==='1'||Boolean(resetFile);
     const resetRequests=resetFile?require('./reset-password-offline.cjs').readRequests(resetFile):null;
     const councilManagerId=process.env.FLORR_FRESH_COUNCIL_MANAGER_ID;
+    const newSkinModeratorFile=process.env.FLORR_CREATE_SKIN_MODERATOR_FILE;
+    const newSkinModerator=newSkinModeratorFile ? JSON.parse(fs.readFileSync(newSkinModeratorFile,'utf8')) : null;
+    if(newSkinModerator)assert(third && preserveSave && !process.env.FLORR_SKIN_MODERATOR_ID &&
+      /^[a-z0-9_]{3,20}$/.test(newSkinModerator.username) &&
+      /^[A-Za-z0-9_-]{24,64}$/.test(newSkinModerator.password) &&
+      /^[a-f0-9-]{36}$/.test(newSkinModerator.accountId), 'Invalid new skin moderator configuration');
+    const skinModeratorId=newSkinModerator?.accountId || process.env.FLORR_SKIN_MODERATOR_ID;
+    const skinTakedownsFile=process.env.FLORR_SKIN_TAKEDOWNS_FILE;
+    const skinTakedowns=skinTakedownsFile ? JSON.parse(fs.readFileSync(skinTakedownsFile,'utf8')) : [];
+    assert(Array.isArray(skinTakedowns) && skinTakedowns.every(entry=>
+      typeof entry.id==='string' && /^sk_[a-z0-9_]+$/.test(entry.id) &&
+      typeof entry.author==='string' && typeof entry.name==='string'), 'Invalid skin takedown list');
+    if(skinTakedowns.length)assert(preserveSave && !process.env.FLORR_RESTORE_SNAPSHOT,
+      'Skin takedowns require a preserved save');
+    if(skinModeratorId)assert(preserveSave && !process.env.FLORR_RESTORE_SNAPSHOT &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(skinModeratorId),
+      'Skin moderation requires an explicit account ID and a preserved save');
     if(councilManagerId)assert(fresh && preserveSave && !bootstrap,
       'Council delegation requires the independent second-server save');
     if(resetRequests) {
@@ -344,6 +361,57 @@ async function main(){
       fs.writeFileSync(next,JSON.stringify(delegated),{mode:0o600});
       report.councilDelegation=true;
     }
+    if(skinModeratorId || skinTakedowns.length){
+      const saved=JSON.parse(fs.readFileSync(next,'utf8'));
+      if(newSkinModerator){
+        const {username,password,accountId}=newSkinModerator;
+        const existing=saved.users[username];
+        if(existing){
+          assert.equal(existing.id,accountId,'Requested new account name is already in use');
+        } else {
+          assert(!Object.values(saved.users).some(account=>account.id===accountId) &&
+            !Object.hasOwn(saved.players,accountId),'New moderator ID already exists');
+          const salt=crypto.randomBytes(16).toString('hex');
+          saved.users[username]={id:accountId,username,
+            password:crypto.scryptSync(password,salt,64).toString('hex'),
+            salt,isPlainText:false,passwordChosen:true,createdAt:Date.now(),lastActiveAt:0};
+          saved.players[accountId]={};
+          report.skinModeratorCreated=true;
+        }
+      }
+      if(skinModeratorId){
+        const matches=Object.values(saved.users).filter(account=>account.id===skinModeratorId);
+        assert(matches.length===1 && !matches[0].guest && !matches[0].adminBanned,
+          'Skin moderator account is missing or ineligible in the stopped save');
+        const moderators=saved.skinModerators ?? {};
+        assert(typeof moderators==='object' && !Array.isArray(moderators),'Invalid skin moderator table');
+        saved.skinModerators={...moderators,[skinModeratorId]:true};
+        report.skinModeration=true;
+      }
+      if(skinTakedowns.length){
+        const ids=new Set();
+        let removed=0,unequipped=0;
+        for(const {id,author,name} of skinTakedowns){
+          assert(!ids.has(id),'Duplicate skin takedown ID');
+          ids.add(id);
+          const skin=saved.customSkins?.[id];
+          if(!skin)continue;
+          assert(skin.id===id && skin.author===author && skin.name===name,
+            'Skin takedown target differs from the approved catalog entry');
+          delete saved.customSkins[id];
+          ++removed;
+        }
+        for(const record of Object.values(saved.players)){
+          if(!ids.has(record.equippedSkinId))continue;
+          delete record.equippedSkinId;
+          delete record.renderFlags;
+          ++unequipped;
+        }
+        report.skinTakedowns={removed,unequipped};
+      }
+      next=path.join(local,'inventory.skin-moderation.json');
+      fs.writeFileSync(next,JSON.stringify(saved),{mode:0o600});
+    }
     if(resetRequests){
       const reset=path.join(local,'inventory.password-reset.json');
       report.passwordReset=JSON.parse(run(process.execPath,
@@ -352,7 +420,7 @@ async function main(){
       fs.writeFileSync(path.join(local,'password-reset.json'),JSON.stringify(report.passwordReset,null,2));
     }
     scp(next,host+':'+remote+'/inventory.next.json');
-    if(resetRequests||councilManagerId||bootstrap||process.env.FLORR_RESTORE_SNAPSHOT){
+    if(resetRequests||councilManagerId||skinModeratorId||skinTakedowns.length||bootstrap||process.env.FLORR_RESTORE_SNAPSHOT){
       const candidateHash=crypto.createHash('sha256').update(fs.readFileSync(next)).digest('hex');
       assert.equal(ssh('sha256sum '+q(remote+'/inventory.next.json')).split(/\s/)[0],candidateHash,
         'Save candidate SHA256 mismatch');
@@ -385,6 +453,27 @@ async function main(){
       const councilUrl = JSON.stringify(backend+'/api/council');
       const check="(async()=>{const r=await fetch("+councilUrl+",{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'view'})});if(!r.ok)throw Error('Council HTTP '+r.status);const j=await r.json();if(j.error||!Array.isArray(j.players)||!Array.isArray(j.polls))throw Error('Invalid council state');if(j.players.length&&j.players.reduce((s,p)=>s+p.units,0)!==1000000)throw Error('Invalid council weights');console.log('PASS council API and exact weight total');})().catch(e=>{console.error(e.message);process.exitCode=1});";
       console.log(ssh(runtime+' -e '+q(check)));
+    }
+    if(skinModeratorId || skinTakedowns.length){
+      const check="const fs=require('node:fs');const db=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));"+
+        "const moderator=process.argv[2],ids=new Set(JSON.parse(process.argv[3]));"+
+        "if(moderator&&db.skinModerators?.[moderator]!==true)throw Error('Missing skin moderation in live save');"+
+        "if([...ids].some(id=>db.customSkins?.[id])||Object.values(db.players).some(p=>ids.has(p.equippedSkinId)))"+
+        "throw Error('Removed skin still appears in the live save');"+
+        "console.log('PASS skin moderation and takedown save checks')";
+      console.log(ssh(runtime+' -e '+q(check)+' '+q(databaseFile)+' '+q(skinModeratorId||'')+' '+
+        q(JSON.stringify(skinTakedowns.map(entry=>entry.id)))));
+    }
+    if(newSkinModerator){
+      const candidate={...newSkinModerator,
+        protocolVersion:Number(process.env.FLORR_NEXT_PROTOCOL_VERSION),
+        contentHash:Number(process.env.FLORR_NEXT_CONTENT_HASH),
+        url:'ws://127.0.0.1:'+backendPort+'/ws'};
+      const verify="const fs=require('node:fs');(async()=>{const client=await require("+
+        JSON.stringify(release+'/deploy-announcement.cjs')+").connect(JSON.parse(fs.readFileSync(0,'utf8')));"+
+        "client.close();console.log('PASS new skin moderator can sign in');})().catch(error=>{console.error(error.message);process.exitCode=1});";
+      console.log(cp.execFileSync('ssh',[...sshOptions,host,runtime+' -e '+q(verify)],
+        {input:JSON.stringify(candidate),encoding:'utf8',timeout:30000}));
     }
     if (bootstrap) {
       const newHash=Number(process.env.FLORR_NEXT_CONTENT_HASH);

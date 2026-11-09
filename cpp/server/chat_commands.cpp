@@ -504,6 +504,25 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     const std::string argument = argumentOf(message);
     const auto out = [&](const std::string& text) { sendSystem(connection, text); };
 
+    if (verb == "/server-status") {
+        if (!effectiveAdmin(session) && !canModeratePublicSkins(session)) {
+            out("Command does not exist.");
+            return true;
+        }
+        const auto online = std::count_if(sessions_.begin(), sessions_.end(),
+            [](const auto& entry) { return entry.second.authenticated(); });
+        std::ostringstream report;
+        report << "服务器状态 · 协议 " << net::kProtocolVersion << " · 在线 " << online
+               << " · 游戏中 " << playerCount() << " · 目标 "
+               << simulationPacing_.ticksPerSecond() << " TPS";
+        if (lastMeasuredTps_ > 0.0)
+            report << " · 上个采样窗实际 " << std::fixed << std::setprecision(1) << lastMeasuredTps_ << " TPS";
+        else
+            report << " · 实际 TPS 正在采样";
+        out(report.str());
+        return true;
+    }
+
     if (verb == "/wave") {
         if (!session.playing() || session.split() || session.controlling != 0 ||
             session.controlledBy != 0 || !dungeons_) {
@@ -1017,6 +1036,8 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/g &lt;message&gt; - Send a message to your guild<br/>";
         help += "<br/>Chat supports HTML tags: <b>bold</b>, <i>italic</i>, <u>underline</u>, "
                 "<span style=\"color: red\">colored text</span>, <blink>blinking text</blink>";
+        if (effectiveAdmin(session) || canModeratePublicSkins(session))
+            help += "<br/>/server-status - 查看服务器在线人数与 TPS<br/>";
         if (effectiveAdmin(session)) {
             // The reference leaves its own angle brackets unescaped here, which
             // its sanitiser then eats along with the rest of the line. Escaped,

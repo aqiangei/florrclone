@@ -262,16 +262,22 @@ CustomSkin storedSkin(const char* id, const char* name, const char* author, doub
 } // namespace
 
 TEST(publishing_a_look_alike_is_refused_and_names_the_original) {
-    Harness h("skin-dedupe-publish", {}, flix::testsupport::dataDir(), 0);
+    Harness h("skin-dedupe-publish", flix::testsupport::seedSkinReviewer, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
 
     NetClient first;
     NetClient second;
+    NetClient reviewer;
+    CHECK(flix::testsupport::loginAs(h, reviewer, "reviewer", "password7"));
     CHECK(registerAs(h, first, "original"));
     CHECK(registerAs(h, second, "copier"));
 
     CHECK(publish(h, first, "smiley", starterWithMouth()));
-    CHECK(sawText(first, "Published \"smiley\""));
+    CHECK(!first.skinCatalog().empty());
+    if (first.skinCatalog().empty()) return;
+    const auto originalId = first.skinCatalog().front().id;
+    CHECK(flix::testsupport::approveSkin(h, reviewer, first, originalId));
+    first.publishSavedSkin(originalId);
     CHECK(h.stepUntil({&first, &second}, [&] { return second.skinCatalog().size() == 1; }));
 
     // Somebody else's skin, one shade off.
@@ -292,9 +298,15 @@ TEST(publishing_a_look_alike_is_refused_and_names_the_original) {
     std::vector<SkinShape> red = starterWithMouth();
     red[0].fill = "#d01c1d";
     CHECK(publish(h, second, "angry", red));
-    CHECK(sawText(second, "Published \"angry\""));
+    const auto pending = std::find_if(second.skinCatalog().begin(), second.skinCatalog().end(),
+        [](const CustomSkin& skin) { return skin.name == "angry" && skin.review == SkinReviewState::Pending; });
+    CHECK(pending != second.skinCatalog().end());
+    if (pending == second.skinCatalog().end()) return;
+    const auto angryId = pending->id;
+    CHECK(flix::testsupport::approveSkin(h, reviewer, second, angryId));
+    second.publishSavedSkin(angryId);
 
-    h.step(10, {&first, &second});
+    CHECK(h.stepUntil({&first, &second, &reviewer}, [&] { return first.findSkin(angryId) != nullptr; }));
     CHECK_EQ(first.skinCatalog().size(), static_cast<std::size_t>(2));
     CHECK_EQ(h.server.database().storedTable("customSkins").keys().size(), static_cast<std::size_t>(2));
 }

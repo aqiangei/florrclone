@@ -754,6 +754,7 @@ public:
     /// and the server's answer is the persistence, not the confirmation.
     void equipSkin(const std::string& id);
     void deleteSkin(const std::string& id);
+    void requestSkinReview(net::SkinReviewAction, const std::string& id = {});
     /// `includeAdmins` is the "Show Admins on Leaderboard" switch: without it
     /// the server leaves admin accounts off the board.
     void requestPracticeBoard(bool includeAdmins, net::PracticeBoardAction action = net::PracticeBoardAction::Read,
@@ -937,6 +938,8 @@ public:
     const CustomSkin* findSkin(const std::string& id) const;
     const std::string& equippedSkinId() const { return equippedSkinId_; }
     bool isSkinAdmin() const { return skinAdmin_; }
+    bool canModeratePublicSkins() const { return skinModerator_; }
+    const std::vector<CustomSkin>& skinReviewQueue() const { return skinReviewQueue_; }
 
     /// Puts a locally generated System line in the transcript. Every notice
     /// the reference makes, its own included, is a chat line and nothing more.
@@ -1248,6 +1251,8 @@ private:
     std::vector<CustomSkin> skinCatalog_;
     std::string equippedSkinId_;
     bool skinAdmin_ = false;
+    bool skinModerator_ = false;
+    std::vector<CustomSkin> skinReviewQueue_;
 
     PracticeBoard practiceBoard_;
     std::vector<LeaderboardRow> leaderboard_;

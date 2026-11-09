@@ -637,6 +637,26 @@ inline void seedUser(const std::string& path, const std::string& username,
     db.save();
 }
 
+inline void seedSkinReviewer(const std::string& path) {
+    seedUser(path, "reviewer", "password7");
+    Database db;
+    std::string error;
+    if (!db.load(path, error)) return;
+    const Account* reviewer = std::as_const(db).findUser("reviewer");
+    if (!reviewer) return;
+    db.rawTable("skinModerators")[reviewer->id] = true;
+    db.markDirty();
+    db.save();
+}
+
+inline bool approveSkin(Harness& h, NetClient& reviewer, NetClient& author, const std::string& id) {
+    reviewer.requestSkinReview(net::SkinReviewAction::Approve, id);
+    return h.stepUntil({&reviewer, &author}, [&] {
+        const auto* skin = author.findSkin(id);
+        return skin && skin->review == SkinReviewState::Approved;
+    });
+}
+
 /// Gives a seeded account a stack -- `itemKey` is the bag's own key,
 /// "petal_rose" -- which no amount of playing would hand out reliably.
 inline void seedStack(const std::string& path, const std::string& username, const char* itemKey,

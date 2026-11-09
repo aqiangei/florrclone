@@ -222,6 +222,7 @@ void writeCustomSkin(ByteWriter& w, const CustomSkin& skin) {
     w.str(skin.author);
     w.f64(skin.createdAt);
     w.boolean(skin.published);
+    w.u8(static_cast<std::uint8_t>(skin.review));
     const std::size_t count = std::min(skin.shapes.size(), static_cast<std::size_t>(kMaxSkinShapes));
     w.u8(static_cast<std::uint8_t>(count));
     for (std::size_t i = 0; i < count; ++i) writeSkinShape(w, skin.shapes[i]);
@@ -234,6 +235,9 @@ bool readCustomSkin(ByteReader& r, CustomSkin& out) {
     skin.author = r.str();
     skin.createdAt = r.f64();
     skin.published = r.boolean();
+    const auto review = r.u8();
+    if (review > static_cast<std::uint8_t>(SkinReviewState::Rejected)) return false;
+    skin.review = static_cast<SkinReviewState>(review);
     const std::uint8_t count = r.u8();
     skin.shapes.reserve(count);
     for (int i = 0; i < count; ++i) {
@@ -266,6 +270,7 @@ Json skinToJson(const CustomSkin& skin) {
     out["name"] = skin.name;
     out["author"] = skin.author;
     out["published"] = skin.published;
+    out["review"] = static_cast<int>(skin.review);
     Json shapes = Json::array();
     for (const SkinShape& s : skin.shapes) {
         Json j = Json::object();
@@ -307,8 +312,13 @@ CustomSkin skinFromJson(const Json& value) {
     skin.name = value["name"].asString();
     skin.author = value["author"].asString();
     skin.createdAt = value["createdAt"].asDouble(0.0);
-    // Existing skins predate privacy and were already public.
-    skin.published = value["published"].asBool(true);
+    // Skins saved before review was introduced keep their existing access.
+    const int review = value["review"].isNull()
+        ? static_cast<int>(SkinReviewState::Approved)
+        : value["review"].asInt(static_cast<int>(SkinReviewState::Draft));
+    skin.review = review >= 0 && review <= static_cast<int>(SkinReviewState::Rejected)
+        ? static_cast<SkinReviewState>(review) : SkinReviewState::Draft;
+    skin.published = skin.review == SkinReviewState::Approved && value["published"].asBool(true);
 
     const Json& shapes = value["shapes"];
     if (!shapes.isArray()) return skin;

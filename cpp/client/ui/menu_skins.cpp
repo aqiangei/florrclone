@@ -367,7 +367,7 @@ std::string serializeShape(const Shape& s) {
 enum class Act : std::uint8_t {
     None, Close, Tab, AddShape, SelectShape, MoveShape, DelShape, Step, Fill, Stroke,
     AddVertex, DelVertex, TextMode, Publish, PublishSaved, Reset, Equip, Unequip, Delete,
-    ConfirmDelete, CancelDelete, EquipBuiltIn, CopyAiPrompt,
+    ConfirmDelete, CancelDelete, EquipBuiltIn, CopyAiPrompt, ReviewRefresh, ReviewApprove, ReviewReject,
 };
 
 enum class Field : std::uint8_t { X, Y, R, Rx, Ry, Rot, Sw };
@@ -442,7 +442,7 @@ Rect browseBody(const Layout& l) {
 
 /// Everything the studio keeps between frames.
 struct Studio {
-    enum class Tab : std::uint8_t { Create, Browse, BuiltIn };
+    enum class Tab : std::uint8_t { Create, Browse, BuiltIn, Review };
 
     Tab tab = Tab::Create;
     std::vector<Shape> shapes = starterSkinShapes();
@@ -470,6 +470,7 @@ struct Studio {
         return net ? net->skinCatalog() : noSkins();
     }
     bool isAdmin() const { return net && net->isSkinAdmin(); }
+    bool canReview() const { return net && net->canModeratePublicSkins(); }
     const std::string& equippedId() const {
         static const std::string none;
         return net ? net->equippedSkinId() : none;
@@ -733,8 +734,10 @@ double Studio::drawPalette(Canvas& canvas, Rect r, const char* caption,
 
 void Studio::drawTabs(Canvas& canvas, Vec2 mouse, double now) {
     const Rect row = layout.tabs;
-    const char* labels[] = {tr(Msg::CreateTab), tr(Msg::BrowseTab), tr(Msg::SkinBuiltInTab)};
-    for (int i = 0; i < 3; ++i) {
+    const char* labels[] = {tr(Msg::CreateTab), tr(Msg::BrowseTab), tr(Msg::SkinBuiltInTab),
+                            trEnZh("Review", "审核")};
+    const int tabCount = canReview() ? 4 : 3;
+    for (int i = 0; i < tabCount; ++i) {
         const Rect r{row.x + i * (kTabWidth + kTabGap), row.y, kTabWidth, row.h};
         const bool active = static_cast<int>(tab) == i;
         Action pick;
@@ -753,7 +756,7 @@ void Studio::drawTabs(Canvas& canvas, Vec2 mouse, double now) {
         const Rect r{row.right() - 110.0, row.y, 110.0, row.h};
         actionButton(canvas, r, textMode ? tr(Msg::SkinVisualEditor) : tr(Msg::SkinTextEditor), mode,
                      textMode ? kAccentPurple : kNeutralFill);
-        const double left = row.x + 3 * (kTabWidth + kTabGap);
+        const double left = row.x + tabCount * (kTabWidth + kTabGap);
         const Rect prompt{left, row.y, std::max(0.0, r.x - left - kTabGap), row.h};
         bool copied = now < promptCopyFeedbackUntil;
 #ifdef __EMSCRIPTEN__
@@ -773,6 +776,11 @@ void Studio::drawTabs(Canvas& canvas, Vec2 mouse, double now) {
         unequip.k = Act::Unequip;
         const Rect r{row.right() - 110.0, row.y, 110.0, row.h};
         actionButton(canvas, r, tr(Msg::SkinUnequip), unequip, kNeutralFill);
+    } else if (tab == Tab::Review) {
+        Action refresh;
+        refresh.k = Act::ReviewRefresh;
+        actionButton(canvas, {row.right() - 110.0, row.y, 110.0, row.h},
+                     trEnZh("Refresh", "刷新队列"), refresh, kNeutralFill);
     }
 }
 
@@ -1076,20 +1084,19 @@ void Studio::drawFooter(Canvas& canvas, double timeSeconds) {
                  tr(Msg::SkinReset), reset, kNeutralFill);
     Action publish;
     publish.k = Act::Publish;
-    actionButton(canvas, {r.right() - kPublishW, r.y, kPublishW, r.h}, "私密保存",
+    actionButton(canvas, {r.right() - kPublishW, r.y, kPublishW, r.h}, trEnZh("Save draft", "保存草稿"),
                  publish, kAccent);
 }
 
 void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
-    ui::text(canvas, "公共皮肤与我的私密皮肤；私密保存后可主动发布。", layout.body.x, layout.tabs.bottom() + 16.0,
-             label(kBodySize));
+    const bool reviewing = tab == Tab::Review;
+    ui::text(canvas, reviewing ? trEnZh("Oldest submissions first", "按提交队列处理，请先检查预览。")
+                                : trEnZh("New skins need approval before use or publication.",
+                                         "新皮肤审核通过后才可穿戴或公开。"),
+             layout.body.x, layout.tabs.bottom() + 16.0, label(kBodySize));
 
     const Rect view = browseBody(layout);
-    const std::vector<CustomSkin>& skins = catalog();
-    if (skins.empty()) {
-        ui::text(canvas, tr(Msg::SkinBrowseEmpty), view.x, view.y + 24.0, label(kBodySize));
-        return;
-    }
+    const auto& skins = reviewing ? net->skinReviewQueue() : catalog();
 
     // Four to a row rather than three: a 135px card fits its own preview,
     // its name and a full-width Equip button, which the old three-up card did
@@ -1102,12 +1109,19 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
     std::vector<const CustomSkin*> sorted;
     sorted.reserve(skins.size());
     for (const CustomSkin& skin : skins) {
-        if (skin.published || lowerCase(skin.author) == me) sorted.push_back(&skin);
+        if (reviewing || skin.published || lowerCase(skin.author) == me) sorted.push_back(&skin);
     }
-    std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const CustomSkin* a, const CustomSkin* b) {
-                         return a->createdAt > b->createdAt;
-                     });
+    if (sorted.empty()) {
+        ui::text(canvas, reviewing ? trEnZh("No pending skins", "暂无待审皮肤") : tr(Msg::SkinBrowseEmpty),
+                 view.x, view.y + 24.0, label(kBodySize));
+        return;
+    }
+    if (!reviewing) {
+        std::stable_sort(sorted.begin(), sorted.end(),
+                         [](const CustomSkin* a, const CustomSkin* b) {
+                             return a->createdAt > b->createdAt;
+                         });
+    }
 
     const double rows = std::ceil(static_cast<double>(sorted.size()) / cols);
     browseScroll.contentHeight = rows * (kCardH + kGap) - kGap;
@@ -1148,11 +1162,32 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
                  card.x + cardW * 0.5, board.bottom() + 30.0,
                  label(kCaptionSize, Align::Centre));
 
-        const bool canDelete = isAdmin() || lowerCase(skin.author) == me;
-        if (lowerCase(skin.author) == me) {
-            Action publish; publish.k = Act::PublishSaved; publish.id = skin.id; publish.i = skin.published ? 0 : 1;
+        if (reviewing) {
+            const double actionWidth = (cardW - 20.0) * 0.5;
+            Action approve;
+            approve.k = Act::ReviewApprove;
+            approve.id = skin.id;
+            Action reject = approve;
+            reject.k = Act::ReviewReject;
+            const double y = card.bottom() - 32.0;
+            actionButton(canvas, {card.x + 8.0, y, actionWidth, 24.0},
+                         trEnZh("Approve", "通过"), approve, kAccent);
+            actionButton(canvas, {card.right() - 8.0 - actionWidth, y, actionWidth, 24.0},
+                         trEnZh("Reject", "驳回"), reject, kDangerFill);
+            continue;
+        }
+        const bool owned = lowerCase(skin.author) == me;
+        const bool approved = skin.review == SkinReviewState::Approved;
+        const bool canDelete = isAdmin() || owned || (skin.published && canReview());
+        if (owned && (approved || skin.review == SkinReviewState::Draft)) {
+            Action publish;
+            publish.k = Act::PublishSaved;
+            publish.id = skin.id;
+            publish.i = skin.published ? 0 : 1;
+            const char* title = skin.review == SkinReviewState::Draft ? trEnZh("Submit for review", "提交审核")
+                : skin.published ? trEnZh("Make private", "撤回为私密") : trEnZh("Publish", "公开皮肤");
             actionButton(canvas, {card.x + 8, card.bottom() - 60, cardW - 16, 24},
-                         skin.published ? "公开 · 撤回为私密" : "私密 · 发布到公共", publish, kAccent, kCaptionSize);
+                         title, publish, kAccent, kCaptionSize);
         }
 
         // A takedown is a glyph beside the Equip button, not a second labelled
@@ -1164,9 +1199,16 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
         Action equip;
         equip.k = Act::Equip;
         equip.id = skin.id;
-        actionButton(canvas, {card.x + 8.0, actionsY, equipW, 24.0},
-                     equipped ? tr(Msg::SkinEquipped) : tr(Msg::SkinEquip), equip,
-                     equipped ? kAccent : kAccentPurple, kBodySize);
+        if (approved) {
+            actionButton(canvas, {card.x + 8.0, actionsY, equipW, 24.0},
+                         equipped ? tr(Msg::SkinEquipped) : tr(Msg::SkinEquip), equip,
+                         equipped ? kAccent : kAccentPurple, kBodySize);
+        } else {
+            const char* status = skin.review == SkinReviewState::Pending ? trEnZh("Pending", "待审核")
+                : skin.review == SkinReviewState::Rejected ? trEnZh("Rejected", "未通过") : trEnZh("Draft", "草稿");
+            ui::text(canvas, status, card.x + 8.0 + equipW * 0.5, actionsY + 12.0,
+                     label(kCaptionSize, Align::Centre));
+        }
         if (canDelete) {
             Action del;
             del.k = Act::Delete;
@@ -1277,6 +1319,7 @@ void Studio::draw(MenuContext& ctx) {
     close.k = Act::Close;
     addRegion(closeRect, close);
 
+    if (tab == Tab::Review && !canReview()) tab = Tab::Browse;
     drawTabs(canvas, mouse, ctx.timeSeconds);
 
     if (tab == Tab::Create) {
@@ -1314,7 +1357,7 @@ void Studio::draw(MenuContext& ctx) {
             drawProps(canvas, layout.right);
         }
         drawFooter(canvas, ctx.timeSeconds);
-    } else if (tab == Tab::Browse) {
+    } else if (tab == Tab::Browse || tab == Tab::Review) {
         drawBrowse(canvas, lowerCase(ctx.net.profile().username));
     } else {
         drawBuiltIn(ctx);
@@ -1540,6 +1583,17 @@ bool Studio::dispatch(MenuContext& ctx, const Action& a) {
             return false;
         case Act::Tab:
             tab = static_cast<Tab>(a.i);
+            browseScroll.offset = 0.0;
+            if (tab == Tab::Review) ctx.net.requestSkinReview(net::SkinReviewAction::List);
+            break;
+        case Act::ReviewRefresh:
+            ctx.net.requestSkinReview(net::SkinReviewAction::List);
+            break;
+        case Act::ReviewApprove:
+            ctx.net.requestSkinReview(net::SkinReviewAction::Approve, a.id);
+            break;
+        case Act::ReviewReject:
+            ctx.net.requestSkinReview(net::SkinReviewAction::Reject, a.id);
             break;
         case Act::AddShape:
             // Silently capped: the button stays fully lit, exactly as it does

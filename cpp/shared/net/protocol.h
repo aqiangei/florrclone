@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 114; // Incompatible with clients that offered petal recycling.
+inline constexpr std::uint16_t kProtocolVersion = 115; // Skin review state, queue and catalog permission flags.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -245,6 +245,7 @@ enum class ClientMessage : std::uint8_t {
     AccountQQ,          ///< bool save, str value if saving; private account record only.
     RequestPracticeBoard, ///< bool includeAdmins, u8 action, u32 own record id.
     RequestWaveRoomStatus, ///< no payload.
+    SkinReview,        ///< u8 SkinReviewAction, str skinId for decisions.
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -300,7 +301,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< The shop panel's own reply channel: a refusal is a
                         ///< modal on the card, not a line in the chat, so it
                         ///< cannot travel as a Notice.
-    SkinCatalog,        ///< u8 isAdmin, str equippedSkinId, u16 count,
+    SkinCatalog,        ///< u8 SkinCatalogFlags, str equippedSkinId, u16 count,
                         ///< { CustomSkin }*. Sent once per authentication: the
                         ///< studio's Browse tab lists it, and it is also what
                         ///< lets a client draw a skin somebody else is wearing.
@@ -473,6 +474,7 @@ enum class ServerMessage : std::uint8_t {
     AccountQQ,          ///< bool saved, str current value; only to the authenticated owner.
     PracticeBoard,      ///< u32 own rank, then private and public ranked record lists.
     WaveRoomStatus,     ///< u8 occupied seats, bool personal daily star cap reached.
+    SkinReviewQueue,    ///< u8 count, followed by CustomSkin rows awaiting review.
 };
 
 // ---------------------------------------------------------------------------
@@ -516,6 +518,14 @@ enum class NotificationKind : std::uint8_t {
     StarCode,
     UniversalCraft,     ///< a universal forged at a titan (version 47)
     PermanentHyperForge,
+};
+
+enum class SkinReviewAction : std::uint8_t { List, Approve, Reject };
+
+/// Server-held abilities announced with the skin catalog.
+enum SkinCatalogFlags : std::uint8_t {
+    SkinCatalogAdmin = 1u << 0,
+    SkinCatalogModerator = 1u << 1,
 };
 
 /// What the Profile says about the account itself rather than its progress:

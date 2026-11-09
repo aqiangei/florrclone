@@ -60,6 +60,8 @@ struct SkinShape {
 
 /// A published skin. `id` and `createdAt` are the server's to assign; a client
 /// that invents them gets them overwritten.
+enum class SkinReviewState : std::uint8_t { Approved, Draft, Pending, Rejected };
+
 struct CustomSkin {
     std::string id;
     std::string name;
@@ -69,6 +71,7 @@ struct CustomSkin {
     /// through the JSON database the TypeScript build wrote.
     double createdAt = 0;
     bool published = false;
+    SkinReviewState review = SkinReviewState::Approved;
 };
 
 const char* skinShapeTypeName(SkinShapeType);

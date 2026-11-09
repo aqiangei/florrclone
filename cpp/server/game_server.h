@@ -415,6 +415,8 @@ private:
     void handlePublishSkin(Session&, net::Connection&, ByteReader&);
     void handleEquipSkin(Session&, net::Connection&, ByteReader&);
     void handleDeleteSkin(Session&, net::Connection&, ByteReader&);
+    void handleSkinReview(Session&, net::Connection&, ByteReader&);
+    void sendSkinReviewQueue(net::Connection&);
     void handlePracticeBoard(Session&, net::Connection&, ByteReader&);
     void servicePracticeTrials(double nowMillis);
     void handleLeaderboard(const Session&, net::Connection&, ByteReader&);
@@ -1019,7 +1021,9 @@ private:
     /// The whole published-skin catalog, this client's admin flag and the skin
     /// its account is wearing. Sent once per authentication, beside the
     /// profile: a client that has not seen a skin cannot draw whoever wears it.
+    bool canModeratePublicSkins(const Session&) const;
     void sendSkinCatalog(Session&, net::Connection&);
+    void unequipCustomSkin(const std::string& skinId, const std::string& exceptUserId = {});
     /// A published skin's sampled look (skin_likeness.h), sampled again only
     /// when the shapes filed under its id change -- `/admin db` can edit a
     /// catalog row in place, so the id alone does not say the picture is the
@@ -1818,6 +1822,7 @@ private:
         std::string lagFrame, workFrame, sessionsFrame;
     } tickProbeWindow_;
     double tickCadenceStartMillis_ = 0;
+    double lastMeasuredTps_ = 0;
     double tickCadenceMaxWorkMillis_ = 0;
     double tickCadenceMaxLagMillis_ = 0;
     unsigned tickCadenceSamples_ = 0;

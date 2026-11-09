@@ -1387,12 +1387,13 @@ void GameServer::recordTickCadence(double nowMillis, double lagMillis, double wo
     tickCadenceMaxLagMillis_ = std::max(tickCadenceMaxLagMillis_, lagMillis);
     const double elapsedMillis = nowMillis - tickCadenceStartMillis_;
     if (elapsedMillis < kTickCadenceLogMillis) return;
+    lastMeasuredTps_ = tickCadenceSamples_ * 1000.0 / elapsedMillis;
 
     const auto players = playerCount();
     if (players > 0 || tickCadenceOverBudget_ > 0) {
         std::printf("[tick] cadence %.2f/%d TPS over %.1f s, players=%zu, over budget=%u/%u, "
                     "max work=%.1f ms, max start lag=%.1f ms\n",
-                    tickCadenceSamples_ * 1000.0 / elapsedMillis, simulationPacing_.ticksPerSecond(),
+                    lastMeasuredTps_, simulationPacing_.ticksPerSecond(),
                     elapsedMillis / 1000.0, players, tickCadenceOverBudget_, tickCadenceSamples_,
                     tickCadenceMaxWorkMillis_, tickCadenceMaxLagMillis_);
         std::printf("[tick] load players=%zu, sessions=%zu, entities=%zu, mobs=%zu, pets=%zu, "
@@ -2487,6 +2488,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::RequestWaveRoomStatus:
         case net::ClientMessage::DailyLoginClaim:
         case net::ClientMessage::AccountQQ:
+        case net::ClientMessage::SkinReview:
         case net::ClientMessage::Craft:
         case net::ClientMessage::OracleCraft:
         case net::ClientMessage::Trade:
@@ -2602,6 +2604,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::PublishSkin:   handlePublishSkin(*session, connection, reader); break;
         case net::ClientMessage::EquipSkin:     handleEquipSkin(*session, connection, reader); break;
         case net::ClientMessage::DeleteSkin:    handleDeleteSkin(*session, connection, reader); break;
+        case net::ClientMessage::SkinReview:     handleSkinReview(*session, connection, reader); break;
         case net::ClientMessage::Logout:        handleLogout(*session); break;
         case net::ClientMessage::AdminDb:       handleAdminDb(*session, connection, reader); break;
         case net::ClientMessage::AdminDashboard:
@@ -5674,6 +5677,12 @@ void GameServer::broadcastDebugStats() {
     broadcastToAuthenticated(w);
 }
 
+bool GameServer::canModeratePublicSkins(const Session& session) const {
+    const auto* account = database_.findUserById(session.userId);
+    return account && !account->guest && !account->adminBanned &&
+        database_.storedTable("skinModerators")[account->id].asBool();
+}
+
 void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) {
     // storedTable, not rawTable: this only reads, and rawTable drops the
     // table's cached text (Database::Table). Sent on every sign-in, that made
@@ -5683,12 +5692,12 @@ void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) 
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinCatalog));
-    // Advisory only: it decides whether the takedown button is drawn and
-    // whether the chat autocomplete offers the /admin rows. Every delete, and
-    // every admin command, is re-checked server-side regardless of what the
-    // client believes -- so a temporary grant may safely raise it, which is
-    // how a grantee's console appears without them logging out and back in.
-    w.boolean(effectiveAdmin(session));
+    // Skin moderation and the admin console are independent capabilities.
+    // Both are rechecked on the server when a request arrives.
+    std::uint8_t flags = 0;
+    if (effectiveAdmin(session)) flags |= net::SkinCatalogAdmin;
+    if (canModeratePublicSkins(session)) flags |= net::SkinCatalogModerator;
+    w.u8(flags);
     w.str(record.equippedSkinId);
     const std::size_t at = w.reserveU16();
     std::uint16_t count = 0;
@@ -5696,7 +5705,7 @@ void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) 
         const CustomSkin skin = skinFromJson(skins[id]);
         if (skin.id.empty() || skin.shapes.empty()) continue;
         bool visible = skin.published || lowerCase(skin.author) == lowerCase(session.username);
-        if (!visible) for (const auto& entry : sessions_) {
+        if (!visible && skin.review == SkinReviewState::Approved) for (const auto& entry : sessions_) {
             const auto& other = entry.second;
             const auto* wearing = other.authenticated() ? database_.findProgress(other.userId) : nullptr;
             if (wearing && wearing->equippedSkinId == skin.id) {
@@ -5710,7 +5719,7 @@ void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) 
     w.patchU16(at, count);
     connection.send(w);
     const CustomSkin worn = skinFromJson(skins[record.equippedSkinId]);
-    if (!worn.id.empty() && !worn.published) {
+    if (!worn.id.empty() && !worn.published && worn.review == SkinReviewState::Approved) {
         ByteWriter appearance;
         appearance.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
         writeCustomSkin(appearance, worn); broadcastToAuthenticated(appearance);
@@ -5742,6 +5751,19 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
             sendSkinChat(connection, "只能发布自己保存的皮肤。"); return;
         }
         CustomSkin skin = skinFromJson(saved);
+        if (skin.review != SkinReviewState::Approved) {
+            if (!published || skin.review != SkinReviewState::Draft) return;
+            skin.review = SkinReviewState::Pending;
+            catalog[existingId]["review"] = static_cast<int>(skin.review);
+            catalog[existingId]["reviewSubmittedAt"] = static_cast<double>(database_.nowMillis());
+            database_.markDirty();
+            ByteWriter w;
+            w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+            writeCustomSkin(w, skin);
+            connection.send(w);
+            sendSkinChat(connection, "已提交审核，通过后才能穿戴或公开。");
+            return;
+        }
         if (skin.published == published) return;
         const SkinLook look = sampleSkinLook(skin.shapes);
         if (published && (skinsLookAlike(look, starterLook()) || findLookAlikeSkin(look))) {
@@ -5749,26 +5771,7 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
         }
         catalog[existingId]["published"] = published;
         skin.published = published;
-        if (!published) {
-            for (const std::string& userId : database_.playerIds()) {
-                const auto* record = database_.findProgress(userId);
-                if (userId != session.userId && record && record->equippedSkinId == existingId) {
-                    auto& changed = database_.progress(userId);
-                    changed.equippedSkinId.clear();
-                    changed.renderFlags = PlayerRenderNone;
-                }
-            }
-            for (auto& entry : sessions_) {
-                auto& other = entry.second;
-                if (other.userId == session.userId) continue;
-                for (Entity body : bodiesOf(other)) {
-                    auto* visuals = world_.tryGet<PlayerVisuals>(body);
-                    if (visuals && visuals->equippedSkinId == existingId) {
-                        visuals->equippedSkinId.clear(); visuals->renderFlags = PlayerRenderNone;
-                    }
-                }
-            }
-        }
+        if (!published) unequipCustomSkin(existingId, session.userId);
         database_.markDirty();
         ByteWriter w; w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
         writeCustomSkin(w, skin); broadcastToAuthenticated(w);
@@ -5832,19 +5835,19 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
     skin.author = session.username;
     skin.shapes = check.shapes;
     skin.createdAt = static_cast<double>(database_.nowMillis());
-    skin.published = published;
+    skin.review = published ? SkinReviewState::Pending : SkinReviewState::Draft;
     catalog[skin.id] = skinToJson(skin);
     catalog[skin.id]["ownerId"] = session.userId;
+    if (published) catalog[skin.id]["reviewSubmittedAt"] = skin.createdAt;
     database_.markDirty();
     skinLooks_[skin.id] = CachedSkinLook{skinShapesHash(skin.shapes), std::move(look)};
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
     writeCustomSkin(w, skin);
-    // Everyone, not just the author: a skin nobody else has cannot be drawn on
-    // the player wearing it.
-    if (published) broadcastToAuthenticated(w); else connection.send(w);
-    sendSkinChat(connection, published ? "Published \"" + skin.name + "\". It's now in the Browse tab." : "已私密保存：" + skin.name + "。仅自己可选用，可在皮肤列表主动发布。");
+    connection.send(w);
+    sendSkinChat(connection, published ? "已提交审核，通过后才能穿戴或公开。"
+                                      : "草稿已保存，可在皮肤列表提交审核。");
 }
 
 void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
@@ -5864,8 +5867,9 @@ void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
         const bool owner = catalog[id]["ownerId"].isString()
             ? catalog[id]["ownerId"].asString() == session.userId
             : lowerCase(skin.author) == lowerCase(session.username);
-        if (!skin.published && !owner) {
-            sendSkinChat(connection, "这是私人皮肤，不能使用。");
+        if (skin.review != SkinReviewState::Approved || (!skin.published && !owner)) {
+            sendSkinChat(connection, skin.review == SkinReviewState::Approved
+                ? "这是私人皮肤，不能使用。" : "审核通过后才能穿戴这张皮肤。");
             sendSkinCatalog(session, connection); return;
         }
         if (!skin.published) {
@@ -5889,33 +5893,115 @@ void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
     }
 }
 
+void GameServer::sendSkinReviewQueue(net::Connection& connection) {
+    const auto& catalog = database_.storedTable("customSkins");
+    std::vector<std::pair<double, std::string>> pending;
+    for (const auto& id : catalog.keys()) {
+        const auto& row = catalog[id];
+        if (row["review"].asInt(-1) == static_cast<int>(SkinReviewState::Pending))
+            pending.emplace_back(row["reviewSubmittedAt"].asDouble(row["createdAt"].asDouble()), id);
+    }
+    const auto count = std::min<std::size_t>(24, pending.size());
+    std::partial_sort(pending.begin(), pending.begin() + count, pending.end());
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinReviewQueue));
+    w.u8(static_cast<std::uint8_t>(count));
+    for (std::size_t i = 0; i < count; ++i)
+        writeCustomSkin(w, skinFromJson(catalog[pending[i].second]));
+    connection.send(w);
+}
+
+void GameServer::handleSkinReview(Session& session, net::Connection& connection, ByteReader& reader) {
+    if (!session.authenticated() || !canModeratePublicSkins(session)) return;
+    const auto action = static_cast<net::SkinReviewAction>(reader.u8());
+    if (!reader.ok()) return;
+    if (action == net::SkinReviewAction::List) {
+        sendSkinReviewQueue(connection);
+        return;
+    }
+    if (action != net::SkinReviewAction::Approve && action != net::SkinReviewAction::Reject) return;
+    const std::string id = reader.str();
+    if (!reader.ok()) return;
+    const auto& saved = database_.storedTable("customSkins")[id];
+    auto skin = skinFromJson(saved);
+    if (skin.id.empty() || skin.review != SkinReviewState::Pending) {
+        sendSkinReviewQueue(connection);
+        return;
+    }
+    if (action == net::SkinReviewAction::Approve) {
+        const auto& look = catalogSkinLook(skin);
+        if (skinsLookAlike(look, starterLook()) || findLookAlikeSkin(look)) {
+            sendSkinChat(connection, "这张皮肤和已有公开皮肤或初始外观过于相似，请驳回。");
+            return;
+        }
+        skin.review = SkinReviewState::Approved;
+    } else {
+        skin.review = SkinReviewState::Rejected;
+    }
+    const std::string ownerId = saved["ownerId"].asString();
+    database_.rawTable("customSkins")[id]["review"] = static_cast<int>(skin.review);
+    database_.markDirty();
+    ByteWriter update;
+    update.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+    writeCustomSkin(update, skin);
+    listener_.each([&](net::Connection& peer) {
+        const auto* owner = sessionFor(peer.id());
+        if (!owner || !owner->authenticated() || owner->userId != ownerId) return;
+        peer.send(update);
+        sendSkinChat(peer, action == net::SkinReviewAction::Approve
+            ? "皮肤审核通过，可以穿戴或公开。" : "皮肤审核未通过，请修改后重新保存并提交。");
+    });
+    sendSkinReviewQueue(connection);
+}
+
+void GameServer::unequipCustomSkin(const std::string& id, const std::string& exceptUserId) {
+    for (const std::string& userId : database_.playerIds()) {
+        const auto* record = database_.findProgress(userId);
+        if (userId == exceptUserId || !record || record->equippedSkinId != id) continue;
+        auto& changed = database_.progress(userId);
+        changed.equippedSkinId.clear();
+        changed.renderFlags = PlayerRenderNone;
+    }
+    for (auto& [connection, session] : sessions_) {
+        if (!session.authenticated() || session.userId == exceptUserId) continue;
+        if (session.arena && session.arena->equippedSkinId == id) {
+            session.arena->equippedSkinId.clear();
+            session.arena->renderFlags = PlayerRenderNone;
+        }
+        for (const Entity body : bodiesOf(session)) {
+            auto* visuals = world_.tryGet<PlayerVisuals>(body);
+            if (!visuals || visuals->equippedSkinId != id) continue;
+            visuals->equippedSkinId.clear();
+            visuals->renderFlags = PlayerRenderNone;
+        }
+    }
+}
+
 void GameServer::handleDeleteSkin(Session& session, net::Connection& connection,
                                   ByteReader& reader) {
     const std::string id = reader.str();
     if (!reader.ok() || !session.authenticated()) return;
 
-    Json& catalog = database_.rawTable("customSkins");
-    const Json& stored = catalog;
-    if (!stored[id].isObject()) return;
-    const std::string author = stored[id]["author"].asString();
-    const std::string name = stored[id]["name"].asString();
-
-    // Case-blind, as when the skin was counted against its author's limit.
-    const bool owner = lowerCase(author) == lowerCase(session.username);
-    if (!session.admin && !owner) {
-        sendSkinChat(connection, "You can only take down your own skins.");
+    const Json& saved = database_.storedTable("customSkins")[id];
+    if (!saved.isObject()) return;
+    const auto skin = skinFromJson(saved);
+    const bool owner = saved["ownerId"].isString() ? saved["ownerId"].asString() == session.userId
+        : lowerCase(skin.author) == lowerCase(session.username);
+    if (!session.admin && !owner && !(skin.published && canModeratePublicSkins(session))) {
+        sendSkinChat(connection, "You do not have permission to delete this skin.");
         return;
     }
-    catalog.erase(id);
+    database_.rawTable("customSkins").erase(id);
     skinLooks_.erase(id);
+    unequipCustomSkin(id);
     database_.markDirty();
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinDeleted));
     w.str(id);
     broadcastToAuthenticated(w);
-    sendSkinChat(connection, owner ? "Deleted \"" + name + "\"."
-                                   : "Took down \"" + name + "\" by " + author + ".");
+    sendSkinChat(connection, owner ? "Deleted \"" + skin.name + "\"."
+                                   : "Took down \"" + skin.name + "\" by " + skin.author + ".");
 }
 
 const SkinLook& GameServer::catalogSkinLook(const CustomSkin& skin) {

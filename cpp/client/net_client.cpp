@@ -54,6 +54,7 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::RedeemCode:          return "redeemCode";
         case net::ClientMessage::PublishSkin:         return "publishSkin";
         case net::ClientMessage::EquipSkin:           return "equipSkin";
+        case net::ClientMessage::SkinReview:         return "skinReview";
         case net::ClientMessage::DeleteSkin:          return "deleteSkin";
         case net::ClientMessage::RequestNotifications:return "notifications";
         case net::ClientMessage::GuildCreate:         return "guildCreate";
@@ -106,6 +107,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::SkinCatalog:         return "skinCatalog";
         case net::ServerMessage::SkinPublished:       return "skinPublished";
         case net::ServerMessage::SkinDeleted:         return "skinDeleted";
+        case net::ServerMessage::SkinReviewQueue:    return "skinReviewQueue";
         case net::ServerMessage::Notifications:       return "notifications";
         case net::ServerMessage::SquadUpdate:         return "squadUpdate";
         case net::ServerMessage::GuildUpdate:         return "guildUpdate";
@@ -319,6 +321,8 @@ void NetClient::forgetAccount() {
     skinCatalog_.clear();
     equippedSkinId_.clear();
     skinAdmin_ = false;
+    skinModerator_ = false;
+    skinReviewQueue_.clear();
     practiceBoard_ = {};
     leaderboard_.clear();
     playtimeLeaderboard_.clear();
@@ -692,6 +696,14 @@ void NetClient::deleteSkin(const std::string& id) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::DeleteSkin);
     w.str(id);
+    send(w);
+}
+
+void NetClient::requestSkinReview(net::SkinReviewAction action, const std::string& id) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::SkinReview);
+    w.u8(static_cast<std::uint8_t>(action));
+    if (action != net::SkinReviewAction::List) w.str(id);
     send(w);
 }
 
@@ -1319,6 +1331,17 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::SkinCatalog:   handleSkinCatalog(reader); break;
         case net::ServerMessage::SkinPublished: handleSkinPublished(reader); break;
         case net::ServerMessage::SkinDeleted:   handleSkinDeleted(reader); break;
+        case net::ServerMessage::SkinReviewQueue: {
+            std::vector<CustomSkin> queue;
+            const auto count = reader.u8();
+            for (int i = 0; i < count; ++i) {
+                CustomSkin skin;
+                if (!readCustomSkin(reader, skin)) return;
+                queue.push_back(std::move(skin));
+            }
+            if (reader.ok()) skinReviewQueue_ = std::move(queue);
+            break;
+        }
         case net::ServerMessage::Notifications: handleNotifications(reader); break;
         case net::ServerMessage::SquadUpdate:   handleSquadUpdate(reader); break;
         case net::ServerMessage::GuildUpdate:   handleGuildUpdate(reader); break;
@@ -2155,7 +2178,7 @@ const CustomSkin* NetClient::findSkin(const std::string& id) const {
 }
 
 void NetClient::handleSkinCatalog(ByteReader& reader) {
-    const bool admin = reader.boolean();
+    const auto flags = reader.u8();
     const std::string equipped = reader.str();
     const std::uint16_t count = reader.u16();
     std::vector<CustomSkin> skins;
@@ -2167,7 +2190,9 @@ void NetClient::handleSkinCatalog(ByteReader& reader) {
     }
     if (!reader.ok()) return;
     skinCatalog_ = std::move(skins);
-    skinAdmin_ = admin;
+    skinAdmin_ = (flags & net::SkinCatalogAdmin) != 0;
+    skinModerator_ = (flags & net::SkinCatalogModerator) != 0;
+    if (!skinModerator_) skinReviewQueue_.clear();
     equippedSkinId_ = equipped;
 }
 
