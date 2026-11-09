@@ -28,6 +28,7 @@ const char* const kPetalsJson = R"JSON({
   "lentil":{"name":"Lentil","damage":13,"health":12,"size":1,"cooldown":2000,"count":1,"attractionForce":2000,"playerModifiers":{"petalAttractionRadius":20}},
   "dice":{"name":"Dice","damage":10,"health":10,"size":2,"cooldown":1200,"count":1},
   "basic":    {"name":"Basic","damage":10,"health":10,"size":2,"cooldown":1200,"count":1,"color":"#90EE90"},
+  "bomb":     {"name":"Bomb","damage":10,"health":5,"size":1,"cooldown":2000,"count":1},
   "icosahedron":{"name":"Icosahedron","damage":10,"health":10,"size":2,"cooldown":2500,"count":1,"color":"#8B5CF6"},
   "sandy":    {"name":"Sandy","damage":4,"health":12,"size":1,"cooldown":800,"count":4,"clumped":true,"color":"#8B0000"},
   "spready":  {"name":"Spready","damage":4,"health":12,"size":1,"cooldown":800,"count":3,"clumped":true,"clumpSpacing":2.5,"color":"#F0BD48"},
@@ -1453,6 +1454,30 @@ Entity touchCapacitor(Rig& rig, Rarity rarity = Rarity::Common) {
 void pullAway(Rig& rig, Entity mob) {
     const Vec2 petal = rig.position(rig.petals(0).front());
     rig.world.get<Transform>(mob).position = {petal.x + 300.0, petal.y};
+}
+
+TEST(bomb_contact_ignores_other_realms_and_dead_wild_mobs) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.equip(0, "bomb");
+    rig.freezeRing();
+    rig.settleEquips();
+    rig.settleRing();
+    const Entity bomb = rig.petals(0).front();
+    const Vec2 at = rig.position(bomb);
+    const Entity mob = addMob(rig, at + Vec2{5, 0});
+    rig.world.get<Transform>(mob).realm = Realm::Maze;
+    rig.tick();
+    CHECK(!rig.world.has<Dead>(bomb));
+
+    rig.world.get<Transform>(mob).realm = Realm::Overworld;
+    rig.world.add<Dead>(mob);
+    rig.tick();
+    CHECK(!rig.world.has<Dead>(bomb));
+
+    rig.world.remove<Dead>(mob);
+    rig.tick();
+    CHECK(rig.world.has<Dead>(bomb));
 }
 
 TEST(a_capacitor_discharges_what_it_banked_when_contact_ends) {
@@ -3489,6 +3514,24 @@ TEST(firing_a_volley_spends_the_petal_and_pays_its_reload) {
     CHECK(rig.tickUntil([&] { return rig.slot(0).broken; }, 400));
 }
 
+TEST(volley_cap_recounts_ended_projectiles_before_the_next_volley) {
+    if (!contentLoaded()) return;
+    Rig rig;
+    rig.system.volleyEntityLimit = 4;
+    rig.equip(0, "peas");
+    rig.settleEquips();
+    const Entity previousShot = rig.world.create();
+    rig.world.add<ProjectileTag>(previousShot);
+    rig.world.add<Projectile>(previousShot).owner = rig.player;
+
+    rig.setFlags(net::InputAttack);
+    rig.tick(20);
+    CHECK_EQ(rig.countOf(net::EntityKind::Projectile), std::size_t(0));
+
+    rig.world.destroy(previousShot);
+    CHECK(rig.tickUntil([&] { return rig.countOf(net::EntityKind::Projectile) == 3; }));
+}
+
 TEST(each_grain_of_a_clump_is_spent_by_its_own_shot) {
     if (!contentLoaded()) return;
     Rig rig;
@@ -5377,7 +5420,6 @@ TEST(a_run_of_mimics_copies_the_first_real_petal_each_at_its_own_tier) {
 TEST(sawblade_reloads_in_one_second_after_breaking_and_hits_harder_from_eternal) {
     const auto& registry = testsupport::shippedContent();
     const auto sawblade = registry.petalIndex("sawblade");
-    const auto blueberries = registry.petalIndex("magic_peas");
     for (int tier = 0; tier < kLadderRarityCount; ++tier) {
         const auto rarity = static_cast<Rarity>(tier);
         CHECK_NEAR(registry.petalStats(sawblade, rarity).reloadMillis, 2000.0, 1e-9);
@@ -5394,8 +5436,8 @@ TEST(sawblade_reloads_in_one_second_after_breaking_and_hits_harder_from_eternal)
         if (rarity == Rarity::Super) {
             CHECK_NEAR(contactDamage, 87480.0, 1e-6);
         } else {
-            const double lightning = registry.petalStats(blueberries, rarity).lightningDamagePerHit;
-            CHECK_NEAR(contactDamage, lightning * 0.6, 1e-6);
+            const double expected = rarity == Rarity::Unique ? 354294.0 : 708588.0;
+            CHECK_NEAR(contactDamage, expected, 1e-6);
         }
         rig.damage(petals.front(), rig.healthOf(petals.front()));
         const double brokenAt = rig.now + net::kTickMillis;
@@ -6440,9 +6482,9 @@ TEST(every_egg_id_takes_the_same_summon_buff){
 }
 
 
-TEST(hyper_technique_rose_saves_its_heal_and_cannot_be_copied_from_an_eternal_rose) {
-    if (!contentLoaded()) return;
-    Rig rig;
+TEST(hyper_technique_rose_charges_earlier_and_eternal_mimic_cannot_copy_it) {
+    const auto& registry = testsupport::shippedContent();
+    Rig rig(registry);
     rig.equip(0, "rose", Rarity::Unique);
     rig.equip(1, "mimic", Rarity::Apex);
     rig.equip(2, "rose", Rarity::Apex);
@@ -6450,16 +6492,14 @@ TEST(hyper_technique_rose_saves_its_heal_and_cannot_be_copied_from_an_eternal_ro
     const auto eternal = rig.petals(0).front();
     const auto copied = rig.petals(1).front();
     const auto hyper = rig.petals(2).front();
+    for (const auto rose : {eternal, copied, hyper}) {
+        rig.world.get<PetalInstance>(rose).spawnedAtMillis = rig.now - 1100.0;
+    }
     auto& health = rig.world.get<Health>(rig.player);
     health.current = health.max - 1.0;
     rig.tick();
-    CHECK(rig.world.get<PetalInstance>(eternal).homing);
-    CHECK(rig.world.get<PetalInstance>(copied).homing);
-    CHECK(!rig.world.get<PetalInstance>(hyper).homing);
-
-    auto& wounded = rig.world.get<Health>(rig.player);
-    wounded.current = wounded.max * 0.30;
-    rig.tick();
+    CHECK(!rig.world.get<PetalInstance>(eternal).homing);
+    CHECK(!rig.world.get<PetalInstance>(copied).homing);
     CHECK(rig.world.get<PetalInstance>(hyper).homing);
 }
 
@@ -6483,7 +6523,7 @@ TEST(hyper_technique_ground_effects_keep_attack_and_defense_roles) {
         fields.each([&](Entity e, GroundEffect& field, Lifetime& life) {
             if (field.kind == GroundEffectKind::Poison) {
                 CHECK_NEAR(field.radius, 6.0 * (defending ? 1.20 : 1.0), 1e-9);
-                CHECK_NEAR(life.remainingSeconds, defending ? 4.8 : 6.0, 1e-9);
+                CHECK_NEAR(life.remainingSeconds, 6.0, 1e-9);
                 return;
             }
             CHECK_NEAR(field.slowFactor, 0.5, 1e-9);
@@ -6520,8 +6560,8 @@ TEST(hyper_technique_projectile_flight_preserves_count_and_damage_budget) {
     const ShotCase cases[] = {
         {"missile", net::InputAttack, 1.20, 1.0},
         {"magic_missile", net::InputAttack, 1.0, 1.15},
-        {"carrot", net::InputAttack, 0.90, 1.20},
-        {"grapes", net::InputAttack, 0.85, 1.15},
+        {"carrot", net::InputAttack, 1.0, 1.20},
+        {"grapes", net::InputAttack, 1.0, 1.15},
         {"grapes", net::InputDefend, 1.0, 1.0},
         {"peas", net::InputDefend, 1.0, 1.0, false},
         {"magic_peas", net::InputAttack, 1.0, 1.0},
@@ -6535,7 +6575,7 @@ TEST(hyper_technique_projectile_flight_preserves_count_and_damage_budget) {
             const Vec2 drift{45.0, -70.0};
             rig.world.get<Motion>(rig.player).velocity = drift;
             rig.setFlags(scenario.flag);
-            rig.tick();
+            CHECK(rig.tickUntil([&] { return Query<ProjectileTag>{rig.world}.count() > 0; }, 20));
 
             const auto& registry = fixture().registry;
             const auto id = petalId(scenario.id);
@@ -6624,42 +6664,108 @@ TEST(hyper_technique_bone_guard_only_changes_wild_mob_recoil_when_defending) {
 }
 
 
-TEST(hyper_technique_guard_and_mana_hold_for_larger_deficits) {
-    if (!contentLoaded()) return;
-    for (const auto tier : {Rarity::Unique, Rarity::Apex}) {
-        Rig rig;
-        rig.equip(0, "shell", tier);
-        rig.equip(1, "mana_orb", tier);
-        rig.world.add<ManaPool>(rig.player, ManaPool{});
-        const double maxHealth = rig.world.get<Health>(rig.player).max;
-        const auto keepFull = [&] {
-            rig.world.get<ManaPool>(rig.player).current = 1e9;
-            rig.world.ensure<ShieldState>(rig.player).amount = maxHealth;
-        };
-        keepFull();
-        rig.tick();
-        CHECK(rig.tickUntil([&] {
-            keepFull();
-            return !rig.slot(0).broken && !rig.slot(1).broken;
-        }));
-        for (int i = 0; i < static_cast<int>(std::ceil(1000.0 / net::kTickMillis)); ++i) {
-            keepFull();
-            rig.tick();
+TEST(hyper_technique_mana_orb_and_shell_charge_earlier_and_fill_small_gaps) {
+    const auto& registry = testsupport::shippedContent();
+    for (const auto tier : {Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
+        for (const bool mana : {false, true}) {
+            Rig rig(registry);
+            rig.equip(0, mana ? "mana_orb" : "shell", tier);
+            const double cap = rig.world.get<Health>(rig.player).max;
+            if (mana) rig.world.add<ManaPool>(rig.player, ManaPool{1e9, 1e9});
+            else rig.world.add<ShieldState>(rig.player, ShieldState{cap});
+            rig.settleEquips();
+            const auto petal = rig.petals(0).front();
+            const double expectedCharge = mana
+                ? (tier == Rarity::Unique ? 1500.0 : 1000.0)
+                : (tier == Rarity::Unique ? 1000.0 : 750.0);
+            const auto& instance = rig.world.get<PetalInstance>(petal);
+            CHECK(!instance.homing);
+            const double spawned = instance.spawnedAtMillis;
+            if (mana) {
+                auto& pool = rig.world.get<ManaPool>(rig.player);
+                pool.current = pool.max - 1.0;
+            } else {
+                rig.world.get<ShieldState>(rig.player).amount = cap - 1.0;
+            }
+            CHECK(rig.tickUntil([&] {
+                return rig.world.get<PetalInstance>(petal).homing;
+            }, 40));
+            CHECK_NEAR(rig.now - spawned, expectedCharge, 1e-7);
+            CHECK(rig.tickUntil([&] {
+                if (!mana) return rig.world.get<ShieldState>(rig.player).amount == cap;
+                const auto& pool = rig.world.get<ManaPool>(rig.player);
+                return pool.current == pool.max;
+            }, 80));
         }
-        const auto shell = rig.petals(0).front();
-        const auto orb = rig.petals(1).front();
-        auto& mana = rig.world.get<ManaPool>(rig.player);
-        mana.current = mana.max - 1.0;
-        rig.world.get<ShieldState>(rig.player).amount = maxHealth - 1.0;
+    }
+}
+
+TEST(hyper_technique_magic_leaf_and_orb_fill_the_wearers_mana_without_draining_it) {
+    const auto& registry = testsupport::shippedContent();
+    for (const auto tier : {Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
+        Rig rig(registry);
+        rig.equip(0, "magic_leaf", tier);
+        rig.equip(1, "mana_orb", tier);
+        rig.settleEquips();
+        const auto ally = rig.world.create();
+        rig.world.add<PlayerTag>(ally);
+        rig.world.add<Transform>(ally, Transform{rig.position(rig.player) + Vec2{20, 0}});
+        rig.world.add<Health>(ally, Health{100.0, 100.0});
+        rig.world.add<Faction>(ally, Faction{Team::Players, false});
+        rig.world.add<PetalRing>(ally);
+        auto& cactus = rig.world.add<Loadout>(ally).slots[0];
+        cactus.configIndex = registry.petalIndex("magic_cactus");
+        rig.world.add<ManaPool>(ally, ManaPool{});
         rig.tick();
-        CHECK_EQ(rig.world.get<PetalInstance>(shell).homing, tier == Rarity::Unique);
-        CHECK_EQ(rig.world.get<PetalInstance>(orb).homing, tier == Rarity::Unique);
-        if (tier == Rarity::Unique) continue;
-        rig.world.get<ShieldState>(rig.player).amount = 0.0;
-        rig.world.get<ManaPool>(rig.player).current = 0.0;
+        CHECK(rig.world.get<ManaPool>(ally).max > 0.0);
+        const double maximum = rig.world.get<ManaPool>(rig.player).max;
+        rig.world.get<ManaPool>(rig.player).current = maximum * 0.25;
+        rig.setFlags(net::InputDefend);
         rig.tick();
-        CHECK(rig.world.get<PetalInstance>(shell).homing);
-        CHECK(rig.world.get<PetalInstance>(orb).homing);
+        const double regen = registry.petalStats(registry.petalIndex("magic_leaf"), tier).passiveManaPerSecond;
+        const double scale = tier == Rarity::Unique ? 1.0 : 1.25;
+        CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current,
+                   maximum * 0.25 + regen * scale * net::kTickSeconds, 1e-7);
+        rig.world.get<ManaPool>(rig.player).current = maximum * 0.95;
+        CHECK(rig.tickUntil([&] { return rig.world.get<ManaPool>(rig.player).current == maximum; }, 100));
+        rig.tick(40);
+        CHECK_NEAR(rig.world.get<ManaPool>(rig.player).current, maximum, 1e-7);
+        CHECK_NEAR(rig.world.get<ManaPool>(ally).current, 0.0, 1e-7);
+    }
+}
+
+TEST(high_tier_blueberries_deal_less_damage_at_the_original_volley_rate) {
+    const auto& registry = testsupport::shippedContent();
+    for (const auto rarity : {Rarity::Super, Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
+        const double damagePerBerry = rarity == Rarity::Super ? 262440.0 :
+            rarity == Rarity::Unique ? 383818.5 : 767637.0;
+        Rig rig(registry);
+        rig.equip(0, "magic_peas", rarity);
+        rig.equip(1, "magic_leaf", rarity);
+        rig.equip(2, "magic_leaf", rarity);
+        rig.settleEquips();
+        rig.settleRing();
+        rig.setFlags(net::InputAttack | net::InputDefend);
+
+        const auto nextVolley = [&] {
+            return rig.tickUntil([&] { return Query<ProjectileTag, Projectile>{rig.world}.count() > 0; }, 30);
+        };
+        const auto readVolley = [&] {
+            Query<ProjectileTag, Projectile> shots{rig.world};
+            const auto volley = shots.collect();
+            CHECK_EQ(volley.size(), std::size_t(4));
+            for (const auto e : volley) {
+                CHECK_NEAR(rig.world.get<Projectile>(e).damage, damagePerBerry, 1e-6);
+                rig.world.destroy(e);
+            }
+        };
+
+        CHECK(nextVolley());
+        const double firstAt = rig.now;
+        readVolley();
+        CHECK(nextVolley());
+        CHECK_NEAR(rig.now - firstAt, 350.0, 1e-9);
+        readVolley();
     }
 }
 
@@ -6990,7 +7096,56 @@ TEST(hyper_catalog_nazar_keeps_its_cooldown_across_a_loadout_swap_and_spares_sma
     CHECK_NEAR(world.get<HyperPetalTimers>(flower).wardReadyAtMillis, 32000.0, 1e-8);
 }
 
-TEST(hyper_catalog_magic_cotton_spends_mana_once_and_only_for_wild_physical_hits) {
+TEST(magic_cotton_spends_only_the_mana_needed_and_passes_overflow_to_health) {
+    std::string error;
+    if (!loadContent(testsupport::dataDir(), error)) { CHECK(false); return; }
+    const auto cotton = content().petalIndex("magic_cotton");
+    CHECK(!content().petalStats(cotton, Rarity::Common).breakable);
+    CHECK(!content().petalStats(cotton, Rarity::Apex).breakable);
+
+    World world;
+    const auto flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<Health>(flower, Health{100.0, 100.0});
+    world.add<ManaPool>(flower, ManaPool{20.0, 20.0});
+    world.add<Faction>(flower, Faction{Team::Players, false});
+    world.add<Loadout>(flower);
+    const auto mob = world.create();
+    world.add<MobTag>(mob);
+    world.add<Faction>(mob, Faction{Team::Hostiles, false});
+    const auto equip = [&](int slot, Rarity rarity) {
+        const auto petal = world.create();
+        auto& instance = world.add<PetalInstance>(petal);
+        instance.configIndex = cotton;
+        instance.owner = flower;
+        instance.rarity = rarity;
+        instance.slot = slot;
+        world.get<Loadout>(flower).spawned.push_back(petal);
+        return petal;
+    };
+    const auto first = equip(0, Rarity::Common);
+    const auto reserve = equip(kLoadoutActiveSlots, Rarity::Apex);
+    CombatSystem combat;
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 4.0, 1000.0).applied, 0.0, 1e-8);
+    CHECK_NEAR(world.get<ManaPool>(flower).current, 12.0, 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 10.0, 2000.0, DamageKind::Poison).applied, 4.0, 1e-8);
+    CHECK_EQ(world.get<ManaPool>(flower).current, 0.0);
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 10.0, 3000.0).applied, 10.0, 1e-8);
+
+    const auto second = equip(1, Rarity::Super);
+    const double perMana = magicCottonDamagePerMana(Rarity::Super);
+    world.get<ManaPool>(flower).current = 10.0;
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 2.0 * perMana, 4000.0).applied, 0.0, 1e-8);
+    CHECK_NEAR(world.get<ManaPool>(flower).current, 8.0, 1e-8);
+    CHECK(!world.has<Dead>(first));
+    CHECK(!world.has<Dead>(second));
+    CHECK(!world.has<Dead>(reserve));
+    world.add<Dead>(second);
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 5.0, 5000.0).applied, 1.0, 1e-8);
+    CHECK_EQ(world.get<ManaPool>(flower).current, 0.0);
+}
+
+TEST(hyper_catalog_magic_cotton_saves_mana_on_guarded_wild_body_hits_only) {
     std::string error;
     CHECK(loadContent(testsupport::dataDir(), error));
     if (!error.empty()) return;
@@ -7015,13 +7170,14 @@ TEST(hyper_catalog_magic_cotton_spends_mana_once_and_only_for_wild_physical_hits
         world.get<Loadout>(flower).spawned.push_back(petal);
     }
     CombatSystem combat;
-    CHECK_NEAR(combat.applyDamage(world, flower, mob, 100.0, 1000.0).applied, 88.0, 1e-8);
-    CHECK_NEAR(world.get<ManaPool>(flower).current, 40.0, 1e-8);
-    CHECK_NEAR(combat.applyDamage(world, flower, mob, 100.0, 2000.0, DamageKind::Lightning).applied, 100.0, 1e-8);
-    CHECK_NEAR(world.get<ManaPool>(flower).current, 40.0, 1e-8);
+    const double perMana = magicCottonDamagePerMana(Rarity::Apex);
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 100.0, 1000.0).applied, 0.0, 1e-8);
+    CHECK_NEAR(world.get<ManaPool>(flower).current, 50.0 - 100.0 / (1.25 * perMana), 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 100.0, 2000.0, DamageKind::Lightning).applied, 0.0, 1e-8);
+    CHECK_NEAR(world.get<ManaPool>(flower).current, 50.0 - 100.0 / (1.25 * perMana) - 100.0 / perMana, 1e-8);
     world.get<PlayerInput>(flower).current.flags = net::InputAttack;
-    CHECK_NEAR(combat.applyDamage(world, flower, mob, 100.0, 3000.0).applied, 100.0, 1e-8);
-    CHECK_NEAR(world.get<ManaPool>(flower).current, 40.0, 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, flower, mob, 100.0, 3000.0).applied, 0.0, 1e-8);
+    CHECK_NEAR(world.get<ManaPool>(flower).current, 50.0 - 100.0 / (1.25 * perMana) - 200.0 / perMana, 1e-8);
 }
 
 
@@ -7171,7 +7327,7 @@ TEST(hyper_followup_jelly_and_sawblade_apply_short_wild_effects) {
     }
     for (const bool copied : {false, true}) {
         Rig rig(registry);
-        rig.setFlags(net::InputDefend);
+        rig.setFlags(net::InputAttack);
         const auto blade = hyperContactPetal(rig, "sawblade", Rarity::Apex);
         if (copied) rig.equip(0, "mimic", Rarity::Apex);
         const auto mob = hyperContactMob(rig, blade);
@@ -7179,9 +7335,9 @@ TEST(hyper_followup_jelly_and_sawblade_apply_short_wild_effects) {
         CombatSystem combat;
         ricochetCombatTick(rig, combat);
         const auto* afflictions = rig.world.tryGet<Afflictions>(mob);
-        CHECK_NEAR(afflictions ? afflictions->shred(rig.now) : 0.0, copied ? 0.0 : 500.0, 1e-7);
+        CHECK_NEAR(afflictions ? afflictions->shred(rig.now) : 0.0, copied ? 0.0 : 1000.0, 1e-7);
         if (copied || !afflictions) continue;
-        CHECK_NEAR(afflictions->armorShredUntilMillis, rig.now + 700.0, 1e-7);
+        CHECK_NEAR(afflictions->armorShredUntilMillis, rig.now + 1000.0, 1e-7);
         combat.applyArmorShred(rig.world, mob, 1000.0, rig.now);
         const double burExpiry = rig.world.get<Afflictions>(mob).armorShredUntilMillis;
         rig.now += 100.0;
@@ -7273,7 +7429,7 @@ TEST(hyper_followup_stinger_focuses_near_aim_only) {
     }
 }
 
-TEST(hyper_final_basic_rally_is_low_health_defense_only) {
+TEST(hyper_final_basic_rally_is_defense_only_even_at_full_health) {
     std::string error;
     CHECK(loadContent(testsupport::dataDir(), error));
     if (!error.empty()) return;
@@ -7284,9 +7440,8 @@ TEST(hyper_final_basic_rally_is_low_health_defense_only) {
             const auto mob = hyperContactMob(rig, basic);
             CombatSystem combat;
             rig.setFlags(net::InputDefend);
-            rig.world.get<Health>(rig.player).current = rig.healthOf(rig.player) * 0.3;
             CHECK_NEAR(combat.applyDamage(rig.world, basic, mob, 100.0, rig.now, DamageKind::Recoil).applied,
-                       tier == Rarity::Apex && !copy ? 92.0 : 100.0, 1e-7);
+                       tier == Rarity::Apex && !copy ? 88.0 : 100.0, 1e-7);
             rig.setFlags(net::InputAttack);
             CHECK_NEAR(combat.applyDamage(rig.world, basic, mob, 100.0, rig.now, DamageKind::Recoil).applied,
                        100.0, 1e-7);
@@ -7435,8 +7590,16 @@ TEST(hyper_final_break_and_defense_effects_use_existing_field_rules) {
             CHECK_EQ(petals.size(), 1u);
             if (petals.empty()) continue;
             const auto mode = std::string_view(id);
-            if (mode == "glitch") rig.setFlags(net::InputDefend);
-            else rig.damage(petals.front(), rig.healthOf(petals.front()) + 1.0);
+            if (mode == "glitch") {
+                rig.freezeRing();
+                rig.setFlags(net::InputDefend);
+                rig.tick();
+                CHECK_EQ(Query<GroundEffect>{rig.world}.count(), 0u);
+                CHECK(rig.world.get<Health>(petals.front()).alive());
+                addMob(rig, rig.position(petals.front()) + Vec2{10.0, 0.0}, "ladybug");
+            } else {
+                rig.damage(petals.front(), rig.healthOf(petals.front()) + 1.0);
+            }
             rig.tick();
             Query<GroundEffect> fields{rig.world};
             CHECK_EQ(fields.count(), tier == Rarity::Apex ? 1u : 0u);
@@ -7503,4 +7666,22 @@ TEST(hyper_final_rice_finishes_wild_mobs_only_while_attacking) {
     CHECK_NEAR(damage(Rarity::Apex, net::InputAttack, 0.24, true), base, 1e-6);
     CHECK_NEAR(damage(Rarity::Unique, net::InputAttack, 0.24),
                damage(Rarity::Unique, net::InputAttack, 0.25), 1e-6);
+}
+
+TEST(hyper_technique_privet_berry_saves_short_poison_and_cleanses_long_poison) {
+    Rig rig(testsupport::shippedContent());
+    rig.equip(0, "privet_berry", Rarity::Apex);
+    rig.settleEquips();
+    const auto berry = rig.petals(0).front();
+    auto& poison = rig.world.get<Afflictions>(rig.player);
+    poison.poisonPerSecond = 10.0;
+    poison.poisonUntilMillis = rig.now + 500.0;
+    rig.setFlags(net::InputDefend);
+    rig.tick();
+    CHECK(rig.world.get<Health>(berry).alive());
+    const double expires = rig.now + 2000.0;
+    rig.world.get<Afflictions>(rig.player).poisonUntilMillis = expires;
+    rig.tick();
+    CHECK(!rig.world.get<Health>(berry).alive());
+    CHECK_NEAR(rig.world.get<Afflictions>(rig.player).poisonUntilMillis, expires - 1250.0, 1e-7);
 }

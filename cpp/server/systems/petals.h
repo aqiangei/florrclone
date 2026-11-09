@@ -507,16 +507,10 @@ private:
     /// by a flat 3 on top of the Healing talent.
     void healFromBehaviour(World& world, Entity player, double amount, Rarity rarity,
                            double nowMillis);
-    /// True once the petal's body overlaps any live wild mob IN ITS REALM,
-    /// which is what arms a behaviour that parks until it hits something.
-    /// This, compassBearing, collectMobsNear and revivePlayerNear sweep the
-    /// world linearly rather than through the broadphase (touchesGridMob alone
-    /// asks a grid), so the realm test is theirs to make: two maps'
-    /// coordinates overlap numerically.
-    bool touchesMob(World& world, Realm realm, Vec2 at, double radius);
-    /// touchesMob asked of the attraction grid instead of the whole world, for
-    /// a petal that asks every tick rather than until its first contact.
-    bool touchesGridMob(World& world, Realm realm, Vec2 at, double radius);
+    /// Checks overlap against wild mobs and hostile NPCs in the attraction grid.
+    /// Parked contact petals also trigger on a hostile NPC's remaining body.
+    bool touchesGridMob(World& world, Realm realm, Vec2 at, double radius,
+                        bool includeDeadNpcs = false);
     /// Where a compass at `at` points: the nearest magnet its flower wears,
     /// or else the highest-tier wild mob in its realm (the nearest of those),
     /// with florr's needle wobble on top. `fallback`, its place on the ring,
@@ -630,6 +624,8 @@ private:
 
     World* bound_ = nullptr;
     std::unique_ptr<Query<PlayerTag, Transform, Loadout, PetalRing>> players_;
+    std::unique_ptr<Query<PetalInstance>> attachedPetals_;
+    std::unique_ptr<Query<ProjectileTag, Projectile>> projectiles_;
     /// NPCs that wear a ring (the titan, from its `npc.petals`). The ring pass
     /// runs them exactly as it runs a flower: nothing in it needs the owner to
     /// be a player, only to have a body, a loadout and a ring -- the player's

@@ -8,7 +8,6 @@ namespace flix {
 struct HyperPetalTimers {
     double wardReadyAtMillis = 0.0;
     double monsteraReadyAtMillis = 0.0;
-    double leafReadyAtMillis = 0.0;
     double bloodNeedleReadyAtMillis = 0.0;
     double coinPickupUntilMillis = 0.0;
     double leafRegrowthReadyAtMillis = 0.0;

@@ -501,7 +501,7 @@ void App::drawLoading(Canvas& canvas, double time) {
     // it -- over the live backdrop. Drawn every frame the join is out, so the
     // page keeps moving while the server answers; the scene wipe then holds a
     // still of it while the world builds underneath.
-    drawTitleStatus(canvas, "Loading...");
+    drawTitleStatus(canvas, trEnZh("Loading...", "正在进入地图"));
     (void)time;
 }
 

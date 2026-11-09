@@ -280,6 +280,16 @@ inline double petalManaScale(Rarity r) {
     return std::pow(2.0, ladderIndex(r));
 }
 
+/// Magic Cotton improves by 50% per tier through Eternal. Higher tiers keep
+/// the Eternal conversion rate, with Hyper's defence technique handled in combat.
+inline constexpr double magicCottonDamagePerMana(Rarity rarity) {
+    constexpr std::array<double, kLadderRarityCount> rates{
+        0.5, 0.75, 1.125, 1.6875, 2.53125, 3.796875, 5.6953125, 8.54296875,
+        12.814453125, 12.814453125
+    };
+    return rates[ladderIndex(rarity)];
+}
+
 /// Camera zoom: the authored figure's distance from 1 multiplies by 4/3 per
 /// tier.
 ///

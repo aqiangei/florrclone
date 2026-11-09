@@ -220,7 +220,14 @@ EM_JS(void, flix_wake_on_arrival, (int on), {
         pending = true;
         setImmediate(() => {
             pending = false;
+            const probe = Module.flixTickHostProbe;
+            if (!probe) { _flix_server_wake(); return; }
+            const start = performance.now();
             _flix_server_wake();
+            const work = performance.now() - start;
+            ++probe.wakeCount;
+            probe.wakeWork += work;
+            probe.wakeMax = Math.max(probe.wakeMax, work);
         });
     };
 });
@@ -231,10 +238,28 @@ EM_JS(void, flix_start_loop, (int probe), {
         setTimeout(run, Math.max(1, Math.ceil(delay)));
     };
     if (!probe) { setTimeout(run, 1); return; }
+    const host = {wakeCount: 0, wakeWork: 0, wakeMax: 0};
+    Module.flixTickHostProbe = host;
     const schedule = delay => {
         const wait = Math.max(1, Math.ceil(delay));
         const due = performance.now() + wait;
-        setTimeout(() => schedule(_flix_server_step(Math.max(0, performance.now() - due))), wait);
+        setTimeout(() => {
+            const start = performance.now();
+            const lag = Math.max(0, start - due);
+            const report = lag >= 50 || host.wakeMax >= 50 ? {
+                wallStartMs: performance.timeOrigin + start,
+                timerLagMs: lag,
+                wakeCount: host.wakeCount,
+                wakeWorkMs: host.wakeWork,
+                wakeMaxMs: host.wakeMax
+            } : null;
+            host.wakeCount = 0;
+            host.wakeWork = 0;
+            host.wakeMax = 0;
+            const next = _flix_server_step(lag);
+            schedule(next);
+            if (report) console.log('[tick-probe-host] ' + JSON.stringify(report));
+        }, wait);
     };
     schedule(1);
 });

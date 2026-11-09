@@ -19,6 +19,7 @@
 
 #include "client/app_internal.h"
 #include "client/ui/draw.h"
+#include "client/ui/menu_style.h"
 #include "client/ui/text_input.h"
 
 namespace flix {
@@ -71,6 +72,7 @@ ReplacedLayout replacedLayout(int viewW, int viewH) {
 /// Keeping the rectangles together prevents the interaction pass and the draw
 /// pass from drifting apart when this form changes again.
 struct AuthLayout {
+    Rect card;
     Rect username;
     Rect password;
     Rect confirmation;      ///< registering only
@@ -91,7 +93,8 @@ struct AuthLayout {
 
 AuthLayout authLayout(int viewW, int viewH, bool registering, bool advancedOpen) {
     const double formHeight = registering ? kRegisterFormHeight : kLoginFormHeight;
-    const Rect form = centred(kLoginFormWidth, formHeight, viewW, viewH);
+    const double formWidth = clamp(static_cast<double>(viewW) - 28.0, 160.0, kLoginFormWidth);
+    const Rect form = centred(formWidth, formHeight, viewW, viewH);
     const double x = form.x + 20;
     const double w = form.w - 40;
 
@@ -143,6 +146,7 @@ AuthLayout authLayout(int viewW, int viewH, bool registering, bool advancedOpen)
         layout.hintY = y + 6;
         layout.bottomY = y + 12;
     }
+    layout.card = {form.x, layout.headingY - 29.0, form.w, layout.bottomY - layout.headingY + 48.0};
     return layout;
 }
 
@@ -297,7 +301,7 @@ void App::updateLogin(double dt) {
         const Rect box = focusedField_ == 0 ? layout.username : layout.serverIp;
         std::string& value = focusedField_ == 0 ? usernameField_ : serverField_;
         ui::trackTextMouse(window_, authField_, box,
-                           ui::inputFieldRun(box, value, authField_, ui::InputLook::Auth), value,
+                           ui::inputFieldRun(box, value, authField_), value,
                            timeSeconds_);
     }
 
@@ -432,7 +436,7 @@ void App::drawConnectionState(Canvas& canvas, double time) {
         return;
     }
 
-    drawTitleStatus(canvas, "Connecting...");
+    drawTitleStatus(canvas, trEnZh("Connecting...", "正在连接服务器"));
     (void)time;
 }
 
@@ -507,7 +511,7 @@ void App::drawLogin(Canvas& canvas, double time) {
     // The sign-in this client sent on its own is still out: the connecting
     // screen's line rather than a form that is about to vanish.
     if (authInFlight()) {
-        drawTitleStatus(canvas, "Connecting...");
+        drawTitleStatus(canvas, trEnZh("Connecting...", "正在连接服务器"));
         return;
     }
     const AuthLayout layout = authLayout(canvas.width(), canvas.height(), registering_,
@@ -522,12 +526,10 @@ void App::drawLogin(Canvas& canvas, double time) {
     const std::string pressed = pointerInWindow(window_) ? pressedControl_ : std::string{};
 
     TextStyle title;
-    title.size = 48;
+    title.size = 42.0;
     title.align = Align::Centre;
-    // Four hundred above centre, unclamped: on a short window the reference
-    // lets it run off the top, and pinning it to the edge instead would put a
-    // second heading beside the form's own.
-    text(canvas, "flowrix beta", centreX, canvas.height() * 0.5 - 400.0, title);
+    text(canvas, "flowrix beta", centreX, layout.card.y - 34.0, title);
+    panelCard(canvas, layout.card, kInventorySkin, kMenuBorder, 10.0);
 
     TextStyle heading;
     heading.size = 28;
@@ -536,39 +538,37 @@ void App::drawLogin(Canvas& canvas, double time) {
          layout.headingY, heading);
 
     const int serverField = registering_ ? 3 : 2;
-    // The four fields share one caret, so only the focused one is handed it:
-    // the bar and the highlight are drawn where editing puts them. The form
-    // keeps the browser build's green plates rather than the standard input.
+    // The four fields share one caret. Draw it only in the focused field.
     const auto field = [&](Rect box, const std::string& value, const char* placeholder,
                            int index, bool masked) {
         inputField(canvas, box, value, placeholder, focusedField_ == index, time,
-                   focusedField_ == index ? &authField_ : nullptr, masked, InputLook::Auth);
+                   focusedField_ == index ? &authField_ : nullptr, masked);
     };
-    field(layout.username, usernameField_, ui::trEnZh("Username", "用户名（点击输入）"), 0, false);
-    field(layout.password, passwordField_, ui::trEnZh("Password", "密码（点击输入）"), 1, true);
+    field(layout.username, usernameField_, ui::trEnZh("Username", "用户名"), 0, false);
+    field(layout.password, passwordField_, ui::trEnZh("Password", "密码"), 1, true);
     if (registering_) {
         field(layout.confirmation, confirmPasswordField_, ui::trEnZh("Confirm Password", "再次输入密码"), 2, true);
     }
-    if (advancedOpen_) field(layout.serverIp, serverField_, "Server IP", serverField, false);
+    if (advancedOpen_) field(layout.serverIp, serverField_, trEnZh("Server address", "服务器地址"), serverField, false);
 
     ButtonStyle advancedStyle;
-    advancedStyle.fill = 0x7B2FA0u;
+    advancedStyle.fill = 0x537BA5u;
     advancedStyle.outlineWidth = 4.0;
-    advancedStyle.radius = 5.0;
+    advancedStyle.radius = 3.0;
     advancedStyle.textSize = 14.0;
     button(canvas, layout.advanced,
-           advancedOpen_ ? ui::trEnZh("Advanced Settings [^]", "高级设置 [^]")
-                         : ui::trEnZh("Advanced Settings [v]", "高级设置 [v]"),
+           advancedOpen_ ? ui::trEnZh("Hide advanced settings", "收起高级设置")
+                         : ui::trEnZh("Advanced settings", "高级设置"),
            hovered == "toggleAdvanced", pressed == "toggleAdvanced", advancedStyle);
 
     // No disabled state: the reference's buttons are full-colour with both
     // fields empty, and the refusal comes from the server, not from the paint.
     ButtonStyle actionStyle;
-    actionStyle.fill = 0x8A2BE2u;
-    actionStyle.radius = 5.0;
+    actionStyle.fill = kAccent;
+    actionStyle.radius = 3.0;
     actionStyle.textSize = 18.0;
     ButtonStyle quietStyle = actionStyle;
-    quietStyle.fill = 0x6A1B9Au;
+    quietStyle.fill = 0x456F9Au;
 
     if (registering_) {
         button(canvas, layout.action, tr(Msg::Register), hovered == "register",
@@ -581,13 +581,13 @@ void App::drawLogin(Canvas& canvas, double time) {
         link.size = 14.0;
         link.align = Align::Centre;
         link.strokeWidth = 0;
-        link.fill = hovered == "showLogin" ? kPaper : 0xE0B0FFu;
+        link.fill = hovered == "showLogin" ? kPaper : 0x183956u;
         text(canvas, tr(Msg::AlreadyHaveAccount), centreX, layout.hintY, link);
     } else {
         button(canvas, layout.action, tr(Msg::Login), hovered == "login",
                pressed == "login", actionStyle);
         button(canvas, layout.secondary, tr(Msg::Register), hovered == "showRegister",
-               pressed == "showRegister", actionStyle);
+               pressed == "showRegister", quietStyle);
         button(canvas, layout.guest, tr(Msg::Guest), hovered == "guest",
                pressed == "guest", quietStyle);
 
@@ -595,7 +595,7 @@ void App::drawLogin(Canvas& canvas, double time) {
         hint.size = 11.0;
         hint.align = Align::Centre;
         hint.strokeWidth = 0;
-        hint.fill = 0xFF9800u;
+        hint.fill = 0x183956u;
         text(canvas, tr(Msg::PickUsernameLater), centreX, layout.hintY, hint);
     }
 

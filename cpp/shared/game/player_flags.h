@@ -56,4 +56,8 @@ enum PlayerRenderFlag : std::uint32_t {
     PlayerRenderSwallowed = 1 << 4,
 };
 
+inline constexpr bool isSelectablePlayerSkin(std::uint32_t flags) {
+    return flags == PlayerRenderNone || flags == PlayerRenderPumpkin || flags == PlayerRenderRobot;
+}
+
 } // namespace flix

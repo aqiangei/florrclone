@@ -335,6 +335,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                                            bool showHyperTechnique) {
     const PetalConfig& config = content().petal(petalIndex);
     const PetalStats stats = content().petalStats(petalIndex, rarity);
+    const auto* technique = showHyperTechnique ? hyperTechniqueInfo(config.id, rarity) : nullptr;
+    const double chargeScale = hyperAmount(technique, HyperTechnique::QuickCharge);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
     const double damageScale = skills.effectScale(SkillId::Damage);
     const double baseDamage = config.lightningDamage && stats.lightningDamagePerHit > 0
@@ -358,7 +360,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const double charge = stats.mana > 0.0                         ? stats.manaChargeMillis
                               : (stats.heal > 0.0 || stats.shield > 0.0) ? stats.healChargeMillis
                                                                          : 0.0;
-        if (charge > 0.0) reload += " + " + reloadSeconds(charge);
+        if (charge > 0.0) reload += " + " + reloadSeconds(charge * chargeScale);
         title.badges.push_back({reload, kPaper, TooltipIcon::Reload});
     }
     lines.push_back(title);
@@ -388,7 +390,6 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(body);
     }
 
-    const auto* technique = showHyperTechnique ? hyperTechniqueInfo(config.id, rarity) : nullptr;
     if (technique) {
         const bool zh = language() == Language::Zh;
         TooltipLine special{std::string(zh ? "超凡机制 · " : "Hyper technique · ") +
@@ -513,6 +514,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("旋转速度变化：", "Rotation speed: ", (stats.modifiers.rotationSpeed - 1.0) * 100.0, "%");
     if (stats.modifiers.attackRange > 0) special("攻击范围：+", "Attack range: +", stats.modifiers.attackRange);
     if (stats.modifiers.magnetism > 0) special("拾取范围：+", "Pickup range: +", stats.modifiers.magnetism);
+    if (config.id == "pharaoh_s_crown") {
+        const auto summonRarity = pharaohCrownSummonRarity(rarity);
+        lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") +
+                         rarityTr(summonRarity), 12.0, rarityColor(summonRarity)});
+    }
     if (config.petMobIndex != kInvalidIndex) {
         const auto& summon=content().mob(config.petMobIndex);
         const bool apex=ladderRarity(rarity)==Rarity::Apex;
@@ -844,6 +850,17 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         pool.altText = std::string(chinese ? "魔法值上限：+" : "Max Mana: +") + exactNumber(stats.maxMana);
         lines.push_back(pool);
     }
+    if (config.id == "magic_cotton") {
+        TooltipLine absorption{
+            std::string(chinese ? "每点法力吸收伤害：" : "Damage absorbed per mana: ") +
+                oneDecimal(magicCottonDamagePerMana(rarity)), 12.0
+        };
+        absorption.alpha = 0.56;
+        absorption.labelColor = kStatMana;
+        absorption.altText = std::string(chinese ? "每点法力吸收伤害：" : "Damage absorbed per mana: ") +
+            exactNumber(magicCottonDamagePerMana(rarity));
+        lines.push_back(absorption);
+    }
     const double manaTalent = skills.effectScale(SkillId::ManaRegen);
     if (stats.mana > 0.0) {
         TooltipLine burst{std::string(chinese ? "单次恢复魔法值：" : "Mana per Burst: ") + abbreviate(stats.mana * manaTalent), 12.0};
@@ -851,7 +868,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         burst.labelColor = kStatMana;
         burst.altText = std::string(chinese ? "单次恢复魔法值：" : "Mana per Burst: ") + exactNumber(stats.mana * manaTalent);
         lines.push_back(burst);
-        const double cycle = stats.reloadMillis + stats.manaChargeMillis;
+        const double cycle = stats.reloadMillis + stats.manaChargeMillis * chargeScale;
         if (cycle > 0.0) {
             TooltipLine average{std::string(chinese ? "完整周期平均回蓝/秒：" : "Full-cycle Mana/s: ") +
                                 exactNumber(stats.mana * manaTalent * 1000.0 / cycle), 12.0};

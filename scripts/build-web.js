@@ -300,7 +300,13 @@ for (const name of selected) {
             const font = fs.readFileSync(path.join(BUILD_DIR, 'data', 'Ubuntu-Bold.ttf')).toString('base64');
             const html = fs.readFileSync(src, 'utf8');
             if (!html.includes('FLIX_BUNDLED_UBUNTU')) fail('Missing bundled-font marker');
-            fs.writeFileSync(dest, html.replace('FLIX_BUNDLED_UBUNTU', `data:font/ttf;base64,${font}`));
+            if (!html.includes('FLIX_LOADING_GROUND')) fail('Missing loading-ground marker');
+            // Reuse the Garden tile before WASM is ready, without a separate request.
+            const ground = fs.readFileSync(path.join(ROOT, 'maps', 'ground', 'land.svg'), 'utf8')
+                .replace(/<svg\b(?![^>]*\bxmlns=)/, '<svg xmlns="http://www.w3.org/2000/svg"');
+            fs.writeFileSync(dest, html
+                .replace('FLIX_BUNDLED_UBUNTU', `data:font/ttf;base64,${font}`)
+                .replace('FLIX_LOADING_GROUND', `data:image/svg+xml;base64,${Buffer.from(ground).toString('base64')}`));
         } else fs.copyFileSync(src, dest);
         copied.push([to, fs.statSync(dest).size]);
     }

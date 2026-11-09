@@ -187,7 +187,8 @@ TEST(todo1105_hyper_clover_recovers_faster_and_grants_more_luck) {
     CHECK(index != kInvalidIndex);
     const auto eternal = content.petalStats(index, Rarity::Unique);
     const auto hyper = content.petalStats(index, Rarity::Apex);
-    CHECK_NEAR(hyper.damage, eternal.damage * 1.5, 1e-7);
+    // Direct damage follows the current Hyper damage rule, separately from luck.
+    CHECK_NEAR(hyper.damage, eternal.damage * 2.0, 1e-7);
     CHECK(hyper.reloadMillis < eternal.reloadMillis);
     CHECK(hyper.modifiers.luck > eternal.modifiers.luck);
 }

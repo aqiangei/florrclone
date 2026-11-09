@@ -596,18 +596,18 @@ TEST(todo1106_projectiles_use_summon_projectile_talent) {
     for(const auto* id:{"peas","magic_peas","grapes"}) {
         const auto& spec = c.petal(c.petalIndex(id)).projectile;
         CHECK_NEAR(spec.speed, 640, 1e-6);
-        CHECK_NEAR(spec.distance / spec.speed, 700.0 / 640.0, 1e-6);
+        CHECK_NEAR(spec.distance / spec.speed, 1000.0 / 640.0, 1e-6);
+        const bool blueberries = std::string_view(id) == "magic_peas";
         const int reload = std::string_view(id) == "peas" ? 3500 :
             std::string_view(id) == "grapes" ? 2250 : 250;
         for (const auto rarity : {Rarity::Common, Rarity::Ultra, Rarity::Apex})
             CHECK_NEAR(c.petalStats(c.petalIndex(id), rarity).reloadMillis, reload, 1e-6);
-        const bool blueberries = std::string_view(id) == "magic_peas";
         const auto shotTier = blueberries ? Rarity::Apex : Rarity::Common;
         if (blueberries) {
             const auto index = c.petalIndex(id);
             CHECK_NEAR(c.petalStats(index, Rarity::Super).lightningDamagePerHit,
                        120.0 * petalStrengthScale(Rarity::Super), 1e-6);
-            CHECK_NEAR(c.petalStats(index, Rarity::Unique).lightningDamagePerHit, 590490.0, 1e-6);
+            CHECK_NEAR(c.petalStats(index, Rarity::Unique).lightningDamagePerHit, 383818.5, 1e-6);
         }
         double damage[3]={};
         for(int variant=0;variant<3;++variant){
@@ -622,7 +622,7 @@ TEST(todo1106_projectiles_use_summon_projectile_talent) {
             }
             std::printf("PROJECTILE %s variant %d damage %.3f\n",id,variant,damage[variant]);CHECK(damage[variant]>0);
         }
-        if (blueberries) CHECK_NEAR(damage[0], 1180980.0, 1e-6);
+        if (blueberries) CHECK_NEAR(damage[0], 767637.0, 1e-6);
         CHECK_NEAR(damage[1],2.5*damage[0],1e-6);
         CHECK_NEAR(damage[2],damage[0],1e-6);
     }

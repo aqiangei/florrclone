@@ -175,6 +175,11 @@ constexpr Entry kTable[] = {
     {"Cancel", "取消"},
     {"Delete", "删除"},
     {"Add shape", "添加形状"},
+    {"Built-in", "内置皮肤"},
+    {"Available to everyone. Choose an appearance to equip it.", "所有玩家均可直接装备。"},
+    {"Default", "默认"},
+    {"Pumpkin", "南瓜"},
+    {"Robot", "机器人"},
 
     {"Local", "本地"},
     {"Global", "全服"},

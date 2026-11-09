@@ -26,9 +26,10 @@ TEST(wiki_stat_blueberries_have_real_lightning_damage_and_nonzero_tooltip){
     CHECK(loadWikiStats());ui::setLanguage(ui::Language::Zh);
     const auto id=content().petalIndex("magic_peas");
     CHECK_NEAR(content().petalStats(id,Rarity::Common).lightningDamagePerHit,120,1e-8);
-    CHECK_NEAR(content().petalStats(id,Rarity::Unique).lightningDamagePerHit,590490,1e-8);
+    CHECK_NEAR(content().petalStats(id,Rarity::Unique).lightningDamagePerHit,383818.5,1e-8);
     CHECK_EQ(content().petalStats(id,Rarity::Unique).lightningBounces,0);
-    CHECK(hasLine(id,Rarity::Unique,"590490"));CHECK(hasLine(id,Rarity::Unique,"不会连锁"));
+    CHECK(hasLine(id, Rarity::Unique, "383818") || hasLine(id, Rarity::Unique, "383819"));
+    CHECK(hasLine(id, Rarity::Unique, "不会连锁"));
 }
 TEST(wiki_stat_mecha_missile_has_a_straight_projectile_without_antennae){
     CHECK(loadWikiStats());const auto& config=content().petal(content().petalIndex("mecha_missile"));
@@ -146,4 +147,19 @@ TEST(wiki_stat_eternal_forge_localization_keeps_theme_and_counts) {
     CHECK(text.find("#eeeeee")!=std::string::npos);CHECK(text.find("永恒")!=std::string::npos);
     CHECK(text.find("锻造")!=std::string::npos);CHECK(text.find("锻造 ×1")!=std::string::npos);
     CHECK(text.find("消耗 ×10")!=std::string::npos);ui::setLanguage(oldLanguage);
+}
+
+TEST(hyper_mana_orb_tooltip_displays_the_actual_charge_time) {
+    CHECK(loadWikiStats());
+    const auto orb = content().petalIndex("mana_orb");
+    for (const auto rarity : {Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
+        const auto lines = ui::petalTooltipLines(orb, rarity, {}, 1.0);
+        CHECK(!lines.empty());
+        if (lines.empty()) continue;
+        const char* duration = rarity == Rarity::Unique ? " + 1.5s" : " + 1.0s";
+        const auto& badges = lines.front().badges;
+        CHECK(std::any_of(badges.begin(), badges.end(), [&](const ui::TooltipBadge& badge) {
+            return badge.icon == ui::TooltipIcon::Reload && badge.text.find(duration) != std::string::npos;
+        }));
+    }
 }

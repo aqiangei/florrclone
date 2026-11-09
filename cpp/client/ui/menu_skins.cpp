@@ -1,10 +1,5 @@
-// The Skin Studio: a two-tab authoring surface for data-driven player skins.
-//
-// Not a picker. The player assembles a skin out of drawing primitives, names
-// it and publishes it; the Browse tab lists what everyone else published. The
-// built-in renderFlags cosmetics are deliberately unreachable from here -- the
-// server's set_skin command is the only way to those, exactly as in the
-// reference client, which has no in-client picker for them at all.
+// The Skin Studio edits custom skins, browses the public catalog, and equips
+// the built-in player appearances.
 //
 // This is an OVERLAY PANEL and is built from the same pieces as the other
 // eleven: panelCard for the frame, panelHeading and panelClose for the
@@ -303,7 +298,7 @@ std::string serializeShape(const Shape& s) {
 enum class Act : std::uint8_t {
     None, Close, Tab, AddShape, SelectShape, MoveShape, DelShape, Step, Fill, Stroke,
     AddVertex, DelVertex, TextMode, Publish, PublishSaved, Reset, Equip, Unequip, Delete,
-    ConfirmDelete, CancelDelete,
+    ConfirmDelete, CancelDelete, EquipBuiltIn,
 };
 
 enum class Field : std::uint8_t { X, Y, R, Rx, Ry, Rot, Sw };
@@ -378,7 +373,7 @@ Rect browseBody(const Layout& l) {
 
 /// Everything the studio keeps between frames.
 struct Studio {
-    enum class Tab : std::uint8_t { Create, Browse };
+    enum class Tab : std::uint8_t { Create, Browse, BuiltIn };
 
     Tab tab = Tab::Create;
     std::vector<Shape> shapes = starterSkinShapes();
@@ -490,6 +485,7 @@ struct Studio {
     void drawCommandHelp(Canvas&, Rect);
     void drawFooter(Canvas&, double timeSeconds);
     void drawBrowse(Canvas&, const std::string& me);
+    void drawBuiltIn(MenuContext&);
     void drawConfirm(Canvas&, Vec2 mouse);
     /// A button that registers its own hit region, so the input pass that runs
     /// before the next paint knows what was under the cursor.
@@ -667,17 +663,14 @@ double Studio::drawPalette(Canvas& canvas, Rect r, const char* caption,
 
 void Studio::drawTabs(Canvas& canvas, Vec2 mouse) {
     const Rect row = layout.tabs;
-    const char* kLabels[2] = {
-        tr(Msg::CreateTab),
-        tr(Msg::BrowseTab),
-    };
-    for (int i = 0; i < 2; ++i) {
+    const char* labels[] = {tr(Msg::CreateTab), tr(Msg::BrowseTab), tr(Msg::SkinBuiltInTab)};
+    for (int i = 0; i < 3; ++i) {
         const Rect r{row.x + i * (kTabWidth + kTabGap), row.y, kTabWidth, row.h};
         const bool active = static_cast<int>(tab) == i;
         Action pick;
         pick.k = Act::Tab;
         pick.i = i;
-        ui::button(canvas, r, kLabels[i], !active && r.contains(mouse), false,
+        ui::button(canvas, r, labels[i], !active && r.contains(mouse), false,
                    buttonStyle(active ? kAccentPurple : kNeutralFill, kBodySize));
         addRegion(r, pick);
     }
@@ -690,7 +683,7 @@ void Studio::drawTabs(Canvas& canvas, Vec2 mouse) {
         const Rect r{row.right() - 110.0, row.y, 110.0, row.h};
         actionButton(canvas, r, textMode ? tr(Msg::SkinVisualEditor) : tr(Msg::SkinTextEditor), mode,
                      textMode ? kAccentPurple : kNeutralFill);
-    } else {
+    } else if (tab == Tab::Browse) {
         Action unequip;
         unequip.k = Act::Unequip;
         const Rect r{row.right() - 110.0, row.y, 110.0, row.h};
@@ -1103,6 +1096,52 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
     drawListScrollbar(canvas, view, browseScroll, kAccentPurple);
 }
 
+void Studio::drawBuiltIn(MenuContext& ctx) {
+    struct Choice {
+        PlayerRenderFlag flags;
+        Msg name;
+    };
+    constexpr Choice choices[] = {
+        {PlayerRenderNone, Msg::SkinDefault},
+        {PlayerRenderPumpkin, Msg::SkinPumpkin},
+        {PlayerRenderRobot, Msg::SkinRobot},
+    };
+    Canvas& canvas = ctx.canvas;
+    const Rect view = browseBody(layout);
+    ui::text(canvas, tr(Msg::SkinBuiltInHint), view.x, layout.tabs.bottom() + 16.0, label(kBodySize));
+
+    constexpr double gap = 10.0;
+    constexpr double cardH = 190.0;
+    constexpr double boardSize = 92.0;
+    const double cardW = (view.w - 2 * gap) / 3;
+    for (int i = 0; i < 3; ++i) {
+        const Choice& choice = choices[i];
+        const Rect card{view.x + i * (cardW + gap), view.y, cardW, cardH};
+        const double center = card.x + card.w * 0.5;
+        const bool equipped = equippedId().empty() && ctx.net.profile().renderFlags == choice.flags;
+        inlaid(canvas, card, kWell, equipped ? kAccentPurple : kSkinsSkin.border, 2.0, 6.0);
+
+        const Rect board{center - boardSize * 0.5, card.y + 12.0, boardSize, boardSize};
+        inlaid(canvas, board, kBoard, kWell, 2.0, 4.0);
+        RemoteEntity flower;
+        flower.kind = net::EntityKind::Player;
+        flower.renderFlags = choice.flags;
+        canvas.save();
+        canvas.translate(static_cast<float>(center), static_cast<float>(board.y + board.h * 0.5));
+        canvas.scale(1.25f, 1.25f);
+        ctx.renderer.drawFlowerBody(canvas, flower, 0.0);
+        canvas.restore();
+
+        ui::text(canvas, tr(choice.name), center, board.bottom() + 20.0, label(kSectionSize, Align::Centre));
+        Action equip;
+        equip.k = Act::EquipBuiltIn;
+        equip.i = static_cast<int>(choice.flags);
+        actionButton(canvas, {card.x + 10.0, card.bottom() - 43.0, card.w - 20.0, 30.0},
+                     tr(equipped ? Msg::SkinEquipped : Msg::SkinEquip), equip,
+                     equipped ? kAccent : kAccentPurple);
+    }
+}
+
 void Studio::drawConfirm(Canvas& canvas, Vec2 mouse) {
     // A confirm is modal: nothing behind it can be clicked, so the regions
     // drawn so far are dropped rather than merely painted over.
@@ -1190,8 +1229,10 @@ void Studio::draw(MenuContext& ctx) {
             drawProps(canvas, layout.right);
         }
         drawFooter(canvas, ctx.timeSeconds);
-    } else {
+    } else if (tab == Tab::Browse) {
         drawBrowse(canvas, lowerCase(ctx.net.profile().username));
+    } else {
+        drawBuiltIn(ctx);
     }
 
     if (confirming) drawConfirm(canvas, mouse);
@@ -1413,7 +1454,7 @@ bool Studio::dispatch(MenuContext& ctx, const Action& a) {
         case Act::Close:
             return false;
         case Act::Tab:
-            tab = a.i == 0 ? Tab::Create : Tab::Browse;
+            tab = static_cast<Tab>(a.i);
             break;
         case Act::AddShape:
             // Silently capped: the button stays fully lit, exactly as it does
@@ -1506,6 +1547,9 @@ bool Studio::dispatch(MenuContext& ctx, const Action& a) {
         case Act::Equip:
             ctx.net.equipSkin(a.id);
             break;
+        case Act::EquipBuiltIn:
+            ctx.net.requestSkin(static_cast<std::uint32_t>(a.i));
+            break;
         case Act::Unequip:
             ctx.net.equipSkin("");
             break;
@@ -1577,7 +1621,7 @@ bool Studio::handleInput(MenuContext& ctx) {
     // Only inside the panel, and raw: one notch is the browser's 100px of
     // deltaY, which is what the other list panels consume too.
     const float wheel = ctx.wheel();
-    if (wheel != 0 && insideInclusive(panel, mouse)) {
+    if (wheel != 0 && tab != Tab::BuiltIn && insideInclusive(panel, mouse)) {
         Scroller& scroller = tab == Tab::Browse ? browseScroll : shapeScroll;
         scroller.offset =
             clamp(scroller.offset - static_cast<double>(wheel) * kWheelStep, 0.0,

@@ -441,6 +441,8 @@ constexpr Pair kPetalDescs[] = {
     {"lotus", "吸收花朵收到的{#Attribute/PoisonNoColon}伤害。"},
     {"magic_bubble", "无魔法者才会遵守物理定律。"},
     {"magic_cactus", "提高你的最大魔力容量。"},
+    {"magic_cotton", "消耗当前法力吸收花朵受到的伤害。魔法棉花不会被摧毁。"},
+    {"pharaoh_s_crown", "每秒召唤一只亡灵木乃伊甲虫，存活 6 秒。重复佩戴不叠加。"},
     {"magic_firefly_egg", "孵化一个魔法萤火虫宠物"},
     {"magic_leaf", "从环境中收集能量为你的花朵提供魔力。"},
     {"magic_missile", "你可以将其发射出去……但要用魔法。"},

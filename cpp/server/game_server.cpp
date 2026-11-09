@@ -5356,26 +5356,17 @@ void GameServer::handleSetSkin(Session& session, net::Connection& connection, By
     const std::uint32_t requested = reader.u32();
     if (!reader.ok() || !session.authenticated()) return;
 
-    // Exactly one cosmetic bit, or none. Glitch is deliberately absent: it is
-    // a transient effect PlayerVisuals ORs in, not something to wear.
-    constexpr std::uint32_t kWearable[] = {PlayerRenderPumpkin, PlayerRenderRobot};
-    std::uint32_t flags = PlayerRenderNone;
-    for (const std::uint32_t bit : kWearable) {
-        if (requested == bit) { flags = bit; break; }
-    }
-    if (requested != PlayerRenderNone && flags == PlayerRenderNone) return;
+    if (!isSelectablePlayerSkin(requested)) return;
 
     PlayerRecord& record = database_.progress(session.userId);
-    record.renderFlags = flags;
-    // The mirror of handleEquipSkin's rule. A custom skin WINS over a built-in
-    // when the client draws the body, so leaving one on here would make
-    // picking a built-in look like it did nothing at all.
-    if (flags != PlayerRenderNone) record.equippedSkinId.clear();
+    record.renderFlags = requested;
+    // Any choice on the built-in tab, including Default, replaces a custom skin.
+    record.equippedSkinId.clear();
     database_.markDirty();
     if (session.playing() && world_.isAlive(session.entity)) {
         PlayerVisuals& visuals = world_.ensure<PlayerVisuals>(session.entity);
-        visuals.renderFlags = flags;
-        visuals.equippedSkinId = record.equippedSkinId;
+        visuals.renderFlags = requested;
+        visuals.equippedSkinId.clear();
     }
     sendProfile(session, connection);
 }

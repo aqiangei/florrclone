@@ -866,13 +866,13 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // every flower in the game, and then nothing splits.
         const auto baseEligible=eligible_;
         std::vector<std::uint16_t> hyperEternalPool;
-        std::vector<double> hyperSuperWeights;
+        std::vector<HyperEternalDropWeight> hyperWeights;
         if(hyperKill)for(const auto& entry:table)
             if(entry.petalIndex!=kInvalidIndex&&petalComesAt(content.petal(entry.petalIndex),Rarity::Unique)&&
                std::find(hyperEternalPool.begin(),hyperEternalPool.end(),entry.petalIndex)==hyperEternalPool.end())
             {
                 hyperEternalPool.push_back(entry.petalIndex);
-                hyperSuperWeights.push_back(hyperSuperChance(entry.rates));
+                hyperWeights.push_back(hyperEternalDropWeight(entry.rates, content.petal(entry.petalIndex).minRarity));
             }
         struct ClaimantRolls {
             int trials;
@@ -903,7 +903,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             trials = std::max(trials, rolls);
         }
         const int baseTrials=baseLootTrialsForRarity(mobRarity);
-        const auto eternalChances=hyperEternalChances(hyperSuperWeights,kHyperEternalDropBudget/baseTrials);
+        const auto eternalChances=hyperEternalChances(hyperWeights,kHyperEternalDropBudget/baseTrials);
         const bool grouped=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rollGroup!=0;});
         const bool legacy=std::any_of(table.begin(),table.end(),[](const auto& e){return e.rates.empty();});
         for (int trial=0;trial<trials;++trial) {

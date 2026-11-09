@@ -31,9 +31,9 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
 int total(const Counts& counts,const std::string& name){int n=0;for(const auto&[key,value]:counts)if(key.first==name)n+=value;return n;}
 }
 double expectedHyperEternals(const char* id) {
-    const auto& c=registry();DropTables tables;tables.link(c);std::vector<double> weights;
+    const auto& c=registry();DropTables tables;tables.link(c);std::vector<HyperEternalDropWeight> weights;
     for(const auto& e:tables.guaranteedForMob(c.mobIndex(id)))
-        if(e.petalIndex!=kInvalidIndex&&petalComesAt(c.petal(e.petalIndex),Rarity::Unique))weights.push_back(hyperSuperChance(e.rates));
+        if(e.petalIndex!=kInvalidIndex&&petalComesAt(c.petal(e.petalIndex),Rarity::Unique))weights.push_back(hyperEternalDropWeight(e.rates,c.petal(e.petalIndex).minRarity));
     double expected=0;for(double chance:hyperEternalChances(weights,kHyperEternalDropBudget/kLootFeelCopies))expected+=chance*kLootFeelCopies;
     return expected;
 }
@@ -51,8 +51,8 @@ TEST(hyper_drop_budget_bonus_uses_one_point_four_and_one_point_eight_rates){
         CHECK_NEAR(eternal/2000.0,expectedHyperEternals("ladybug")*1.3*(bonus==2?1.4:1.8),0.1);
     }
 }
-TEST(reference_pharaoh_crown_really_drops_at_unique_from_super_and_eternal_beetles){
-    for(const auto tier:{Rarity::Super,Rarity::Unique}){
+TEST(reference_pharaoh_crown_drops_at_eternal_from_super_eternal_and_hyper_beetles){
+    for(const auto tier:{Rarity::Super,Rarity::Unique,Rarity::Apex}){
         const auto result=kills("pharaoh_beetle",tier,1000);
         const int crowns=total(result,"pharaoh_s_crown");CHECK(crowns>20&&crowns<110);
         for(const auto&[key,n]:result)if(key.first=="pharaoh_s_crown")CHECK_EQ(key.second,rarityIndex(Rarity::Unique));
@@ -321,12 +321,17 @@ TEST(centipede_body_kills_award_loot_without_soul_splitter) {
 TEST(hyper_eternal_allocations_do_not_exceed_super_chances) {
     const auto& c=registry();DropTables tables;tables.link(c);
     for(std::uint16_t mob=0;mob<c.mobCount();++mob){
-        std::vector<double> weights;
+        std::vector<HyperEternalDropWeight> weights;
         for(const auto& row:tables.guaranteedForMob(mob))
             if(row.petalIndex!=kInvalidIndex&&petalComesAt(c.petal(row.petalIndex),Rarity::Unique))
-                weights.push_back(hyperSuperChance(row.rates));
+                weights.push_back(hyperEternalDropWeight(row.rates,c.petal(row.petalIndex).minRarity));
         const auto chances=hyperEternalChances(weights,kHyperEternalDropBudget/kLootFeelCopies);
-        double sum=0;for(std::size_t i=0;i<weights.size();++i){sum+=chances[i];if(weights[i]>=0)CHECK(chances[i]<=weights[i]*0.5+1e-12);}
+        double sum = 0.0;
+        for (std::size_t i = 0; i < weights.size(); ++i) {
+            sum += chances[i];
+            if (weights[i].superChance >= 0.0)
+                CHECK(chances[i] <= weights[i].superChance * 0.5 + weights[i].eternalOnlyChance + 1e-12);
+        }
         CHECK(sum<=kHyperEternalDropBudget/kLootFeelCopies+1e-12);
     }
     const auto result=kills("mecha_flower",Rarity::Apex,4000);

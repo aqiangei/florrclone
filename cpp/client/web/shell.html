@@ -58,59 +58,107 @@
         #lobby-links > :focus-visible,#loading-quality:focus-visible,#loading-retry:focus-visible,
         #loading-server-guide:focus-visible,#serverNotice :focus-visible {
             outline:3px solid #fff1a1;outline-offset:4px;}
-        #loadingScreen { position:fixed;inset:0;z-index:5;display:grid;place-items:center;
-            padding:20px;overflow:auto;overscroll-behavior:contain;touch-action:pan-y;color:#fff;
-            background:radial-gradient(ellipse at 50% 18%,#83bc56 0%,#37884c 62%,#246743 100%); }
-        #loadingScreen[hidden] { display:none; }
-        .loading-card {width:min(460px,100%);padding:22px 28px 24px;border:3px solid #163d2d;
-            border-radius:22px;background:#23543b;box-shadow:0 7px #163d2d;text-align:center;}
-        .loading-flower {display:block;width:110px;height:88px;margin:0 auto 4px;overflow:visible;}
-        .loading-petals {transform-origin:55px 43px;animation:loading-orbit 7s linear infinite;}
-        .loading-face {animation:loading-bob 2.6s ease-in-out infinite;}
-        .loading-brand {font-size:12px;letter-spacing:3px;color:#cce9b1;margin-bottom:10px;}
-        #loading-stage {font-size:23px;margin-bottom:8px;text-shadow:0 2px #163d2d;}
-        #loading-detail {font-size:14px;line-height:1.8;color:#d2e8dc;min-height:50px;overflow-wrap:anywhere;}
-        #loading-progress {width:100%;height:14px;accent-color:#b7ec70;margin:12px 0 10px;}
-        #loading-meta {font-size:12px;color:#b8cebf;min-height:20px;}
-        .loading-hint {font-size:12px;line-height:1.8;color:#9bbbaa;border-top:1px solid #ffffff1c;padding-top:18px;margin-top:18px;}
-        #loading-retry {font:inherit;border:0;border-radius:10px;background:#c1ee86;color:#173a27;padding:12px 26px;cursor:pointer;margin-top:18px;}
-        #loading-quality {display:inline-block;margin-top:12px;color:#dfff9b;font-size:14px;}
-        @keyframes loading-orbit {to {transform:rotate(360deg);}}
-        @keyframes loading-bob {50% {transform:translateY(-3px);}}
-        #loadingScreen[data-static] .loading-petals,#loadingScreen[data-static] .loading-face {animation:none;}
-        @media(max-width:480px){.loading-card{padding-inline:18px;}#loading-stage{font-size:21px;}}
-        @media(max-height:500px){
-            #loadingScreen {padding:12px 16px 74px;}
-            .loading-card {padding-block:12px;}
-            .loading-flower {width:74px;height:56px;}
-            .loading-hint {display:none;}
-            #loading-detail {min-height:0;}
+        /* Match the Garden, Inventory panel, Ready button and HUD gauge. */
+        #loadingScreen {
+            position:fixed;inset:0;z-index:5;display:grid;
+            padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px))
+                    max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));
+            overflow:auto;overscroll-behavior:contain;touch-action:pan-y;
+            background:#1ea761 url(FLIX_LOADING_GROUND) center / 190px;
+            color:#fff;text-align:center;
+        }
+        #loadingScreen[hidden] {display:none;}
+        .loading-entry {width:min(100%,390px);margin:auto;}
+        .loading-wordmark,#loading-stage,.loading-button,#serverNotice h2 {
+            paint-order:stroke fill;
+            -webkit-text-stroke:2px #171c22;
+        }
+        .loading-mascot {display:block;width:122px;height:122px;margin:0 auto 7px;}
+        .loading-orbit {transform-origin:center;animation:loading-orbit 20s linear infinite;}
+        @keyframes loading-orbit {to{transform:rotate(360deg);}}
+        #loadingScreen[data-static] .loading-orbit {animation:none;}
+        .loading-wordmark {font-size:42px;line-height:1.06;-webkit-text-stroke-width:5px;}
+        .loading-card {
+            margin-top:23px;padding:14px 16px 10px;
+            background:#6b9dd6;border:5px solid #5680ad;border-radius:12px;
+            box-shadow:0 3px #174b39a6,inset 0 1px #b5d4f05c;
+        }
+        #loading-stage {font-size:19px;line-height:1.3;-webkit-text-stroke-width:2.6px;}
+        #loading-detail {
+            margin-top:6px;color:#122c48;font-size:13px;line-height:1.55;
+            overflow-wrap:anywhere;
+        }
+        #loading-progress {
+            display:block;width:100%;height:16px;margin-top:13px;
+            appearance:none;border:0;border-radius:10px;
+            background:#333;accent-color:#75dd34;
+        }
+        #loading-progress[hidden] {display:none;}
+        #loading-progress::-webkit-progress-bar {
+            background:#333;border:3px solid #333;border-radius:10px;
+        }
+        #loading-progress::-webkit-progress-value {
+            background:linear-gradient(#99ea57,#75dd34 67%);border-radius:7px;
+        }
+        #loading-progress::-moz-progress-bar {
+            background:linear-gradient(#99ea57,#75dd34 67%);border-radius:7px;
+        }
+        #loading-meta {
+            margin-top:5px;min-height:1.5em;color:#122c48;
+            font-size:12px;font-variant-numeric:tabular-nums;line-height:1.5;
+        }
+        .loading-actions {display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin-top:12px;}
+        .loading-button {
+            display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 12px;
+            border:3px solid #32587e;border-radius:7px;background:#456f9a;color:#fff;
+            box-shadow:inset 0 1px #ffffff26;
+            font:inherit;font-size:13px;white-space:nowrap;cursor:pointer;
+            text-decoration:none;touch-action:manipulation;
+        }
+        .loading-button:hover {filter:brightness(1.08);}
+        .loading-button:active {transform:translateY(1px);filter:brightness(.94);}
+        #loading-retry {margin-top:10px;background:#1dd129;border-color:#17a721;}
+        #loading-retry[hidden] {display:none;}
+        @media(max-width:360px){.loading-card{padding-inline:10px;}}
+        @media(max-height:480px){
+            .loading-mascot {width:76px;height:76px;margin-bottom:3px;}
+            .loading-wordmark {font-size:34px;-webkit-text-stroke-width:4px;}
+            .loading-card {margin-top:12px;padding-top:8px;}
+            #loading-progress {margin-top:8px;}
+            .loading-actions {margin-top:8px;}
+        }
+        @media(max-height:360px){
+            #loadingScreen{padding-block:max(10px,env(safe-area-inset-top,0px)) max(10px,env(safe-area-inset-bottom,0px));}
+            .loading-mascot{width:60px;height:60px;}
+            .loading-wordmark{font-size:30px;}
+            .loading-card{margin-top:8px;padding-bottom:8px;}
         }
         @media(prefers-reduced-motion:reduce){
-            #council-link {transition:none;}
-            .loading-petals,.loading-face {animation:none;}
+            #council-link{transition:none;}
+            .loading-orbit{animation:none;}
         }
-        #loading-server-guide {display:block;min-height:44px;margin:10px auto 0;padding:0 16px;
-            border:1px solid #b4e69a;border-radius:10px;background:#173e2d;color:#e4ffba;
-            font:inherit;cursor:pointer;touch-action:manipulation;}
-        #serverNotice {position:fixed;inset:0;margin:auto;padding:0;
-            width:min(480px,calc(100vw - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+        #serverNotice {
+            position:fixed;inset:0;margin:auto;padding:0;
+            width:min(440px,calc(100vw - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)));
             max-height:calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
             overflow:auto;overscroll-behavior:contain;touch-action:pan-y;
-            border:2px solid #85b563;border-radius:16px;background:#173e2d;
-            color:#fff;font-size:15px;line-height:1.55;box-shadow:0 8px 32px #0008;}
-        #serverNotice::backdrop {background:#0b1b15a8;}
-        .server-notice-header {position:sticky;top:0;display:flex;align-items:center;
-            justify-content:space-between;gap:8px;padding:8px 10px 8px 16px;background:#173e2d;}
-        .server-notice-header h2 {font-size:18px;}
-        .server-notice-body {padding:0 16px 16px;}
+            border:5px solid #5680ad;border-radius:12px;background:#6b9dd6;
+            box-shadow:0 4px #16334b8a;
+            color:#122c48;font-size:14px;line-height:1.55;
+        }
+        #serverNotice::backdrop {background:#13252199;}
+        .server-notice-header {
+            position:sticky;top:0;display:flex;align-items:center;
+            justify-content:space-between;gap:8px;padding:8px 10px 8px 14px;background:#6b9dd6;
+        }
+        .server-notice-header h2 {color:#fff;font-size:20px;-webkit-text-stroke-width:2.6px;}
+        .server-notice-body {padding:0 14px 14px;}
         #serverNotice p {margin:8px 0;}
-        #serverNotice a {display:block;width:fit-content;min-height:44px;padding:9px 0;
-            color:#dfff9b;overflow-wrap:anywhere;}
-        #closeServerNotice {flex:none;display:grid;place-items:center;width:48px;height:48px;
-            border:1px solid #9ecb83;border-radius:10px;background:#244e37;color:#fff;
-            font:26px/1 sans-serif;cursor:pointer;touch-action:manipulation;}
-
+        #serverNotice a {display:flex;align-items:center;min-height:44px;margin:5px 0;padding:3px 9px;
+            color:#fff;background:#345d87;border:2px solid #2a4c6f;border-radius:4px;overflow-wrap:anywhere;}
+        #closeServerNotice {flex:none;display:grid;place-items:center;width:44px;height:44px;
+            border:3px solid #8d4a47;border-radius:4px;background:#ae5b58;color:#fff;
+            font:bold 25px/1 Ubuntu,sans-serif;cursor:pointer;touch-action:manipulation;}
         #landscape-btn{position:fixed;z-index:8;bottom:max(20px,env(safe-area-inset-bottom,0px));left:50%;
             transform:translateX(-50%);border:2px solid #dfff9b;border-radius:14px;padding:13px 24px;
             background:#267b3f;color:#fff;font:bold 17px sans-serif;box-shadow:0 3px 18px #0006;
@@ -134,32 +182,53 @@
     </a>
     <button id="open-server-guide" type="button">服务器指引</button>
     </nav>
-    <section id="loadingScreen" role="status" aria-live="polite">
-      <div class="loading-card">
-        <svg class="loading-flower" viewBox="0 0 110 88" aria-hidden="true">
-          <g class="loading-petals" stroke-width="3">
-            <circle cx="55" cy="10" r="8" fill="#ffd970" stroke="#b88439"/>
-            <circle cx="86" cy="33" r="8" fill="#fff4d2" stroke="#bda978"/>
-            <circle cx="74" cy="70" r="8" fill="#f4a5c2" stroke="#b66a8b"/>
-            <circle cx="36" cy="70" r="8" fill="#fff4d2" stroke="#bda978"/>
-            <circle cx="24" cy="33" r="8" fill="#ffd970" stroke="#b88439"/>
+    <section id="loadingScreen" aria-label="游戏加载">
+      <div class="loading-entry">
+        <svg class="loading-mascot" viewBox="-64 -64 128 128" aria-hidden="true">
+          <!-- A starter Flower and its five Basic petals, in the game's art space. -->
+          <defs>
+            <radialGradient id="loading-pearl" cx=".33" cy=".27" r=".78">
+              <stop stop-color="#fff"/>
+              <stop offset=".55" stop-color="#fbfcff"/>
+              <stop offset="1" stop-color="#dce4ef"/>
+            </radialGradient>
+            <g id="loading-petal">
+              <circle r="8.5" fill="url(#loading-pearl)" stroke="#bec8d0" stroke-width="3.2"/>
+              <ellipse cx="-2.1" cy="-3" rx="3" ry="1.6" fill="#fff" transform="rotate(-22)"/>
+            </g>
+          </defs>
+          <g class="loading-orbit">
+            <use href="#loading-petal" x="0" y="-49"/>
+            <use href="#loading-petal" x="46.6" y="-15.1"/>
+            <use href="#loading-petal" x="28.8" y="39.6"/>
+            <use href="#loading-petal" x="-28.8" y="39.6"/>
+            <use href="#loading-petal" x="-46.6" y="-15.1"/>
           </g>
-          <g class="loading-face" fill="#593d28">
-            <circle cx="55" cy="43" r="20" fill="#ffdb62" stroke="#b88439" stroke-width="3"/>
-            <ellipse cx="49" cy="41" rx="2" ry="4"/>
-            <ellipse cx="61" cy="41" rx="2" ry="4"/>
-            <path d="M51 48q4 4 8 0" fill="none" stroke="#593d28" stroke-width="2" stroke-linecap="round"/>
+          <circle r="25" fill="#ffe763" stroke="#cfbb50" stroke-width="3"/>
+          <g fill="#111">
+            <ellipse cx="-7" cy="-4.8" rx="3.5" ry="6.5"/>
+            <ellipse cx="7" cy="-4.8" rx="3.5" ry="6.5"/>
           </g>
+          <g fill="#fff">
+            <ellipse cx="-7" cy="-6.8" rx="2.45" ry="2.9"/>
+            <ellipse cx="7" cy="-6.8" rx="2.45" ry="2.9"/>
+          </g>
+          <path d="M-6 10Q0 14.5 6 10" fill="none" stroke="#222" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
-        <div class="loading-brand">FLORR.CLONE</div>
-        <h1 id="loading-stage">准备进入花园</h1>
-        <p id="loading-detail">正在连接游戏资源，请稍候。</p>
-        <progress id="loading-progress" aria-label="游戏加载进度"></progress>
-        <p id="loading-meta">首次进入需要下载资源，之后会使用缓存。</p>
-        <button id="loading-retry" hidden type="button">重新连接</button>
-        <a id="loading-quality" href="?quality=low">低清模式</a>
-        <button id="loading-server-guide" type="button">服务器指引</button>
-        <p class="loading-hint">加载期间无需反复刷新。账号和存档保存在服务器。</p>
+        <h1 class="loading-wordmark">flowrix beta</h1>
+        <div class="loading-card">
+          <div role="status">
+            <h2 id="loading-stage">准备进入花园</h2>
+            <p id="loading-detail">正在连接游戏资源。</p>
+          </div>
+          <progress id="loading-progress" aria-label="游戏加载进度"></progress>
+          <p id="loading-meta">首次进入需要下载游戏资源。</p>
+          <button id="loading-retry" class="loading-button" hidden type="button">重新连接</button>
+          <div class="loading-actions">
+            <button id="loading-server-guide" class="loading-button" type="button">服务器指引</button>
+            <a id="loading-quality" class="loading-button" href="?quality=low">低清模式</a>
+          </div>
+        </div>
       </div>
     </section>
     <dialog id="serverNotice" aria-labelledby="server-notice-title">
@@ -248,7 +317,7 @@
   const lowGraphics = query.get('quality') === 'low';
   window.flixLowMemoryGraphics = lowGraphics;
   status.toggleAttribute('data-static', lowGraphics);
-  quality.textContent = lowGraphics ? '切回标准画质' : '内存不足？使用低清模式';
+  quality.textContent = lowGraphics ? '标准画质' : '低清模式';
   const qualityUrl = new URL(location.href);
   if (lowGraphics) qualityUrl.searchParams.set('quality', 'standard');
   else qualityUrl.searchParams.set('quality', 'low');
@@ -270,11 +339,26 @@
     if (!dismissed) openNotice();
   }
   const began = performance.now();
-  let failed = false, queued = false, bytes = 0, total = 0, lastProgress = performance.now();
+  let failed = false, queued = false, bytes = 0, total = 0, lastProgress = began;
+  let stallGuideOpened = false;
+  const showStallGuide = () => {
+    if (stallGuideOpened) return;
+    stallGuideOpened = true;
+    openNotice();
+  };
   const ui = window.flixLoading = {
-    phase(title, message) { if(failed)return; status.hidden=false;stage.textContent=title;detail.textContent=message; },
+    phase(title, message) {
+      if (failed) return;
+      if (stage.textContent !== title) lastProgress = performance.now();
+      status.hidden = false;
+      stage.textContent = title;
+      detail.textContent = message;
+    },
     download(received, expected, hasQueueTicket) {
-      if(failed)return; bytes=received;total=expected;lastProgress=performance.now();
+      if (failed) return;
+      if (received !== bytes || stage.textContent !== '正在下载游戏资源') lastProgress = performance.now();
+      bytes = received;
+      total = expected;
       queued=hasQueueTicket;
       stage.textContent='正在下载游戏资源';
       detail.textContent=queued
@@ -284,8 +368,8 @@
     },
     error(message) {
       failed=true;status.hidden=false;stage.textContent='暂时未能进入游戏';detail.textContent=message;
-      status.setAttribute('data-static', '');
       progress.hidden=true;retry.hidden=false;meta.textContent='你的账号和存档不会因此丢失。';
+      showStallGuide();
     },
     finish() { if(!failed){status.hidden=true;window.florrMobileReady();} }
   };
@@ -307,8 +391,10 @@
     const seconds=Math.floor((performance.now()-began)/1000);
     const size=bytes ? (bytes/1048576).toFixed(1)+' MB'+(total?' / '+(total/1048576).toFixed(1)+' MB':'')+' · ' : '';
     meta.textContent=size+'已等待 '+seconds+' 秒';
-    if(bytes && performance.now()-lastProgress>10000 && stage.textContent==='正在下载游戏资源')
+    const stalledFor = performance.now() - lastProgress;
+    if (bytes && stalledFor > 10000 && stage.textContent === '正在下载游戏资源')
       detail.textContent=(queued?'已获下载名额。':'')+'当前传输较慢，下载中断会自动重试。';
+    if (stalledFor >= 15000) showStallGuide();
   },500);
 
 

@@ -7,14 +7,18 @@
 
 namespace flix {
 
+inline constexpr Rarity pharaohCrownSummonRarity(Rarity crown) {
+    return isHyperPetal(crown) ? Rarity::Unique : Rarity::Super;
+}
+
 enum class HyperTechnique {
-    None, WideSight, ReserveHeal, SwiftHeal, ReserveShield, ReserveMana, RescueReach,
+    None, WideSight, QuickCharge, SwiftHeal, RescueReach,
     DefensiveWeb, RapidWeb, BroadPollen, DistantBait, LocalCompass,
     WingReach, MissileSpeed, MagicMissileRange, CarrotBank, SteadyPeas,
     PatientGrapes, StableBlueberry, BoneGuard, QuickRecall, LongRicochet,
     AttackSpread, CleanseBerry, CommandApex, CrownReach,
     CutterShove, EarlySummon, Existing, FastMecha, FastOrbit,
-    FrugalLeaf, GhostSight, GuardAggro, GuardAir, GuardBasil, GuardDisc,
+    ManaLeafRecovery, GhostSight, GuardAggro, GuardAir, GuardBasil, GuardDisc,
     GuardLentil, GuardLotus, GuardMagnet, GuardOverheal, GuardSpread,
     LongMeteor, LongShip, LongSponge, LongTotem, LongWax,
     ManaCotton, Material, MoonEase, NazarWard, OpenEye,
@@ -59,8 +63,8 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "Hyper Bandage prolongs the existing Undead window.",
      "超凡绷带延长原有的亡灵时间。", 0},
     {"basic", HyperTechnique::BasicRally,
-     "When defending below 35% flower health, Basic takes 8% less recoil from wild mobs.",
-     "花朵生命低于 35% 且防御时，基础花瓣承受的野怪接触反伤减少 8%。", 0.92},
+     "While defending, Basic takes 12% less contact recoil from wild mobs.",
+     "防御时，基础花瓣承受的野怪接触反伤减少 12%。", 0.88},
     {"basil", HyperTechnique::GuardBasil,
      "Below 35% health, defending improves the basil healing bonus by up to 10%.",
      "防御且生命低于 35% 时，罗勒提供的治疗加成最多提高 10%。", 1.1},
@@ -110,8 +114,8 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "While defending, takes 12% less wild physical projectile damage when the card is at or below half durability.",
      "防御且扑克牌耐久不超过一半时，野怪物理弹幕对它的伤害减少 12%。", 0.88},
     {"carrot", HyperTechnique::CarrotBank,
-     "Bouncing shots travel 20% farther at 90% of their usual speed.",
-     "反弹弹道的总射程增加 20%，弹速为原来的 90%。", 0.0},
+     "Bouncing shots travel 20% farther at their usual speed.",
+     "反弹弹道的总射程增加 20%，弹速相同。", 1.20},
     {"champion_crown", HyperTechnique::CrownReach,
      "Hyper Basic loans reach allies 10% farther away.",
      "超凡基础花瓣可借给远 10% 的友方。", 1.1},
@@ -203,14 +207,14 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "While attacking, a hit on an already slowed wild mob has a 12% shorter recovery.",
      "主动攻击时，玻璃命中已减速野怪后的伤害间隔缩短 12%。", 0.88},
     {"glitch", HyperTechnique::GlitchJam,
-     "Defending spends Glitch to lay a 75-unit interference field for 0.8 seconds, slowing wild mobs by up to 20%.",
-     "防御时，消耗故障花瓣布下半径 75 单位的干扰区，持续 0.8 秒，野怪减速最多 20%。", 0.8},
+     "While defending, Glitch is used only when a wild mob enters its 75-unit reach. Its field slows wild mobs by up to 20% for 0.8 seconds.",
+     "防御且 75 单位内有野怪时才消耗故障花瓣，布下持续 0.8 秒的干扰区，野怪减速最多 20%。", 0.8},
     {"golden_leaf", HyperTechnique::GoldenRecovery,
      "When Golden Leaf breaks while defending, its own reload is 10% shorter.",
      "防御时金叶碎裂，自身装填时间缩短 10%。", 0.9},
     {"grapes", HyperTechnique::PatientGrapes,
-     "On attack, venom shots gain 15% range but lose 15% speed.",
-     "攻击射击时，毒弹射程增加 15%，弹速降低 15%。", 0.0},
+     "Attacking venom shots travel 15% farther at their usual speed.",
+     "攻击射击时，毒弹射程增加 15%，弹速相同。", 1.15},
     {"heavy", HyperTechnique::WildShove,
      "Defending pushes wild mobs 10% harder.",
      "防御时，对野怪的击退提高 10%。", 1.1},
@@ -257,14 +261,14 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "While defending below 25% mana, restores 0.4% of its own mana-capacity bonus each second.",
      "防御且魔力低于 25% 时，每秒回复魔法仙人掌自身提供的魔力上限的 0.4%。", 0.004},
     {"magic_cotton", HyperTechnique::ManaCotton,
-     "Defending spends 10% of max mana to cushion 12% of damage from a wild physical hit.",
-     "防御时，可消耗最大魔力的 10%，缓冲野怪物理一击的 12% 伤害。", 0.12},
+     "While defending, each point of mana absorbs 25% more damage from wild mob body contact.",
+     "防御时，每点法力可多吸收 25% 的野怪体撞伤害。", 1.25},
     {"magic_eye", HyperTechnique::WideMagicEye,
      "Detects targets and casts in a 10% larger radius.",
      "魔眼侦测与施法半径增加 10%。", 1.1},
-    {"magic_leaf", HyperTechnique::FrugalLeaf,
-     "Defending above 75% mana lends a little of your reserve to a nearby ally.",
-     "防御且魔力高于 75% 时，将少量自身魔力分给附近一名友方。", 0.01},
+    {"magic_leaf", HyperTechnique::ManaLeafRecovery,
+     "While below half mana, this leaf's passive mana recovery is 25% stronger.",
+     "自身魔力低于一半时，这片叶子的被动回蓝提高 25%。", 1.25},
     {"magic_missile", HyperTechnique::MagicMissileRange,
      "The charged shot flies 15% farther for the same mana.",
      "充能飞弹的射程增加 15%，魔耗相同。", 0.0},
@@ -280,9 +284,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"magnet", HyperTechnique::GuardMagnet,
      "Defending gives the strongest Hyper Magnet 12% more pickup range.",
      "防御时，最强的超凡磁铁额外增加其拾取距离的 12%。", 0.12},
-    {"mana_orb", HyperTechnique::ReserveMana,
-     "Saves the orb until at least half its mana would fit, or you are below 25% mana.",
-     "损失魔力达到回复量的一半，或剩余魔力低于 25% 时，才消耗魔力球。", 0.0},
+    {"mana_orb", HyperTechnique::QuickCharge,
+     "After reloading, charges in 1 second instead of 1.5 and can refill any missing mana.",
+     "重装后蓄力由 1.5 秒缩短至 1 秒，只要有魔力缺口就能补蓝。", 2.0 / 3.0},
     {"mecha_missile", HyperTechnique::FastMecha,
      "Straight shots fly 15% faster. Observer-guided shots keep their current speed.",
      "直射弹速提高 15%，机械触角引导的弹速保持原值。", 1.15},
@@ -347,14 +351,14 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "Below 25% of its own durability, gains 2 percentage points of evasion against wild physical hits.",
      "筹码自身耐久低于 25% 时，闪避野怪物理伤害的概率提高 2 个百分点。", 0.02},
     {"pollen", HyperTechnique::BroadPollen,
-     "Defending spreads a 20% wider pollen cloud that lasts 20% less time.",
-     "防御布置的花粉半径增加 20%，持续时间缩短 20%。", 0.0},
+     "Defending spreads a 20% wider pollen cloud for the usual duration.",
+     "防御布置的花粉半径增加 20%，持续时间相同。", 1.20},
     {"poo", HyperTechnique::GuardAggro,
      "Defending makes its existing wild-mob aggro reduction 10% stronger.",
      "防御时，便便原有的减仇恨量提高 10%。", 1.1},
     {"privet_berry", HyperTechnique::CleanseBerry,
-     "Defending uses the berry to shorten your current poison by 0.35 seconds.",
-     "防御时，消耗果实，将当前中毒缩短 0.35 秒。", 350},
+     "While defending, the berry shortens poison by up to 1.25 seconds when at least one second remains.",
+     "防御且中毒还剩至少 1 秒时，消耗果实，将中毒缩短最多 1.25 秒。", 1250},
     {"ram", HyperTechnique::RamRecovery,
      "Original RAM reloads 10% faster after breaking when three distinct Hyper computer parts are equipped.",
      "装备至少三类超凡电脑部件时，内存原件碎裂后的装填时间缩短 10%。", 0.9},
@@ -367,9 +371,9 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
     {"root", HyperTechnique::RootRecovery,
      "The first armor layer builds 20% faster while defending with no layers.",
      "防御且没有护甲层时，根的首层护甲积攒速度提高 20%。", 1.2},
-    {"rose", HyperTechnique::ReserveHeal,
-     "Saves the heal until at least half of it is needed or you are below 40% health.",
-     "损失生命达到治疗量的一半，或生命低于 40% 时，才消耗花瓣治疗。", 0.0},
+    {"rose", HyperTechnique::QuickCharge,
+     "Charges its heal 25% sooner after reloading.",
+     "重装后治疗蓄力时间缩短 25%。", 0.75},
     {"rubber", HyperTechnique::RubberGround,
      "While defending, Rubber loses 15% less durability to wild lightning.",
      "防御时，橡胶承受野怪闪电损失的耐久减少 15%。", 0.85},
@@ -383,11 +387,11 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "Defending spreads this clump 20% wider.",
      "防御时，沙粒簇间距扩大 20%。", 1.2},
     {"sawblade", HyperTechnique::SawbladeNotch,
-     "While defending, a real Sawblade can cut 5% of a wild mob’s armor for 0.7 seconds if it is not already shredded.",
-     "防御时，原件锯片能削去尚未破甲的野怪 5% 护甲，持续 0.7 秒。", 0.05},
-    {"shell", HyperTechnique::ReserveShield,
-     "Saves the shell until its shield is gone or half a refill would fit.",
-     "护盾耗尽，或剩余容量达到单次护盾量的一半时，才消耗贝壳。", 0.0},
+     "On contact, an original Sawblade cuts 10% of a wild mob’s armor for 1 second if it is not already shredded.",
+     "原件锯片接触命中时能削去尚未破甲的野怪 10% 护甲，持续 1 秒。", 0.10},
+    {"shell", HyperTechnique::QuickCharge,
+     "Charges its shield refill 25% sooner after reloading.",
+     "重装后补盾蓄力时间缩短 25%。", 0.75},
     {"shovel", HyperTechnique::QuickDig,
      "Charges burrowing 15% sooner after reloading.",
      "装填完成后的潜地准备时间缩短 15%。", 0.85},
@@ -494,12 +498,10 @@ inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
         case HyperTechnique::TameOrbit:
         case HyperTechnique::FastOrbit:
             return chinese ? "换个出手节奏，留意花环的走位。" : "Change your timing and watch how the ring moves.";
-        case HyperTechnique::ReserveHeal:
-        case HyperTechnique::ReserveShield:
-        case HyperTechnique::ReserveMana:
+        case HyperTechnique::QuickCharge:
         case HyperTechnique::StarfishWindow:
         case HyperTechnique::GuardBasil:
-        case HyperTechnique::FrugalLeaf:
+        case HyperTechnique::ManaLeafRecovery:
         case HyperTechnique::NazarWard:
         case HyperTechnique::ManaCotton:
             return chinese ? "资源见底或危险逼近时，再看它会做什么。" : "Watch for its response when you are low or in danger.";
@@ -552,7 +554,7 @@ inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
         case HyperTechnique::TomatoRipening:
             return chinese ? "先把果实护在环上，等它变熟再靠近野怪。" : "Keep the fruit on the ring a little longer before fighting.";
         case HyperTechnique::BasicRally:
-            return chinese ? "重伤时把这枚最熟悉的花瓣留在身边。" : "Keep the most familiar petal close when your health runs low.";
+            return chinese ? "面对野怪时收起花环，留意基础花瓣的耐久。" : "Draw in the ring against wild mobs to protect Basic from recoil.";
         case HyperTechnique::BeanSolo:
             return chinese ? "试着独自接下一场战斗。" : "Try taking on a fresh opponent by yourself.";
         case HyperTechnique::BloodRecovery:

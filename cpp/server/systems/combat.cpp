@@ -1000,10 +1000,7 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         const int parts = mods ? computerPartCount(mods->computerParts[rarityIndex(Rarity::Apex)]) : 0;
         if (kind == DamageKind::Recoil && isWildMob(world, source) && !world.has<MobRingPetal>(source)) {
             amount *= hyperAmount(technique, HyperTechnique::RockBrace);
-            if (technique->technique == HyperTechnique::BasicRally) {
-                const auto* owner = world.tryGet<Health>(petal->owner);
-                if (owner && owner->fraction() < 0.35) amount *= technique->amount;
-            }
+            amount *= hyperAmount(technique, HyperTechnique::BasicRally);
             if (parts >= 3) amount *= hyperAmount(technique, HyperTechnique::CodeParity);
             const auto id = technique->id;
             if (id == "leaf" || id == "golden_leaf" || id == "magic_leaf" || id == "dead_leaf") {
@@ -1116,15 +1113,12 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         if (loadout) {
             const auto& registry = content();
             const auto nazar = registry.petalIndex("nazar_amulet");
-            const auto cotton = registry.petalIndex("magic_cotton");
             const double maxHealth = world.get<Health>(victim).max;
-            bool cottonReady = false;
             bool wardReady = false;
             for (const auto petal : loadout->spawned) {
                 auto* instance = world.tryGet<PetalInstance>(petal);
                 if (!instance || !isHyperPetal(instance->rarity) || instance->mimicked ||
                     instance->slot >= kLoadoutActiveSlots || world.has<Dead>(petal)) continue;
-                if (instance->configIndex == cotton) cottonReady = true;
                 if (instance->configIndex == nazar) wardReady = true;
             }
             const auto* timers = world.tryGet<HyperPetalTimers>(victim);
@@ -1133,13 +1127,6 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
                 world.ensure<HyperPetalTimers>(victim).wardReadyAtMillis = nowMillis + 30000.0;
                 amount *= 1.0 - hyperAmount(hyperTechniqueInfo("nazar_amulet", Rarity::Apex),
                                             HyperTechnique::NazarWard, 0.0);
-            } else if (cottonReady) {
-                if (auto* mana = world.tryGet<ManaPool>(victim); mana && mana->max > 0.0 &&
-                    mana->canAfford(mana->max * 0.10)) {
-                    mana->current -= mana->max * 0.10;
-                    amount *= 1.0 - hyperAmount(hyperTechniqueInfo("magic_cotton", Rarity::Apex),
-                                                HyperTechnique::ManaCotton, 0.0);
-                }
             }
         }
     }
@@ -1161,12 +1148,9 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         }
     }
 
-    // Cotton is the LAST thing between the damage and the bar: it takes what
-    // is left in the flower's place, up to what it has left, and only the
-    // overflow lands. Every kind, drips included, so poison and a sponge's
-    // repayment wear it down as well. Behind the sponge on purpose -- a hit the
-    // sponge defers is caught here a tick's worth at a time as it is repaid,
-    // not up front.
+    // Cotton, then Magic Cotton, catch the damage left before it reaches the
+    // bar. This runs after Sponge, so deferred damage is caught as it is
+    // repaid. Poison drips can also spend the remaining cotton or mana.
     if (world.has<PlayerTag>(victim)) {
         amount = soakIntoCotton(world, victim, source, amount, nowMillis, kind);
         if (amount <= 0.0) {
@@ -2125,10 +2109,28 @@ double CombatSystem::soakIntoCotton(World& world, Entity flower, Entity source, 
     // pool, so taking a share from two of them would spend it twice; the
     // fold at the top of the next tick is what tells them apart again.
     cottonScratch_.clear();
+    const auto* mana = world.tryGet<ManaPool>(flower);
+    const auto magicCotton = mana && mana->has() && mana->current > 0.0
+        ? content().petalIndex("magic_cotton") : kInvalidIndex;
+    const bool guardBodyContact = magicCotton != kInvalidIndex && kind == DamageKind::Direct &&
+        hyperDefending(world, flower) && isWildMob(world, source) && !world.has<MobRingPetal>(source);
+    double damagePerMana = 0.0;
     std::array<bool, kLoadoutSlots> seen{};
     for (const Entity petal : loadout->spawned) {
         const PetalInstance* instance = world.tryGet<PetalInstance>(petal);
         if (instance == nullptr) continue;
+        if (magicCotton != kInvalidIndex && instance->configIndex == magicCotton &&
+            instance->slot < kLoadoutActiveSlots && !world.has<Dead>(petal)) {
+            // All copies draw from the same pool. Using the best rate first
+            // can already spend as much mana as the hit needs.
+            double rate = magicCottonDamagePerMana(instance->rarity);
+            if (guardBodyContact) {
+                rate *= hyperAmount(hyperTechniqueInfo("magic_cotton", instance->rarity, instance->mimicked),
+                                    HyperTechnique::ManaCotton);
+            }
+            damagePerMana = std::max(damagePerMana, rate);
+            continue;
+        }
         // Rubber catches lightning and nothing else.
         if (!instance->soaksOwnerDamage &&
             !(instance->soaksOwnerLightning && kind == DamageKind::Lightning)) {
@@ -2165,6 +2167,17 @@ double CombatSystem::soakIntoCotton(World& world, Entity flower, Entity source, 
         const DamageResult hit = applyDamage(world, cotton, source, wear, nowMillis, kind);
         if (hit.refused || hit.dodged) continue;
         amount -= caught;
+    }
+
+    // Normal Cotton may have broken and moved ECS rows. Read the mana again
+    // before converting the remaining hit, spending only what is absorbed.
+    if (amount > 0.0 && damagePerMana > 0.0) {
+        if (auto* pool = world.tryGet<ManaPool>(flower); pool && pool->has() && pool->current > 0.0) {
+            const double capacity = pool->current * damagePerMana;
+            const double caught = std::min(amount, capacity);
+            pool->current = caught >= capacity ? 0.0 : pool->current - caught / damagePerMana;
+            amount -= caught;
+        }
     }
     return amount;
 }
@@ -3235,7 +3248,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                         applySlow(world, victim, technique->amount, 350.0, source.rarity, nowMillis);
                     }
                 }
-                if (wild && guarding && technique->technique == HyperTechnique::SawbladeNotch) {
+                if (wild && technique && technique->technique == HyperTechnique::SawbladeNotch) {
                     const auto* loadout = world.tryGet<Loadout>(source.owner);
                     const auto* blade = world.tryGet<PetalInstance>(source.attacker);
                     const Entity armored = poolOwner(world, victim);
@@ -3244,7 +3257,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                     if (loadout && blade && loadout->slots[blade->slot].configIndex == blade->configIndex &&
                         armor && armor->amount > 0.0 && (!afflictions || afflictions->shred(nowMillis) == 0.0)) {
                         applyArmorShred(world, victim, armor->amount * technique->amount,
-                                        nowMillis, 700.0 / kArmorShredMillis);
+                                        nowMillis, 1000.0 / kArmorShredMillis);
                     }
                 }
                 const double poisonWindow = guarding ?

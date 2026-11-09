@@ -1,4 +1,5 @@
 #include "test.h"
+#include "test_data.h"
 #include "client/ui/gallery_drop_preview.h"
 #include "client/ui/text.h"
 #include "client/net_client.h"
@@ -47,10 +48,29 @@ TEST(gallery_magic_orb_checks_active_slots_and_resolves_mimic) {
     p.loadout[1]={content().petalIndex("mimic"),Rarity::Unique};CHECK_EQ(galleryOrbTier(p),8);
 }
 
+TEST(gallery_hyper_pharaoh_shows_the_budgeted_eternal_crown_chance) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    CHECK(ui::Fonts::init(testsupport::dataDir(), error));
+    double total = 0.0;
+    double crown = 0.0;
+    const auto index = content().petalIndex("pharaoh_s_crown");
+    for (const auto& drop : galleryDropPreview(content().mobIndex("pharaoh_beetle"), Rarity::Apex, kRarityCount)) {
+        if (drop.rarity != Rarity::Unique) continue;
+        total += drop.probability;
+        if (drop.petalIndex == index) crown += drop.probability;
+    }
+    CHECK_NEAR(crown, 0.2, 1e-8);
+    CHECK_NEAR(total, 100.0 * kHyperEternalDropBudget / kLootFeelCopies, 1e-8);
+}
+
 TEST(gallery_hyper_eternal_cells_share_the_reduced_budget) {
-    std::string error;CHECK(loadContent("/data",error));
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    CHECK(ui::Fonts::init(testsupport::dataDir(), error));
     double total=0;
     for(const auto& d:galleryDropPreview(content().mobIndex("ladybug"),Rarity::Apex,kRarityCount))
         if(d.rarity==Rarity::Unique)total+=d.probability;
-    CHECK_NEAR(total,100.0*0.35/30.0,1e-8);
+    // The two 0.9645% Super tails each cap their Eternal share at half.
+    CHECK_NEAR(total, 0.9645, 1e-8);
 }

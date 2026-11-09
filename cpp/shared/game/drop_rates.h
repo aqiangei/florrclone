@@ -52,18 +52,50 @@ inline double hyperSuperChance(const DropRates& rates) {
         if(rate.rarity==Rarity::Super) chance+=rate.probability;
     return chance;
 }
-// Preserve legacy allocations. Explicit rows share the remaining E budget
-// by S weight, with each E chance capped at half its S chance.
-inline std::vector<double> hyperEternalChances(const std::vector<double>& super, double budget) {
-    std::vector<double> result(super.size(),0);
-    if(super.empty())return result;
-    double remaining=budget,total=0;
-    for(std::size_t i=0;i<super.size();++i) {
-        if(super[i]<0){result[i]=budget/super.size();remaining-=result[i];}
-        else total+=super[i];
+struct HyperEternalDropWeight {
+    double superChance = 0.0;
+    double eternalOnlyChance = 0.0;
+};
+
+inline HyperEternalDropWeight hyperEternalDropWeight(const DropRates& rates, Rarity minimum) {
+    HyperEternalDropWeight weight{hyperSuperChance(rates), 0.0};
+    if (minimum == Rarity::Unique && weight.superChance == 0.0) {
+        for (const auto& rate : ratesFor(rates, Rarity::Apex)) {
+            if (rate.rarity == Rarity::Unique) weight.eternalOnlyChance += rate.probability;
+        }
     }
-    const double scale=total>0?std::min(0.5,std::max(0.0,remaining)/total):0;
-    for(std::size_t i=0;i<super.size();++i)if(super[i]>=0)result[i]=super[i]*scale;
+    return weight;
+}
+
+inline std::vector<double> hyperEternalChances(const std::vector<HyperEternalDropWeight>& weights,
+                                               double budget) {
+    std::vector<double> result(weights.size(), 0.0);
+    if (weights.empty()) return result;
+
+    // Eternal-only petals have no Super tail. Reserve their authored chance
+    // inside the same budget, scaling them down together if it is exhausted.
+    double eternalOnlyTotal = 0.0;
+    double superTotal = 0.0;
+    for (const auto& weight : weights) {
+        eternalOnlyTotal += weight.eternalOnlyChance;
+        superTotal += std::max(0.0, weight.superChance);
+    }
+    const double reserved = std::min(budget, eternalOnlyTotal);
+    const double specialScale = eternalOnlyTotal > 0.0 ? reserved / eternalOnlyTotal : 0.0;
+    const double legacyShare = (budget - reserved) / weights.size();
+    double remaining = budget - reserved;
+    for (std::size_t i = 0; i < weights.size(); ++i) {
+        if (weights[i].superChance < 0.0) {
+            result[i] = legacyShare;
+            remaining -= legacyShare;
+        }
+    }
+    const double superScale = superTotal > 0.0
+        ? std::min(0.5, std::max(0.0, remaining) / superTotal) : 0.0;
+    for (std::size_t i = 0; i < weights.size(); ++i) {
+        result[i] += weights[i].eternalOnlyChance * specialScale +
+            std::max(0.0, weights[i].superChance) * superScale;
+    }
     return result;
 }
 inline int rollDropRates(const DropRates& rates,Rarity mob,double sample) {

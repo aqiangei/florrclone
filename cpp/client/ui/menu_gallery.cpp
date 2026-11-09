@@ -466,8 +466,10 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         for(const auto& drop:table)if(original(drop)!=kInvalidIndex&&petalComesAt(content().petal(original(drop)),Rarity::Unique)&&
             std::none_of(pool.begin(),pool.end(),[&](const DropDef* other){return original(*other)==original(drop);} ))pool.push_back(&drop);
         hyperEternalCell=true;
-        std::vector<double> weights;
-        for(const auto* drop:pool)weights.push_back(hyperSuperChance(drop->sourceRates));
+        std::vector<HyperEternalDropWeight> weights;
+        for (const auto* drop : pool) {
+            weights.push_back(hyperEternalDropWeight(drop->sourceRates, content().petal(original(*drop)).minRarity));
+        }
         const auto chances=hyperEternalChances(weights,kHyperEternalDropBudget/kLootFeelCopies);
         for(std::size_t i=0;i<pool.size();++i)push(*pool[i],Rarity::Unique,100.0*chances[i]);
         hyperEternalCell=false;

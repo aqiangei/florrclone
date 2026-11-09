@@ -625,6 +625,7 @@ void NetClient::requestRedeemCode(const std::string& code) {
 }
 
 void NetClient::requestSkin(std::uint32_t renderFlags) {
+    if (isSelectablePlayerSkin(renderFlags)) equippedSkinId_.clear();
     ByteWriter w;
     beginMessage(w, net::ClientMessage::SetSkin);
     w.u32(renderFlags);

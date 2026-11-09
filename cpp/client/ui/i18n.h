@@ -183,6 +183,11 @@ enum class Msg : std::uint16_t {
     SkinCancel,
     SkinDelete,
     SkinAddShape,
+    SkinBuiltInTab,
+    SkinBuiltInHint,
+    SkinDefault,
+    SkinPumpkin,
+    SkinRobot,
 
     // -- chat ----------------------------------------------------------------
     ChatLocal,

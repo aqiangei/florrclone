@@ -213,3 +213,45 @@ TEST(a_worn_skin_survives_a_respawn) {
         return own != nullptr && own->equippedSkinId == id;
     }));
 }
+
+TEST(public_builtin_skins_replace_custom_skins_and_survive_rejoining) {
+    Harness h("builtin-skins", {}, flix::testsupport::dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+
+    NetClient player;
+    if (!joinAs(h, player, "visitor")) { CHECK(false); return; }
+    player.publishSkin("mine", magentaDiscSkin("").shapes, true);
+    if (!h.stepUntil({&player}, [&] { return !player.skinCatalog().empty(); })) {
+        CHECK(false); return;
+    }
+    const std::string custom = player.skinCatalog().front().id;
+    const auto isWearing = [&](std::uint32_t flags, const std::string& id) {
+        return h.stepUntil({&player}, [&] {
+            const RemoteEntity* own = flowerOf(player, player.view().self().netId);
+            return own && own->renderFlags == flags && own->equippedSkinId == id &&
+                player.profile().renderFlags == flags && player.equippedSkinId() == id;
+        });
+    };
+
+    player.equipSkin(custom);
+    CHECK(isWearing(PlayerRenderNone, custom));
+    player.requestSkin(PlayerRenderGlitch);
+    h.step(20, {&player});
+    CHECK(isWearing(PlayerRenderNone, custom));
+
+    player.requestSkin(PlayerRenderPumpkin);
+    CHECK(isWearing(PlayerRenderPumpkin, ""));
+    player.requestSkin(PlayerRenderRobot);
+    CHECK(isWearing(PlayerRenderRobot, ""));
+
+    player.leaveGame();
+    CHECK(h.stepUntil({&player}, [&] { return player.status() != NetClient::Status::Playing; }));
+    player.joinGame(1280, 720);
+    CHECK(h.stepUntil({&player}, [&] { return player.status() == NetClient::Status::Playing; }));
+    CHECK(isWearing(PlayerRenderRobot, ""));
+
+    player.equipSkin(custom);
+    CHECK(isWearing(PlayerRenderNone, custom));
+    player.requestSkin(PlayerRenderNone);
+    CHECK(isWearing(PlayerRenderNone, ""));
+}
