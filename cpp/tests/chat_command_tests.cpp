@@ -2586,12 +2586,10 @@ TEST(guild_commands_reach_the_same_logic_as_the_guild_panel) {
     CHECK(loginAs(h, leader, "leader", "password7"));
     CHECK(loginAs(h, member, "member", "password7"));
 
-    CHECK(say(h, leader, "/guild-create AB12"));
-    // The same validation the binary GuildCreate applies: exactly five
-    // alphanumerics, because the tag hangs under a nameplate.
-    CHECK(sawText(leader, "exactly 5 alphanumeric characters"));
+    CHECK(say(h, leader, "/guild-create AB-12"));
+    CHECK(sawText(leader, "only A-Z and 0-9"));
 
-    CHECK(say(h, leader, "/guild-create ABC12"));
+    CHECK(say(h, leader, "/guild-create AB12"));
     CHECK(sawText(leader, "created"));
 
     CHECK(say(h, leader, "/guild-invite member"));
@@ -2599,7 +2597,7 @@ TEST(guild_commands_reach_the_same_logic_as_the_guild_panel) {
 
     CHECK(say(h, member, "/guild-accept"));
     CHECK(say(h, leader, "/guild-info"));
-    CHECK(sawText(leader, "ABC12"));
+    CHECK(sawText(leader, "AB12"));
     CHECK(sawText(leader, "member"));
 
     // A guild message reaches the guild.

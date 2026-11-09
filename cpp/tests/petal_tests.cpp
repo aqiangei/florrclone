@@ -7,6 +7,7 @@
 #include "test_data.h"
 #include "server/systems/combat.h"
 #include "server/systems/movement.h"
+#include "server/systems/npcs.h"
 #include "server/systems/petals.h"
 
 #include <algorithm>
@@ -1443,6 +1444,85 @@ TEST(a_battery_remembers_one_real_hit_during_its_discharge_interval) {
     CHECK_EQ(batteryCharges(rig), 1);
     rig.tick(14);
     CHECK_EQ(countStrikes(rig), 2u);
+}
+
+TEST(eternal_battery_reload_talent_shortens_only_the_refill_after_three_discharges) {
+    const auto& registry = testsupport::shippedContent();
+    const auto run = [&](bool talented) {
+        Rig rig(registry);
+        rig.equip(0, "battery", Rarity::Unique);
+        if (talented)
+            rig.world.add<PlayerSkillTree>(rig.player).skills.set(
+                SkillId::Reload, skillTierCount(SkillId::Reload) - 1);
+        rig.settleEquips();
+        const Entity source = ramMob(rig);
+        CombatSystem combat;
+        double last = 0.0;
+        for (int charge = 0; charge < 3; ++charge) {
+            if (charge) rig.tick(9);
+            CHECK(combat.applyDamage(rig.world, rig.player, source, 1, rig.now).applied > 0);
+            rig.tick();
+            CHECK_EQ(countStrikes(rig), static_cast<std::size_t>(charge + 1));
+            if (charge) CHECK_NEAR(rig.now - last, 500.0, 1e-9);
+            last = rig.now;
+        }
+        CHECK(rig.tickUntil([&] { return batteryCharges(rig) == 3; }, 60));
+        const double refill = rig.now - last;
+        CHECK_EQ(countStrikes(rig), 3u);
+        return refill;
+    };
+    const double base = run(false);
+    const double talented = run(true);
+    std::printf("Eternal Battery refill: %.0f ms base, %.0f ms max Reload\n", base, talented);
+    CHECK_NEAR(base, 1250.0, 50.0);
+    CHECK(talented < base * .30);
+}
+
+TEST(eternal_battery_dummy_dps_depends_on_keeping_body_contact) {
+    std::string error;
+    const bool loaded = loadContent(testsupport::dataDir(), error);
+    CHECK(loaded);
+    if (!loaded) return;
+    const auto& registry = content();
+    const auto run = [&](bool talented, int touchEvery) {
+        Rig rig(registry);
+        rig.equip(0, "battery", Rarity::Unique);
+        if (talented)
+            rig.world.add<PlayerSkillTree>(rig.player).skills.set(
+                SkillId::Reload, skillTierCount(SkillId::Reload) - 1);
+        rig.settleEquips();
+        NpcSystem npcs;
+        const Vec2 at{1000.0, 1000.0};
+        const Entity dummy = npcs.spawnNpc(rig.world, rig.terrain, registry,
+            registry.mobIndex("target_dummy"), Rarity::Common, at, Realm::Overworld, rig.now);
+        CHECK(dummy != NULL_ENTITY);
+        if (dummy == NULL_ENTITY) return 0.0;
+        const double reach = rig.world.get<Body>(dummy).radius + rig.world.get<Body>(rig.player).radius;
+        CombatSystem combat;
+        for (int tick = 0; tick < 200; ++tick) {
+            const double gap = tick % touchEvery == 0 ? reach - 3.0 : reach + 10.0;
+            rig.world.get<Transform>(rig.player).position = at - Vec2{gap, 0.0};
+            rig.tick();
+            auto& hp = rig.world.get<Health>(rig.player);
+            hp.current = hp.max;
+            ricochetCombatTick(rig, combat);
+            rig.reap();
+        }
+        double damage = 0.0;
+        for (const auto& line : combat.practiceDamage(rig.player, rig.now, dummy))
+            damage += line.amount;
+        return damage / 10.0;
+    };
+    const double held = run(false, 1);
+    const double heldWithReload = run(true, 1);
+    const double spaced = run(false, 30);
+    const double spacedWithReload = run(true, 30);
+    std::printf("Dummy DPS held: %.0f -> %.0f; spaced: %.0f -> %.0f\n",
+                held, heldWithReload, spaced, spacedWithReload);
+    CHECK(held > 0.0);
+    CHECK(heldWithReload > held);
+    CHECK(spaced > 0.0);
+    CHECK_NEAR(spacedWithReload, spaced, 1e-6);
 }
 
 TEST(a_battery_ignores_self_damage_and_invulnerability) {
@@ -4044,7 +4124,9 @@ TEST(a_summoning_shot_brings_one_summon_per_landing_up_to_its_cap) {
     if (placed.size() != 3) return;
     for (std::size_t i = 0; i < placed.size(); ++i) {
         const Entity pet = placed[i];
-        CHECK_EQ(rig.world.get<MobType>(pet).configIndex, fixture().registry.mobIndex("critter"));
+        const auto critter = fixture().registry.mobIndex("critter");
+        CHECK_EQ(rig.world.get<MobType>(pet).configIndex, critter);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, fixture().registry.mob(critter).health * 5.0, 1e-9);
         CHECK_EQ(rig.world.get<Pet>(pet).owner, rig.player);
         CHECK_EQ(static_cast<int>(rig.world.get<Pet>(pet).slot), 2);
         // Where the shot landed, give or take the spread a squad lands with.
@@ -4132,7 +4214,7 @@ TEST(a_pet_climbs_the_petal_ladder_not_the_mob_one) {
         Query<Pet> pets{rig.world};
         for (const Entity pet : pets.collect()) {
             const Health& health = rig.world.get<Health>(pet);
-            CHECK_NEAR(health.max, config.health * ladder, 1e-9);
+            CHECK_NEAR(health.max, config.health * ladder * 5.0, 1e-9);
             CHECK_NEAR(health.current, health.max, 1e-9);
             CHECK_NEAR(rig.world.get<ContactDamage>(pet).amount, config.damage * ladder, 1e-9);
         }
@@ -4147,23 +4229,23 @@ TEST(a_universal_egg_hatches_the_apex_squad_with_sqrt2_its_strength) {
     if (!contentLoaded()) return;
     const ContentRegistry& content = fixture().registry;
     const MobConfig& config = content.mob(content.mobIndex("critter"));
-    // An apex egg hatches three squads' worth at unique, the top a pet
-    // reaches. A universal egg hatches exactly that squad, and its sqrt(2) on
-    // health and damage is carried onto the pets -- they ARE the egg's damage.
+    // An apex or universal summoner hatches three squads at its own tier.
+    // The universal strength bonus also reaches both summon stats.
     for (const Rarity rarity : {Rarity::Apex, Rarity::Universal}) {
         Rig rig;
         rig.equip(0, "summoner", rarity);
         CHECK(rig.tickUntil([&] { return rig.petCount() == 6; }));
         rig.tick(5);
         CHECK_EQ(rig.petCount(), std::size_t(6));
-        const double strength = petalStatScale(Rarity::Unique) *
-                                (rarity == Rarity::Universal ? std::sqrt(2.0) : 1.0);
+        const auto& source = content.petal(content.petalIndex("summoner"));
+        const double strength = petalStrengthScale(rarity) * hyperSummonScale(source, rarity) *
+                                hyperSummonPromotionScale(source, rarity);
         Query<Pet> pets{rig.world};
         for (const Entity pet : pets.collect()) {
-            CHECK(rig.world.get<MobType>(pet).rarity == Rarity::Unique);
+            CHECK(rig.world.get<MobType>(pet).rarity == rarity);
             const double health = rig.world.get<Health>(pet).max;
             const double damage = rig.world.get<ContactDamage>(pet).amount;
-            CHECK_NEAR(health, config.health * strength, config.health * strength * 1e-12);
+            CHECK_NEAR(health, config.health * strength * 5.0, config.health * strength * 5e-12);
             CHECK_NEAR(damage, config.damage * strength, config.damage * strength * 1e-12);
         }
     }
@@ -4186,7 +4268,7 @@ TEST(the_pet_health_talent_multiplies_pets_and_nothing_else) {
     Query<Pet> pets{rig.world};
     for (const Entity pet : pets.collect()) {
         // The pool grows on the Petal Health talent's own table...
-        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * talent, 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * talent * 5.0, 1e-9);
         // ...and it is health alone: what the pet hits for is untouched.
         CHECK_NEAR(rig.world.get<ContactDamage>(pet).amount, critter.damage, 1e-9);
     }
@@ -4218,7 +4300,7 @@ TEST(both_health_talents_grant_what_their_tooltip_quotes) {
     if (!basic.empty()) CHECK_NEAR(rig.world.get<Health>(basic.front()).max, 40.0, 1e-9);
     Query<Pet> pets{rig.world};
     for (const Entity pet : pets.collect()) {
-        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * 4.0456, 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * 4.0456 * 5.0, 1e-9);
     }
 }
 
@@ -4247,7 +4329,7 @@ TEST(the_petal_health_talent_leaves_pets_alone) {
     CHECK(rig.tickUntil([&] { return rig.petCount() == 2; }));
     Query<Pet> pets{rig.world};
     for (const Entity pet : pets.collect()) {
-        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health, 1e-9);
+        CHECK_NEAR(rig.world.get<Health>(pet).max, critter.health * 5.0, 1e-9);
     }
 }
 
@@ -6273,7 +6355,7 @@ TEST(wiki_mechanism_egg_hatches_with_bandage_and_while_undead_with_double_summon
                     CHECK(combat.applyDamage(rig.world,shell,enemy,1e9,rig.now).refused);}
             }
             count=0;Query<Pet,Health,ContactDamage> pets{rig.world};pets.each([&](Entity,Pet& tag,Health& hp,ContactDamage& hit){
-            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,50,1e-8);CHECK_NEAR(hit.amount,2.0,1e-8);
+            if(tag.owner!=rig.player||tag.slot!=1)return;++count;CHECK_NEAR(hp.max,250,1e-8);CHECK_NEAR(hit.amount,2.0,1e-8);
         });return count==4;},150));
     }
 }
@@ -6409,7 +6491,7 @@ TEST(pharaoh_crown_summons_in_a_crowd_without_stacking_or_extending_duration) {
     const auto& mummy = registry.mob(type.configIndex);
     const double superScale = petalStatScale(Rarity::Super);
     CHECK_NEAR(rig.world.get<Health>(first).max,
-               3.0 * mummy.health * mummy.petHealthScale * superScale, 1e-6);
+               15.0 * mummy.health * mummy.petHealthScale * superScale, 1e-6);
     CHECK_NEAR(rig.world.get<ContactDamage>(first).amount,
                3.0 * mummy.damage * mummy.petDamageScale * superScale, 1e-6);
     rig.tick(19);
@@ -6470,14 +6552,15 @@ TEST(ant_and_beetle_egg_summons_gain_health_and_damage_at_every_rarity){
     for(const auto* id:{"egg","beetle_egg"})for(int tier=0;tier<kRarityCount;++tier){
         const auto rarity=clampRarity(tier);Rig rig;rig.equip(0,id,rarity);
         CHECK(rig.tickUntil([&]{return rig.petCount()>0;},2500));
-        const auto petRarity=ladderRarity(rarity)==Rarity::Apex?Rarity::Unique:rarity;
-        const double scale=petalStatScale(petRarity)*strengthBoost(rarity);
+        const auto& source = fixture().registry.petal(fixture().registry.petalIndex(id));
+        const auto petRarity = rarity;
+        const double scale = petalStrengthScale(rarity) * hyperSummonScale(source, rarity);
         int count=0;Query<Pet,Health,ContactDamage> pets{rig.world};
         pets.each([&](Entity entity,Pet& tag,Health& hp,ContactDamage& hit){
             if(tag.owner!=rig.player)return;++count;
-            CHECK_NEAR(hp.max,config.health*scale*5.0,std::max(1e-7,hp.max*1e-10));
+            CHECK_NEAR(hp.max,config.health*scale*25.0,std::max(1e-7,hp.max*1e-10));
             CHECK_NEAR(hit.amount,config.damage*scale*2.0,std::max(1e-7,hit.amount*1e-10));
-            CHECK_NEAR(rig.world.get<MobAi>(entity).aggroRange,std::max(kEnemyChaseRange,fixture().registry.mobStats(fixture().registry.mobIndex("critter"),petRarity).aggroRange)+rarityIndex(petRarity)*kPetAggroRangePerRarity,1e-9);
+            CHECK_NEAR(rig.world.get<MobAi>(entity).aggroRange,std::max(kEnemyChaseRange,fixture().registry.mobStats(fixture().registry.mobIndex("critter"),petRarity).aggroRange) + petalTier(petRarity) * kPetAggroRangePerRarity,1e-9);
         });CHECK(count>0);
     }
 }
@@ -6726,42 +6809,6 @@ TEST(hyper_technique_mana_orb_and_shell_charge_earlier_and_fill_small_gaps) {
     }
 }
 
-TEST(hyper_technique_mana_orb_and_shell_charge_earlier_and_fill_small_gaps) {
-    const auto& registry = testsupport::shippedContent();
-    for (const auto tier : {Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
-        for (const bool mana : {false, true}) {
-            Rig rig(registry);
-            rig.equip(0, mana ? "mana_orb" : "shell", tier);
-            const double cap = rig.world.get<Health>(rig.player).max;
-            if (mana) rig.world.add<ManaPool>(rig.player, ManaPool{1e9, 1e9});
-            else rig.world.add<ShieldState>(rig.player, ShieldState{cap});
-            rig.settleEquips();
-            const auto petal = rig.petals(0).front();
-            const double expectedCharge = mana
-                ? (tier == Rarity::Unique ? 1500.0 : 1000.0)
-                : (tier == Rarity::Unique ? 1000.0 : 750.0);
-            const auto& instance = rig.world.get<PetalInstance>(petal);
-            CHECK(!instance.homing);
-            const double spawned = instance.spawnedAtMillis;
-            if (mana) {
-                auto& pool = rig.world.get<ManaPool>(rig.player);
-                pool.current = pool.max - 1.0;
-            } else {
-                rig.world.get<ShieldState>(rig.player).amount = cap - 1.0;
-            }
-            CHECK(rig.tickUntil([&] {
-                return rig.world.get<PetalInstance>(petal).homing;
-            }, 40));
-            CHECK_NEAR(rig.now - spawned, expectedCharge, 1e-7);
-            CHECK(rig.tickUntil([&] {
-                if (!mana) return rig.world.get<ShieldState>(rig.player).amount == cap;
-                const auto& pool = rig.world.get<ManaPool>(rig.player);
-                return pool.current == pool.max;
-            }, 80));
-        }
-    }
-}
-
 TEST(hyper_technique_magic_leaf_and_orb_fill_the_wearers_mana_without_draining_it) {
     const auto& registry = testsupport::shippedContent();
     for (const auto tier : {Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
@@ -6800,7 +6847,7 @@ TEST(high_tier_blueberries_deal_less_damage_at_the_original_volley_rate) {
     const auto& registry = testsupport::shippedContent();
     for (const auto rarity : {Rarity::Super, Rarity::Unique, Rarity::Apex, Rarity::PermanentHyper}) {
         const double damagePerBerry = rarity == Rarity::Super ? 262440.0 :
-            rarity == Rarity::Unique ? 383818.5 : 767637.0;
+            rarity == Rarity::Unique ? 413343.0 : 826686.0;
         Rig rig(registry);
         rig.equip(0, "magic_peas", rarity);
         rig.equip(1, "magic_leaf", rarity);

@@ -2483,14 +2483,14 @@
         "damage": 0,
         "health": 49207.5,
         "reloadMillis": 250,
-        "lightningDamagePerHit": 383818.5,
+        "lightningDamagePerHit": 413343,
         "count": 4
       },
       "9": {
         "damage": 0,
         "health": 147622.5,
         "reloadMillis": 250,
-        "lightningDamagePerHit": 767637,
+        "lightningDamagePerHit": 826686,
         "count": 4
       }
     }

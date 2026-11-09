@@ -4530,7 +4530,7 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
         }
     }
     strength *= combatScale;
-    mob.health = config.health * ladder * config.petHealthScale * strength;
+    mob.health = config.health * ladder * config.petHealthScale * strength * kSummonedMobHealthScale;
     if(const auto* state=world.tryGet<PetalSlotState>(player))if(slot<state->slots.size()){
         const auto index=state->slots[slot].configIndex;
         if(index<registry.petalCount())mob.health*=eggSummonHealthScale(registry.petal(index));

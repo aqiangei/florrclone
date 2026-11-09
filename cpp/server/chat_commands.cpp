@@ -1000,7 +1000,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/s &lt;message&gt; - Send a message to your squad<br/>";
         help += "<br/><b>Guild commands (up to " + std::to_string(kMaxGuildSize) +
                 " members, persistent):</b><br/>";
-        help += "/guild-create &lt;tag&gt; [name] - Create a new guild (5-char alphanumeric "
+        help += "/guild-create &lt;tag&gt; [name] - Create a new guild (alphanumeric "
                 "tag, optional display name)<br/>";
         help += "/guild-invite &lt;username&gt; - Invite a player (leader or deputy)<br/>";
         help += "/guild-deputy [username] - Set or remove the invite-only deputy (leader only)<br/>";

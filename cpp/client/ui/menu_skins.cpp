@@ -25,6 +25,10 @@
 #include <string>
 #include <vector>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "client/net_client.h"
 #include "client/render/skin_render.h"
 #include "client/ui/draw.h"
@@ -42,6 +46,71 @@ namespace flix {
 using namespace flix::ui;
 
 namespace {
+
+constexpr char kSkinAiPrompt[] = R"PROMPT(请把我上传的参考图转成可以直接粘贴进「皮肤工坊」的画布命令。根据图中角色的轮廓、发型、眼睛、服装和配色来画。先铺底色和大轮廓，再叠加五官、配件和高光。缩小预览时，优先保证角色容易辨认。
+
+画布以 x=0 y=0 为中心，y 向下为正。参考示例中的 r=25，把主要图案控制在 x、y 各约 ±28 的范围内。一行一个图形，颜色用 #rrggbb。可用以下命令：
+circle x=0 y=0 r=5 fill=#ffffff
+ellipse x=0 y=0 rx=5 ry=3 fill=#ffffff
+rect x=0 y=0 rx=5 ry=3 fill=#ffffff
+polygon x=0 y=0 points=-3,2,0,-3,3,2 fill=#ffffff
+可选参数为 rot、stroke、sw。多边形的坐标全部用逗号分隔。
+
+请给出一个皮肤名称，再用一个独立代码块输出完整命令。代码块内只放可粘贴的画布命令。每条 polygon 最多 16 个顶点，每对 x,y 算一个顶点。复杂轮廓请拆成多个多边形，输出前逐行检查顶点数。)PROMPT";
+
+#ifdef __EMSCRIPTEN__
+EM_JS(void, copySkinPrompt, (const char* text, bool chinese), {
+    const value = UTF8ToString(text);
+    Module.flixSkinPromptCopied = false;
+    const copied = () => { Module.flixSkinPromptCopied = true; };
+    const manualCopy = () => {
+        const previous = document.getElementById('flix-skin-prompt');
+        if (previous) previous.remove();
+        const dialog = document.createElement('dialog');
+        dialog.id = 'flix-skin-prompt';
+        dialog.style.cssText = 'position:fixed;inset:0;margin:auto;z-index:20;width:min(32rem,88vw);max-height:80vh;' +
+            'background:#563a83;color:white;border:3px solid #9d7ace;border-radius:10px;padding:12px;';
+        const help = document.createElement('p');
+        help.textContent = chinese ? '复制下方提示词，再把参考图和提示词一起发给 AI。' :
+            'Copy the prompt below and send it to AI with your reference image.';
+        const field = document.createElement('textarea');
+        field.readOnly = true;
+        field.value = value;
+        field.style.cssText = 'display:block;box-sizing:border-box;width:100%;height:36vh;font-size:16px;';
+        field.setAttribute('aria-label', chinese ? 'AI 提示词' : 'AI prompt');
+        const select = () => {
+            field.focus();
+            field.select();
+            field.setSelectionRange(0, value.length);
+        };
+        const copy = document.createElement('button');
+        copy.textContent = chinese ? '复制提示词' : 'Copy prompt';
+        copy.onclick = () => {
+            select();
+            try {
+                if (document.execCommand('copy')) {
+                    copied();
+                    dialog.remove();
+                }
+            } catch (_) {}
+        };
+        const close = document.createElement('button');
+        close.textContent = chinese ? '关闭' : 'Close';
+        close.onclick = () => dialog.remove();
+        dialog.addEventListener('close', () => dialog.remove());
+        dialog.append(help, field, copy, close);
+        document.body.appendChild(dialog);
+        if (typeof dialog.showModal === 'function') dialog.showModal();
+        else dialog.setAttribute('open', '');
+        // Try the clipboard on HTTP as well. If the browser refuses, leave
+        // the selected text visible so the player can copy it directly.
+        copy.onclick();
+    };
+    if (navigator.clipboard) navigator.clipboard.writeText(value).then(copied, manualCopy);
+    else manualCopy();
+});
+EM_JS(bool, skinPromptWasCopied, (), { return Module.flixSkinPromptCopied === true; });
+#endif
 
 // --- palette ---------------------------------------------------------------
 //
@@ -298,7 +367,7 @@ std::string serializeShape(const Shape& s) {
 enum class Act : std::uint8_t {
     None, Close, Tab, AddShape, SelectShape, MoveShape, DelShape, Step, Fill, Stroke,
     AddVertex, DelVertex, TextMode, Publish, PublishSaved, Reset, Equip, Unequip, Delete,
-    ConfirmDelete, CancelDelete, EquipBuiltIn,
+    ConfirmDelete, CancelDelete, EquipBuiltIn, CopyAiPrompt,
 };
 
 enum class Field : std::uint8_t { X, Y, R, Rx, Ry, Rot, Sw };
@@ -349,7 +418,7 @@ struct Layout {
     Rect right;     ///< the selected shape's properties, or the text editor
 };
 
-Layout layoutOf(Rect panel) {
+Layout layoutOf(Rect panel, bool showPromptHint) {
     Layout out;
     out.panel = panel;
     const double x = panel.x + kPad;
@@ -357,7 +426,7 @@ Layout layoutOf(Rect panel) {
     out.tabs = {x, panel.y + kPad + kHeadingBand + 5.0, w, kTabHeight};
     out.footer = {x, panel.bottom() - kPad - kFooterHeight, w, kFooterHeight};
 
-    const double top = out.tabs.bottom() + 12.0;
+    const double top = out.tabs.bottom() + (showPromptHint ? 34.0 : 12.0);
     out.body = {x, top, w, std::max(0.0, out.footer.y - 10.0 - top)};
     out.left = {x, top, kLeftWidth, out.body.h};
     out.preview = {x + (kLeftWidth - kPreviewSize) * 0.5, top, kPreviewSize, kPreviewSize};
@@ -430,6 +499,7 @@ struct Studio {
     int dragVertex = 0;
 
     bool textMode = false;
+    double promptCopyFeedbackUntil = 0.0;
     std::string textError;
     std::string textBuffer;
     /// Caret, selection and focus for the two editors. The name box is an
@@ -474,7 +544,7 @@ struct Studio {
 
     // draw
     void draw(MenuContext&);
-    void drawTabs(Canvas&, Vec2 mouse);
+    void drawTabs(Canvas&, Vec2 mouse, double now);
     void drawPreview(Canvas&);
     void drawShapeList(Canvas&, Rect);
     void drawProps(Canvas&, Rect);
@@ -661,7 +731,7 @@ double Studio::drawPalette(Canvas& canvas, Rect r, const char* caption,
 
 // --- the panel -------------------------------------------------------------
 
-void Studio::drawTabs(Canvas& canvas, Vec2 mouse) {
+void Studio::drawTabs(Canvas& canvas, Vec2 mouse, double now) {
     const Rect row = layout.tabs;
     const char* labels[] = {tr(Msg::CreateTab), tr(Msg::BrowseTab), tr(Msg::SkinBuiltInTab)};
     for (int i = 0; i < 3; ++i) {
@@ -683,6 +753,21 @@ void Studio::drawTabs(Canvas& canvas, Vec2 mouse) {
         const Rect r{row.right() - 110.0, row.y, 110.0, row.h};
         actionButton(canvas, r, textMode ? tr(Msg::SkinVisualEditor) : tr(Msg::SkinTextEditor), mode,
                      textMode ? kAccentPurple : kNeutralFill);
+        const double left = row.x + 3 * (kTabWidth + kTabGap);
+        const Rect prompt{left, row.y, std::max(0.0, r.x - left - kTabGap), row.h};
+        bool copied = now < promptCopyFeedbackUntil;
+#ifdef __EMSCRIPTEN__
+        copied = copied && skinPromptWasCopied();
+#endif
+        Action copy;
+        copy.k = Act::CopyAiPrompt;
+        actionButton(canvas, prompt,
+                     copied ? trEnZh("Copied", "已复制") : trEnZh("Copy AI prompt", "复制 AI 提示词"),
+                     copy, kAccentPurple);
+        ui::text(canvas, trEnZh(
+            "Send the image and prompt to AI. Paste the result into the text editor.",
+            "把参考图和提示词发给 AI，再把生成的画布命令粘贴到文本编辑。"),
+            row.x, row.bottom() + 15.0, label(kCaptionSize));
     } else if (tab == Tab::Browse) {
         Action unequip;
         unequip.k = Act::Unequip;
@@ -1192,7 +1277,7 @@ void Studio::draw(MenuContext& ctx) {
     close.k = Act::Close;
     addRegion(closeRect, close);
 
-    drawTabs(canvas, mouse);
+    drawTabs(canvas, mouse, ctx.timeSeconds);
 
     if (tab == Tab::Create) {
         drawPreview(canvas);
@@ -1514,6 +1599,14 @@ bool Studio::dispatch(MenuContext& ctx, const Action& a) {
             }
             break;
         }
+        case Act::CopyAiPrompt:
+#ifdef __EMSCRIPTEN__
+            copySkinPrompt(kSkinAiPrompt, language() == Language::Zh);
+#else
+            ctx.window.setClipboardText(kSkinAiPrompt);
+#endif
+            promptCopyFeedbackUntil = ctx.timeSeconds + 3.0;
+            break;
         case Act::TextMode:
             textMode = !textMode;
             textError.clear();
@@ -1706,7 +1799,7 @@ bool SkinsPanel::render(MenuContext& ctx) {
     state.window = &ctx.window;
     // From the shared anchor, so the card, its hit regions and the box
     // MenuSystem captures the mouse in are one rect.
-    state.layout = layoutOf(ctx.bounds);
+    state.layout = layoutOf(ctx.bounds, state.tab == Studio::Tab::Create);
     // Input runs first and against the previous frame's regions: the panel's
     // handlers fire between renders, and every button, tab, swatch and stepper
     // acts on PRESS rather than release.

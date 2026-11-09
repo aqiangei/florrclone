@@ -3314,9 +3314,9 @@ TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
     const auto current=shopOffers(buyer.lockedShopRotation).front();
     const auto beforeBulk=buyer.profile().stackCount(current.petalIndex,current.rarity);
     const auto beforeStars=buyer.profile().stars;
-    buyer.requestBuyPetal(current.petalIndex,current.rarity,0,125);
-    CHECK(awaitProfile(h,buyer,[&](const Profile& p){return p.stackCount(current.petalIndex,current.rarity)==beforeBulk+125;}));
-    CHECK_NEAR(buyer.profile().stars,beforeStars-current.price*125,1e-6);
+    buyer.requestBuyPetal(current.petalIndex,current.rarity,0,330);
+    CHECK(awaitProfile(h,buyer,[&](const Profile& p){return p.stackCount(current.petalIndex,current.rarity)==beforeBulk+330;}));
+    CHECK_NEAR(buyer.profile().stars,beforeStars-current.price*330,1e-6);
     CHECK_EQ(starsForKill(Rarity::Mythic),1);CHECK_EQ(starsForKill(Rarity::Ultra),5);CHECK_EQ(starsForKill(Rarity::Super),25);
     for(std::uint16_t p=0;p<content().petalCount();++p)if(shopSellsPetal(p)){
         CHECK(shopPrice(p,Rarity::Rare)>=1);CHECK(shopPrice(p,Rarity::Super)>=shopPrice(p,Rarity::Rare));

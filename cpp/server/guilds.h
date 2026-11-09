@@ -3,13 +3,13 @@
 // stores it in.
 //
 // Guilds live in the browser build's own `guilds` table -- an object keyed by
-// the upper-cased five-character name, each value carrying {name,
+// the upper-cased tag, each value carrying {name,
 // leaderUsername, memberUsernames, createdAt} -- and are held as JSON in that
 // shape, which existing database files carry, rather than mirrored into a
 // typed cache: a second copy is a second thing to keep true.
 //
 // Two optional fields ride beside those: `displayName`, the free-text name the
-// panel heads the card with, and `description`. The five-character `name` is
+// panel heads the card with, and `description`. The stored `name` is
 // the guild's TAG -- its key, and what hangs under a nameplate in brackets. A
 // record written before either field existed has neither, which reads as a
 // display name equal to the tag and no description.
@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include "server/text.h"
 #include "shared/core/json.h"
@@ -37,15 +38,20 @@ inline std::string normalizeGuildName(const std::string& raw) {
     return name;
 }
 
-/// Exactly five A-Z or 0-9, which is what makes the name short enough to hang
-/// under a nameplate as a tag.
+/// Nonempty ASCII A-Z or 0-9 after normalization.
 inline bool validGuildName(const std::string& name) {
-    if (name.size() != 5) return false;
+    if (name.empty()) return false;
     for (const char c : name) {
-        const auto byte = static_cast<unsigned char>(c);
-        if (!std::isupper(byte) && !std::isdigit(byte)) return false;
+        if (!(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9')) return false;
     }
     return true;
+}
+
+/// A compact tag for the online roster, where it may appear once per member.
+inline std::string publicGuildTag(std::string_view tag) {
+    constexpr std::size_t width = 16;
+    if (tag.size() <= width) return std::string(tag);
+    return std::string(tag.substr(0, width - 3)) + "...";
 }
 
 inline constexpr std::size_t kMaxGuildDisplayName = 20;

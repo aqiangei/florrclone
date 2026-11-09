@@ -33,6 +33,7 @@
 #include "client/ui/text_input.h"
 #include "client/ui/text_select.h"
 #include "shared/core/text.h"
+#include "shared/net/bytebuffer.h"
 
 namespace flix {
 
@@ -62,6 +63,13 @@ constexpr double kNameSize = 22.0;
 constexpr double kNameBaseline = 85.0;
 constexpr double kTagSize = 18.0;
 constexpr double kTagBaseline = 111.0;
+
+// Bound the input to the text fitter, which removes one glyph per pass.
+std::string guildLabel(const std::string& value, double size, double width) {
+    constexpr std::size_t previewBytes = 96;
+    return ellipsize(value.size() <= previewBytes ? value : value.substr(0, previewBytes) + "...",
+                     size, width);
+}
 
 /// The description box: centred, square-cornered, in the frame's colour.
 constexpr double kAboutTop = 136.5;
@@ -96,7 +104,6 @@ constexpr double kTagFieldWidth = 110.0;
 /// The server's own limits (server/guilds.h), held at the field so an
 /// over-long value is never typed only to be refused.
 constexpr std::size_t kNameLimit = 20;
-constexpr std::size_t kTagLimit = 5;
 constexpr std::size_t kDescriptionLimit = 120;
 constexpr std::size_t kUsernameLimit = 24;
 
@@ -421,17 +428,18 @@ bool GuildPanel::render(MenuContext& ctx) {
                        f.editName.state.focused, ctx.timeSeconds, &f.editName.state);
             fields.push_back({&f.editName, nameField, kNameLimit, false});
         } else {
-            text(canvas, guild.name, centreX, panel.y + kNameBaseline,
+            text(canvas, guildLabel(guild.name, kNameSize, panel.w - 40), centreX, panel.y + kNameBaseline,
                  cardText(kNameSize, Align::Centre, Baseline::Alphabetic));
         }
-        text(canvas, "[" + guild.tag + "]", centreX, panel.y + kTagBaseline,
+        text(canvas, "[" + guildLabel(guild.tag, kTagSize, panel.w - 64) + "]",
+             centreX, panel.y + kTagBaseline,
              cardText(kTagSize, Align::Centre, Baseline::Alphabetic));
         aboutLines = wrapAbout(guild.description, kAboutWidth - kAboutInset * 2,
                                kAboutTextSize, kAboutMaxLines);
     } else {
         text(canvas, tr(Msg::NoGuild), centreX, panel.y + kNameBaseline,
              cardText(kNameSize, Align::Centre, Baseline::Alphabetic));
-        textAtAlpha(canvas, "Name a guild and pick a 5-letter tag to start one",
+        textAtAlpha(canvas, "Name a guild and pick a tag to start one",
                     centreX, panel.y + kTagBaseline,
                     cardText(kDetailTextSize, Align::Centre, Baseline::Alphabetic), 0.85);
     }
@@ -462,7 +470,7 @@ bool GuildPanel::render(MenuContext& ctx) {
         inputField(canvas, tagField, f.createTag.value, "Tag", f.createTag.state.focused,
                    ctx.timeSeconds, &f.createTag.state);
         fields.push_back({&f.createName, nameField, kNameLimit, false});
-        fields.push_back({&f.createTag, tagField, kTagLimit, true});
+        fields.push_back({&f.createTag, tagField, ByteWriter::kMaxStringBytes, true});
     } else if (editing) {
         const Rect aboutField{aboutBox.x + kBoxFieldInset, boxFieldY,
                               aboutBox.w - kBoxFieldInset * 2, kFieldHeight};
@@ -558,14 +566,15 @@ bool GuildPanel::render(MenuContext& ctx) {
             fillRound(canvas, card, 6.0, kGuildThumb);
             textAtAlpha(canvas, "@" + pending.fromUsername + " invited you to join",
                         card.x + 14.0, card.y + 18.0, cardText(kDetailTextSize), 0.9);
-            text(canvas, pending.displayName + " [" + pending.guildName + "]", card.x + 14.0,
-                 card.y + 39.0, cardText(kTagSize));
-
             const double declineW = buttonWidth("Decline");
             const double acceptW = buttonWidth("Accept");
             const double buttonY = card.y + (card.h - kButtonHeight) * 0.5;
             const Rect decline{card.right() - 13.0 - declineW, buttonY, declineW, kButtonHeight};
             const Rect accept{decline.x - kButtonGap - acceptW, buttonY, acceptW, kButtonHeight};
+            const auto invitationName = pending.displayName == pending.guildName
+                ? pending.guildName : pending.displayName + " [" + pending.guildName + "]";
+            text(canvas, guildLabel(invitationName, kTagSize, accept.x - card.x - 28.0),
+                 card.x + 14.0, card.y + 39.0, cardText(kTagSize));
             cardButton(canvas, accept, "Accept", kAcceptFace, kAcceptRim,
                        pointing && accept.contains(mouse));
             cardButton(canvas, decline, "Decline", kCloseFace, kCloseRim,

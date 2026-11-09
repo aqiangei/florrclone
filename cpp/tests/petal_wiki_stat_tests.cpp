@@ -26,9 +26,9 @@ TEST(wiki_stat_blueberries_have_real_lightning_damage_and_nonzero_tooltip){
     CHECK(loadWikiStats());ui::setLanguage(ui::Language::Zh);
     const auto id=content().petalIndex("magic_peas");
     CHECK_NEAR(content().petalStats(id,Rarity::Common).lightningDamagePerHit,120,1e-8);
-    CHECK_NEAR(content().petalStats(id,Rarity::Unique).lightningDamagePerHit,383818.5,1e-8);
+    CHECK_NEAR(content().petalStats(id,Rarity::Unique).lightningDamagePerHit,413343.0,1e-8);
     CHECK_EQ(content().petalStats(id,Rarity::Unique).lightningBounces,0);
-    CHECK(hasLine(id, Rarity::Unique, "383818") || hasLine(id, Rarity::Unique, "383819"));
+    CHECK(hasLine(id, Rarity::Unique, "413343"));
     CHECK(hasLine(id, Rarity::Unique, "不会连锁"));
 }
 TEST(wiki_stat_mecha_missile_has_a_straight_projectile_without_antennae){

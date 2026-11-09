@@ -1402,6 +1402,9 @@ inline bool petalIsCompass(const PetalConfig& config) { return config.id == "com
 /// A cursor walks its flower's pets of a LOWER tier to the pointer instead of
 /// letting them fight on their own (MobAiSystem::steerPet).
 inline bool petalControlsPets(const PetalConfig& config) { return config.id == "cursor"; }
+// Shared by summoned bodies and the loadout stat preview.
+inline constexpr double kSummonedMobHealthScale = 5.0;
+
 inline bool petalIsEgg(const PetalConfig& config) {
     const auto& id = config.id;
     return id == "egg" || (id.size() >= 4 && id.compare(id.size() - 4, 4, "_egg") == 0);

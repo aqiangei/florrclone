@@ -6425,7 +6425,7 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
         }
         for (auto& row : rows) {
             const auto found = guildByMember.find(row.sortKey);
-            if (found != guildByMember.end()) row.guild = found->second;
+            if (found != guildByMember.end()) row.guild = publicGuildTag(found->second);
         }
     }
     if(config_.authorityAuth) {
@@ -6455,7 +6455,7 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
             const auto shard=item["shard"].asString();if(shard==local||(shard!="one"&&shard!="two"))continue;
             Row row;row.account=item["account"].asString();
             if(std::any_of(rows.begin(),rows.end(),[&](const Row& r){return r.account==row.account;}))continue;
-            row.name=item["name"].asString();row.guild=item["guild"].asString();row.location=item["location"].asString();
+            row.name=item["name"].asString();row.guild=publicGuildTag(item["guild"].asString());row.location=item["location"].asString();
             row.level=static_cast<std::uint16_t>(std::clamp(item["level"].asInt(),1,65535));
             row.sortKey=lowerCase(row.name);row.shard=shard=="one"?1:2;row.sameShard=false;
             rows.push_back(std::move(row));
@@ -6583,13 +6583,12 @@ void GameServer::guildCreate(Session& session, net::Connection& connection,
     }
     if (!validGuildName(name)) {
         sendNotice(connection, net::NoticeSeverity::Warning,
-                   "Guild tag must be exactly 5 alphanumeric characters (A鈥揨, 0鈥?).");
+                   "Guild tag must contain only A-Z and 0-9.");
         return;
     }
-    // No display name is the tag: the card always has something to say.
-    const std::string displayName =
-        trimmed(rawDisplayName).empty() ? name : trimmed(rawDisplayName);
-    if (!validGuildDisplayName(displayName)) {
+    // An omitted display name falls back to the tag when shown.
+    const std::string displayName = trimmed(rawDisplayName);
+    if (!displayName.empty() && !validGuildDisplayName(displayName)) {
         sendNotice(connection, net::NoticeSeverity::Warning,
                    "Guild name must be 1-" + std::to_string(kMaxGuildDisplayName) +
                        " letters, digits, spaces or punctuation.");
@@ -6603,7 +6602,7 @@ void GameServer::guildCreate(Session& session, net::Connection& connection,
     Json& guilds = database_.rawTable("guilds");
     if (guilds.contains(name)) {
         sendNotice(connection, net::NoticeSeverity::Warning,
-                   "A guild named \"" + name + "\" already exists.");
+                   "A guild named \"" + publicGuildTag(name) + "\" already exists.");
         return;
     }
 
@@ -6620,7 +6619,8 @@ void GameServer::guildCreate(Session& session, net::Connection& connection,
     database_.markDirty();
 
     sendNotice(connection, net::NoticeSeverity::Good,
-               "Guild \"" + escapedMarkup(displayName) + "\" [" + name + "] created.");
+               "Guild \"" + escapedMarkup(displayName.empty() ? publicGuildTag(name) : displayName) +
+                   "\" [" + publicGuildTag(name) + "] created.");
     broadcastGuildRoster(guilds[name]);
 }
 

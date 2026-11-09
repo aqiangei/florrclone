@@ -132,15 +132,16 @@ TEST(a_guild_is_created_named_and_pushed_back_to_its_leader) {
     // to know it is in the no-guild state rather than the not-asked-yet one.
     CHECK(h.stepUntil({&client}, [&] { return !client.guild().joined; }, 100));
 
-    // Names are upper-cased and must be exactly five alphanumerics.
-    client.requestGuildCreate("nope");
+    // Punctuation is invalid, but the tag can exceed even the display-name limit.
+    client.requestGuildCreate("no-pe");
     CHECK(!h.stepUntil({&client}, [&] { return client.guild().joined; }, 40));
 
-    client.requestGuildCreate("alpha");
+    client.requestGuildCreate("longguildtag123456789012345");
     CHECK(h.stepUntil({&client}, [&] { return client.guild().joined; }, 200));
-    CHECK_EQ(client.guild().tag, std::string("ALPHA"));
+    const std::string tag = "LONGGUILDTAG123456789012345";
+    CHECK_EQ(client.guild().tag, tag);
     // No display name was given, so the card is headed with the tag.
-    CHECK_EQ(client.guild().name, std::string("ALPHA"));
+    CHECK_EQ(client.guild().name, tag);
     CHECK_EQ(client.guild().leader, std::string("leader"));
     CHECK_EQ(client.guild().members.size(), static_cast<std::size_t>(1));
     // The leader is online, so their own roster says so.
@@ -149,7 +150,7 @@ TEST(a_guild_is_created_named_and_pushed_back_to_its_leader) {
     // A second guild under the same name is refused, and the first survives.
     NetClient other;
     CHECK(loginNew(h, other, "rival", "password7"));
-    other.requestGuildCreate("ALPHA");
+    other.requestGuildCreate("LongGuildTag123456789012345");
     CHECK(!h.stepUntil({&client, &other}, [&] { return other.guild().joined; }, 40));
 }
 
