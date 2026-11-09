@@ -12,7 +12,9 @@ async function run({target,remotePort,localPort}){
     +"process.stdin.pipe(peer);peer.pipe(process.stdout);"
     +"peer.on('error',error=>{console.error(error.message);process.exit(1)});"
     +"peer.on('close',()=>process.stdin.destroy());";
-  const command='/opt/florrclone/runtime/bin/node -e '+quote(bridge)+' '+remotePort;
+  const node = target.host === '154.219.105.164' && remotePort === 38788
+    ? '/usr/bin/node' : '/opt/florrclone/runtime/bin/node';
+  const command=node+' -e '+quote(bridge)+' '+remotePort;
   const args=['-T','-i',target.key,'-p',String(target.sshPort),'-o','BatchMode=yes',
     '-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=10','-o','ServerAliveInterval=15',
     '-o','ServerAliveCountMax=3',...sshProxyOptions(target),'root@'+target.host,command];

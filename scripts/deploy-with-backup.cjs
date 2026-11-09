@@ -118,10 +118,14 @@ async function main(){
     old=ssh('readlink -f '+q(current)).trim();
     if (fresh || third) {
       const queuePolicy = third ? ['0'] : ['0','1'];
-      assert(process.env.FLORR_PRESERVE_SAVE === '1' && queuePolicy.includes(process.env.FLORR_DOWNLOAD_QUEUE) &&
+      const restoring = Boolean(process.env.FLORR_RESTORE_SNAPSHOT);
+      const verifiedRestore = restoring && !preserveSave &&
+        /^[a-f0-9]{64}$/.test(process.env.FLORR_RESTORE_SHA256 || '');
+      assert((verifiedRestore || (preserveSave && !restoring)) &&
+             queuePolicy.includes(process.env.FLORR_DOWNLOAD_QUEUE) &&
              process.env.FLORR_CLIENT_ASSET_HOST === target.host && !process.env.FLORR_ENTRY_PROXY_IP &&
              !process.env.FLORR_PASSWORD_RESET_FILE,
-             'Independent instance requires an explicit download policy and its own preserved save');
+             'Independent instance requires a verified restore or its own preserved save and a download policy');
       const command = ssh('systemctl show '+service+' --property=ExecStart --value');
       assert(command.includes(current+'/server.js') &&
              command.includes('--db '+databaseFile+' '),
@@ -348,7 +352,7 @@ async function main(){
       fs.writeFileSync(path.join(local,'password-reset.json'),JSON.stringify(report.passwordReset,null,2));
     }
     scp(next,host+':'+remote+'/inventory.next.json');
-    if(resetRequests||councilManagerId||bootstrap){
+    if(resetRequests||councilManagerId||bootstrap||process.env.FLORR_RESTORE_SNAPSHOT){
       const candidateHash=crypto.createHash('sha256').update(fs.readFileSync(next)).digest('hex');
       assert.equal(ssh('sha256sum '+q(remote+'/inventory.next.json')).split(/\s/)[0],candidateHash,
         'Save candidate SHA256 mismatch');
