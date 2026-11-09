@@ -140,6 +140,7 @@
         #serverNotice {
             position:fixed;inset:0;margin:auto;padding:0;
             width:min(440px,calc(100vw - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+            max-height:calc(100vh - 32px);
             max-height:calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
             overflow:auto;overscroll-behavior:contain;touch-action:pan-y;
             border:5px solid #5680ad;border-radius:12px;background:#6b9dd6;
@@ -156,6 +157,16 @@
         #serverNotice p {margin:8px 0;}
         #serverNotice a {display:flex;align-items:center;min-height:44px;margin:5px 0;padding:3px 9px;
             color:#fff;background:#345d87;border:2px solid #2a4c6f;border-radius:4px;overflow-wrap:anywhere;}
+        .server-official-site {
+            padding:9px 12px;background:#fff1e7;border:2px solid #8e2630;border-radius:7px;
+        }
+        .server-official-site strong {display:block;color:#a11724;font-size:16px;}
+        #serverNotice .server-official-site a {
+            margin:0;padding:0;background:none;border:0;color:#a11724;
+            font-size:clamp(18px,5vw,24px);font-weight:800;line-height:1.25;
+            text-underline-offset:3px;
+        }
+        #serverNotice .server-official-site p {margin:0;color:#45232b;}
         #closeServerNotice {flex:none;display:grid;place-items:center;width:44px;height:44px;
             border:3px solid #8d4a47;border-radius:4px;background:#ae5b58;color:#fff;
             font:bold 25px/1 Ubuntu,sans-serif;cursor:pointer;touch-action:manipulation;}
@@ -243,7 +254,12 @@
         </form>
       </div>
       <div class="server-notice-body">
-        <p>请记下或收藏以下服务器地址。</p>
+        <div class="server-official-site">
+          <strong>重要提醒！！！今后的正式访问地址</strong>
+          <a href="https://ashflor.com/">https://ashflor.com/</a>
+          <p><b>你现在使用的网址以后可能会失效！</b>请现在就收藏上面的域名，也可以截图保存。以后请从这个地址进入游戏。</p>
+        </div>
+        <p>各服务器直连地址</p>
         <a data-server href="http://154.219.105.158:8088/">一服 · 154.219.105.158:8088</a>
         <a data-server href="http://154.219.105.161:10000/">二服 · 154.219.105.161:10000</a>
         <a data-server href="http://154.219.105.164:10000/">三服 · 154.219.105.164:10000</a>
@@ -327,7 +343,7 @@
   else qualityUrl.searchParams.set('quality', 'low');
   quality.href = qualityUrl.href;
   const serverNotice = document.getElementById('serverNotice');
-  const noticeKey = 'florr-server-guide-three-servers-dismissed';
+  const noticeKey = 'florr-server-guide-official-site-dismissed';
   const openNotice = () => {
     if (!serverNotice.open) serverNotice.showModal();
   };
