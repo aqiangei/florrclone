@@ -570,7 +570,9 @@ EM_JS(int, flix_write_snapshot, (const char* file, const char* text, std::size_t
         dir = fs.openSync(require("node:path").dirname(path), "r");
         temp = path + ".save-" + require("node:crypto").randomUUID();
         fd = fs.openSync(temp, "wx", 0o600);
-        const bytes = Buffer.from(HEAPU8.subarray(text, text + size));
+        // writeFileSync finishes before the worker releases the immutable
+        // WASM string, so Node can read its bytes directly.
+        const bytes = Buffer.from(HEAPU8.buffer, text >>> 0, size);
         fs.writeFileSync(fd, bytes);
         if (fs.fstatSync(fd).size !== size) throw new Error("short write");
         fs.fsyncSync(fd);
@@ -626,6 +628,7 @@ SnapshotOutcome writeSnapshot(const std::string& path, const std::string& text) 
 } // namespace
 
 struct Database::SnapshotWriter {
+    using Clock = std::chrono::steady_clock;
     template<class Row>
     struct Changes {
         typename Table<Row>::RowChanges rows;
@@ -639,6 +642,7 @@ struct Database::SnapshotWriter {
         std::vector<std::string> topOrder;
         std::uint64_t generation = 0;
         bool finalSave = false;
+        Clock::time_point submittedAt;
     };
     struct Result {
         SnapshotOutcome outcome;
@@ -646,6 +650,8 @@ struct Database::SnapshotWriter {
         std::size_t bytes, accounts, players;
         double millis;
         std::string sha;
+        Clock::time_point completedAt;
+        double queueMs = 0.0, encodeRowsMs = 0.0, assembleMs = 0.0, writeMs = 0.0;
     };
     struct Rows {
         std::unordered_map<std::string, std::string> text;
@@ -679,8 +685,8 @@ struct Database::SnapshotWriter {
         }
     };
 
-    explicit SnapshotWriter(const std::string& path)
-        : path(path), thread([this] { run(); }) {}
+    SnapshotWriter(const std::string& path, bool trace)
+        : trace(trace), path(path), thread([this] { run(); }) {}
     ~SnapshotWriter() {
         {
             std::lock_guard lock(mutex);
@@ -694,6 +700,7 @@ struct Database::SnapshotWriter {
         {
             std::lock_guard lock(mutex);
             busy = true;
+            if (trace) job.submittedAt = Clock::now();
             pending = std::move(job);
         }
         ready.notify_one();
@@ -709,6 +716,7 @@ struct Database::SnapshotWriter {
     }
 
     bool requested = false;
+    const bool trace;
     std::chrono::steady_clock::time_point retryAt{};
     std::optional<Result> latest;
 
@@ -726,6 +734,7 @@ private:
             auto done = write(job);
             {
                 std::lock_guard lock(mutex);
+                if (trace) done.completedAt = Clock::now();
                 result = std::move(done);
                 busy = false;
             }
@@ -733,11 +742,12 @@ private:
         }
     }
     Result write(Job& job) {
-        const auto started = std::chrono::steady_clock::now();
+        const auto started = Clock::now();
         users.apply(job.users, [](const Account& row) { return accountToJson(row).dump(0); });
         players.apply(job.players, [](const PlayerRecord& row) { return playerToJson(row).dump(0); });
         sessions.apply(job.sessions, [](const Session& row) { return sessionToJson(row).dump(0); });
         globals.apply(job.globals, [](const Json& row) { return row.dump(0); });
+        const auto encodedAt = trace ? Clock::now() : Clock::time_point{};
         std::string output;
         output.reserve(lastBytes);
         const auto add = [&](const std::string& key, const auto& append) {
@@ -761,12 +771,24 @@ private:
         if (!wroteSessions && !sessions.order.empty()) table("sessions", sessions);
         output += '}';
         lastBytes = output.size();
+        const auto assembledAt = trace ? Clock::now() : Clock::time_point{};
         const auto outcome = writeSnapshot(path, output);
+        const auto writtenAt = trace ? Clock::now() : Clock::time_point{};
         const std::string sha = outcome == SnapshotOutcome::Saved && job.finalSave
             ? crypto::sha256Hex(output) : "";
-        const double millis = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - started).count();
-        return {outcome, job.generation, lastBytes, users.order.size(), players.order.size(), millis, sha};
+        const auto completedAt = Clock::now();
+        const auto ms = [](Clock::duration span) {
+            return std::chrono::duration<double, std::milli>(span).count();
+        };
+        Result done{outcome, job.generation, lastBytes, users.order.size(), players.order.size(),
+                    ms(completedAt - started), sha, {}};
+        if (trace) {
+            done.queueMs = ms(started - job.submittedAt);
+            done.encodeRowsMs = ms(encodedAt - started);
+            done.assembleMs = ms(assembledAt - encodedAt);
+            done.writeMs = ms(writtenAt - assembledAt);
+        }
+        return done;
     }
 
     std::string path;
@@ -1187,23 +1209,35 @@ bool Database::flushDelta() {
     return true;
 }
 
-bool Database::enableBackgroundSave(std::string& errorOut) {
+bool Database::enableBackgroundSave(std::string& errorOut, bool trace) {
 #ifdef FLIX_BACKGROUND_SAVE
     if (snapshotWriter_ || authoritative() || loadFailed_ || path_.empty()) {
         errorOut = "background save requires a loaded independent database";
         return false;
     }
-    snapshotWriter_ = std::make_unique<SnapshotWriter>(path_);
-    users_.trackSnapshotRows();
-    players_.trackSnapshotRows();
-    sessions_.trackSnapshotRows();
-    otherTop_.trackSnapshotRows();
+    snapshotWriter_ = std::make_unique<SnapshotWriter>(path_, trace);
+    users_.trackSnapshotRows(trace);
+    players_.trackSnapshotRows(trace);
+    sessions_.trackSnapshotRows(trace);
+    otherTop_.trackSnapshotRows(trace);
     queueSnapshot();
     return true;
 #else
+    (void)trace;
     errorOut = "background save requires a threaded server";
     return false;
 #endif
+}
+
+Database::SnapshotEditTiming Database::snapshotEdits() const {
+    SnapshotEditTiming total;
+    for (const auto& stats : {users_.snapshotEdits(), players_.snapshotEdits(),
+                              sessions_.snapshotEdits(), otherTop_.snapshotEdits()}) {
+        total.attempts += stats.attempts;
+        total.copies += stats.copies;
+        total.wallMs += stats.wallMs;
+    }
+    return total;
 }
 
 void Database::queueSnapshot(bool finalSave) {
@@ -1260,6 +1294,18 @@ void Database::collectSnapshotResult(bool wait) {
     auto result = snapshotWriter_->takeResult(wait);
     if (!result) return;
     auto& writer = *snapshotWriter_;
+    if (writer.trace) {
+        const double delay = std::chrono::duration<double, std::milli>(
+            SnapshotWriter::Clock::now() - result->completedAt).count();
+        const double wall = std::chrono::duration<double, std::milli>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        std::printf("[persist-probe-worker] {\"generation\":%llu,\"completedWallMs\":%.3f,"
+                    "\"workerMs\":%.3f,\"queueMs\":%.3f,\"rowEncodeMs\":%.3f,"
+                    "\"assembleMs\":%.3f,\"writeMs\":%.3f,\"collectDelayMs\":%.3f,\"blocking\":%s}\n",
+                    static_cast<unsigned long long>(result->generation), wall - delay,
+                    result->millis, result->queueMs, result->encodeRowsMs,
+                    result->assembleMs, result->writeMs, delay, wait ? "true" : "false");
+    }
     if (result->outcome == SnapshotOutcome::Saved) {
         committedGeneration_ = result->generation;
         dirty_ = mutationGeneration_ != committedGeneration_;
@@ -1292,10 +1338,31 @@ void Database::pollBackgroundSave() {
 
 bool Database::saveBackgroundNow(bool finalSave) {
 #ifdef FLIX_BACKGROUND_SAVE
+    const bool trace = snapshotWriter_->trace;
+    const auto now = [trace] {
+        return trace ? SnapshotWriter::Clock::now() : SnapshotWriter::Clock::time_point{};
+    };
+    const auto start = now();
     collectSnapshotResult(true);
     if (commitUncertain_) return false;
+    const auto priorCollected = now();
     queueSnapshot(finalSave);
+    const auto submitted = now();
     collectSnapshotResult(true);
+    if (trace) {
+        const auto end = now();
+        const auto ms = [](SnapshotWriter::Clock::duration span) {
+            return std::chrono::duration<double, std::milli>(span).count();
+        };
+        if (ms(end - start) >= 25.0) {
+            const double wall = std::chrono::duration<double, std::milli>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            std::printf("[persist-probe-blocking] {\"wallEndMs\":%.3f,\"priorWaitMs\":%.3f,"
+                        "\"submitMs\":%.3f,\"resultWaitMs\":%.3f,\"finalSave\":%s}\n",
+                        wall, ms(priorCollected - start), ms(submitted - priorCollected),
+                        ms(end - submitted), finalSave ? "true" : "false");
+        }
+    }
     return !dirty_ && !commitUncertain_;
 #else
     (void)finalSave;
@@ -1964,35 +2031,17 @@ bool Database::isStarterProgress(const PlayerRecord& record) {
 }
 
 bool Database::verifyPassword(const std::string& username, const std::string& password) {
+    // Keep a rejected login read-only, including the row's serialized cache.
+    if (!passwordMatches(username, password)) return false;
     Account* account = findUser(username);
     if (!account) return false;
 
-    bool ok = false;
-    if (crypto::isBcryptHash(account->passwordHash)) {
-        // The stored value's shape decides, not the isPlainText flag: the old
-        // server tested `startsWith('$2b$')` and so mistook every $2a$ hash
-        // for a plaintext password. A bcrypt hash is never something a player
-        // typed, so this branch is always the right one when it matches.
-        ok = crypto::bcryptVerify(password, account->passwordHash);
-    } else if (!account->passwordSalt.empty()) {
-        // florrclone accounts.js: scrypt(password, saltHex, 64) → hex hash.
-        ok = crypto::scryptVerifyHex(password, account->passwordSalt, account->passwordHash);
-        if (ok) {
-            // Upgrade to bcrypt so subsequent logins do not need Node scrypt.
-            account->passwordHash = crypto::bcryptHash(password, passwordCost_);
-            account->passwordSalt.clear();
-            account->isPlainText = false;
-        }
-    } else {
-        ok = crypto::constantTimeEquals(account->passwordHash, password);
-        if (ok) {
-            // The one moment the plaintext is available. Upgrade in place; the
-            // account never stores a bare password again.
-            account->passwordHash = crypto::bcryptHash(password, passwordCost_);
-            account->isPlainText = false;
-        }
+    // A verified legacy scrypt or plaintext password can now be migrated.
+    if (!crypto::isBcryptHash(account->passwordHash)) {
+        account->passwordHash = crypto::bcryptHash(password, passwordCost_);
+        account->passwordSalt.clear();
+        account->isPlainText = false;
     }
-    if (!ok) return false;
 
     account->lastActiveAtMillis = nowMillis();
     markDirty();
@@ -2002,6 +2051,7 @@ bool Database::verifyPassword(const std::string& username, const std::string& pa
 bool Database::passwordMatches(const std::string& username,const std::string& password) const {
     const auto* account=findUser(username);
     if(!account)return false;
+    // A bcrypt hash is never accepted as a plaintext password.
     if(crypto::isBcryptHash(account->passwordHash))return crypto::bcryptVerify(password,account->passwordHash);
     if(!account->passwordSalt.empty())return crypto::scryptVerifyHex(password,account->passwordSalt,account->passwordHash);
     return crypto::constantTimeEquals(account->passwordHash,password);
@@ -2131,9 +2181,20 @@ const PlayerRecord* Database::findProgress(const std::string& userId) const {
     return players_.find(userId);
 }
 
+namespace {
+constexpr int kWaveDailyStarCap = 150000;
+}
+
+bool Database::waveDailyStarCapReached(const std::string& userId) const {
+    const auto* record = findProgress(userId);
+    if (!record) return false;
+    const auto& ledger = record->extra["waveStars"];
+    return ledger["day"].asDouble(-1) == nowMillis() / 86400000 &&
+        ledger["earned"].asInt() >= kWaveDailyStarCap;
+}
+
 int Database::awardWaveStars(const std::string& userId, bool* reachedDailyCap) {
     constexpr int kStarsPerWave = 7500;
-    constexpr int kDailyCap = 150000;
     if (reachedDailyCap) *reachedDailyCap = false;
     const std::int64_t today = nowMillis() / 86400000;
     PlayerRecord& record = progress(userId);
@@ -2141,16 +2202,16 @@ int Database::awardWaveStars(const std::string& userId, bool* reachedDailyCap) {
     const auto lastDay = static_cast<std::int64_t>(prior["day"].asDouble(-1.0));
     if (lastDay > today) return 0;
     const int earned = lastDay == today ? std::max(0, prior["earned"].asInt()) : 0;
-    if (earned >= kDailyCap) {
+    if (earned >= kWaveDailyStarCap) {
         if (reachedDailyCap) *reachedDailyCap = true;
         return 0;
     }
 
-    const int award = std::min(kStarsPerWave, kDailyCap - earned);
+    const int award = std::min(kStarsPerWave, kWaveDailyStarCap - earned);
     auto& ledger = record.extra["waveStars"];
     ledger["day"] = static_cast<double>(today);
     ledger["earned"] = earned + award;
-    if (reachedDailyCap) *reachedDailyCap = earned + award >= kDailyCap;
+    if (reachedDailyCap) *reachedDailyCap = earned + award >= kWaveDailyStarCap;
     record.stars += award;
     markDirty();
     return award;

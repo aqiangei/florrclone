@@ -88,6 +88,8 @@ void TitanPanel::reset() {
     resultPending_ = false;
     confirmForge_ = false;
     confirmBatch_ = false;
+    confirmAll_ = false;
+    allForgeSummary_.clear();
     refusal_.clear();
     askedPetal_ = kNoPetal;
     askedAt_ = -1.0;
@@ -121,7 +123,15 @@ bool TitanPanel::render(MenuContext& ctx) {
     TitanForgeOutcome& outcome = ctx.net.titanForgeOutcome();
     if (outcome.pending) {
         outcome.pending = false;
-        if (outcome.success && knownPetal(outcome.petalIndex)) {
+        if (outcome.petalIndex == kNoPetal) {
+            if (phase_ == Phase::Forging && offeredPetal_ == kNoPetal) phase_ = Phase::Idle;
+            if (outcome.success) {
+                allForgeSummary_ = outcome.reason;
+            } else {
+                refusal_ = outcome.reason;
+                refusalUntil_ = now + kRefusalSeconds;
+            }
+        } else if (outcome.success && knownPetal(outcome.petalIndex)) {
             resultPetal_ = outcome.petalIndex;
             resultQuantity_ = outcome.quantity;
             // Mid-spin the result is only recorded: the spin decides when it
@@ -300,11 +310,27 @@ bool TitanPanel::render(MenuContext& ctx) {
                                 profile.titanForgeCount(stagedPetal_), content().petal(stagedPetal_).id);
     }
     const bool canBatch = batch.quantity > 1;
+    const Rect allButton{button.x, button.bottom() + 8.0,
+                         batchButton.right() - button.x, button.h};
+    const bool canForgeAll = permanent && phase_ == Phase::Idle &&
+        std::any_of(profile.inventory.begin(), profile.inventory.end(), [&](const auto& stack) {
+            if (stack.rarity != kTitanInputRarity || !knownPetal(stack.petalIndex) ||
+                !canUse(stack.petalIndex)) return false;
+            return stack.count >= static_cast<std::uint32_t>(costOf(stack.petalIndex)) &&
+                profile.stackCount(stack.petalIndex, kTitanOutputRarity) <
+                    static_cast<std::uint32_t>(kMaxStackCount);
+        });
     if (permanent) {
         drawSlotButton(canvas, batchButton, confirmBatch_ && canBatch ? "确认批量" : "批量兑换",
                        canBatch ? std::optional<std::uint32_t>(rarityColor(outputTier)) : std::nullopt,
                        batchButton.contains(mouse),
                        batchButton.contains(mouse) && ctx.window.mouseDown(MouseButton::Left));
+        const bool working = phase_ == Phase::Forging && offeredPetal_ == kNoPetal;
+        drawSlotButton(canvas, allButton,
+                       working ? "正在锻造全部永恒…" : confirmAll_ && canForgeAll ? "确认锻造全部永恒"
+                                                                                : "一键锻造全部永恒",
+                       canForgeAll ? std::optional<std::uint32_t>(rarityColor(outputTier)) : std::nullopt,
+                       allButton.contains(mouse), allButton.contains(mouse) && ctx.window.mouseDown(MouseButton::Left));
     }
     // A refusal stands in place of the card's lines, on the middle one, until
     // it expires.
@@ -313,6 +339,15 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
+            if (permanent && i == 0 && confirmAll_ && canForgeAll) {
+                drawSlotLine(canvas, line, "确认后将消耗背包内所有可锻造的超级材料。");
+                continue;
+            }
+            if (permanent && i == 0 && !allForgeSummary_.empty()) {
+                line.line2Y = line.lineY;
+                drawSlotLine(canvas, line, allForgeSummary_, std::nullopt, true);
+                continue;
+            }
             if (permanentHyper_) {
                 constexpr std::array<const char*, 3> rules = {
                     "30 个未装备的同种永恒 → 1 个永久超凡",
@@ -398,6 +433,24 @@ bool TitanPanel::render(MenuContext& ctx) {
         return true;
     }
 
+    if (permanent && allButton.contains(mouse) && ctx.pressed()) {
+        if (canForgeAll) {
+            if (confirmAll_) {
+                phase_ = Phase::Forging;
+                phaseStarted_ = now;
+                offeredPetal_ = kNoPetal;
+                resultPending_ = false;
+                allForgeSummary_.clear();
+                refusal_.clear();
+                ctx.net.requestTitanForgeAll();
+            }
+            confirmAll_ = !confirmAll_;
+            confirmForge_ = false;
+            confirmBatch_ = false;
+        }
+        return true;
+    }
+    confirmAll_ = false;
     const bool batchPressed = permanent && batchButton.contains(mouse);
     if (button.contains(mouse) || batchPressed) {
         if (batchPressed ? canBatch : canForge) {

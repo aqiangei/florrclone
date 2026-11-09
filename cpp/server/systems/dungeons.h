@@ -76,6 +76,7 @@ public:
     bool inWave(const World& world, Entity player) const;
     net::WaveHud waveHudFor(const World& world, Entity player, double nowMillis) const;
     bool waveExterior(const World& world, Entity player, Realm& realm) const;
+    std::uint8_t waveOccupancy() const { return static_cast<std::uint8_t>(wave_.members.size()); }
     std::function<void(Entity, const std::string&)> waveSummary;
     struct WaveAward {
         int stars = 0;

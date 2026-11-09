@@ -55,7 +55,7 @@ struct Fixture {
 
 } // namespace
 
-TEST(a_first_login_claims_day_one_and_pays_500_stars) {
+TEST(a_first_login_claims_day_one_and_pays_10000_stars) {
     gNowMillis = 20000 * kDay + 3600000;   // some day, an hour past midnight
     Fixture f;
     if (f.userId.empty()) { CHECK(false); return; }
@@ -63,9 +63,9 @@ TEST(a_first_login_claims_day_one_and_pays_500_stars) {
     const DailyStreakResult first = f.db.processDailyStreak(f.userId);
     CHECK(first.newDay);
     CHECK_EQ(first.streak, 1);
-    CHECK_EQ(first.starsAwarded, 500);
-    CHECK_EQ(first.todayReward, 500);
-    CHECK_EQ(f.db.progress(f.userId).stars, 500);
+    CHECK_EQ(first.starsAwarded, 10000);
+    CHECK_EQ(first.todayReward, 10000);
+    CHECK_EQ(f.db.progress(f.userId).stars, 10000);
     // The countdowns are anchored to midnight, not to the moment of the claim.
     CHECK_EQ(first.nextClaimAtMillis, 20001 * kDay);
     CHECK_EQ(first.streakExpiresAtMillis, 20002 * kDay);
@@ -82,8 +82,8 @@ TEST(a_second_login_the_same_day_pays_nothing) {
     CHECK(!again.newDay);
     CHECK_EQ(again.streak, 1);
     CHECK_EQ(again.starsAwarded, 0);
-    CHECK_EQ(again.todayReward, 500);
-    CHECK_EQ(f.db.progress(f.userId).stars, 500);
+    CHECK_EQ(again.todayReward, 10000);
+    CHECK_EQ(f.db.progress(f.userId).stars, 10000);
 }
 
 TEST(a_same_day_legacy_streak_receipt_reports_the_stars_already_paid) {
@@ -101,8 +101,8 @@ TEST(a_same_day_legacy_streak_receipt_reports_the_stars_already_paid) {
     CHECK_EQ(record.stars, 4);
     gNowMillis += kDay;
     const auto next = f.db.processDailyStreak(f.userId);
-    CHECK_EQ(next.todayReward, 2500);
-    CHECK_EQ(record.stars, 2504);
+    CHECK_EQ(next.todayReward, 50000);
+    CHECK_EQ(record.stars, 50004);
 }
 
 TEST(consecutive_days_climb_the_streak_and_the_reward) {
@@ -117,7 +117,7 @@ TEST(consecutive_days_climb_the_streak_and_the_reward) {
         CHECK(result.newDay);
         CHECK_EQ(result.streak, day + 1);
         // The sixth day repeats day one's award.
-        CHECK_EQ(result.starsAwarded, 500 * ((day % 5) + 1));
+        CHECK_EQ(result.starsAwarded, 10000 * ((day % 5) + 1));
         expectedStars += result.starsAwarded;
     }
     CHECK_EQ(f.db.progress(f.userId).stars, expectedStars);
@@ -137,7 +137,7 @@ TEST(a_missed_day_resets_the_streak_to_one) {
     const DailyStreakResult broken = f.db.processDailyStreak(f.userId);
     CHECK(broken.newDay);
     CHECK_EQ(broken.streak, 1);
-    CHECK_EQ(broken.starsAwarded, 500);
+    CHECK_EQ(broken.starsAwarded, 10000);
 }
 
 TEST(an_unreadable_streak_date_restarts_rather_than_crashing) {
@@ -150,7 +150,7 @@ TEST(an_unreadable_streak_date_restarts_rather_than_crashing) {
     record.lastStreakDate = "not-a-date";
     const DailyStreakResult result = f.db.processDailyStreak(f.userId);
     CHECK_EQ(result.streak, 1);
-    CHECK_EQ(result.starsAwarded, 500);
+    CHECK_EQ(result.starsAwarded, 10000);
     CHECK_EQ(f.db.progress(f.userId).lastStreakDate, std::string("2024-10-04"));
 }
 

@@ -119,6 +119,7 @@ struct PetalSlotState {
     /// and fires whether or not any one of them is due to act.
     double raindropReadyAtMillis = 0;
     std::uint64_t batteryHurtSerial = 0;
+    double batteryRetryUntilMillis = 0.0;
 
     /// Next time a lightning cutter may strike. The reference's limiter is per
     /// PLAYER rather than per petal, so two cutters share one cadence.

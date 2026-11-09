@@ -155,7 +155,7 @@ constexpr double kDialogTitleSize = 24.0;
 constexpr double kDialogLineSize = 14.0;
 constexpr double kDialogButtonHeight = 28.0;
 constexpr double kDialogButtonGap = 10.0;
-constexpr double kDialogBuyWidth = 120.0;
+constexpr double kDialogBuyWidth = 152.0;
 /// The buy button's row: the star in a 22 box with 3 either side, then the
 /// price at 14.
 constexpr double kDialogStarBox = 28.0;
@@ -251,7 +251,9 @@ struct ShopState {
     /// and what that card costs, which the box prints on its buy button.
     int pendingSlot = -1;
     double pendingPrice = 0;
-    int pendingQuantity = 1;
+    std::string quantity = "1";
+    TextFieldState quantityField;
+    double nextBonusQuery = 0;
     int pendingLimit = 10000;
     /// The scrim, the stage that holds the box back, and the box's scale.
     double scrim = 0;
@@ -556,6 +558,8 @@ void ShopPanel::reset() {
     // lifetime; closing it drops only the focus and any open dialog.
     ShopState& state = stateFor(this);
     state.field.blur();
+    state.quantityField.blur();
+    state.nextBonusQuery = 0;
     state.modal = ShopState::Modal::None;
     state.shown = ShopState::Modal::None;
     state.scrim = state.stage = state.grow = 0.0;
@@ -617,6 +621,8 @@ bool ShopPanel::render(MenuContext& ctx) {
     // latched here and used by both passes. While one is up the window under
     // it answers nothing.
     const bool modalUp = state.modal != ShopState::Modal::None;
+    std::int64_t bonusLeft = 0;
+    bool bonusAvailable = false;
     const Vec2 under = modalUp ? Vec2{-1e9, -1e9} : mouse;
 
     // What the pointer is over, pushed to the window once at the end.
@@ -824,8 +830,16 @@ bool ShopPanel::render(MenuContext& ctx) {
         text(canvas, trEnZh("Redeem", "兑换"), redeemButton.x + redeemButton.w * 0.5,
              redeemButton.y + redeemButton.h * 0.5, shopText(kTabSize));
         const auto now=shopClockNow()*1000;
-        const auto left=std::max<std::int64_t>(0,ctx.net.dropBonusUntil-now);
-        const bool ready=ctx.net.dropBonusNextClaim<=now;
+        if (live && ctx.timeSeconds >= state.nextBonusQuery) {
+            ctx.net.requestDailyDropBonus(false);
+            state.nextBonusQuery = ctx.timeSeconds + 5.0;
+        }
+        const auto elapsed = ctx.net.dropBonusPaused ? 0 :
+            std::max<std::int64_t>(0, now - ctx.net.dropBonusUpdatedAt) *
+            ctx.net.dropBonusCountdownRate / net::kTicksPerSecond;
+        const auto left = bonusLeft = std::max<std::int64_t>(0,
+            ctx.net.dropBonusUntil - ctx.net.dropBonusUpdatedAt - elapsed);
+        const bool ready = bonusAvailable = left > 0 || ctx.net.dropBonusNextClaim <= now;
         const int nextDay=ctx.net.dropBonusStreak+1;
         const int multiplier=left>0?ctx.net.dropBonusMultiplier:(nextDay%4==0?3:2);
         const double y=box.bottom()+28;
@@ -840,7 +854,13 @@ bool ShopPanel::render(MenuContext& ctx) {
         const bool hot=ready&&bonusButton.contains(under);
         drawFlorrButton(canvas,bonusButton,ready?0x55B8D4u:kButtonIdle,kButtonBorder,kButtonRadius,hot,ready&&pressing(bonusButton));
         std::string label;
-        if(left>0) label=std::string(multiplier==3?trEnZh("Enhanced ","强化加成 "):trEnZh("Bonus ","普通加成 "))+trEnZh("remaining ","剩余 ")+std::to_string(left/60000)+":"+(left/1000%60<10?"0":"")+std::to_string(left/1000%60);
+        if (left > 0) {
+            label = ctx.net.dropBonusPaused ? trEnZh("Resume", "继续") : trEnZh("Pause", "暂停");
+            label += multiplier == 3 ? trEnZh(" enhanced bonus · ", "强化加成 · ") :
+                                      trEnZh(" bonus · ", "普通加成 · ");
+            label += std::to_string(left / 60000) + ":" + (left / 1000 % 60 < 10 ? "0" : "") +
+                     std::to_string(left / 1000 % 60);
+        }
         else if(ready)label=multiplier==3?trEnZh("Claim enhanced bonus: 1 hour","领取强化加成1小时"):trEnZh("Claim bonus: 1 hour","领取普通加成1小时");
         else label=trEnZh("Claimed today","今日已领取");
         text(canvas,label,bonusButton.x+bonusButton.w*.5,bonusButton.y+bonusButton.h*.5,shopText(16));
@@ -882,9 +902,21 @@ bool ShopPanel::render(MenuContext& ctx) {
     // --- dialog -------------------------------------------------------------
     // The window dims under it and one box stands on it, grown in about the
     // window's centre: a title, the message, and what can be done about it.
+    const int quantity = [&] {
+        int count = 0;
+        for (char c : state.quantity) {
+            if (c < '0' || c > '9') return 0;
+            count = count * 10 + c - '0';
+            if (count > 10000) return 0;
+        }
+        return count;
+    }();
+    const double totalPrice = state.pendingPrice * quantity;
+    const bool validQuantity = quantity > 0 && quantity <= state.pendingLimit;
+    const bool canPurchase = validQuantity && stars >= totalPrice;
     Rect confirmRect{};
     Rect cancelRect{};
-    Rect lessRect{}, moreRect{}, maxRect{};
+    Rect lessRect{}, moreRect{}, maxRect{}, quantityRect{};
     if (state.shown != ShopState::Modal::None) {
         const double alpha = std::floor(kScrimMax * clamp(state.scrim, 0.0, 1.0)) / 255.0;
         if (alpha > 0) fillWindowRect(canvas, panel, kInk, alpha);
@@ -895,8 +927,9 @@ bool ShopPanel::render(MenuContext& ctx) {
             confirming ? std::vector<std::string>{
                              trEnZh("Are you sure you want to buy this?", "确定要购买吗？"),
                              trEnZh("Petal purchases are not refundable", "花瓣购买后不可退款"),
-                             trEnZh("No purchase quota; charged at the displayed price",
-                                    "不限购，按显示价格扣除星星")}
+                             validQuantity && !canPurchase ? trEnZh("Not enough stars", "星星不足") :
+                             trEnZh("Enter a quantity from 1 to ", "请输入数量：1 至 ") +
+                                 std::to_string(state.pendingLimit)}
                        : state.lines;
         const char* cancelLabel =
             confirming ? trEnZh("Cancel", "取消") : trEnZh("OK", "确定");
@@ -953,10 +986,11 @@ bool ShopPanel::render(MenuContext& ctx) {
                 tile.petalIndex = state.pendingPetal;
                 tile.rarity = state.pendingRarity;
                 tile.timeSeconds = ctx.timeSeconds;
-                tile.badge = "x" + std::to_string(state.pendingQuantity);
+                if (quantity > 0) tile.badge = "x" + std::to_string(quantity);
                 drawItemTile(canvas, ctx.sprites, {centre.x - kTile * 0.5, y, kTile, kTile}, tile);
                 const double rowY = y + kTile + 8;
                 lessRect = {centre.x-110,rowY,36,28};
+                quantityRect = {centre.x-66,rowY,76,28};
                 moreRect = {centre.x+18,rowY,36,28};
                 maxRect = {centre.x+66,rowY,60,28};
                 for (const auto& control : {lessRect,moreRect,maxRect}) {
@@ -965,16 +999,25 @@ bool ShopPanel::render(MenuContext& ctx) {
                     if (answering && control.contains(mouse)) cursor=CursorShape::Hand;
                 }
                 text(canvas,"-",lessRect.x+18,rowY+14,shopText(18));
-                text(canvas,std::to_string(state.pendingQuantity),centre.x-28,rowY+14,shopText(16));
+                if (state.grow >= 0.99) {
+                    inputField(canvas, quantityRect, state.quantity, "1", state.quantityField.focused,
+                               ctx.timeSeconds, &state.quantityField);
+                    if (answering && quantityRect.contains(mouse)) cursor = CursorShape::Text;
+                }
                 text(canvas,"+",moreRect.x+18,rowY+14,shopText(18));
                 text(canvas,trEnZh("Max","最多"),maxRect.x+30,rowY+14,shopText(14));
 
-                const bool hovered = answering && confirmRect.contains(mouse);
+                const bool hovered = answering && canPurchase && confirmRect.contains(mouse);
                 if (hovered) cursor = CursorShape::Hand;
-                drawFlorrButton(canvas, confirmRect, kPriceFace, kButtonBorder, kButtonRadius,
-                                hovered, answering && pressing(confirmRect));
-                drawStarRow(canvas, confirmRect, formatPrice(state.pendingPrice * state.pendingQuantity), kDialogStarBox,
-                            kDialogStar, kDialogPriceSize);
+                drawFlorrButton(canvas, confirmRect, canPurchase ? kPriceFace : kDialogGrey,
+                                kButtonBorder, kButtonRadius, hovered,
+                                answering && canPurchase && pressing(confirmRect));
+                if (quantity > 0)
+                    drawStarRow(canvas, confirmRect, withSeparators(totalPrice), kDialogStarBox,
+                                kDialogStar, kDialogPriceSize);
+                else
+                    text(canvas, trEnZh("Buy", "购买"), confirmRect.x + confirmRect.w * .5,
+                         confirmRect.y + confirmRect.h * .5, shopText(16));
             }
 
             const bool cancelHover = answering && cancelRect.contains(mouse);
@@ -999,12 +1042,16 @@ bool ShopPanel::render(MenuContext& ctx) {
 
     // --- actions ------------------------------------------------------------
     // What the box says is left in place: it is still drawn on its way out.
-    const auto closeModal = [&state] { state.modal = ShopState::Modal::None; };
+    const auto closeModal = [&state] {
+        state.modal = ShopState::Modal::None;
+        state.quantityField.blur();
+    };
     const auto resolveModal = [&](bool confirmed) {
         if (confirmed && state.modal == ShopState::Modal::Confirm &&
             state.pendingPetal != kNoPetal) {
+            if (!canPurchase) return;
             ctx.net.requestBuyPetal(state.pendingPetal, state.pendingRarity, state.pendingSlot,
-                                    static_cast<std::uint32_t>(state.pendingQuantity));
+                                    static_cast<std::uint32_t>(quantity));
         }
         closeModal();
     };
@@ -1030,6 +1077,21 @@ bool ShopPanel::render(MenuContext& ctx) {
 
     // --- keyboard -----------------------------------------------------------
     if (modalUp) {
+        if (state.modal == ShopState::Modal::Confirm && state.grow >= 0.99) {
+            const bool alreadyFocused = state.quantityField.focused;
+            const bool pressedField = trackTextMouse(ctx.window, state.quantityField, quantityRect,
+                inputFieldRun(quantityRect, state.quantity, state.quantityField), state.quantity,
+                ctx.timeSeconds);
+            if (pressedField && !alreadyFocused)
+                state.quantityField.focus(state.quantity, ctx.timeSeconds);
+            if (state.quantityField.focused) {
+                TextEditOptions options;
+                options.maxBytes = 12;
+                options.asciiOnly = true;
+                if (editText(ctx.window, state.quantity, state.quantityField, ctx.timeSeconds, options))
+                    return true; // the next frame quotes the edited amount before allowing purchase
+            }
+        }
         if (ctx.window.keyPressed(Key::Enter)) {
             resolveModal(state.modal == ShopState::Modal::Confirm);
         } else if (ctx.window.keyPressed(Key::Escape)) {
@@ -1060,12 +1122,18 @@ bool ShopPanel::render(MenuContext& ctx) {
     if (!ctx.released()) return true;
 
     if (modalUp) {
+        const auto setQuantity = [&](int count) {
+            state.quantity = std::to_string(clamp(count, 1, state.pendingLimit));
+            state.quantityField.blur();
+        };
         if (state.modal == ShopState::Modal::Confirm && clicked(lessRect))
-            state.pendingQuantity=std::max(1,state.pendingQuantity-1);
+            setQuantity(quantity - 1);
         else if (state.modal == ShopState::Modal::Confirm && clicked(moreRect))
-            state.pendingQuantity=std::min(state.pendingLimit,state.pendingQuantity+1);
+            setQuantity(quantity + 1);
         else if (state.modal == ShopState::Modal::Confirm && clicked(maxRect))
-            state.pendingQuantity=static_cast<int>(clamp(std::floor(ctx.net.profile().stars / std::max(1.0,state.pendingPrice)),1.0,static_cast<double>(state.pendingLimit)));
+            setQuantity(static_cast<int>(clamp(
+                std::floor(stars / std::max(0.01, state.pendingPrice)),
+                1.0, static_cast<double>(state.pendingLimit))));
         else if (clicked(confirmRect)) resolveModal(true);
         else if (clicked(cancelRect)) resolveModal(false);
         // The scrim swallows everything else, including the close button.
@@ -1080,12 +1148,16 @@ bool ShopPanel::render(MenuContext& ctx) {
         // on eating keystrokes from a tab with no field on it.
         if (static_cast<int>(tab_) != i) state.field.blur();
         tab_ = static_cast<Tab>(i);
-        if(tab_==Tab::Bonus)ctx.net.requestDailyDropBonus(false);
+        if (tab_ == Tab::Bonus) state.nextBonusQuery = 0;
         return true;
     }
 
     if(clicked(lockButton)){ctx.net.toggleShopLock();return true;}
-    if(clicked(bonusButton) && ctx.net.dropBonusNextClaim<=shopClockNow()*1000) {ctx.net.requestDailyDropBonus(true);return true;}
+    if (clicked(bonusButton) && bonusAvailable) {
+        if (bonusLeft > 0) ctx.net.setDropBonusEnabled(ctx.net.dropBonusPaused);
+        else ctx.net.requestDailyDropBonus(true);
+        return true;
+    }
     if (!trimmed(state.code).empty() && clicked(redeemButton)) {
         submitCode();
         return true;
@@ -1102,8 +1174,9 @@ bool ShopPanel::render(MenuContext& ctx) {
         state.pendingRarity = offer.rarity;
         state.pendingSlot = static_cast<int>(i);
         state.pendingPrice = offer.price;
-        state.pendingQuantity = 1;
-        state.pendingLimit = offer.remaining < 0 ? 10000 : offer.remaining;
+        state.quantity = "1";
+        state.quantityField = {};
+        state.pendingLimit = offer.remaining < 0 ? 10000 : clamp(offer.remaining, 1, 10000);
         break;
     }
     return true;

@@ -460,7 +460,7 @@
     "description": "Shiny",
     "color": "#ffff00",
     "image": "$ladybug_shiny",
-    "ai_type": "neutral",
+    "ai_type": "hostile",
     "gardn_ai": true,
     "range": 200,
     "spawn_weight": 0.05,
@@ -2791,7 +2791,7 @@
     "health": 50,
     "size": 0.9666666666666667,
     "speed": 0.1,
-    "chase_speed": 0.1,
+    "chase_speed": 0.95,
     "cooldown": 2000,
     "xp": {
       "common": 3,
@@ -2807,8 +2807,8 @@
     "description": "Nazar Beetle",
     "color": "#888888",
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"75\" height=\"75\" viewBox=\"0 0 75 75\" data-official-mob-id=\"67\" data-source-sha256=\"fcdba640db576298a2e9a39c397b9ad262de1800e6415ce2f030d16dde5901fb\"><g id=\"body\"><g id=\"official-art\" transform=\"translate(-18 -18)\"><clipPath id=\"a\"><rect width=\"91.667\" height=\"91.667\" x=\"9.167\" y=\"9.167\" rx=\"4.167\" ry=\"4.167\"/></clipPath><g clip-path=\"url(#a)\"><g id=\"mandible-right\" data-part=\"mandible-right\" data-pivot=\"55 46\" data-motion=\"mandible\"><path fill=\"#333\" d=\"M57.357 43.215q-4.714-18.856-21.213-21.213 11.785 7.07 16.499 25.927z\"/><path fill=\"none\" stroke=\"#333\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"4.667\" d=\"M57.357 43.215q-4.714-18.856-21.213-21.213 11.785 7.07 16.499 25.927z\"/></g><g id=\"mandible-left\" data-part=\"mandible-left\" data-pivot=\"46 55\" data-motion=\"mandible\"><path fill=\"#333\" d=\"M43.215 57.357q-18.856-4.714-21.213-21.213 7.07 11.785 25.927 16.499z\"/><path fill=\"none\" stroke=\"#333\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"4.667\" d=\"M43.215 57.357q-18.856-4.714-21.213-21.213 7.07 11.785 25.927 16.499z\"/></g><g id=\"carapace\" data-part=\"carapace\" data-pivot=\"63 63\" data-motion=\"fixed\"><path fill=\"#1213bd\" d=\"M43.686 80.456q-18.384-18.385 0-36.77 18.385-18.384 36.77 0 18.385 18.385 0 36.77t-36.77 0\"/><path fill=\"#0f0f99\" d=\"M42.036 82.106q-9.875-9.876-9.875-20.035t9.875-20.035q9.876-9.875 20.035-9.875t20.035 9.875 9.876 20.035-9.876 20.035-20.035 9.876-20.035-9.876m3.3-3.3q16.735 16.735 33.47 0t0-33.47-33.47 0 0 33.47\"/><path fill=\"#fff\" d=\"M65.619 45.795c4.497.98 8.577 3.422 10.881 7.011s2.195 8.179 1.215 12.675-3.288 7.938-6.877 10.244-7.727 3.187-12.224 2.207-8.48-3.128-10.785-6.716-3.554-8.313-2.574-12.81 4.34-7.872 7.928-10.177c3.589-2.306 7.938-3.414 12.436-2.434\"/><path fill=\"#88c9f9\" d=\"M64.4 51.39c5.994 1.307 9.986 7.085 8.68 13.08-1.307 5.996-7.303 9.41-13.298 8.103s-9.582-6.81-8.275-12.805c1.306-5.995 6.897-9.685 12.892-8.378\"/><path fill=\"#292f33\" d=\"M63.335 55.132c3.616.789 5.999 4.485 5.21 8.101s-4.443 5.758-8.06 4.97c-3.616-.788-5.95-4.235-5.16-7.851.787-3.617 4.393-6.008 8.01-5.22\"/></g></g></g></g></svg>\r\n",
-    "ai_type": "passive",
-    "range": 100,
+    "ai_type": "hostile",
+    "range": 300,
     "groups": [
       "desert",
       "pyramid"

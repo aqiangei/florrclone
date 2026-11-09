@@ -1588,6 +1588,10 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     // petal has just served its whole cooldown to get here, and a slam it is
     // already standing in should discharge.
     instance.charges = chargesFor(config);
+    if (instance.charges > 0) {
+        const auto* ownerHealth = world.tryGet<Health>(player);
+        if (ownerHealth) instance.batteryDischargedFor = ownerHealth->directHurtSerial;
+    }
     instance.soaksOwnerDamage = soaksOwnerDamage(config);
     instance.soaksOwnerLightning = petalSoaksLightning(config);
     instance.ignoresMobs = config.ignoresMobs;
@@ -2822,6 +2826,11 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             }
             const auto rarity = instance->rarity;
             const auto index = instance->configIndex;
+            constexpr double lifetimeSeconds = 8.0;
+            const auto meteor = registry.petalIndex("meteor");
+            const double meteorHealth = meteor < registry.petalCount()
+                ? registry.petalStats(meteor, rarity).health : 0.0;
+            const double durability = std::max(stats.health, meteorHealth * 2.0);
             const Vec2 direction = Vec2::fromAngle(angle);
             const Motion* thrower = world.tryGet<Motion>(thrownBody);
             // Keep the bait ahead of a flower running in the throw direction,
@@ -2835,10 +2844,11 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             const Entity bait = world.create();
             world.add<Transform>(bait, launch);
             world.add<Body>(bait, Body{stats.radius, 2.0});
-            world.add<Health>(bait, Health{stats.health, stats.health});
+            world.add<Health>(bait, Health{durability, durability, 0.0,
+                                           nowMillis + lifetimeSeconds * 1000.0});
             world.add<Faction>(bait, Faction{Team::Players, false});
             world.add<HoneyBait>(bait, flight);
-            world.add<Lifetime>(bait, Lifetime{8.0});
+            world.add<Lifetime>(bait, Lifetime{lifetimeSeconds});
             Replicated art; art.kind = net::EntityKind::Projectile; art.typeIndex = index; art.rarity = rarity;
             world.add<Replicated>(bait, art); assignNetId(world, bait);
             world.add<Dead>(petal, Dead{player});
@@ -4013,70 +4023,53 @@ void PetalSystem::strikeBatteries(World& world, const ContentRegistry& registry,
                                   double nowMillis) {
     auto* state = world.tryGet<PetalSlotState>(player);
     const auto* health = world.tryGet<Health>(player);
-    if (!state || !health || state->batteryHurtSerial == health->directHurtSerial) return;
-    state->batteryHurtSerial = health->directHurtSerial;
-    const Loadout* loadout = world.tryGet<Loadout>(player);
-    const Transform* transform = world.tryGet<Transform>(player);
-    const Body* body = world.tryGet<Body>(player);
-    if (loadout == nullptr || transform == nullptr || body == nullptr) return;
-
-    // Which batteries could fire at all, before anything is asked about the
-    // world: the sweep below is linear in the mobs on the field, and a loadout
-    // with no battery -- which is nearly every loadout -- must not pay for it.
-    batteryList_.clear();
-    for (const Entity petal : loadout->spawned) {
-        const PetalInstance* instance = world.tryGet<PetalInstance>(petal);
-        if (instance == nullptr || instance->charges == 0) continue;
-        if (nowMillis < instance->nextChargeMillis) continue;
-        if (registry.petal(instance->configIndex).id != "battery") continue;
-        batteryList_.push_back(petal);
+    if (!state || !health) return;
+    if (state->batteryHurtSerial != health->directHurtSerial) {
+        state->batteryHurtSerial = health->directHurtSerial;
+        // Keep one recent hit through the per-charge cooldown. A newly
+        // loaded battery starts at the owner's current serial and cannot
+        // spend a hit taken before it arrived.
+        state->batteryRetryUntilMillis = nowMillis + kBatteryStrikeIntervalMillis;
     }
-    if (batteryList_.empty()) return;
-
-    // The FLOWER's body, not the petal's. A battery is discharged by ramming
-    // something, so a mob the ring happens to sweep across is not a trigger and
-    // a mob wedged against the flower is one whatever the ring is doing --
-    // which is also what makes the charge worth spending while the ring is
-    // pulled in and the petals are nowhere near the mob.
+    if (state->batteryRetryUntilMillis <= 0.0 || nowMillis > state->batteryRetryUntilMillis)
+        return;
+    const auto serial = state->batteryHurtSerial;
+    const auto* loadout = world.tryGet<Loadout>(player);
+    const auto* transform = world.tryGet<Transform>(player);
+    if (!loadout || !transform || !world.has<Body>(player)) return;
     const Vec2 at = transform->position;
 
-
-    bool targetInRange = false;
-    mobs_->each([&](Entity e, MobTag&, Transform& t, Body&) {
-        if(t.realm==transform->realm && isStanding(world,e) && !world.has<Pet>(e) &&
-           distance(t.position,at)<240.0+body->radius+world.get<Body>(e).radius) targetInRange=true;
-    });
-    npcs_->each([&](Entity e, NpcTag&, Transform& t, Body&, Faction& f) {
-        if(t.realm==transform->realm && f.team!=Team::Players && isStanding(world,e) &&
-           distance(t.position,at)<240.0+body->radius+world.get<Body>(e).radius) targetInRange=true;
-    });
-    if(!targetInRange) return;
-
-    // Each battery pays its own charge on the same slam: they are separate
-    // petals holding separate charges, and one cell going flat says nothing
-    // about the next.
-    for (const Entity petal : batteryList_) {
-        PetalInstance* instance = world.tryGet<PetalInstance>(petal);
-        if (instance == nullptr) continue;
-        // Everything the strike needs is read, and the charge is spent, BEFORE
-        // the strike is thrown: emitting creates entities and spending the
-        // petal moves it between archetypes, so nothing past this block may
-        // reach back through `instance`.
-        const Rarity batteryRarity = instance->rarity;
-        const PetalStats stats = registry.petalStats(instance->configIndex, batteryRarity);
-        const std::uint8_t slotId = instance->slot;
-        const std::uint8_t subIndex = instance->subIndex;
-        instance->nextChargeMillis = nowMillis + kBatteryStrikeIntervalMillis;
-        const bool flat = --instance->charges == 0;
-
-        const auto* profile = hyperTechniqueInfo("battery", batteryRarity, instance->mimicked);
-        strikeLightning(world, player, at, stats.lightningDamagePerHit, batteryRarity, stats.lightningBounces,
-                        hyperAmount(profile, HyperTechnique::WideArc));
-        // The last charge retires the petal. spendPetal finds no Health on it
-        // and takes the by-hand path: off the ring now, back on the slot's own
-        // cooldown, holding three again.
-        if (flat) spendPetal(world, registry, player, petal, slotId, subIndex, stats, nowMillis);
+    batteryList_.clear();
+    bool waiting = false;
+    for (const Entity petal : loadout->spawned) {
+        const auto* instance = world.tryGet<PetalInstance>(petal);
+        if (!instance || instance->charges == 0 || instance->batteryDischargedFor == serial ||
+            world.has<Dead>(petal)) continue;
+        if (nowMillis < instance->nextChargeMillis) {
+            waiting = true;
+            continue;
+        }
+        batteryList_.push_back(petal);
     }
+
+    for (const Entity petal : batteryList_) {
+        const auto* instance = world.tryGet<PetalInstance>(petal);
+        const auto rarity = instance->rarity;
+        const auto stats = registry.petalStats(instance->configIndex, rarity);
+        const auto slot = instance->slot;
+        const auto sub = instance->subIndex;
+        const auto* technique = hyperTechniqueInfo("battery", rarity, instance->mimicked);
+        if (!strikeLightning(world, player, at, stats.lightningDamagePerHit, rarity, stats.lightningBounces,
+                             hyperAmount(technique, HyperTechnique::WideArc))) {
+            waiting = true;
+            continue;
+        }
+        auto& live = world.get<PetalInstance>(petal);
+        live.batteryDischargedFor = serial;
+        live.nextChargeMillis = nowMillis + kBatteryStrikeIntervalMillis;
+        if (--live.charges == 0) spendPetal(world, registry, player, petal, slot, sub, stats, nowMillis);
+    }
+    if (!waiting) world.get<PetalSlotState>(player).batteryRetryUntilMillis = 0.0;
 }
 
 void PetalSystem::dischargeCapacitors(World& world, const ContentRegistry& registry,

@@ -1126,6 +1126,7 @@ private:
         double distanceSq = 0.0;
         std::optional<double> facing;
         bool blockedByPlayer = false;
+        const Viewer* refillViewer = nullptr;
     };
     std::vector<WakeCandidate> wakeList_;
     std::size_t relocationCursor_ = 0;

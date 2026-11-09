@@ -1108,6 +1108,19 @@ TEST(a_sandstorm_holds_its_heading_until_its_own_clock_re_rolls_it) {
                sim.now - net::kTickMillis + kSandstormHeadingMillis, 1e-6);
 }
 
+TEST(nazar_beetle_and_shiny_ladybug_target_an_unprovoking_player) {
+    CHECK(contentReady());
+    for (const auto* id : {"nazar_beetle", "shiny_ladybug"}) {
+        Sim sim;
+        const auto mob = sim.spawnMob(id, {5000.0, 5000.0});
+        const auto player = sim.spawnPlayer({5200.0, 5000.0});
+        const double before = sim.gap(mob, player);
+        sim.tick(30);
+        CHECK_EQ(sim.brainOf(mob).target, player);
+        CHECK(sim.gap(mob, player) < before - 30.0);
+    }
+}
+
 TEST(a_stationary_mob_never_moves) {
     CHECK(contentReady());
     Sim sim;

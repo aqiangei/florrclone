@@ -42,9 +42,11 @@
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_style.h"
 #include "client/ui/menu_theme.h"
+#include "client/ui/menu_widgets.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
 #include "shared/game/absorb.h"
+#include "shared/game/shop.h"
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
 
@@ -170,11 +172,7 @@ std::string levelLine(int level, double into, double need, double width) {
     const auto line = [&](const std::string& a, const std::string& b) {
         return "Level " + std::to_string(level) + " - " + a + "/" + b + " XP";
     };
-    char a[32];
-    char b[32];
-    std::snprintf(a, sizeof a, "%.0f", into);
-    std::snprintf(b, sizeof b, "%.0f", need);
-    std::string out = line(a, b);
+    std::string out = line(withSeparators(into), withSeparators(need));
     if (measure(out, kLevelSize) > width) out = line(florrShort(into), florrShort(need));
     return out;
 }
@@ -221,6 +219,7 @@ void AbsorbPanel::reset() {
     heldPetal_ = kNoPetal;
     refusal_.clear();
     switchPressed_ = false;
+    lastRecycledStars_ = 0.0;
     // `waiting_` stays: a request still out will be answered, and the button
     // stays down until it is.
 }
@@ -234,7 +233,10 @@ std::uint32_t AbsorbPanel::staged(std::uint16_t petalIndex, Rarity rarity) const
 
 void AbsorbPanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity rarity,
                         std::uint32_t count) {
-    if (!knownPetal(petalIndex) || !absorbable(content().petal(petalIndex), rarity)) return;
+    if (!knownPetal(petalIndex) ||
+        (recycle_ ? petalRecycleListPrice(petalIndex, rarity) <= 0.0 :
+                    !absorbable(content().petal(petalIndex), rarity))) return;
+    lastRecycledStars_ = 0.0;
     const std::uint32_t owned = profile.stackCount(petalIndex, rarity);
     const auto it = std::find_if(staged_.begin(), staged_.end(), [&](const Staged& s) {
         return s.petalIndex == petalIndex && s.rarity == rarity;
@@ -302,6 +304,7 @@ bool AbsorbPanel::render(MenuContext& ctx) {
             waiting_ = false;
             if (outcome.success) {
                 absorbed = true;
+                if (recycle_) lastRecycledStars_ = outcome.reward;
             } else {
                 refusal_ = outcome.reason;
                 refusalUntil_ = nowMs + kRefusalMs;
@@ -332,9 +335,14 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     }
 
     const SlotCardLayout card =
-        drawSlotCard(canvas, ctx.bounds, kAbsorbSkin, "Absorb", "Absorb", mouse);
+        drawSlotCard(canvas, ctx.bounds, kAbsorbSkin,
+                     recycle_ ? trEnZh("Recycle petals", "花瓣回收") : "Absorb", "Absorb", mouse);
     const Rect panel = card.panel;
     const Rect switchRect = drawSlotSwitch(canvas, card, kCraftingSkin.fill, mouse, mouseDown);
+    const Rect recycleToggle{panel.x + 16.0, panel.y + 48.0, 112.0, 29.0};
+    drawSlotButton(canvas, recycleToggle,
+                   recycle_ ? trEnZh("XP absorb", "经验吸收") : trEnZh("Recycle", "回收换星"),
+                   kAbsorbSkin.fill, recycleToggle.contains(mouse), mouseDown && recycleToggle.contains(mouse));
     const double centreX = panel.x + panel.w * 0.5;
     const Vec2 slot{centreX + kSlotX, panel.y + kSlotY};
 
@@ -430,79 +438,94 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     const double rim = kButtonBorder * 0.5;
     const Rect buttonHit{button.x - rim, button.y - rim, button.w + kButtonBorder,
                          button.h + kButtonBorder};
-    const bool usable = !staged_.empty() && !waiting_;
+    double totalListPrice = 0.0;
+    if (recycle_) {
+        for (const auto& stack : staged_)
+            totalListPrice += petalRecycleListPrice(stack.petalIndex, stack.rarity) * stack.count;
+    }
+    const double plannedStars = petalRecycleStars(totalListPrice);
+    const bool usable = !staged_.empty() && !waiting_ && (!recycle_ || plannedStars >= 1.0);
     const bool overButton = usable && buttonHit.contains(mouse);
     drawFlorrButton(canvas, button, usable ? kButtonFace : kButtonIdleFace, kButtonBorder,
                     kButtonRadius, overButton, overButton && mouseDown);
-    outlinedText(canvas, trEnZh("Absorb", "吸收"), button.x + button.w * 0.5, button.y + button.h * 0.5,
+    outlinedText(canvas, recycle_ ? trEnZh("Recycle", "回收") : trEnZh("Absorb", "吸收"), button.x + button.w * 0.5, button.y + button.h * 0.5,
                  panelLabel(kButtonLabelSize, Align::Centre, Baseline::Middle), 1.0);
 
     // --- the bar -------------------------------------------------------------------
-    // The level the flower is playing at -- the body's, live, in the world, or
-    // the account's on the title screen -- and never a flower this client is
-    // only steering for somebody else.
-    const SelfState& self = ctx.net.view().self();
-    const bool live = self.maxHealth > 0.0 && !ctx.net.controllingFlower();
-    const double barLeft = centreX - kBarHalf;
-    const double barRight = centreX + kBarHalf;
-    const double barY = panel.y + kBarY;
-    // The maze keeps a level of its own: a different track, not a level-up.
-    const bool mazeTrack = live && ctx.net.view().realm() == Realm::Maze;
-    stepBar(profile.username + (mazeTrack ? "#maze" : ""), live ? self.totalXp : profile.totalXp,
-            dtMs, {barLeft, barY});
-    const double need = std::max(1.0, xpForNextLevel(barLevel_));
-
-    // What the staged petals would grant, priced exactly as the server will
-    // price it, and eased in from the fill and back out to it.
-    double units = 0.0;
-    for (const Staged& s : staged_) units += static_cast<double>(s.count) * absorbUnits(s.rarity);
-    if (!staged_.empty()) {
-        const double target = absorbXpTotal(units, profile.skills) / need + barFill_;
-        if (previewShown_) {
-            preview_ += (target - preview_) * settle(0.8, dtMs);
-        } else {
-            previewShown_ = true;
-            preview_ = barFill_;
-        }
-    } else if (previewShown_) {
-        if (preview_ < barFill_ + 0.001) previewShown_ = false;
-        else preview_ -= preview_ * settle(0.8, dtMs);
-    }
-
-    const double length = barRight - barLeft;
-    barStroke(canvas, barLeft, barRight, barY, kBarTrackWidth, kBarTrack, 1.0);
-    double plus = 0.0;
-    if (previewShown_) {
-        const double reach = clamp(preview_, 0.0, 1.0);
-        const double ramp = clamp(reach * kBarRamp, 0.0, 1.0);
-        barStroke(canvas, barLeft, barLeft + reach * length, barY, ramp * kBarPreviewWidth,
-                  kBarPreview, ramp);
-        plus = (preview_ - barFill_) * need;
-    }
-    if (barFlash_) {
-        // The level just filled: the whole bar, swelling as it fades.
-        barStroke(canvas, barLeft, barRight, barY,
-                  kBarFillWidth + kBarFlashSwell * (1.0 - barFill_), kBarFill, barFill_);
+    if (recycle_) {
+        const double y = panel.y + kBarY;
+        const double amount = lastRecycledStars_ > 0.0 ? lastRecycledStars_ : plannedStars;
+        const char* label = lastRecycledStars_ > 0.0 ? trEnZh("Received: ", "已获得 ")
+                                                      : trEnZh("Preview: ", "预计获得 ");
+        outlinedText(canvas, std::string(label) + florrShort(amount) + trEnZh(" stars", " 星"),
+                     centreX, y, panelLabel(kLevelSize, Align::Centre, Baseline::Middle), 1.0);
     } else {
-        const double reach = clamp(barFill_, 0.0, 1.0);
-        barStroke(canvas, barLeft, barLeft + reach * length, barY,
-                  clamp(reach * kBarRamp, 0.0, 1.0) * kBarFillWidth, kBarFill, 1.0);
-    }
+        // The level the flower is playing at -- the body's, live, in the world, or
+        // the account's on the title screen -- and never a flower this client is
+        // only steering for somebody else.
+        const SelfState& self = ctx.net.view().self();
+        const bool live = self.maxHealth > 0.0 && !ctx.net.controllingFlower();
+        const double barLeft = centreX - kBarHalf;
+        const double barRight = centreX + kBarHalf;
+        const double barY = panel.y + kBarY;
+        // The maze keeps a level of its own: a different track, not a level-up.
+        const bool mazeTrack = live && ctx.net.view().realm() == Realm::Maze;
+        stepBar(profile.username + (mazeTrack ? "#maze" : ""), live ? self.totalXp : profile.totalXp,
+                dtMs, {barLeft, barY});
+        const double need = std::max(1.0, xpForNextLevel(barLevel_));
 
-    // Keep the level-up preview aligned with availableTalentPoints.
-    outlinedText(canvas, "下一级：+2 TP", barRight,
-                 barY - kBarTrackWidth * 0.5 - 1.0 - kNextSize * kLineHeight * 0.5,
-                 panelLabel(kNextSize, Align::Right, Baseline::Middle), 1.0);
-    if (plus >= 0.5) {
-        outlinedText(canvas, "+" + florrShort(plus) + " XP", barRight, barY,
-                     panelLabel(kLevelSize, Align::Right, Baseline::Middle), 1.0);
+        // What the staged petals would grant, priced exactly as the server will
+        // price it, and eased in from the fill and back out to it.
+        double units = 0.0;
+        for (const Staged& s : staged_) units += static_cast<double>(s.count) * absorbUnits(s.rarity);
+        const double plannedXp = absorbXpTotal(units, profile.skills);
+        if (!staged_.empty()) {
+            const double target = plannedXp / need + barFill_;
+            if (previewShown_) {
+                preview_ += (target - preview_) * settle(0.8, dtMs);
+            } else {
+                previewShown_ = true;
+                preview_ = barFill_;
+            }
+        } else if (previewShown_) {
+            if (preview_ < barFill_ + 0.001) previewShown_ = false;
+            else preview_ -= preview_ * settle(0.8, dtMs);
+        }
+
+        const double length = barRight - barLeft;
+        barStroke(canvas, barLeft, barRight, barY, kBarTrackWidth, kBarTrack, 1.0);
+        if (previewShown_) {
+            const double reach = clamp(preview_, 0.0, 1.0);
+            const double ramp = clamp(reach * kBarRamp, 0.0, 1.0);
+            barStroke(canvas, barLeft, barLeft + reach * length, barY, ramp * kBarPreviewWidth,
+                      kBarPreview, ramp);
+        }
+        if (barFlash_) {
+            // The level just filled: the whole bar, swelling as it fades.
+            barStroke(canvas, barLeft, barRight, barY,
+                      kBarFillWidth + kBarFlashSwell * (1.0 - barFill_), kBarFill, barFill_);
+        } else {
+            const double reach = clamp(barFill_, 0.0, 1.0);
+            barStroke(canvas, barLeft, barLeft + reach * length, barY,
+                      clamp(reach * kBarRamp, 0.0, 1.0) * kBarFillWidth, kBarFill, 1.0);
+        }
+
+        // Keep the level-up preview aligned with availableTalentPoints.
+        const double labelsY = barY - kBarTrackWidth * 0.5 - 1.0 - kNextSize * kLineHeight * 0.5;
+        outlinedText(canvas, trEnZh("Next level: +2 TP", "下一级：+2 TP"), barRight, labelsY,
+                     panelLabel(kNextSize, Align::Right, Baseline::Middle), 1.0);
+        if (plannedXp >= 0.5) {
+            outlinedText(canvas, std::string(trEnZh("Preview +", "预计 +")) + florrShort(plannedXp) + " XP",
+                         barLeft, labelsY, panelLabel(kNextSize, Align::Left, Baseline::Middle), 1.0);
+        }
+        outlinedText(canvas, levelLine(barLevel_, barFill_ * need, need, length), centreX, barY,
+                     panelLabel(kLevelSize, Align::Centre, Baseline::Middle), 1.0);
+        sparks_.drawGrains(canvas, dtMs);
     }
-    outlinedText(canvas, levelLine(barLevel_, barFill_ * need, need, length), centreX, barY,
-                 panelLabel(kLevelSize, Align::Centre, Baseline::Middle), 1.0);
-    sparks_.drawGrains(canvas, dtMs);
 
     // --- the lines ---------------------------------------------------------------
-    outlinedText(canvas, trEnZh("Absorb spare petals for XP; check the preview first", "吸收多余花瓣获得经验，请先查看经验预览"), centreX, panel.y + kLine1Y,
+    outlinedText(canvas, recycle_ ? trEnZh("Recycle shop petals for 10% of the listed price", "按商店标价的 10% 回收可购买的花瓣") :
+                      trEnZh("Absorb spare petals for XP; check the preview first", "吸收多余花瓣获得经验，请先查看经验预览"), centreX, panel.y + kLine1Y,
                  panelLabel(kLineSize, Align::Centre, Baseline::Middle), 1.0);
     // A refusal says why where the warning stands, for as long as it is news.
     const bool refused = !refusal_.empty() && nowMs < refusalUntil_;
@@ -526,7 +549,8 @@ bool AbsorbPanel::render(MenuContext& ctx) {
             const std::uint32_t inSlot = staged(petalIndex, rarity);
             cell.count = owned > inSlot ? owned - inSlot : 0;
             cell.greyed =
-                !knownPetal(petalIndex) || !absorbable(content().petal(petalIndex), rarity);
+                !knownPetal(petalIndex) || (recycle_ ? petalRecycleListPrice(petalIndex, rarity) <= 0.0 :
+                                                            !absorbable(content().petal(petalIndex), rarity));
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             return cell;
         });
@@ -557,11 +581,16 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     }
     // Nothing moves in or out of the slot while an absorb is out.
     if (waiting_) return true;
+    if (recycleToggle.contains(mouse)) {
+        reset();
+        recycle_ = !recycle_;
+        return true;
+    }
     if (overButton) {
         std::vector<NetClient::AbsorbStack> stacks;
         stacks.reserve(staged_.size());
         for (const Staged& s : staged_) stacks.push_back({s.petalIndex, s.rarity, s.count});
-        ctx.net.requestAbsorb(stacks);
+        ctx.net.requestAbsorb(stacks, recycle_);
         waiting_ = true;
         waitStarted_ = nowMs;
         refusal_.clear();

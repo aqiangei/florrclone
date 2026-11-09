@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 112; // Private Wave countdown and historical practice board.
+inline constexpr std::uint16_t kProtocolVersion = 113; // Whole-bag Eternal forge and petal recycling.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -166,7 +166,8 @@ enum class ClientMessage : std::uint8_t {
                         ///< what the guild has. Leader only; the tag is the
                         ///< guild's key and cannot be edited. (Version 45.)
     TitanForge,         ///< u16 input petal, u8 mode (0 Eternal, 1 contested Hyper, 2 Eternal fragment,
-                        ///< 3 timed hammer, 4 max Eternal batch, 5 permanent Hyper).
+                        ///< 3 timed hammer, 4 max Eternal batch, 5 permanent Hyper, 6 all bagged Eternal).
+                        ///< Mode 6 uses kNoPetal as the input.
                         ///< Hyper: 5 Eternal -> globally contested Hyper (v82).
                         ///< permanent next-tier petal, Fragment -> Mjolnir.
                         ///< Per-account/per-petal price ledger; never takes
@@ -200,7 +201,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< OracleCraft's oracle is found; the tier only says
                         ///< WHICH one when two stand close. Never a roll, and
                         ///< all or nothing. (Version 55.)
-    Absorb,             ///< u16 stackCount, { u16 itemType, u8 rarity, u32 count }*
+    Absorb,             ///< u8 recycle (0 XP, 1 stars), u16 stackCount, { u16 itemType, u8 rarity, u32 count }*
                         ///< -- the craft window's Absorb side: every staged
                         ///< stack in ONE request, destroyed for XP
                         ///< (shared/game/absorb.h). All or nothing: one stack
@@ -239,10 +240,11 @@ enum class ClientMessage : std::uint8_t {
                         ///< points come back because spent() drops. (Version 69.)
     BulkCraft,          ///< u8 target, u16 exclusion count, u16 petal IDs; craft lower unequipped stacks.
     EnterDungeon,       ///< no payload; explicit nearby dungeon entry.
-    DailyDropBonus,     ///< u8 action: 0 query, 1 claim, 2 toggle shop lock; daily one-hour drop bonus (v78).
+    DailyDropBonus,     ///< u8 action: 0 query, 1 claim, 2 toggle shop lock, 3 pause, 4 resume.
     DailyLoginClaim,    ///< no payload; idempotent daily login reward / refresh.
     AccountQQ,          ///< bool save, str value if saving; private account record only.
     RequestPracticeBoard, ///< bool includeAdmins, u8 action, u32 own record id.
+    RequestWaveRoomStatus, ///< no payload.
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -399,7 +401,8 @@ enum class ServerMessage : std::uint8_t {
     AdminDb,            ///< u8 AdminDbReply, then that reply's payload -- the
                         ///< database editor's answers (shared/net/admin_db.h).
                         ///< Sent to full admins only. (Version 44.)
-    TitanForgeResult,   ///< u8 ok, u16 itemType, str reason, u32 quantity.
+    TitanForgeResult,   ///< u8 ok, u16 itemType, str message, u32 quantity.
+                        ///< For all-bag forge, itemType is kNoPetal and quantity counts kinds.
                         ///< On refusal, itemType is the offer and quantity is zero.
     TitanHolder,        ///< u16 itemType, str username, u32 protection remainingMs (v82).
                         ///< ClientMessage::TitanHolder: the account holding that
@@ -422,7 +425,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< there -- so the client goes back to the title
                         ///< screen as if it had left. The Profile after it is
                         ///< the one a LeaveGame is answered with. (Version 57.)
-    AbsorbResult,       ///< u8 ok, f64 xpGained, u32 petalsAbsorbed, str reason
+    AbsorbResult,       ///< u8 ok, f64 reward (XP or stars), u32 petalsAbsorbed, str reason
                         ///< -- the answer to ClientMessage::Absorb. On a
                         ///< refusal nothing was taken and `reason` says why.
                         ///< The Profile follows it. (Version 58.)
@@ -465,9 +468,11 @@ enum class ServerMessage : std::uint8_t {
                         ///< squad invite for the top-left Accept/Decline toast.
                         ///< Additive; older clients skip an unknown id.
     PyramidMapState,    ///< u8 realm, u8 revealed; visit-only, never saved (v74).
-    DailyDropBonusState, ///< v93: bonus fields, i64 locked rotation, locked offers, i64 current rotation, current offers. Each list: u8 count, {u16 petal,u8 rarity,f64 price,u8 discount,u16 remaining (65535 unlimited)}.
+    DailyDropBonusState, ///< u32 streak, u8 multiplier, u32 remaining, bool paused, u8 countdown TPS,
+                        ///< u32 until next claim, i64 locked rotation, locked offers, i64 current rotation, current offers. Each list: u8 count, {u16 petal,u8 rarity,f64 price,u8 discount,u16 remaining (65535 unlimited)}.
     AccountQQ,          ///< bool saved, str current value; only to the authenticated owner.
     PracticeBoard,      ///< u32 own rank, then private and public ranked record lists.
+    WaveRoomStatus,     ///< u8 occupied seats, bool personal daily star cap reached.
 };
 
 // ---------------------------------------------------------------------------
@@ -701,7 +706,7 @@ enum SelfFields : std::uint8_t {
     SelfWave = 1 << 5,         ///< u32 round, u16 remaining and duration (ms), u8 theme
 };
 
-enum class WaveTheme : std::uint8_t { Normal, Bubble, Sandstorm, EternalBoss, HyperBoss };
+enum class WaveTheme : std::uint8_t { Normal, Bubble, Sandstorm, EternalBoss, HyperBoss, Golden };
 
 struct WaveHud {
     std::uint32_t round = 0;

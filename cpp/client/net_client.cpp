@@ -49,6 +49,7 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::BuyPetal:            return "buyPetal";
         case net::ClientMessage::SetSkin:             return "setSkin";
         case net::ClientMessage::RequestPracticeBoard: return "practiceBoard";
+        case net::ClientMessage::RequestWaveRoomStatus: return "waveRoomStatus";
         case net::ClientMessage::RequestLeaderboard:  return "leaderboard";
         case net::ClientMessage::RedeemCode:          return "redeemCode";
         case net::ClientMessage::PublishSkin:         return "publishSkin";
@@ -96,6 +97,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::Revived:             return "revived";
         case net::ServerMessage::CraftResult:         return "craftResult";
         case net::ServerMessage::PracticeBoard:       return "practiceBoard";
+        case net::ServerMessage::WaveRoomStatus:      return "waveRoomStatus";
         case net::ServerMessage::Leaderboard:         return "leaderboard";
         case net::ServerMessage::Pong:                return "pong";
         case net::ServerMessage::Kick:                return "kick";
@@ -336,7 +338,8 @@ void NetClient::forgetAccount() {
     craftOutcome_ = CraftOutcome{};
     craftAttemptCount_ = 0;
     pyramidMapRevealed = false;
-    lockedShopRotation=-1;lockedShopOffers.clear();currentShopRotation=-1;currentShopOffers.clear();dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=0;
+    lockedShopRotation=-1;lockedShopOffers.clear();currentShopRotation=-1;currentShopOffers.clear();dropBonusStreak=0;dropBonusMultiplier=1;dropBonusUntil=dropBonusNextClaim=dropBonusUpdatedAt=0;dropBonusPaused=false;dropBonusCountdownRate=net::kTicksPerSecond;
+    waveRoomStatus = {};
     oracleOutcome_ = OracleOutcome{};
     oracleReadyAtMillis_ = 0;
     tradeOutcome_ = TradeOutcome{};
@@ -476,6 +479,19 @@ void NetClient::requestDungeonEntry(){ByteWriter w;beginMessage(w,net::ClientMes
 void NetClient::requestDailyDropBonus(bool claim) {
     ByteWriter w;beginMessage(w,net::ClientMessage::DailyDropBonus);w.boolean(claim);send(w);
 }
+void NetClient::requestWaveRoomStatus() {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::RequestWaveRoomStatus);
+    send(w);
+}
+
+void NetClient::setDropBonusEnabled(bool enabled) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::DailyDropBonus);
+    w.u8(enabled ? 4 : 3);
+    send(w);
+}
+
 void NetClient::requestBulkCraft(Rarity target, const std::vector<std::uint16_t>& excluded) {
     ByteWriter w;beginMessage(w,net::ClientMessage::BulkCraft);w.u8(static_cast<std::uint8_t>(target));
     w.u16(static_cast<std::uint16_t>(excluded.size()));
@@ -541,11 +557,12 @@ void NetClient::requestAssemble(Rarity rarity, std::uint8_t recipe, std::uint16_
     send(w);
 }
 
-void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks) {
+void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks, bool recycle) {
     if (stacks.empty()) return;
     const std::size_t count = std::min<std::size_t>(stacks.size(), kMaxAbsorbStacks);
     ByteWriter w;
     beginMessage(w, net::ClientMessage::Absorb);
+    w.boolean(recycle);
     w.u16(static_cast<std::uint16_t>(count));
     for (std::size_t i = 0; i < count; ++i) {
         w.u16(stacks[i].petalIndex);
@@ -569,6 +586,14 @@ void NetClient::requestPermanentHyperForge(std::uint16_t petalIndex) {
     beginMessage(w, net::ClientMessage::TitanForge);
     w.u16(petalIndex);
     w.u8(kPermanentHyperForgeMode);
+    send(w);
+}
+
+void NetClient::requestTitanForgeAll() {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::TitanForge);
+    w.u16(kNoPetal);
+    w.u8(kTitanForgeAllMode);
     send(w);
 }
 
@@ -1220,7 +1245,8 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::AuthResult:   handleAuthResult(reader); break;
         case net::ServerMessage::DailyDropBonusState: {
             const auto streak=reader.u32();const auto multiplier=reader.u8();
-            const auto remaining=reader.u32();const auto next=reader.u32();const auto locked=reader.i64();
+            const auto remaining=reader.u32();const bool paused=reader.boolean();const auto rate=reader.u8();
+            const auto next=reader.u32();const auto locked=reader.i64();
             const auto readOffers = [&]() {
                 std::vector<ShopOffer> result; const auto count = reader.u8();
                 for (unsigned i=0; i<count; ++i) {
@@ -1234,7 +1260,9 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
             auto offers=readOffers(); const auto current=reader.i64(); auto currentOffers=readOffers();
             if(reader.ok()) {lockedShopOffers=std::move(offers);lockedShopRotation=locked;dropBonusStreak=streak;dropBonusMultiplier=multiplier;
                 currentShopRotation=current; currentShopOffers=std::move(currentOffers);
-                dropBonusUntil=wallClockMillis()+remaining;dropBonusNextClaim=wallClockMillis()+next;}
+                dropBonusUpdatedAt=wallClockMillis();dropBonusPaused=paused;
+                dropBonusCountdownRate=std::clamp<int>(rate,1,net::kTicksPerSecond);
+                dropBonusUntil=dropBonusUpdatedAt+remaining;dropBonusNextClaim=dropBonusUpdatedAt+next;}
             break;
         }
         case net::ServerMessage::PyramidMapState: {
@@ -1260,6 +1288,12 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::Revived:      handleRevived(reader); break;
         case net::ServerMessage::CraftResult:  handleCraftResult(reader); break;
         case net::ServerMessage::PracticeBoard: handlePracticeBoard(reader); break;
+        case net::ServerMessage::WaveRoomStatus: {
+            const auto occupied = reader.u8();
+            const bool capped = reader.u8() != 0;
+            if (reader.ok() && occupied <= 4) waveRoomStatus = {true, occupied, capped};
+            break;
+        }
         case net::ServerMessage::Leaderboard:  handleLeaderboard(reader); break;
         // Timed from when the bytes arrived, not from this read of them. The
         // client reads once a frame, so a reply that came straight back still
@@ -1653,7 +1687,7 @@ void NetClient::handleAssembleResult(ByteReader& reader) {
 void NetClient::handleAbsorbResult(ByteReader& reader) {
     AbsorbOutcome outcome;
     outcome.success = reader.boolean();
-    outcome.xpGained = reader.f64();
+    outcome.reward = reader.f64();
     outcome.absorbed = reader.u32();
     outcome.reason = reader.str();
     if (!reader.ok()) return;

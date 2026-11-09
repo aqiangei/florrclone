@@ -412,7 +412,7 @@ void MovementSystem::collectStationaryMobs(World& world) {
     queries_->mobBodies.each([&](Entity e, MobTag&, Transform& at, Body& body, MobType& type) {
         if (type.configIndex >= registry.mobCount()) return;
         const auto& config = registry.mob(type.configIndex);
-        if (config.noMobCollision || world.has<Intangible>(e) || world.has<Pet>(e) ||
+        if (world.has<Intangible>(e) || world.has<Pet>(e) ||
             !anchoredAgainstKnockback(world, registry, e)) return;
         const double half = squareMobHalfExtent(world, e);
         const double radius = half > 0.0 ? half * 1.4142135623730951 :

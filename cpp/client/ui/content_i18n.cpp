@@ -149,7 +149,7 @@ constexpr Pair kPetals[] = {
     {"leech_body_egg", "水蛭身体蛋"},
     {"leech_egg", "水蛭蛋"},
     {"lentil", "扁豆"},
-    {"light", "光"},
+    {"light", "轻"},
     {"lightning", "闪电"},
     {"lightning_cutter", "闪电切割器"},
     {"lotus", "莲花"},

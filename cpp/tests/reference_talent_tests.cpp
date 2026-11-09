@@ -231,7 +231,7 @@ TEST(reference_absorption_talent_preview_matches_server_and_protects_hyper) {
     client.requestAbsorb({{rose, Rarity::Rare, 50}});
     CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }, 200));
     CHECK(client.absorbOutcome().success);
-    CHECK_EQ(client.absorbOutcome().xpGained, preview);
+    CHECK_EQ(client.absorbOutcome().reward, preview);
     CHECK(awaitProfile(h, client, [&](const Profile& p) { return p.totalXp == before + preview; }));
     client.absorbOutcome().pending = false;
     client.requestAbsorb({{rose, Rarity::Apex, 1}});

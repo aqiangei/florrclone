@@ -129,6 +129,8 @@ inline int titanForgeCost(unsigned completed, const std::string& inputId = {}) {
     if (inputId == "fragment") return 15;
     return completed == 0 ? 10 : 15;
 }
+inline constexpr std::uint8_t kTitanForgeAllMode = 6;
+
 struct TitanForgeBatch {
     int quantity = 0;
     int cost = 0;

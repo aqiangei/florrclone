@@ -339,7 +339,11 @@ private:
     /// The minimap in the top-right corner -- 200 design units square, the
     /// whole of the map the flower is standing on fitted into it -- with its
     /// gold border and its map caption.
-    void drawMinimap(Canvas&);
+    void drawMinimap(Canvas&, bool expanded = false);
+    bool canShowMinimap() const;
+    Rect minimapBounds(bool expanded) const;
+    Rect minimapCloseBounds() const;
+    void updateMinimapControls();
     /// Scrollable online roster under the minimap (name / level / guild / map),
     /// fed by ServerMessage::OnlineRoster.
     void drawOnlineRoster(Canvas&);
@@ -348,7 +352,7 @@ private:
     /// The maze realm's map: the whole layout rasterised, corridors light and
     /// tinted by depth band, walls dark, with the same player dots the
     /// overworld map draws. Replaces the world minimap inside the maze.
-    void drawMazeMinimap(Canvas&);
+    void drawMazeMinimap(Canvas&, const Rect&);
     /// The arena realm has no map to show; the reference puts the live
     /// scoreboard in the minimap's corner instead.
     void drawArenaLeaderboard(Canvas&);
@@ -808,6 +812,8 @@ private:
     /// the key: a bitmap baked for a 1x display and shown on a Retina one is
     /// the single blocky rectangle on an otherwise crisp screen.
     double minimapDensity_ = 0.0;
+    bool minimapExpanded_ = false;
+    bool minimapControlUsed_ = false;
 
     /// The maze minimap's bake, keyed on the day it was built for and the
     /// density it was rasterised at, for the same reasons as the world one.

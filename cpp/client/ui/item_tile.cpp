@@ -438,8 +438,8 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     // Only the confirmed upright oval egg silhouettes share this slot layout.
     // Other silhouettes retain their authored cluster (including world drops).
     const auto& iconId = content().petal(petalIndex).id;
-    const bool fan = equipmentFan && drawCount > 1 &&
-                     (iconId == "egg" || iconId == "beetle_egg");
+    const bool eggPair = equipmentFan && drawCount == 2 &&
+                         (iconId == "egg" || iconId == "beetle_egg");
     ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
     const int authoredCount = std::max(1, content().petalStats(petalIndex, rarity).count);
     if (drawCount > authoredCount) {
@@ -460,6 +460,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
 
     const double diameter = shape.diameter * fit;
     const double ring = shape.ring * fit;
+    const double eggDiameter = maxDiameter > 0.0 ? std::min(diameter, maxDiameter / 2.15) : diameter;
     // gardn measures its clump radius to each petal's own ORIGIN -- a
     // stinger's is the middle of its triangle -- while drawPetal centres the
     // viewBox, which for a stinger sits 1.75 units nearer the point. Turned
@@ -475,16 +476,10 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
                               timeSeconds);
             return;
         }
-        if (fan) {
-            const double fanDiameter = std::min(maxDiameter > 0 ? maxDiameter * .68 : diameter, diameter * 1.35);
-            const double anchorY = oy + fanDiameter * .32;
-            const double stem = fanDiameter * .40;
-            for (int i = 0; i < drawCount; ++i) {
-                const double turn = -.65 + 1.30 * i / (drawCount - 1);
-                sprites.drawPetal(into, petalIndex, rarity,
-                    ox + std::sin(turn) * stem, anchorY - std::cos(turn) * stem,
-                    fanDiameter, turn, timeSeconds);
-            }
+        if (eggPair) {
+            const double gap = eggDiameter * 0.55;
+            sprites.drawPetal(into, petalIndex, rarity, ox - gap, oy, eggDiameter, shape.tilt, timeSeconds);
+            sprites.drawPetal(into, petalIndex, rarity, ox + gap, oy, eggDiameter, shape.tilt, timeSeconds);
             return;
         }
         for (int i = 0; i < drawCount; ++i) {
@@ -519,7 +514,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
         // A margin on the box: a petal's artwork may paint outside the circle
         // it is fitted into, and a bake that cropped it would be a visible
         // change rather than a free one.
-        const double side = (ring * 2.0 + diameter) * kClusterBakeMargin;
+        const double side = (eggPair ? eggDiameter * 2.1 : ring * 2.0 + diameter) * kClusterBakeMargin;
         // Quantised, because the size is part of the key and one that wobbled
         // in its last decimal would bake a new bitmap every frame.
         const auto q = [](double v) { return static_cast<std::uint64_t>(std::lround(v * 16.0)); };
@@ -532,7 +527,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
         variant = variant * 1000003u + q(ring);
         variant = variant * 1000003u + q(shape.tilt);
         variant = variant * 2u + (facesInward ? 1u : 0u);
-        variant = variant * 2u + (fan ? 1u : 0u);
+        variant = variant * 2u + (eggPair ? 1u : 0u);
         if (drawCachedPicture(canvas, &sprites, variant, cx - side * 0.5, cy - side * 0.5, side,
                               side, [&](Canvas& bitmap) {
                                   paintCluster(bitmap, side * 0.5, side * 0.5);
@@ -635,11 +630,12 @@ void drawItemTile(Canvas& canvas, const SpriteCache& sprites, Rect rect, const I
     if (filled) {
         const PetalStats stats = content().petalStats(tile.petalIndex, tile.rarity);
         const PetalConfig& config = content().petal(tile.petalIndex);
-        // Keep the petal's own cluster layout, but show the equipped quantity.
+        // An egg tile represents one egg, regardless of how many can hatch from its slot.
+        const int baseCount = config.id == "egg" ? 1 : stats.count;
         const int copies = tile.loadoutSlot >= 0
-            ? petalCopies(stats.count, viewerSkills, tile.loadoutSlot,
+            ? petalCopies(baseCount, viewerSkills, tile.loadoutSlot,
                           petalTier(tile.rarity), config.stackable)
-            : stats.count;
+            : baseCount;
         canvas.save();
         canvas.translate(0.0f, static_cast<float>(-kItemTileIconRise));
         canvas.rotate(static_cast<float>(tile.iconAngle));

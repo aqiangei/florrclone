@@ -1,5 +1,9 @@
 'use strict';
-if(process.argv[2]==='--restore-stable') {
+if(process.argv[2]==='--legacy-third') {
+  require('./deploy-legacy-third.cjs').main(process.argv.slice(3)).catch(error=>{
+    console.error(error.message);process.exitCode=1;
+  });
+} else if(process.argv[2]==='--restore-stable') {
   require('./shards/ops/restore-stable.cjs').main(process.argv[3],process.argv[4]).then(result=>console.log(JSON.stringify(result)))
     .catch(error=>{console.error(error.message);process.exitCode=1;});
 } else if(process.argv[2]==='--cluster') {

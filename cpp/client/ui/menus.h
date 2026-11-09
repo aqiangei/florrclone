@@ -1009,6 +1009,8 @@ private:
     std::string refusal_;
     double refusalUntil_ = 0;
     bool switchPressed_ = false;
+    bool recycle_ = false;
+    double lastRecycledStars_ = 0.0;
 };
 
 /// The oracle: what the craft card becomes while the flower stands at an
@@ -1136,6 +1138,8 @@ private:
     bool permanentHyper_ = false;
     bool confirmForge_ = false;
     bool confirmBatch_ = false;
+    bool confirmAll_ = false;
+    std::string allForgeSummary_;
     std::uint32_t resultQuantity_ = 0;
     SlotTierGrid grid_;
     SlotMotion motion_;
@@ -1372,12 +1376,13 @@ private:
 class WavePanel {
 public:
     bool render(MenuContext&);
-    void reset() { code_.clear(); field_ = {}; }
+    void reset() { code_.clear(); field_ = {}; nextStatusRequest_ = 0; }
     static Rect bounds(int viewWidth, int viewHeight);
 
 private:
     std::string code_;
     ui::TextFieldState field_;
+    double nextStatusRequest_ = 0;
 };
 
 /// Display switches, camera zoom and the menu keys.

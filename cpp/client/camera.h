@@ -99,6 +99,18 @@ public:
     /// (claimableViewport, server/game_server.cpp).
     double loadoutZoom = 1.0;
 
+    void approachLoadoutZoom(double target, double dt) {
+        if (!(target > 0.0) || !std::isfinite(target)) return;
+        const double gap = std::log(target / loadoutZoom);
+        if (std::abs(gap) < 0.002) {
+            loadoutZoom = target;
+            return;
+        }
+        // Smooth in log space so high-tier zoom changes have the same feel
+        // as small ones, while the flower stays pinned to the screen centre.
+        loadoutZoom *= std::exp(gap * (1.0 - std::exp(-18.0 * std::clamp(dt, 0.0, 0.05))));
+    }
+
 private:
     Vec2 centre_;
     int viewportWidth_ = 1280;

@@ -307,7 +307,7 @@ struct AssembleOutcome {
 struct AbsorbOutcome {
     bool pending = false;      ///< a result arrived that the panel has not read
     bool success = false;
-    double xpGained = 0;
+    double reward = 0;
     std::uint32_t absorbed = 0;   ///< petals destroyed; 0 on a refusal
     std::string reason;
 };
@@ -698,11 +698,12 @@ public:
     };
     /// Destroys every one of `stacks` for XP, in one request (shared/game/
     /// absorb.h prices it). The answer lands in absorbOutcome().
-    void requestAbsorb(const std::vector<AbsorbStack>& stacks);
+    void requestAbsorb(const std::vector<AbsorbStack>& stacks, bool recycle = false);
     /// Forges kTitanForgeCost apex of this petal into one universal at the
     /// titan the body is standing at.
     void requestTitanForge(std::uint16_t petalIndex, bool hyper=false, bool eternalFragment=true, bool batch=false);
     void requestPermanentHyperForge(std::uint16_t petalIndex);
+    void requestTitanForgeAll();
     /// Asks the titan the body is standing at who holds this petal at
     /// universal. The answer lands in titanHolder(); the server drops a query
     /// that comes too soon after the last, so a caller asks again until one
@@ -845,8 +846,17 @@ public:
     void toggleShopLock();
     std::uint32_t dropBonusStreak=0;
     int dropBonusMultiplier=1;
-    std::int64_t dropBonusUntil=0,dropBonusNextClaim=0;
+    std::int64_t dropBonusUntil=0,dropBonusNextClaim=0,dropBonusUpdatedAt=0;
+    bool dropBonusPaused = false;
+    int dropBonusCountdownRate = net::kTicksPerSecond;
     void requestDailyDropBonus(bool claim);
+    void setDropBonusEnabled(bool enabled);
+    struct WaveRoomStatus {
+        bool known = false;
+        std::uint8_t occupied = 0;
+        bool dailyCapReached = false;
+    } waveRoomStatus;
+    void requestWaveRoomStatus();
     /// The map grid the server sent, plus the collision SHAPES this client
     /// read out of its own copy of the map. See setWorldMaps().
     const Terrain& terrain() const { return terrain_; }

@@ -2060,6 +2060,64 @@ TEST(todo1107_titan_batch_charges_sequential_prices_and_respects_capacity) {
     removeDataDir(dir);
 }
 
+TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
+    const std::string dir = titanWorld("titan-forge-all");
+    Harness h("titan-forge-all", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_rose", Rarity::Super, 41);
+        seedWorn(path, "smith", 0, "rose", Rarity::Super);
+        seedStack(path, "smith", "petal_fragment", Rarity::Super, 31);
+        seedStack(path, "smith", "petal_wing", Rarity::Super, 42);
+        seedStack(path, "smith", "petal_wing", Rarity::Unique, kMaxStackCount - 1);
+        seedStack(path, "smith", "petal_leaf", Rarity::Super, 9);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const std::vector<NetClient*> clients{&client};
+    h.step(3, clients);
+    const auto rose = content().petalIndex("rose");
+    const auto fragment = content().petalIndex("fragment");
+    const auto wing = content().petalIndex("wing");
+    const auto leaf = content().petalIndex("leaf");
+    const auto hammer = content().petalIndex("timed_mjolnir");
+
+    TitanForgeOutcome outcome;
+    client.requestTitanForgeAll();
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(!outcome.success);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Super), 41u);
+
+    standAtTitan(h, clients, "smith");
+    client.requestTitanForgeAll();
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(outcome.success);
+    CHECK_EQ(outcome.petalIndex, kNoPetal);
+    CHECK_EQ(outcome.quantity, 3u);
+    CHECK(outcome.reason.find("获得 6 个永恒") != std::string::npos);
+    CHECK(outcome.reason.find("消耗 80 个超级") != std::string::npos);
+    CHECK(awaitProfile(h, client, [&](const Profile& profile) {
+        return profile.stackCount(rose, Rarity::Unique) == 3 &&
+               profile.stackCount(fragment, Rarity::Unique) == 2 &&
+               profile.stackCount(wing, Rarity::Unique) == kMaxStackCount;
+    }));
+    const auto& profile = client.profile();
+    CHECK_EQ(profile.stackCount(rose, Rarity::Super), 1u);
+    CHECK_EQ(profile.stackCount(fragment, Rarity::Super), 1u);
+    CHECK_EQ(profile.stackCount(wing, Rarity::Super), 32u);
+    CHECK_EQ(profile.stackCount(leaf, Rarity::Super), 9u);
+    CHECK_EQ(profile.stackCount(hammer, Rarity::Unique), 0u);
+    CHECK_EQ(profile.titanForgeCount(rose), 2u);
+    CHECK_EQ(profile.titanForgeCount(wing), 1u);
+    CHECK_EQ(profile.loadout[0].petalIndex, rose);
+    CHECK_EQ(profile.loadout[0].rarity, Rarity::Super);
+    client.requestTitanForgeAll();
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(!outcome.success);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Unique), 3u);
+    removeDataDir(dir);
+}
+
 TEST(permanent_hyper_exchange_consumes_only_bagged_eternals_and_saves_the_new_identity) {
     const std::string dir = titanWorld("titan-permanent-hyper");
     Harness h("titan-permanent-hyper", [](const std::string& path) {
@@ -3232,7 +3290,7 @@ TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
     const auto dir=titanWorld("shop-lock-purchase");const auto old=shopRotation(shopClockNow())-10;
     Harness h("shop-lock-purchase",[&](const std::string& path){seedAccount(path,"buyer");
         Database db;std::string error;CHECK(db.load(path,error));auto& r=db.progress(db.findUser("buyer")->id);
-        r.stars=100000;r.extra["lockedShopRotation"]=Json(static_cast<double>(old));
+        r.stars=1000000000;r.extra["lockedShopRotation"]=Json(static_cast<double>(old));
         // Stored stock deliberately differs from regenerating this rotation.
         // This simulates adding content between lock and server restart.
         captureShopLock(r,old-1);r.extra["lockedShopOffersRotation"]=static_cast<double>(old);
@@ -3256,9 +3314,9 @@ TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
     const auto current=shopOffers(buyer.lockedShopRotation).front();
     const auto beforeBulk=buyer.profile().stackCount(current.petalIndex,current.rarity);
     const auto beforeStars=buyer.profile().stars;
-    buyer.requestBuyPetal(current.petalIndex,current.rarity,0,5);
-    CHECK(awaitProfile(h,buyer,[&](const Profile& p){return p.stackCount(current.petalIndex,current.rarity)==beforeBulk+5;}));
-    CHECK_NEAR(buyer.profile().stars,beforeStars-current.price*5,1e-6);
+    buyer.requestBuyPetal(current.petalIndex,current.rarity,0,125);
+    CHECK(awaitProfile(h,buyer,[&](const Profile& p){return p.stackCount(current.petalIndex,current.rarity)==beforeBulk+125;}));
+    CHECK_NEAR(buyer.profile().stars,beforeStars-current.price*125,1e-6);
     CHECK_EQ(starsForKill(Rarity::Mythic),1);CHECK_EQ(starsForKill(Rarity::Ultra),5);CHECK_EQ(starsForKill(Rarity::Super),25);
     for(std::uint16_t p=0;p<content().petalCount();++p)if(shopSellsPetal(p)){
         CHECK(shopPrice(p,Rarity::Rare)>=1);CHECK(shopPrice(p,Rarity::Super)>=shopPrice(p,Rarity::Rare));

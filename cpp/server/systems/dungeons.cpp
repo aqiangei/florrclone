@@ -227,12 +227,14 @@ net::WaveTheme waveTheme(std::uint64_t round) {
     if (round % 5 == 0) return net::WaveTheme::EternalBoss;
     if (round % 20 == 7) return net::WaveTheme::Bubble;
     if (round % 20 == 13) return net::WaveTheme::Sandstorm;
+    if (round % 20 == 17) return net::WaveTheme::Golden;
     return net::WaveTheme::Normal;
 }
 
 const char* waveBonusMob(net::WaveTheme theme) {
     if (theme == net::WaveTheme::Bubble) return "bubble";
     if (theme == net::WaveTheme::Sandstorm) return "sandstorm";
+    if (theme == net::WaveTheme::Golden) return "golden_leafbug";
     return nullptr;
 }
 

@@ -26,6 +26,7 @@
 #include <limits>
 #include <optional>
 #include <random>
+#include <string_view>
 #include <utility>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -814,7 +815,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         if(database_.dirty()&&!database_.save()){errorOut="initial authority save failed";return false;}
         if(!database_.setDeltaSink(config_.authorityDeltaCommit)){errorOut="authority delta adapter initialization failed";return false;}
     }
-    if (config_.backgroundSave && !database_.enableBackgroundSave(errorOut)) return false;
+    if (config_.backgroundSave && !database_.enableBackgroundSave(errorOut, config_.tickProbe)) return false;
     running_ = true;
     return true;
 }
@@ -1193,7 +1194,7 @@ bool GameServer::step(double timerLagMillis) {
     const int waitMillis = static_cast<int>(std::max(0.0, nextTickMillis_ - now));
     serviceNetwork(std::min(waitMillis, 5));
     if (persistenceFrozen_) return false;
-    if(hyperBarrierFrozen_){nextTickMillis_=monotonicMillis();lastTickWorldMillis_=0;return true;}
+    if(hyperBarrierFrozen_){nextTickMillis_=monotonicMillis();lastTickWorldMillis_=0;lastDropBonusTickWallMillis_=0;return true;}
     // What the handlers just answered -- a Pong, an AuthResult, a CraftResult
     // -- leaves now, not at the next drain. Under Node that drain is the next
     // step, a whole 60 Hz timer away, or the end of a tick: on loopback it was
@@ -1208,6 +1209,20 @@ bool GameServer::step(double timerLagMillis) {
                          ? (worldNow - lastTickWorldMillis_) / 1000.0
                          : net::kTickSeconds;
         lastTickWorldMillis_ = worldNow;
+        if (simulationPacing_.ticksPerSecond() < net::kTicksPerSecond &&
+            lastDropBonusTickWallMillis_ > 0) {
+            const double elapsed = tickNow - lastDropBonusTickWallMillis_;
+            const auto now = dropBonusNow();
+            bool changed = false;
+            for (auto& [id, session] : sessions_) {
+                if (session.authenticated() && session.playing()) {
+                    changed |= compensateSlowDropBonus(database_.progress(session.userId),
+                                                       now, elapsed, raw * 1000.0);
+                }
+            }
+            if (changed) database_.markDirty();
+        }
+        lastDropBonusTickWallMillis_ = tickNow;
         if (raw > kMaxDeltaSeconds) raw = kMaxDeltaSeconds;
         if (simulationPacing_.ticksPerSecond() < net::kTicksPerSecond) {
             smoothedDeltaSeconds_ = net::kTickSeconds;
@@ -1297,8 +1312,50 @@ void GameServer::serviceNetwork(int timeoutMillis) {
 void GameServer::serviceArrivals() {
     if (!running_.load()) return;
     wallClockMillis_ = monotonicMillis();
+    if (!config_.tickProbe) {
+        serviceNetwork(0);
+        listener_.flush();
+        return;
+    }
+
+    ArrivalProbe probe;
+    arrivalProbe_ = &probe;
+    const double start = monotonicMillis();
+    const double cpuStart = tickProbeThreadCpuMillis();
+    const auto editsBefore = database_.snapshotEdits();
     serviceNetwork(0);
+    const double networkEnd = monotonicMillis();
     listener_.flush();
+    arrivalProbe_ = nullptr;
+    const double end = monotonicMillis();
+    if (end - start < 50.0) return;
+
+    const auto wallEnd = std::chrono::duration<double, std::milli>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    Json report = Json::object();
+    report["wallEndMs"] = wallEnd;
+    report["workMs"] = end - start;
+    report["threadCpuMs"] = tickProbeCpuElapsed(cpuStart);
+    report["networkMs"] = networkEnd - start;
+    report["flushMs"] = end - networkEnd;
+    report["messages"] = static_cast<double>(probe.messages);
+    report["messageMs"] = probe.messageMillis;
+    report["slowestMessage"] = static_cast<double>(probe.slowestMessage);
+    report["slowestMs"] = probe.slowestMillis;
+    const auto editsAfter = database_.snapshotEdits();
+    report["snapshotRowCopies"] = static_cast<double>(editsAfter.copies - editsBefore.copies);
+    report["snapshotRowMs"] = editsAfter.wallMs - editsBefore.wallMs;
+    Json types = Json::object();
+    for (std::size_t id = 0; id < probe.byType.size(); ++id) {
+        const auto& message = probe.byType[id];
+        if (!message.count) continue;
+        Json stats = Json::object();
+        stats["count"] = static_cast<double>(message.count);
+        stats["wallMs"] = message.millis;
+        types[std::to_string(id)] = std::move(stats);
+    }
+    report["messageTypes"] = std::move(types);
+    std::printf("[tick-probe-arrival] %s\n", report.dump().c_str());
 }
 
 double GameServer::nextStepDelayMillis() const {
@@ -1366,9 +1423,12 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
     }
     const bool lagPeak = hasWindow && startLag > window.maxLag;
     const bool workPeak = hasWindow && work > window.maxWork;
+    const double sessions = sessionPhaseCount_
+        ? sessionPhases_[sessionPhaseCount_ - 1].endedMillis - tickStartedMillis_ : 0.0;
+    const bool sessionsPeak = hasWindow && sessions > window.maxSessions;
     const bool transition = previousRate != rate;
     const bool save = saveProbe_.periodic || saveProbe_.poll.wall >= 25.0;
-    if (lagPeak || workPeak || transition || save) {
+    if (lagPeak || workPeak || sessionsPeak || transition || save) {
         Json frame = Json::object();
         frame["tick"] = static_cast<double>(tick_);
         frame["wallStartMs"] = wallStart;
@@ -1390,6 +1450,14 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
         }
         frame["stagesMs"] = std::move(stages);
         frame["stageOtherMs"] = std::max(0.0, work - (previous - tickStartedMillis_));
+        Json sessionStages = Json::object();
+        previous = tickStartedMillis_;
+        for (std::size_t i = 0; i < sessionPhaseCount_; ++i) {
+            const auto& phase = sessionPhases_[i];
+            sessionStages[phase.name] = phase.endedMillis - previous;
+            previous = phase.endedMillis;
+        }
+        frame["sessionsMs"] = std::move(sessionStages);
         const auto timingJson = [](const ProbeTiming& timing) {
             Json result = Json::object();
             result["wallMs"] = timing.wall;
@@ -1403,6 +1471,11 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
         persistence["request"] = timingJson(saveProbe_.request);
         persistence["poll"] = timingJson(saveProbe_.poll);
         persistence["other"] = timingJson(saveProbe_.other);
+        Json rowEdits = Json::object();
+        rowEdits["attempts"] = static_cast<double>(saveProbe_.sessionsEdits.attempts);
+        rowEdits["copies"] = static_cast<double>(saveProbe_.sessionsEdits.copies);
+        rowEdits["wallMs"] = saveProbe_.sessionsEdits.wallMs;
+        persistence["sessionsSnapshotEdits"] = std::move(rowEdits);
         frame["save"] = std::move(persistence);
         const auto line = frame.dump();
         if (transition || save)
@@ -1417,6 +1490,11 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
             window.workTick = tick_;
             window.workFrame = line;
         }
+        if (sessionsPeak) {
+            window.maxSessions = sessions;
+            window.sessionsTick = tick_;
+            window.sessionsFrame = line;
+        }
     }
     if (!hasWindow || tickNow - tickCadenceStartMillis_ < kTickCadenceLogMillis) return;
     std::printf("[tick-probe-window] targets=20:%u,16:%u,13:%u,11:%u,10:%u over50=%u overTarget=%u late50=%u transitions=%u ewma=%.1f\n",
@@ -1428,6 +1506,10 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
     } else {
         std::printf("[tick-probe-frame] window-lag %s\n", window.lagFrame.c_str());
         std::printf("[tick-probe-frame] window-work %s\n", window.workFrame.c_str());
+    }
+    if (!window.sessionsFrame.empty() &&
+        window.sessionsTick != window.lagTick && window.sessionsTick != window.workTick) {
+        std::printf("[tick-probe-frame] window-sessions %s\n", window.sessionsFrame.c_str());
     }
     window = {};
 }
@@ -1469,9 +1551,17 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     wallClockMillis_ = wallMillis;
     clockMillis_ = nowMillis;
     tickPhaseCount_ = 0;
+    sessionPhaseCount_ = 0;
     if (!bossClocksRestored_) restoreBossClocks(nowMillis);
     tickStartedMillis_ = monotonicMillis();
+    const auto editsBeforeSessions = config_.tickProbe ? database_.snapshotEdits()
+        : Database::SnapshotEditTiming{};
+    const auto markSessionPhase = [&](const char* name) {
+        if (config_.tickProbe && sessionPhaseCount_ < sessionPhases_.size())
+            sessionPhases_[sessionPhaseCount_++] = {name, monotonicMillis()};
+    };
     servicePyramidRotation(pyramidRotationCycle());
+    markSessionPhase("pyramidRotation");
 
     // First, so a session whose socket is gone is not counted as a player,
     // simulated or saved by anything below. Above the idle gate because such a
@@ -1480,8 +1570,10 @@ void GameServer::tick(double wallMillis, double nowMillis) {
         nextSocketAuditMillis_ = wallMillis + 1000.0;
         reapSessionsWithoutSockets();
     }
+    markSessionPhase("socketAudit");
 
     for (auto& entry : sessions_) refillAllowances(entry.second, wallMillis);
+    markSessionPhase("allowances");
     // At most one credited second per account and server second; idle input heartbeats do not count.
     if (wallMillis >= nextCouncilSampleMillis_) {
         nextCouncilSampleMillis_ = wallMillis + 1000.0;
@@ -1500,6 +1592,7 @@ void GameServer::tick(double wallMillis, double nowMillis) {
             activity=std::max(0.0,activity.asDouble())+elapsed;database_.markDirty();
         }
     }
+    markSessionPhase("council");
 
     // Invitations lapse on the server's own clock rather than on a timer per
     // invite, which is a timer that has to be cancelled when its target
@@ -1508,6 +1601,7 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     // without the roster ever moving.
     squads_.expire(static_cast<std::int64_t>(wallMillis));
     rebuildSquadIndex();
+    markSessionPhase("squads");
 
     // Above the idle gate on purpose: a server with nobody left on it is
     // exactly the one a scheduled restart is usually waiting for, and an
@@ -1515,27 +1609,37 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     // schedule.
     serviceAutoUpdate();
     serviceScheduledRestart(wallMillis);
+    markSessionPhase("maintenance");
     // Above the idle gate too: a member logging out of the title screen
     // changes every guildmate's roster whether or not anybody is playing.
     serviceGuildPresence(wallMillis);
+    markSessionPhase("guildPresence");
     // Public online list under the minimap (same session walk as the admin
     // crown Players tab; fingerprint skips unchanged payloads).
     serviceOnlineRoster(wallMillis);
+    markSessionPhase("rosterBuild");
     sendDueOnlineRosters();
+    markSessionPhase("rosterSend");
     serviceTimedHammers(wallMillis);
+    markSessionPhase("timedHammers");
     // One-shot requests are staged only by the server operator in the verified
     // stopped database. No client packet or chosen player name can enqueue one.
     // The maintenance marker keeps the transaction behind successful cutover.
     {
-        const Json job=database_.storedTable("operatorHyperForgeRequest");
+        const Json& job=database_.storedTable("operatorHyperForgeRequest");
+        const auto status=job["status"].asString();
+        const bool needsWork=status=="pending" ||
+            (status=="done" && !job["announced"].asBool(false));
         const auto userId=job["userId"].asString();
         const auto requestId=job["id"].asString();
-        const auto gate=job["maintenanceGate"].asString();
-        const auto ready=job["readyFile"].asString();
-        const bool waiting=(!gate.empty()&&std::ifstream(gate).good())||
-            (!ready.empty()&&!std::ifstream(ready).good());
-        if(!config_.authorityHyper&&!userId.empty()&&!requestId.empty()&&!waiting) {
-            if(job["status"].asString()=="pending") {
+        const auto waiting=[&job] {
+            const auto gate=job["maintenanceGate"].asString();
+            const auto ready=job["readyFile"].asString();
+            return (!gate.empty()&&std::ifstream(gate).good()) ||
+                (!ready.empty()&&!std::ifstream(ready).good());
+        };
+        if(needsWork&&!config_.authorityHyper&&!userId.empty()&&!requestId.empty()&&!waiting()) {
+            if(status=="pending") {
                 const auto& state=database_.storedTable("hyperForges")["mjolnir"];
                 const bool completed=state["operatorRequest"].asString()==requestId&&
                     state["owner"].asString()==userId;
@@ -1574,6 +1678,7 @@ void GameServer::tick(double wallMillis, double nowMillis) {
             }
         }
     }
+    markSessionPhase("operatorJob");
     markTickPhase("sessions");
 
     // Housekeeping, ABOVE the idle gate: an account registered by somebody
@@ -1586,6 +1691,9 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     if (traceSave) {
         saveProbe_ = {};
         saveProbe_.periodic = checkpoint;
+        const auto after = database_.snapshotEdits();
+        saveProbe_.sessionsEdits = {after.attempts - editsBeforeSessions.attempts,
+            after.copies - editsBeforeSessions.copies, after.wallMs - editsBeforeSessions.wallMs};
     }
     const auto measureSave = [&](ProbeTiming& timing, auto&& operation) {
         if (!traceSave) { operation(); return; }
@@ -2312,6 +2420,23 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
     if (!session) return;
 
     const auto id = static_cast<net::ClientMessage>(reader.u8());
+    struct MeasureArrivalMessage {
+        ArrivalProbe* probe;
+        net::ClientMessage id;
+        double start;
+        ~MeasureArrivalMessage() {
+            if (!probe) return;
+            const double elapsed = monotonicMillis() - start;
+            ++probe->messages;
+            probe->messageMillis += elapsed;
+            auto& message = probe->byType[static_cast<unsigned>(id)];
+            ++message.count;
+            message.millis += elapsed;
+            if (elapsed <= probe->slowestMillis) return;
+            probe->slowestMillis = elapsed;
+            probe->slowestMessage = static_cast<unsigned>(id);
+        }
+    } measure{arrivalProbe_, id, arrivalProbe_ ? monotonicMillis() : 0.0};
     if (session->stage == SessionStage::Greeting && id != net::ClientMessage::Hello) {
         connection.closeGracefully();return;
     }
@@ -2359,6 +2484,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::LoadLoadoutPreset:
         case net::ClientMessage::BulkCraft:
         case net::ClientMessage::DailyDropBonus:
+        case net::ClientMessage::RequestWaveRoomStatus:
         case net::ClientMessage::DailyLoginClaim:
         case net::ClientMessage::AccountQQ:
         case net::ClientMessage::Craft:
@@ -2394,6 +2520,14 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::SetLoadout:    handleSetLoadout(*session, reader); break;
         case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
         case net::ClientMessage::DailyDropBonus: handleDropBonus(*session, connection, reader); break;
+        case net::ClientMessage::RequestWaveRoomStatus: {
+            ByteWriter status;
+            status.u8(static_cast<std::uint8_t>(net::ServerMessage::WaveRoomStatus));
+            status.u8(dungeons_ ? dungeons_->waveOccupancy() : 0);
+            status.boolean(database_.waveDailyStarCapReached(session->userId));
+            connection.send(status);
+            break;
+        }
         case net::ClientMessage::AccountQQ: {
             const bool save = reader.boolean();
             const std::string value = save ? reader.str() : std::string();
@@ -2696,7 +2830,13 @@ void GameServer::handleLogin(Session& session, net::Connection& connection, Byte
         return;
     }
 
-    if (!config_.authorityAuth&&!database_.passwordMatches(username, password)) {
+    // A standalone login can verify and update activity together. The shared
+    // path must still check credentials before it tries to acquire ownership.
+    const bool standaloneLogin = !config_.authorityAuth && !config_.authorityAcquire &&
+                                 !config_.authorityRefresh && !database_.authoritative();
+    if (!config_.authorityAuth &&
+        !(standaloneLogin ? database_.verifyPassword(username, password)
+                          : database_.passwordMatches(username, password))) {
         // Deliberately the same answer for a wrong password and an unknown
         // account: distinguishing them tells an attacker which names exist.
         sendAuthResult(connection, net::AuthStatus::BadCredentials, "", "",
@@ -2714,7 +2854,7 @@ void GameServer::handleLogin(Session& session, net::Connection& connection, Byte
         sendAuthResult(connection,net::AuthStatus::ServerError,"","","Account is active on another server or temporarily unavailable.");
         return;
     }
-    if(!database_.verifyPassword(username,password))return;
+    if (!standaloneLogin && !database_.verifyPassword(username, password)) return;
     accountLimits_.refundLoginAttempt(address);
 
     // A socket still in the world leaves it first, its body saved into the
@@ -3300,8 +3440,14 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
     const auto& b=record.extra["dailyDropBonus"];
     const bool claimed=static_cast<std::int64_t>(b["day"].asDouble(-1))>=dropBonusDay(now);
     ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::DailyDropBonusState));
-    w.u32(dropBonusStreak(record,now));w.u8(activeDropBonus(record,now));
-    w.u32(static_cast<std::uint32_t>(clamp(b["until"].asDouble()-now,0.0,3600000.0)));
+    const auto remaining = dropBonusRemaining(record, now);
+    const bool paused = b["pausedMillis"].asDouble() > 0.0;
+    w.u32(dropBonusStreak(record,now));
+    w.u8(remaining > 0.0 ? clamp(b["multiplier"].asInt(1), 1, 3) : 1);
+    w.u32(static_cast<std::uint32_t>(remaining));
+    w.boolean(paused);
+    w.u8(static_cast<std::uint8_t>(session.playing() ? simulationPacing_.ticksPerSecond() :
+                                                       net::kTicksPerSecond));
     w.u32(claimed?static_cast<std::uint32_t>((dropBonusDay(now)+1)*86400000-8LL*3600000-now):0);
     w.i64(static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1)));
     const auto writeOffers = [&](std::vector<ShopOffer> offers, std::int64_t rotation) {
@@ -3321,9 +3467,11 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
     connection.send(w);
 }
 void GameServer::handleDropBonus(Session& session, net::Connection& connection, ByteReader& reader) {
-    const auto claim=reader.u8();if(!reader.ok()||!session.authenticated()||claim>2)return;
+    const auto claim=reader.u8();if(!reader.ok()||!session.authenticated()||claim>4)return;
     auto& record=database_.progress(session.userId);
     if(claim==1 && claimDropBonus(record,dropBonusNow())) database_.markDirty();
+    if ((claim == 3 || claim == 4) && setDropBonusEnabled(record, dropBonusNow(), claim == 4))
+        database_.markDirty();
     if(claim==2){const auto old=record.extra["lockedShopRotation"].asDouble(-1);
         record.extra["lockedShopRotation"]=Json(old<0?static_cast<double>(shopRotation(shopClockNow())):-1.0);
         if(old<0)captureShopLock(record,static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble()));
@@ -4437,10 +4585,12 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
         Rarity rarity = Rarity::Common;
         std::int64_t count = 0;
     };
+    const auto mode = reader.u8();
+    const bool recycle = mode == 1;
     const int stackCount = reader.u16();
     std::vector<Stack> stacks;
     stacks.reserve(static_cast<std::size_t>(std::min(stackCount, kMaxAbsorbStacks)));
-    bool malformed = stackCount <= 0 || stackCount > kMaxAbsorbStacks;
+    bool malformed = mode > 1 || stackCount <= 0 || stackCount > kMaxAbsorbStacks;
     for (int i = 0; i < stackCount && !malformed; ++i) {
         Stack stack;
         stack.petalIndex = reader.u16();
@@ -4482,6 +4632,7 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
     // request one petal short destroys none of the others.
     PlayerRecord& record = liveRecord(session);
     double units = 0.0;
+    double totalListPrice = 0.0;
     std::int64_t absorbed = 0;
     for (const Stack& stack : stacks) {
         if (stack.petalIndex >= content().petalCount() || content().petal(stack.petalIndex).id == "timed_mjolnir" || stack.count <= 0 ||
@@ -4490,8 +4641,9 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
             return;
         }
         const PetalConfig& petal = content().petal(stack.petalIndex);
-        if (!absorbable(petal, stack.rarity)) {
-            reply(false, 0, 0, petal.name + " cannot be absorbed.");
+        const double listPrice = recycle ? petalRecycleListPrice(stack.petalIndex, stack.rarity) : 0.0;
+        if (recycle ? listPrice <= 0.0 : !absorbable(petal, stack.rarity)) {
+            reply(false, 0, 0, petal.name + (recycle ? " 不可回收。" : " cannot be absorbed."));
             return;
         }
         if (record.itemCount(stack.rarity, inventoryKey(stack.petalIndex)) < stack.count) {
@@ -4500,10 +4652,28 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
             return;
         }
         units += static_cast<double>(stack.count) * absorbUnits(stack.rarity);
+        totalListPrice += static_cast<double>(stack.count) * listPrice;
         absorbed += stack.count;
+    }
+    const double stars = petalRecycleStars(totalListPrice);
+    if (recycle && stars < 1.0) {
+        reply(false, 0, 0, "预计收益不足 1 星。");
+        return;
     }
     for (const Stack& stack : stacks) {
         takeFromInventory(record, stack.petalIndex, stack.rarity, static_cast<int>(stack.count));
+    }
+
+    if (recycle) {
+        const auto* live = session.playing() ? world_.tryGet<PlayerProgress>(session.entity) : nullptr;
+        record.stars = (live ? live->stars : record.stars) + stars;
+        for (const auto body : bodiesOf(session)) {
+            if (auto* progress = world_.tryGet<PlayerProgress>(body)) progress->stars = record.stars;
+        }
+        database_.markDirty();
+        reply(true, stars, absorbed, "");
+        sendProfile(session, connection);
+        return;
     }
 
     // Priced by the tree the flower is playing on -- the maze's in the maze,
@@ -4552,7 +4722,8 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     const bool timedHammer=forgeMode==3;
     const bool batch = forgeMode == 4;
     const bool permanentHyper = forgeMode == kPermanentHyperForgeMode;
-    if (forgeMode > kPermanentHyperForgeMode) return;
+    const bool all = forgeMode == kTitanForgeAllMode;
+    if (forgeMode > kTitanForgeAllMode || (all && petalIndex != kNoPetal)) return;
     if (!reader.ok() || !session.authenticated()) return;
 
     std::uint16_t outputIndex = petalIndex;
@@ -4578,6 +4749,46 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     if (npcs_->findService(world_, NpcService::Titan, body->position, body->realm,
                            kNpcServiceReach + kNpcServiceSlack) == NULL_ENTITY) {
         reply(false, "You are too far from the titan.");
+        return;
+    }
+    if (all) {
+        if (wallClockMillis_ < session.nextTitanForgeAllMillis) {
+            reply(false, "锻造请求过快，请稍候。");
+            return;
+        }
+        session.nextTitanForgeAllMillis = wallClockMillis_ + 1500.0;
+        auto& record = liveRecord(session);
+        int kinds = 0;
+        std::uint64_t made = 0;
+        std::uint64_t consumed = 0;
+        for (std::uint16_t index = 0; index < content().petalCount(); ++index) {
+            const auto& id = content().petal(index).id;
+            if (!titanForgeEligible(id)) continue;
+            const auto key = inventoryKey(index);
+            const int owned = record.itemCount(kTitanInputRarity, key);
+            if (owned == 0) continue;
+            const int completed = clamp(record.extra["titanForgeCounts"][id].asInt(0), 0, 2);
+            const int space = kMaxStackCount - record.itemCount(kTitanOutputRarity, key);
+            const auto exchange = titanForgeBatch(owned, space, completed, id);
+            if (!exchange.quantity ||
+                !takeFromInventory(record, index, kTitanInputRarity, exchange.cost)) continue;
+            giveToInventory(record, index, kTitanOutputRarity, exchange.quantity);
+            record.extra["titanForgeCounts"][id] = std::min(2, completed + exchange.quantity);
+            announceRareCraft(session, index, kTitanOutputRarity, exchange.quantity, exchange.cost, true, false);
+            ++kinds;
+            made += exchange.quantity;
+            consumed += exchange.cost;
+        }
+        if (kinds == 0) {
+            reply(false, "背包里没有可锻造的超级材料。");
+            resyncProfile(session, connection);
+            return;
+        }
+        database_.markDirty();
+        const auto result = "一键锻造完成：共 " + std::to_string(kinds) + " 种，获得 " +
+            std::to_string(made) + " 个永恒，消耗 " + std::to_string(consumed) + " 个超级。";
+        reply(true, result, kinds);
+        sendProfile(session, connection);
         return;
     }
     if (petalIndex >= content().petalCount()) {
@@ -4816,7 +5027,7 @@ int GameServer::takeUniversals(std::uint16_t petalIndex, const std::string& keep
 }
 
 void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIndex,
-                                   Rarity made, std::uint32_t quantity, std::uint32_t consumed, bool titanForge) {
+                                   Rarity made, std::uint32_t quantity, std::uint32_t consumed, bool titanForge, bool broadcast) {
     // ONE line however many the batch produced:
     // the reference announces the craft, not each petal it yielded. A
     // universal is never crafted -- it is forged at a titan, one at a time --
@@ -4860,7 +5071,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
             sendChatTo(*recipient, net::ChatChannel::System, "", marked);
         return;
     }
-    broadcastChat(net::ChatChannel::System, "", marked);
+    if (broadcast) broadcastChat(net::ChatChannel::System, "", marked);
 
     addNotification(made == Rarity::PermanentHyper ? "permanent_hyper_forge"
                     : made == Rarity::Universal ? "universal_craft"
@@ -6198,7 +6409,6 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
         Row row;row.account=session.userId;
         row.name = session.displayName.empty() ? session.username : session.displayName;
         row.sortKey = lowerCase(session.username);
-        row.guild = guildNameForUser(session.username);
         row.location = guildLocation(session);
         if (const PlayerRecord* progress = database_.findProgress(session.userId)) {
             const int level = levelFromTotalXp(progress->totalXp).level;
@@ -6223,6 +6433,21 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
             }
         }
         rows.push_back(std::move(row));
+    }
+    if (!rows.empty()) {
+        // Build once for this roster. Keep the first matching guild in save
+        // order, as guildNameForUser does for an older duplicate membership.
+        std::unordered_map<std::string, std::string_view> guildByMember;
+        const auto& guilds = database_.storedTable("guilds");
+        for (const auto& guild : guilds.keys()) {
+            for (const auto& member : guilds[guild]["memberUsernames"].items()) {
+                guildByMember.try_emplace(lowerCase(member.asString()), guild);
+            }
+        }
+        for (auto& row : rows) {
+            const auto found = guildByMember.find(row.sortKey);
+            if (found != guildByMember.end()) row.guild = found->second;
+        }
     }
     if(config_.authorityAuth) {
         Json input=Json::object();input["action"]="presence";input["rows"]=Json::array();

@@ -19,6 +19,7 @@
 // the tables below keep theirs, so a save produces a file that diffs cleanly
 // against the one it was loaded from instead of reshuffling every account.
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -255,6 +256,11 @@ public:
         std::int64_t expiresAtMillis = 0;
     };
 
+    struct SnapshotEditTiming {
+        std::uint64_t attempts = 0, copies = 0;
+        double wallMs = 0.0;
+    };
+
     /// A dictionary that remembers insertion order.
     ///
     /// The database is a file people read and back up; rebuilding it from an
@@ -280,7 +286,7 @@ public:
             auto& row = it->second;
             row.cached = false;
             if(tracking_)touched_.insert(key);
-            return &row.mutableValue();
+            return &row.mutableValue(traceSnapshotEdits_ ? &snapshotEdits_ : nullptr);
         }
         const T* find(const std::string& key) const {
             auto it = byKey_.find(key);
@@ -295,7 +301,7 @@ public:
                 it = byKey_.try_emplace(key).first;
             }
             it->second.cached = false;
-            return it->second.mutableValue();
+            return it->second.mutableValue(traceSnapshotEdits_ ? &snapshotEdits_ : nullptr);
         }
         /// The row as compact JSON, re-serialised with `toJson` only when it
         /// was handed out mutably since the last call. `key` must exist.
@@ -344,11 +350,12 @@ public:
         public:
             explicit SnapshotValue(std::shared_ptr<const T> live) : live_(std::move(live)) {}
 
-            void freezeBeforeEdit() {
+            bool freezeBeforeEdit() {
                 std::lock_guard lock(mutex_);
-                if (!live_) return;
+                if (!live_) return false;
                 frozen_.emplace(*live_);
                 live_.reset();
+                return true;
             }
             T take() {
                 std::lock_guard lock(mutex_);
@@ -369,12 +376,15 @@ public:
             std::optional<std::string> cachedText;
         };
         using RowChanges = std::vector<SnapshotRow>;
-        void trackSnapshotRows() {
+        void trackSnapshotRows(bool trace = false) {
             tracking_ = true;
+            traceSnapshotEdits_ = trace;
+            snapshotEdits_ = {};
             orderChanged_ = true;
             touched_.insert(order_.begin(), order_.end());
         }
         const std::set<std::string>& touchedKeys() const { return touched_; }
+        SnapshotEditTiming snapshotEdits() const { return snapshotEdits_; }
         void takeSnapshotChanges(RowChanges& changes, std::optional<std::vector<std::string>>& order) {
             if (orderChanged_) order = order_;
             orderChanged_ = false;
@@ -426,8 +436,19 @@ public:
             mutable bool cached = false;
             std::string committed;
 
-            T& mutableValue() {
-                if (auto snapshot = pending.lock()) snapshot->freezeBeforeEdit();
+            T& mutableValue(SnapshotEditTiming* trace) {
+                if (auto snapshot = pending.lock()) {
+                    if (trace) {
+                        const auto start = std::chrono::steady_clock::now();
+                        const bool copied = snapshot->freezeBeforeEdit();
+                        trace->wallMs += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - start).count();
+                        ++trace->attempts;
+                        trace->copies += copied;
+                    } else {
+                        snapshot->freezeBeforeEdit();
+                    }
+                }
                 pending.reset();
                 return *value;
             }
@@ -435,6 +456,8 @@ public:
         std::vector<std::string> order_;
         std::unordered_map<std::string, Row> byKey_;
         mutable std::set<std::string> touched_;
+        bool traceSnapshotEdits_ = false;
+        SnapshotEditTiming snapshotEdits_;
         bool tracking_=false;
         bool orderChanged_ = false;
     };
@@ -493,7 +516,8 @@ public:
     /// anything went wrong, and leaves the database dirty so the change is
     /// retried rather than lost.
     bool save();
-    bool enableBackgroundSave(std::string& errorOut);
+    bool enableBackgroundSave(std::string& errorOut, bool trace = false);
+    SnapshotEditTiming snapshotEdits() const;
     bool backgroundSaveEnabled() const { return snapshotWriter_ != nullptr; }
     void requestBackgroundSave();
     void pollBackgroundSave();
@@ -679,6 +703,7 @@ public:
     /// still reports the current state, which is what a reconnect needs.
     DailyStreakResult processDailyStreak(const std::string& userId);
     int awardWaveStars(const std::string& userId, bool* reachedDailyCap = nullptr);
+    bool waveDailyStarCapReached(const std::string& userId) const;
     bool awardWaveBonusHammer(const std::string& userId);
     /// Every userId with a progress record, in stored order. Read with
     /// findProgress(); reach for progress() only for the rows actually being

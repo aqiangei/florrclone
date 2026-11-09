@@ -229,3 +229,20 @@ TEST(interface_scale_preserves_the_world_view_and_cursor_aim) {
         CHECK_NEAR(cursor.y, aim.y, 1e-9);
     }
 }
+
+TEST(camera_loadout_zoom_eases_and_keeps_the_flower_centred) {
+    Camera camera;
+    camera.setViewport(1200, 800);
+    camera.snapTo({5000.0, 7000.0});
+    for (int i = 0; i < 12; ++i) {
+        const auto before = camera.loadoutZoom;
+        camera.approachLoadoutZoom(0.1, 1.0 / 60.0);
+        CHECK(camera.loadoutZoom < before);
+        CHECK(camera.loadoutZoom > 0.1);
+        const Vec2 centre = camera.worldToScreen({5000.0, 7000.0});
+        CHECK_NEAR(centre.x, 600.0, 1e-8);
+        CHECK_NEAR(centre.y, 400.0, 1e-8);
+    }
+    for (int i = 0; i < 24; ++i) camera.approachLoadoutZoom(0.1, 1.0 / 60.0);
+    CHECK_NEAR(camera.loadoutZoom, 0.1, 1e-8);
+}

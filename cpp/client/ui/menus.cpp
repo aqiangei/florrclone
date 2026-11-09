@@ -2177,7 +2177,14 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             dial.y = std::clamp(clearAbove - dialHeight - gap, gap, bottomY);
         }
         rotationDial_ = dial;
-        canvas.save();canvas.translate(dial.x,dial.y);canvas.scale(dialScale,dialScale);
+        // The phone HUD can use a smaller face without shrinking either tap
+        // target or letting the reserved area overlap the movement controls.
+        const double faceRatio = touch ? 0.80 : 1.0;
+        const double faceScale = dialScale * faceRatio;
+        canvas.save();
+        canvas.translate(static_cast<float>(dial.x + dial.w * (1.0 - faceRatio) * .5),
+                         static_cast<float>(dial.y + dial.h * (1.0 - faceRatio) * .5));
+        canvas.scale(static_cast<float>(faceScale), static_cast<float>(faceScale));
         drawLoadoutSlot(canvas, {0,0,104,44}, 0x355C4Fu,
             rotationDial_.contains(mouse) && !panelRect_.contains(mouse));
         const double cx=52, cy=21;

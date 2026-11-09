@@ -22,6 +22,8 @@ constexpr double kSpawnedMobBodyScale = 0.75;
 // Prestige Jungle lacks the ordinary Jungle's separately stocked boss populations.
 // More of its own ambient slots can stay latent outside the players' views.
 constexpr double kPrestigeJungleDensityScale = 1.25;
+constexpr double kDeepHelDifficulty = 50.0;
+constexpr double kDeepHelDensityScale = 1.20;
 constexpr double kDeepJungleDensityScale = 1.20;
 constexpr double kDeepJungleDifficulty = 65.0;
 constexpr double kPrestigeSewersDensityScale = 0.90;
@@ -1683,6 +1685,8 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
         const bool prestigeJungle = isPrestigeJungle(map);
         const bool ordinaryJungle = !map.prestige() && map.templateId() == "jungle";
         const bool prestigeSewers = map.prestige() && map.templateId() == "sewers";
+        const bool prestigeHel = map.prestige() && map.templateId() == "hel" &&
+                                 map.usesReferenceSpawnCurve();
         if (prestigeJungle) prestigeJungleRealm_ = map.realm();
         if (ordinaryJungle) ordinaryJungleRealm_ = map.realm();
         if (prestigeSewers) prestigeSewersRealm_ = map.realm();
@@ -1691,7 +1695,10 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             SpawnZone zone;
             zone.bounds = element.bounds;
             zone.polygon = element.polygon;
-            zone.difficulty = element.difficulty;
+            // Hel's deepest authored band is 60. At 65 the reference
+            // curve centres on Ultra, which Prestige can promote to Super.
+            zone.difficulty = prestigeHel && element.forceRarity < 0 && element.difficulty >= 60.0
+                ? std::max(65.0, element.difficulty) : element.difficulty;
             zone.forceRarity = element.forceRarity;
             zone.realm = map.realm();
             zone.singular = element.singular;
@@ -1744,6 +1751,9 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
                 else if (prestigeSewers) densityScale = kPrestigeSewersDensityScale;
                 else if (ordinaryJungle && element.difficulty >= kDeepJungleDifficulty)
                     densityScale = kDeepJungleDensityScale;
+                else if (!map.prestige() && map.templateId() == "hel" &&
+                         element.difficulty >= kDeepHelDifficulty)
+                    densityScale = kDeepHelDensityScale;
             }
             zone.targetMobs =
                 element.singular
@@ -2543,7 +2553,9 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
             const bool sewersRefill = zone.realm == prestigeSewersRealm_ &&
                 zone.difficulty >= kPrestigeSewersBoxDifficulty && !zone.singular && forcedTier < 0;
             if (jungleDelay) delay = rng.range(kJungleRespawnMinMillis, kJungleRespawnMaxMillis);
-            else if (sewersRefill) delay = rng.range(3000.0, 7000.0);
+            else if (sewersRefill || (authoredMap && !zone.prestige &&
+                     authoredMap->templateId() == "hel" && zone.difficulty >= kDeepHelDifficulty &&
+                     !zone.singular && forcedTier < 0)) delay = rng.range(3000.0, 7000.0);
             else delay = rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis);
         }
         addLatent(zoneIndex, LatentMob{at, nowMillis + delay, type, rarity});
@@ -2742,12 +2754,44 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         // walking, and on a map with two dozen bands almost none of them are.
         if (!zoneInView(zone.bounds, zone.realm, seers, kLatentWakeMargin)) continue;
 
+        // Deep Jungle rooms can share a band across walls. If a flower has
+        // no nearby mob in its room, keep one ready slot available to move
+        // into reach rather than requiring the flower to draw mobs out.
+        const Viewer* refillViewer = nullptr;
+        const auto inRoom = [&](const Viewer& viewer, Vec2 at) {
+            return std::abs(at.x - viewer.position.x) <= viewer.half.x &&
+                   std::abs(at.y - viewer.position.y) <= viewer.half.y &&
+                   !terrain.segmentBlocked(viewer.position, at, zone.realm);
+        };
+        if (relocateBlocked && !zone.singular && zone.forceRarity < 0 &&
+            zone.difficulty >= kDeepJungleDifficulty &&
+            (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_)) {
+            const auto offset = (static_cast<std::size_t>(nowMillis / kPopulationIntervalMillis) + index)
+                % seers.size();
+            for (std::size_t i = 0; i < seers.size(); ++i) {
+                const auto& viewer = seers[(offset + i) % seers.size()];
+                if (viewer.realm != zone.realm || !zoneContains(zone.bounds, zone.polygon, viewer.position))
+                    continue;
+                if (std::none_of(censusMobs_.begin(), censusMobs_.end(), [&](const CensusMob& mob) {
+                        return mob.zone == index && inRoom(viewer, mob.position);
+                    })) refillViewer = &viewer;
+                break;
+            }
+        }
+        std::size_t refillIndex = zone.latent.size();
+        double refillDistance = std::numeric_limits<double>::infinity();
+        bool wakingInRoom = false;
         for (std::size_t i = 0; i < zone.latent.size(); ++i) {
             const LatentMob& record = zone.latent[i];
-            if (nowMillis < record.readyMillis ||
-                !seenBy(seers, zone.realm, record.position, kLatentWakeMargin)) {
-                continue;
+            if (nowMillis < record.readyMillis) continue;
+            if (refillViewer) {
+                const double gap = distanceSq(refillViewer->position, record.position);
+                if (gap < refillDistance) {
+                    refillDistance = gap;
+                    refillIndex = i;
+                }
             }
+            if (!seenBy(seers, zone.realm, record.position, kLatentWakeMargin)) continue;
             // Nobody's lap, at the moment the body actually appears.
             //
             // The record's own placement test was made against where the
@@ -2769,8 +2813,20 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                             !seenBy(seers, zone.realm, record.position, 0.0))) continue;
             double nearestSq = 0.0;
             nearestViewer(seers, zone.realm, record.position, &nearestSq);
+            if (refillViewer && inRoom(*refillViewer, record.position)) wakingInRoom = true;
             wakeList_.push_back(WakeCandidate{static_cast<std::uint16_t>(index),
                                               static_cast<std::uint32_t>(i), nearestSq, facing, blocked});
+        }
+        if (refillViewer && !wakingInRoom && refillIndex < zone.latent.size()) {
+            // Replace the ordinary wake for this record if it was visible
+            // through a wall. A record must never be woken twice.
+            auto previous = std::find_if(wakeList_.rbegin(), wakeList_.rend(), [&](const WakeCandidate& candidate) {
+                return candidate.zone == index && candidate.index == refillIndex;
+            });
+            const WakeCandidate refill{static_cast<std::uint16_t>(index),
+                static_cast<std::uint32_t>(refillIndex), refillDistance, std::nullopt, true, refillViewer};
+            if (previous == wakeList_.rend()) wakeList_.push_back(refill);
+            else *previous = refill;
         }
     }
     if (wakeList_.empty()) return;
@@ -2811,16 +2867,20 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         if (candidate.blockedByPlayer) {
             if (relocationSearches == kMaxRelocationSearches) break;
             ++relocationSearches;
-            const Viewer* viewer = nearestViewer(seers, zone.realm, at);
+            const Viewer* viewer = candidate.refillViewer ? candidate.refillViewer
+                : nearestViewer(seers, zone.realm, at);
+            const Vec2 origin = candidate.refillViewer ? viewer->position : at;
             const SpawnFootprint footprint = spawnFootprint(content, record.mobIndex, record.rarity);
             const Vec2 extent = terrain.realmExtent(zone.realm);
             const double searchRadius = std::max(kRespawnScatter,
                 kMinSpawnDistance + footprint.radius + viewer->radius + 350.0);
             bool found = false;
             for (int attempt = 0; attempt < kRelocationAttempts; ++attempt) {
-                const Vec2 point = samplePointNear(record.position, searchRadius, extent, rng);
+                const Vec2 point = samplePointNear(origin, searchRadius, extent, rng);
                 if (!zoneContains(zone.bounds, zone.polygon, point) || inBorderBand(point, extent) ||
                     terrain.blocked(point, zone.realm) || !seenBy(seers, zone.realm, point, 0.0) ||
+                    (candidate.refillViewer && (std::abs(point.x - viewer->position.x) > viewer->half.x ||
+                                               std::abs(point.y - viewer->position.y) > viewer->half.y)) ||
                     crowdedAt(zone.realm, point, kPreliminarySpawnRadius, kMinMobSpawnSpacing, candidate.zone) ||
                     terrain.segmentBlocked(viewer->position, point, zone.realm)) continue;
                 const auto bearing = wakingFacing(viewers, zone.realm, point, footprint, kMinSpawnDistance, rng);

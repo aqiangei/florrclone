@@ -390,7 +390,7 @@ void App::drawHud(Canvas& canvas, double time) {
 
     canvas.restore();
 
-    drawMinimap(canvas);
+    if (!minimapExpanded_) drawMinimap(canvas);
     drawOnlineRoster(canvas);
 
     const double waveBarBottom = drawWaveBar(canvas);
@@ -591,6 +591,10 @@ double App::drawWaveBar(Canvas& canvas) {
         case net::WaveTheme::Sandstorm:
             caption += chinese ? " · 沙尘暴奖励波" : " · Sandstorm Bonus";
             colour = 0xAF7B3A;
+            break;
+        case net::WaveTheme::Golden:
+            caption += chinese ? " · 黄金奖励波" : " · Golden Bonus";
+            colour = 0xC39332;
             break;
         case net::WaveTheme::EternalBoss:
         case net::WaveTheme::HyperBoss:

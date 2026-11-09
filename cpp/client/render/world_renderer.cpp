@@ -3313,6 +3313,11 @@ void WorldRenderer::drawHitbox(Canvas& canvas, const RemoteEntity& entity, const
         // A mob's circle is its COLLISION size, drawn in its own tier colour:
         // visual_scale moves the artwork and never the body. An NPC is a
         // mob's body, so it is outlined the same way.
+        if (entity.kind == net::EntityKind::Mob && content_) {
+            const auto& config = content_->mob(entity.typeIndex);
+            if (config.intangible) return;
+            radius *= mobBodyContactScale(config.id);
+        }
         color = rarityColor(entity.rarity);
     } else if (entity.kind == net::EntityKind::Drop) {
         // A drop is picked up by walking a square over it, so its overlay is

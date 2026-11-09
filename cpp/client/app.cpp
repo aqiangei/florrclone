@@ -686,7 +686,10 @@ void App::frame(double dt) {
     // frame takes hold of it.
     window_.setRenderScale(config_.lowMemoryGraphics
         ? std::min(0.5, menus_.settings().renderScale) : menus_.settings().renderScale);
-    window_.setDesynchronized(menus_.settings().desynchronizedCanvas);
+    const double loadoutZoom = loadoutCameraZoom(net_.profile(), content());
+    // Wide views render substantially more of the map. Wait for the complete
+    // frame before presenting it, even if low latency mode was requested.
+    window_.setDesynchronized(menus_.settings().desynchronizedCanvas && loadoutZoom >= 0.4);
     // Apply after the slider gesture has finished so the track and the
     // pointer stay in the same coordinate space throughout the drag.
     if (window_.touches().empty() && !window_.touchPan().active &&
@@ -762,6 +765,8 @@ void App::frame(double dt) {
         tutorial_.update(window_, menus_.settings(), net_.profile(), timeSeconds_);
     }
 
+    minimapControlUsed_ = false;
+    if (screen_ != Screen::Playing) minimapExpanded_ = false;
     // Taken on every screen, so a jump no world screen was up to see cannot
     // play its iris over the next join.
     const bool teleported = net_.takeTeleported();
@@ -858,7 +863,10 @@ void App::frame(double dt) {
     // out only to bound the viewport a client may claim (claimableViewport).
     // It rides into the viewport the next input frame reports, so the server
     // widens what it streams as soon as an observer goes on.
-    camera_.loadoutZoom = loadoutCameraZoom(net_.profile(), content());
+    if (screen_ == Screen::Playing || screen_ == Screen::Dead)
+        camera_.approachLoadoutZoom(loadoutZoom, dt);
+    else
+        camera_.loadoutZoom = loadoutZoom;
     menus_.setTouchLayout(config_.forceTouchControls || menus_.settings().touchControlsWanted(
         coarsePointer_ || window_.touchSeen()), mobile_.hitBounds());
     // Re-measured every frame, so the craft panel turns into the oracle's (or
@@ -981,7 +989,9 @@ void App::frame(double dt) {
         // their between-strip-and-bar slot is the only way to land it there.
         // Only the paint moves: the card's button is still answered by
         // updateDead, before any of this.
-        menus_.render(canvas, window_, net_, sprites_, renderer_, timeSeconds_, dt, [&] {
+        if (minimapExpanded_) {
+            drawMinimap(canvas, true);
+        } else if (!minimapControlUsed_) menus_.render(canvas, window_, net_, sprites_, renderer_, timeSeconds_, dt, [&] {
             // The slide, not the flag: the card keeps painting on its way back
             // down after a yggdrasil has put the body on its feet.
             if (deathCardSlide_ > 0.01) {
@@ -1142,7 +1152,7 @@ bool App::touchControlsVisible() const {
     // Playing only. There is nothing on the title screen, and nothing on the
     // death card, a thumb cannot already reach through the mirrored pointer --
     // and a stick over a dead flower steers nothing.
-    if (screen_ != Screen::Playing) return false;
+    if (screen_ != Screen::Playing || minimapExpanded_) return false;
     // A panel standing over the controls takes the whole screen back: its own
     // buttons and its drag-and-drop are what the finger is there for, and a
     // stick underneath would swallow presses meant for it.

@@ -189,7 +189,7 @@ void App::sendInputFrame(double dt, bool periodic) {
     // open panel nothing, and being frozen in place with the inventory up is
     // how a player gets eaten. They still stop for the one thing that really is
     // typing -- a focused field, which keyboardCaptured() answers for below.
-    const bool menuOpen = menus_.anyOpen();
+    const bool menuOpen = menus_.anyOpen() || minimapExpanded_ || minimapControlUsed_;
 
     // Movement follows the cursor, which is the control scheme this game is
     // built around: the flower runs toward the pointer, at a speed set by how
@@ -337,9 +337,11 @@ void App::sendInputFrame(double dt, bool periodic) {
     net_.view().previewLocalControl(input, net_.terrain(), now, dt);
     const bool moved = (input.moveStrength > 0) != (lastSentInput_.moveStrength > 0);
     const bool turned = input.moveStrength > 0 &&
-                        std::abs(wrapAngle(input.moveAngle - lastSentInput_.moveAngle)) > kPi * 0.25;
+                        std::abs(wrapAngle(input.moveAngle - lastSentInput_.moveAngle)) > kPi / 15.0;
+    const bool speedChanged = std::abs(input.moveStrength - lastSentInput_.moveStrength) >= 0.20;
     const bool action = input.flags != lastSentInput_.flags;
-    if ((!periodic && !(moved || turned || action)) || now - lastInputSentMillis_ < 20.0) return;
+    if ((!periodic && !(moved || turned || speedChanged || action)) ||
+        now - lastInputSentMillis_ < 20.0) return;
     input.sequence = ++inputSequence_;
     net_.sendInput(input);
     lastSentInput_ = input;
@@ -347,6 +349,7 @@ void App::sendInputFrame(double dt, bool periodic) {
 }
 
 void App::updatePlaying(double dt) {
+    updateMinimapControls();
     // Mobile R: tap swaps rows; long-press arms a sticky L preset bank (stays
     // after release for one-finger load/save). Applied before handleKeys so a
     // same-frame drawLoadoutBar sees the pending swap / bank the way a real
@@ -358,18 +361,20 @@ void App::updatePlaying(double dt) {
 
     // Chat swallows the keyboard while open, or typing would also drive the
     // flower and trip every hotkey.
-    if (chatOpen_ && !menus_.wantsText()) {
-        editChatLine();
-    } else {
-        // The menus get first refusal on the keyboard: a hotkey they claim is
-        // not also a chat key. Escape is one of theirs now -- it opens the
-        // settings panel and no longer leaves the game, which is the red exit
-        // button in the top strip's job alone.
-        const bool consumed = menus_.handleKeys(window_);
-        if (!consumed) {
-            if (boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Chat)) ||
-                pressedChatBox()) {
-                chatOpen_ = true;
+    if (!minimapExpanded_ && !minimapControlUsed_) {
+        if (chatOpen_ && !menus_.wantsText()) {
+            editChatLine();
+        } else {
+            // The menus get first refusal on the keyboard: a hotkey they claim is
+            // not also a chat key. Escape is one of theirs now -- it opens the
+            // settings panel and no longer leaves the game, which is the red exit
+            // button in the top strip's job alone.
+            const bool consumed = menus_.handleKeys(window_);
+            if (!consumed) {
+                if (boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Chat)) ||
+                    pressedChatBox()) {
+                    chatOpen_ = true;
+                }
             }
         }
     }
@@ -385,7 +390,7 @@ void App::updatePlaying(double dt) {
     // The wheel zooms the camera unless a panel -- or the tutorial box, which
     // is a DOM element and eats the event before the canvas -- is over it, and
     // unless the transcript took it to read back through itself.
-    if (!scrollChat() && !scrollOnlineRoster() &&
+    if (!minimapExpanded_ && !minimapControlUsed_ && !scrollChat() && !scrollOnlineRoster() &&
         !menus_.capturesMouse({window_.mouseX(), window_.mouseY()}) &&
         !tutorial_.capturesMouse({window_.mouseX(), window_.mouseY()})) {
         menus_.settings().zoom =

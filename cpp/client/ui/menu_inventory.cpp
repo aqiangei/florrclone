@@ -414,7 +414,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     if (!stats.breakable) { hp.text = std::string(tipHp()) + (language() == Language::Zh ? "不可破坏" : "Unbreakable"); hp.altText = hp.text; }
     lines.push_back(hp);
 
-    const std::string damageLabel = config.id == "battery" || config.id == "lightning"
+    const std::string damageLabel = config.id == "battery" || config.id == "lightning" ||
+        config.id == "mecha_missile"
         ? (language() == Language::Zh ? "接触伤害：" : "Contact damage: ") : tipDamage();
     TooltipLine hit{damageLabel + abbreviate(damage), 12.0};
     hit.alpha = 0.56;
@@ -573,6 +574,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         } else lines.push_back({chinese ? "腐化期间无法触发或维持绷带续命。" : "Corruption prevents and ends Bandage's Undead effect.",12.0});
     }
     if (config.id == "bandage") lines.push_back({chinese ? "普通或随机腐化会阻止并终止续命；H腐化及其光环不受此限制。" : "Ordinary or random corruption prevents and ends Undead; H Corruption and its aura are exempt.",12.0});
+    if ((config.id == "sawblade" && ladderRarity(rarity) >= Rarity::Unique) ||
+        (config.id == "rock" && isHyperPetal(rarity))) {
+        lines.push_back({chinese ? "对野怪接触命中且花瓣未碎时，追加半伤害并承受半反伤。" :
+                                   "After landing a contact hit on a wild mob, a surviving petal strikes again at half damage and takes half recoil.", 12.0});
+    }
     if (stats.count > 1) special("每组花瓣数量：", "Petals per cluster: ", stats.count);
     if (stats.armorPerStack > 0) {
         special("每层护甲：", "Armor per stack: ", stats.armorPerStack);
@@ -617,6 +623,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     }
     if (stats.modifiers.poisonArmor > 0) special("毒抗：", "Poison armor: ", stats.modifiers.poisonArmor);
     if (config.projectile.present) {
+        if (config.id == "mecha_missile") {
+            special("单发伤害：", "Damage per missile: ", baseDamage * skills.effectScale(SkillId::PetDamage));
+            lines.push_back({chinese ? "单发伤害随召唤物伤害天赋提升。" :
+                                       "Missile damage scales with the summon damage talent.", 12.0});
+        }
         special("每轮弹数：", "Projectiles per volley: ", config.projectile.count);
         special("弹速：", "Projectile speed: ", config.projectile.speed);
         special("射程：", "Projectile range: ", config.projectile.distance);
@@ -661,8 +672,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("每段索敌范围：", "Range per jump: ", stats.lightningRange);
         if (stats.batteryCharges > 0) {
             special("每轮放电次数：", "Discharges per reload: ", stats.batteryCharges);
-            TooltipLine mechanism{chinese ? "花朵实际受伤时放电；每轮3次，用完进入冷却。仅接触、护盾完全吸收、自伤和无敌期间不触发。" :
-                "Discharges on damage taken; reloads after 3 charges. No trigger on contact alone, fully shielded hits, self-damage or invulnerability.",12.0};
+            TooltipLine mechanism{chinese ? "花朵实际受伤时放电，每次间隔 0.5 秒。间隔内受伤会保留一次放电机会。每轮 3 次，用完重装。仅接触、护盾全吸收、自伤和无敌不触发。" :
+                "Damage taken can queue one discharge during the 0.5s interval. Reloads after 3 charges. Contact alone, fully shielded hits, self-damage and invulnerability do not trigger it.",12.0};
             mechanism.maxWidth=kTooltipWrapWidth; lines.push_back(mechanism);
         }
     }
@@ -761,7 +772,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
 
     // Bone. Its armour is the whole of what the petal is for and it climbs the
     // mob armour ladder, so the figure a player is weighing belongs here.
-    if (config.id == "bone") lines.push_back({chinese ? "每次受击后，自身护甲减半；重新加载恢复。" : "Armor halves after each hit and resets on reload.",12.0});
+    if (config.id == "bone") lines.push_back({chinese ? "骨头的护甲不会因受击而衰减。" : "Bone keeps its armor after taking a hit.",12.0});
     if (stats.petalArmor > 0.0) {
         TooltipLine armor{std::string(tipArmor()) + abbreviate(stats.petalArmor), 12.0};
         armor.alpha = 0.56;
@@ -849,6 +860,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         pool.labelColor = kStatMana;
         pool.altText = std::string(chinese ? "魔法值上限：+" : "Max Mana: +") + exactNumber(stats.maxMana);
         lines.push_back(pool);
+    }
+    if (config.id == "honey") {
+        lines.push_back({chinese ? "投出的蜂蜜持续 8 秒，期间不会被怪物咬碎。" :
+                                   "Thrown honey lasts 8 seconds and cannot be broken by mobs.", 12.0});
     }
     if (config.id == "magic_cotton") {
         TooltipLine absorption{

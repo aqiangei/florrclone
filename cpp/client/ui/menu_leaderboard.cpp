@@ -399,6 +399,10 @@ bool WavePanel::render(MenuContext& ctx) {
 
     trackTextMouse(ctx.window, field_, field, inputFieldRun(field, code_, field_),
                    code_, ctx.timeSeconds);
+    if (ctx.timeSeconds >= nextStatusRequest_) {
+        ctx.net.requestWaveRoomStatus();
+        nextStatusRequest_ = ctx.timeSeconds + 2.5;
+    }
     const bool typing = field_.focused;
     if (typing) {
         TextEditOptions options;
@@ -429,7 +433,17 @@ bool WavePanel::render(MenuContext& ctx) {
     panelClose(canvas, close, close.contains(mouse));
     TextStyle info;
     info.size = 14.0;
-    text(canvas, "最多四人，无限波次。", x, y + 54.0, info);
+    const auto& status = ctx.net.waveRoomStatus;
+    const auto lamp = [&](double left, const std::string& label, std::uint32_t colour) {
+        fillQuadRound(canvas, {left, y + 49.0, 10.0, 10.0}, 5.0, colour);
+        text(canvas, label, left + 16.0, y + 54.0, info);
+    };
+    lamp(x, status.known ? "房间 " + std::to_string(status.occupied) + "/4" : "查询房间中",
+         !status.known ? 0x9BA4AAu : status.occupied == 4 ? 0xF47776u :
+         status.occupied > 0 ? 0xFAD66Fu : 0x8EE26Au);
+    lamp(panel.x + panel.w * .46,
+         !status.known ? "查询奖励中" : status.dailyCapReached ? "今日星星已达上限" : "今日还可获得星星",
+         !status.known ? 0x9BA4AAu : status.dailyCapReached ? 0xFAD66Fu : 0x8EE26Au);
     text(canvas, "房号发到个人聊天，开房 30 秒后开打。", x, y + 74.0, info);
     pillButton(canvas, start, "创建房间", kLeaderboardSkin.border);
     pillButton(canvas, leave, "离开房间", kLeaderboardSkin.border);

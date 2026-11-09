@@ -87,8 +87,8 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "The explosion covers 12% more radius at the same damage.",
      "炸弹爆炸半径增加 12%，单次伤害相同。", 1.12},
     {"bone", HyperTechnique::BoneGuard,
-     "Defending retains 55% of bone armor after recoil from wild mobs.",
-     "防御时，承受接触野怪身体产生的反伤后，保留当前护甲的 55%。", 0.0},
+     "While defending, Bone uses 10% more armor against recoil from wild mob contact.",
+     "防御时，骨头抵挡野怪体撞反伤的护甲效果提高 10%。", 1.1},
     {"broccoli", HyperTechnique::BroccoliBurst,
      "Breaks into a burst of seeds with 12% of its base contact damage within 80 units of the break.",
      "被打碎时，种子在破碎点周围 80 单位内迸发，对野怪造成基础接触伤害的 12%。", 0.12},
@@ -174,8 +174,8 @@ inline constexpr HyperTechniqueInfo kHyperTechniques[] = {
      "While defending, worn Dead Leaf reduces wild recoil on your Hyper leaf-family petals by 10%.",
      "防御时，装备枯叶会让自身超凡叶、魔法叶、金叶和枯叶承受的野怪接触反伤减少 10%。", 0.9},
     {"dice", HyperTechnique::DiceFloor,
-     "While defending, a non-critical hit on a wild mob above 90% health deals 8% more damage.",
-     "防御时，对生命高于 90% 的野怪打出非暴击，伤害提高 8%。", 1.08},
+     "Non-critical contact hits on wild mobs deal 25% more damage.",
+     "对野怪的非暴击接触伤害提高 25%。", 1.25},
     {"disc", HyperTechnique::GuardDisc,
      "While defending, takes 8% less remaining damage from wild body contact.",
      "防御时，野怪体撞造成的剩余伤害再降低 8%。", 0.92},
@@ -480,10 +480,12 @@ inline double hyperAmount(const HyperTechniqueInfo* info, HyperTechnique techniq
 
 inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
     switch (technique) {
+        case HyperTechnique::BoneGuard:
+            return chinese ? "收起花环，用骨头接住野怪的体撞，留意这一击挡下多少。"
+                           : "Brace and let Bone take recoil from a wild mob, then watch how much it blocks.";
         case HyperTechnique::GuardSpread:
         case HyperTechnique::GuardAir:
         case HyperTechnique::GuardDisc:
-        case HyperTechnique::BoneGuard:
         case HyperTechnique::RootRecovery:
             return chinese ? "收紧阵线时，仔细观察花朵身边。" : "Watch what happens close to the flower when you brace.";
         case HyperTechnique::AttackSpread:
@@ -586,7 +588,7 @@ inline const char* hyperMysteryHint(HyperTechnique technique, bool chinese) {
         case HyperTechnique::DeadLeafShelter:
             return chinese ? "和其他叶片一起装备，防御时看谁留得更久。" : "Equip it beside other leaves and see which ones last longer when you guard.";
         case HyperTechnique::DiceFloor:
-            return chinese ? "即使没掷出大奖，也有一小笔开场底注。" : "Even a bad roll can pay a little on the opening hit.";
+            return chinese ? "即使没掷出大奖，打野怪也有更高的底注。" : "Even a bad roll pays better against wild mobs.";
         case HyperTechnique::DustWake:
             return chinese ? "跑动起来，观察追兵穿过尘埃的一瞬。" : "Keep moving and watch what happens when pursuers cross the dust.";
         case HyperTechnique::GlassPhase:

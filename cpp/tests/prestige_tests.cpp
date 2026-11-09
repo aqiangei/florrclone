@@ -552,6 +552,46 @@ TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
     CHECK(announced);
 }
 
+TEST(prestige_hel_deep_stock_contains_more_super_mobs) {
+    World world;
+    CommandBuffer commands{world};
+    Terrain terrain;
+    SpawnSystem spawner;
+    Rng rng{0xE114u};
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    spawner.worldMaps = &maps;
+    spawner.run(world, terrain, shippedContent(), {}, rng, 50000.0, net::kTickSeconds, commands);
+    commands.flush();
+    bool found = false;
+    const Realm hel = maps.realmOfId("hel", found);
+    CHECK(found);
+    const Realm prestigeHel = maps.prestigeRealm(hel, found);
+    CHECK(found);
+    if (!found) return;
+
+    for (const auto realm : {hel, prestigeHel}) {
+        std::vector<SpawnSystem::LatentSite> sites;
+        spawner.latentSites(realm, sites);
+        int deep = 0;
+        int supers = 0;
+        for (const auto& site : sites) {
+            if (site.difficulty < 60.0) continue;
+            CHECK_EQ(site.difficulty, realm == prestigeHel ? 65.0 : 60.0);
+            if (realm == prestigeHel) CHECK(!barredFromPrestige(site.rarity));
+            ++deep;
+            supers += site.rarity == Rarity::Super;
+        }
+        CHECK(deep >= 12);
+        if (realm == prestigeHel) CHECK(supers > deep * 0.4 && supers < deep * 0.9);
+        else CHECK(supers < deep * 0.1);
+        std::printf("Hel deep stock (%s): %d of %d Super\n",
+                    realm == prestigeHel ? "prestige" : "ordinary", supers, deep);
+    }
+}
+
 TEST(prestige_jungle_and_sewers_box_wake_local_mobs_at_the_shared_ambient_limit) {
     World world;
     CommandBuffer commands{world};
@@ -680,6 +720,73 @@ TEST(jungle_refills_near_a_stationary_viewer_after_kills) {
         std::printf("[stationary %s] cleared %zu, refilled %zu after 6.5 seconds\n",
                     mapId, cleared.size(), refilled.size());
     }
+}
+
+TEST(deep_jungle_refills_a_reachable_empty_room_for_a_stationary_flower) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    bool found = false;
+    const auto realm = maps.realmOfId("jungle", found);
+    CHECK(found);
+    if (!found) return;
+    const auto& registry = shippedContent();
+    const auto* map = maps.forRealm(realm);
+    World world;
+    SpawnSystem spawn;
+    spawn.worldMaps = &maps;
+    spawn.sizePlacementGrids(terrain);
+    CommandBuffer commands{world};
+    Rng rng{42};
+    double now = 50'000.0;
+    const auto tick = [&](const std::vector<RealmPoint>& viewers) {
+        spawn.run(world, terrain, registry, viewers, rng, now, net::kTickSeconds, commands);
+        commands.flush();
+        now += kPopulationIntervalMillis;
+    };
+    for (int pass = 0; pass < 4; ++pass) tick({});
+    std::vector<SpawnSystem::LatentSite> sites;
+    spawn.latentSites(realm, sites);
+    constexpr double half = kViewportBuffer + 120.0;
+    const auto nearby = [&](Vec2 a, Vec2 b) {
+        return std::abs(a.x - b.x) <= half && std::abs(a.y - b.y) <= half &&
+            !terrain.segmentBlocked(a, b, realm);
+    };
+    std::optional<Vec2> stand;
+    for (const auto& band : map->elements()) {
+        if (!band.isSpawnBand() || band.difficulty < 70.0 || band.singular) continue;
+        for (double y = band.bounds.y; !stand && y < band.bounds.bottom(); y += 160.0) {
+            for (double x = band.bounds.x; !stand && x < band.bounds.right(); x += 160.0) {
+                const Vec2 point{x, y};
+                if (!band.contains(point) || terrain.blocked(point, realm) ||
+                    std::any_of(sites.begin(), sites.end(), [&](const auto& site) {
+                        return nearby(point, site.position);
+                    })) continue;
+                int usable = 0;
+                for (int i = 0; i < 8; ++i) {
+                    const auto at = point + Vec2::fromAngle(i * kPi / 4.0, 540.0);
+                    usable += band.contains(at) && nearby(point, at);
+                }
+                if (usable >= 4) stand = point;
+            }
+        }
+    }
+    CHECK(stand.has_value());
+    if (!stand) return;
+    const auto player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Transform>(player, Transform{*stand, 0.0, realm});
+    world.add<PlayerLocation>(player).viewport = {240.0, 240.0};
+    for (int pass = 0; pass < 18; ++pass) tick({{*stand, realm}});
+    int inRoom = 0;
+    Query<AmbientMob, Transform, MobType>{world}.each(
+        [&](Entity, AmbientMob&, Transform& at, MobType&) {
+            if (at.realm == realm && nearby(*stand, at.position)) ++inRoom;
+        });
+    std::printf("Deep Jungle room: %d nearby mobs after stationary refill\n", inRoom);
+    CHECK(inRoom > 0);
 }
 
 TEST(authored_maps_wake_blocked_ambient_records_without_viewer_movement) {
@@ -1286,6 +1393,10 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
         return;
     }
     const auto origin = world.get<Transform>(guestBody).realm;
+    guest.requestWaveRoomStatus();
+    CHECK(h.stepUntil({&host, &guest}, [&] { return guest.waveRoomStatus.known; }));
+    CHECK_EQ(guest.waveRoomStatus.occupied, 0);
+    CHECK(!guest.waveRoomStatus.dailyCapReached);
     std::string code;
     host.sendChat("/wave start");
     CHECK(h.stepUntil({&host, &guest}, [&] {
@@ -1306,6 +1417,8 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
     CHECK(h.stepUntil({&host, &guest}, [&] {
         return world.has<WavePlayer>(guestBody) && guest.view().realm() == arena;
     }));
+    guest.requestWaveRoomStatus();
+    CHECK(h.stepUntil({&host, &guest}, [&] { return guest.waveRoomStatus.occupied == 2; }));
     CHECK(host.view().self().wave.durationMillis == 30000);
     const Vec2 rescuePoint = world.get<Transform>(hostBody).position;
     world.get<Transform>(guestBody).position = rescuePoint;
@@ -1317,6 +1430,8 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
         return !world.has<WavePlayer>(guestBody) && guest.view().realm() == origin;
     }));
     CHECK(world.has<WavePlayer>(hostBody));
+    guest.requestWaveRoomStatus();
+    CHECK(h.stepUntil({&host, &guest}, [&] { return guest.waveRoomStatus.occupied == 1; }));
     CHECK(h.stepUntil({&guest}, [&] { return guest.waveResultNotice().sequence > 0; }));
     CHECK(guest.waveResultNotice().lines[1].find("本局 +0 星星") != std::string::npos);
 
@@ -1409,7 +1524,7 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     int guestAwards = 0;
     std::map<Entity, std::string> summaries;
     dungeon.waveAward = [&](Entity player, std::uint64_t round, bool bonus) -> DungeonSystem::WaveAward {
-        CHECK_EQ(bonus, round == 7 || round == 13);
+        CHECK_EQ(bonus, round == 7 || round == 13 || round == 17);
         if (player == members[3]) {
             CHECK_EQ(round, std::uint64_t(1));
             ++guestAwards;
@@ -1445,7 +1560,8 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
         const auto theme = wave % 10 == 0 ? net::WaveTheme::HyperBoss :
                            boss ? net::WaveTheme::EternalBoss :
                            wave == 7 ? net::WaveTheme::Bubble :
-                           wave == 13 ? net::WaveTheme::Sandstorm : net::WaveTheme::Normal;
+                           wave == 13 ? net::WaveTheme::Sandstorm :
+                           wave == 17 ? net::WaveTheme::Golden : net::WaveTheme::Normal;
         int seen = 0;
         const double start = now;
         for (; now - start <= 42000.0; now += 2800.0) {
@@ -1476,8 +1592,9 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
                     CHECK_EQ(type.configIndex, content.mobIndex("beetle"));
                     CHECK(type.rarity == (wave % 10 == 0 ? Rarity::Apex : Rarity::Unique));
                     CHECK(body.radius > 92.0);
-                } else if (wave == 7 || wave == 13) {
-                    CHECK_EQ(type.configIndex, content.mobIndex(wave == 7 ? "bubble" : "sandstorm"));
+                } else if (wave == 7 || wave == 13 || wave == 17) {
+                    CHECK_EQ(type.configIndex, content.mobIndex(
+                        wave == 7 ? "bubble" : wave == 13 ? "sandstorm" : "golden_leafbug"));
                 }
                 // Hold the final batch to near its deadline; 21 clears exceed ten minutes.
                 if (seen + static_cast<int>(mobs.size()) == expected && now - start < 42000.0) continue;
@@ -1563,13 +1680,17 @@ TEST(wave_stars_accumulate_per_wave_to_the_daily_cap_across_reloads) {
     CHECK(restarted.load(path, error));
     restarted.setClock(waveStarNow);
     bool reachedDailyCap = false;
+    CHECK(!restarted.waveDailyStarCapReached("wave-account"));
     CHECK_EQ(restarted.awardWaveStars("wave-account", &reachedDailyCap), 6000);
+    CHECK(restarted.waveDailyStarCapReached("wave-account"));
+    CHECK(!restarted.waveDailyStarCapReached("other-account"));
     CHECK(reachedDailyCap);
     CHECK_EQ(restarted.awardWaveStars("wave-account", &reachedDailyCap), 0);
     CHECK(reachedDailyCap);
     CHECK_NEAR(restarted.progress("wave-account").stars, 150000.0, 1e-9);
     CHECK_EQ(restarted.awardWaveStars("other-account"), 7500);
     waveStarClock += 86400000ll;
+    CHECK(!restarted.waveDailyStarCapReached("wave-account"));
     CHECK_EQ(restarted.awardWaveStars("wave-account"), 7500);
     CHECK(restarted.awardWaveBonusHammer("wave-account"));
     CHECK(!restarted.awardWaveBonusHammer("wave-account"));

@@ -125,13 +125,13 @@ TEST(absorbing_on_the_title_screen_pays_the_account) {
     // Every stack in one request, priced once: 10 x 16 + 2 x 80 + 60.
     AbsorbOutcome outcome;
     CHECK(absorb(h, client, {{light,Rarity::Common,1}},outcome));
-    CHECK(outcome.success);CHECK_EQ(outcome.xpGained,1.0);
+    CHECK(outcome.success);CHECK_EQ(outcome.reward,1.0);
     CHECK(awaitProfile(h,client,[&](const Profile& p){return p.totalXp==before+1.0;}));
     CHECK(absorb(h, client,
                  {{rose, Rarity::Rare, 10}, {light, Rarity::Epic, 2}, {light, Rarity::Common, 60}},
                  outcome));
     CHECK(outcome.success);
-    CHECK_EQ(outcome.xpGained, 380.0);
+    CHECK_EQ(outcome.reward, 380.0);
     CHECK_EQ(outcome.absorbed, 72u);
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.stackCount(rose, Rarity::Rare) == 0u && p.stackCount(light, Rarity::Epic) == 1u &&
@@ -167,7 +167,7 @@ TEST(an_absorb_short_of_one_stack_takes_nothing) {
     AbsorbOutcome outcome;
     CHECK(absorb(h, client, {{rose, Rarity::Rare, 10}, {light, Rarity::Epic, 4}}, outcome));
     CHECK(!outcome.success);
-    CHECK_EQ(outcome.xpGained, 0.0);
+    CHECK_EQ(outcome.reward, 0.0);
     CHECK(!outcome.reason.empty());
     // Naming a stack twice asks for the sum, and the sum is checked.
     CHECK(absorb(h, client, {{rose, Rarity::Rare, 6}, {rose, Rarity::Rare, 6}}, outcome));
@@ -205,7 +205,7 @@ TEST(the_absorption_talent_multiplies_what_absorbing_pays) {
     AbsorbOutcome outcome;
     CHECK(absorb(h, client, {{rose, Rarity::Rare, 50}}, outcome));
     CHECK(outcome.success);
-    CHECK_EQ(outcome.xpGained, 2016.0);
+    CHECK_EQ(outcome.reward, 2016.0);
 }
 
 TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
@@ -237,7 +237,7 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     AbsorbOutcome outcome;
     CHECK(absorb(h, client, {{rose, Rarity::Legendary, 2}}, outcome));
     CHECK(outcome.success);
-    CHECK_EQ(outcome.xpGained, earnedXp);
+    CHECK_EQ(outcome.reward, earnedXp);
     const PlayerProgress& progress = world.get<PlayerProgress>(body);
     CHECK_EQ(progress.totalXp, before + earnedXp);
     CHECK(progress.level > levelBefore);
@@ -250,5 +250,40 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     // Profile that followed already counts it.
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.totalXp == before + earnedXp && p.stackCount(rose, Rarity::Legendary) == 0u;
+    }));
+}
+
+TEST(recycling_for_stars_uses_listed_prices_and_is_atomic) {
+    Harness h("recycle-stars", [](const std::string& path) {
+        seedUser(path, "recycler", "secret1");
+        seedStack(path, "recycler", "petal_rose", Rarity::Super, 20);
+        seedStack(path, "recycler", "petal_rose", Rarity::Unique, 2);
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    CHECK(loginAs(h, client, "recycler", "secret1"));
+    const auto rose = content().petalIndex("rose");
+    const double before = client.profile().stars;
+    const double beforeXp = client.profile().totalXp;
+    const auto send = [&](const std::vector<NetClient::AbsorbStack>& stacks) {
+        client.requestAbsorb(stacks, true);
+        CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }));
+        const auto reply = client.absorbOutcome();
+        client.absorbOutcome().pending = false;
+        return reply;
+    };
+    CHECK(!send({{rose, Rarity::Super, 5}, {rose, Rarity::Unique, 1}}).success);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Super), 20u);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::Unique), 2u);
+    CHECK(!send({{rose, Rarity::Super, 11}, {rose, Rarity::Super, 10}}).success);
+    const auto result = send({{rose, Rarity::Super, 5}, {rose, Rarity::Super, 2}});
+    const double stars = std::floor(shopPrice(rose, Rarity::Super) * 7.0 / 10.0);
+    CHECK(result.success);
+    CHECK_EQ(result.reward, stars);
+    CHECK_EQ(result.absorbed, 7u);
+    CHECK(awaitProfile(h, client, [&](const Profile& profile) {
+        return profile.stars == before + stars && profile.totalXp == beforeXp &&
+               profile.stackCount(rose, Rarity::Super) == 13;
     }));
 }

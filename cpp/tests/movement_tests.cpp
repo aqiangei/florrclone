@@ -392,6 +392,29 @@ TEST(a_solid_stationary_mob_blocks_player_movement_but_not_cutter) {
     }
 }
 
+TEST(tangible_stationary_hole_blocks_players_even_without_mob_separation) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+    for (const auto* id : {"ant_hole", "fire_ant_hole", "server"}) {
+        Fixture fx;
+        const auto index = content().mobIndex(id);
+        const auto& config = content().mob(index);
+        const auto stats = content().mobStats(index, Rarity::Common);
+        CHECK(config.noMobCollision);
+        const Vec2 centre{5000.0, 5000.0};
+        const Entity mob = fx.spawnMob(centre, stats.radius, stats.mass);
+        fx.world.add<MobType>(mob, MobType{index, Rarity::Common, 1.0});
+        if (config.intangible) fx.world.add<Intangible>(mob);
+        const double contact = stats.radius * mobBodyContactScale(id) + kPlayerBaseRadius;
+        const auto player = fx.spawnPlayer(centre - Vec2{contact - 10.0, 0.0});
+        fx.step(1);
+        CHECK_NEAR(distance(fx.positionOf(player), centre),
+                   contact - (config.intangible ? 10.0 : 0.0), 1e-6);
+        CHECK_NEAR(distance(fx.positionOf(mob), centre), 0.0, 1e-9);
+    }
+}
+
 TEST(knockback_cannot_put_a_mob_through_a_wall) {
     Fixture fx;
     fx.wallColumn(10);                       // x in [kWallWest, kWallEast)

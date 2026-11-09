@@ -591,7 +591,8 @@ private:
     /// is where the reference draws the line too -- an ultra is crafted often
     /// enough to be noise.
     void announceRareCraft(const Session&, std::uint16_t petalIndex, Rarity made,
-                           std::uint32_t quantity = 1, std::uint32_t consumed = 0, bool titanForge = false);
+                           std::uint32_t quantity = 1, std::uint32_t consumed = 0, bool titanForge = false,
+                           bool broadcast = true);
     /// How long `userId` has left to wait for the oracle, 0 when it may craft.
     /// A lapsed wait is forgotten on the way.
     double oracleWaitMillis(const std::string& userId);
@@ -1770,6 +1771,7 @@ private:
     /// exactly fixed step.
     double smoothedDeltaSeconds_ = net::kTickSeconds;
     double lastTickWorldMillis_ = 0;
+    double lastDropBonusTickWallMillis_ = 0;
     double wallClockMillis_ = 0;
     double nextCouncilSampleMillis_ = 0;
 
@@ -1792,13 +1794,28 @@ private:
     struct SaveProbe {
         bool periodic = false;
         ProbeTiming capture, prune, request, poll, other;
+        Database::SnapshotEditTiming sessionsEdits;
     } saveProbe_;
+    struct ArrivalProbe {
+        struct Message {
+            unsigned count = 0;
+            double millis = 0.0;
+        };
+        std::array<Message, 256> byType{};
+        unsigned messages = 0;
+        unsigned slowestMessage = 0;
+        double messageMillis = 0.0;
+        double slowestMillis = 0.0;
+    };
+    ArrivalProbe* arrivalProbe_ = nullptr;
     struct TickProbeWindow {
         std::array<unsigned, 21> targets{};
         unsigned overNominal = 0, overTarget = 0, late = 0, transitions = 0;
         double maxLag = -1.0, maxWork = -1.0;
+        double maxSessions = 25.0;
         std::uint32_t lagTick = 0, workTick = 0;
-        std::string lagFrame, workFrame;
+        std::uint32_t sessionsTick = 0;
+        std::string lagFrame, workFrame, sessionsFrame;
     } tickProbeWindow_;
     double tickCadenceStartMillis_ = 0;
     double tickCadenceMaxWorkMillis_ = 0;
@@ -1820,6 +1837,8 @@ private:
     std::string describeTickPhases(double tookMillis) const;
     std::array<TickPhase, 24> tickPhases_{};
     std::size_t tickPhaseCount_ = 0;
+    std::array<TickPhase, 11> sessionPhases_{};
+    std::size_t sessionPhaseCount_ = 0;
     double tickStartedMillis_ = 0;
     double slowTickWorstMillis_ = 0;
     std::string slowTickLine_;

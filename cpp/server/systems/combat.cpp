@@ -1033,20 +1033,17 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // Below zero the subtraction ADDS, which is what a stripped mob is for.
     // A colony's share was blunted whole, before it was split (above).
     if (armorBlunts(kind) && !sharingColonyHit_) {
-        const double armor = effectiveArmor(world, victim, nowMillis);
-        if (armor != 0.0) amount = std::max(0.0, amount - armor);
-        if (auto* boneArmor = world.tryGet<Armor>(victim); boneArmor && boneArmor->halvesOnHit) {
-            double remaining = 0.5;
-            if (kind == DamageKind::Recoil && world.has<MobTag>(source) && !world.has<Pet>(source) &&
-                !world.has<MobRingPetal>(source)) {
-                const auto* bone = world.tryGet<PetalInstance>(victim);
-                if (bone && hyperTechnique("bone", bone->rarity, bone->mimicked) == HyperTechnique::BoneGuard) {
-                    const auto* input = world.tryGet<PlayerInput>(bone->owner);
-                    if (input && input->current.defending()) remaining = 0.55;
-                }
+        double armor = effectiveArmor(world, victim, nowMillis);
+        if (armor > 0.0 && kind == DamageKind::Recoil && isWildMob(world, source) &&
+            !world.has<MobRingPetal>(source)) {
+            const auto* armorState = world.tryGet<Armor>(victim);
+            const auto* bone = armorState && armorState->bone ? world.tryGet<PetalInstance>(victim) : nullptr;
+            if (bone && hyperDefending(world, bone->owner)) {
+                armor *= hyperAmount(hyperTechniqueInfo("bone", bone->rarity, bone->mimicked),
+                                     HyperTechnique::BoneGuard);
             }
-            boneArmor->amount *= remaining;
         }
+        if (armor != 0.0) amount = std::max(0.0, amount - armor);
     }
 
     const bool directPlayerHit = isDirectHit(kind) && world.has<PlayerTag>(victim);
@@ -3125,7 +3122,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                         if (attacking && fraction < 0.25) swing *= technique->amount;
                         break;
                     case HyperTechnique::DiceFloor:
-                        if (guarding && !critical && fraction > 0.90) swing *= technique->amount;
+                        if (!critical) swing *= technique->amount;
                         break;
                     case HyperTechnique::TriangleStrike: {
                         const auto* mods = world.tryGet<PlayerModifiers>(source.owner);
@@ -3356,8 +3353,22 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             if (landed && source.isPetal && !source.isLoose && source.petalBreakable &&
                 (world.has<MobTag>(victim) || world.has<NpcTag>(victim))) {
                 const double recoil = contactDamageOf(world, victim);
-                applyDamage(world, source.attacker, victim, wild ? recoil * source.wildRecoilScale : recoil,
-                            nowMillis, DamageKind::Recoil);
+                const double wear = wild ? recoil * source.wildRecoilScale : recoil;
+                applyDamage(world, source.attacker, victim, wear, nowMillis, DamageKind::Recoil);
+                const auto* livePetal = world.tryGet<PetalInstance>(source.attacker);
+                if (wild && livePetal && hit.applied > 0.0 && !hit.killed &&
+                    source.hitKind == DamageKind::Direct && isStanding(world, source.attacker)) {
+                    const auto& id = registry.petal(livePetal->configIndex).id;
+                    const bool followup = (id == "sawblade" && ladderRarity(source.rarity) >= Rarity::Unique) ||
+                                          (id == "rock" && isHyperPetal(source.rarity));
+                    if (followup) {
+                        // One extra pass for these durable contacts, on the
+                        // simulation clock. It spends durability as well.
+                        const auto second = applyDamage(world, victim, source.attacker, swing * 0.5, nowMillis);
+                        if (!second.refused && !second.dodged)
+                            applyDamage(world, source.attacker, victim, wear * 0.5, nowMillis, DamageKind::Recoil);
+                    }
+                }
             }
 
             // Re-fetched, never cached across the calls above: adding Dead or

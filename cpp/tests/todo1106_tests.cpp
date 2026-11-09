@@ -627,6 +627,31 @@ TEST(todo1106_projectiles_use_summon_projectile_talent) {
         CHECK_NEAR(damage[2],damage[0],1e-6);
     }
 }
+TEST(mecha_missile_uses_summon_damage_talent_for_its_shot) {
+    const auto& registry = shippedContent();
+    const auto index = registry.petalIndex("mecha_missile");
+    for (const bool boost : {false, true}) {
+        World world;
+        PetalSystem petals;
+        CommandBuffer commands{world};
+        const auto player = flower(world);
+        wear(world, player, 0, "mecha_missile", Rarity::Super);
+        auto& skills = world.add<PlayerSkillTree>(player).skills;
+        skills.set(boost ? SkillId::PetDamage : SkillId::Damage, 9);
+        world.get<PlayerInput>(player).current.flags = net::InputAttack;
+        Query<ProjectileTag, Projectile> shots{world};
+        for (int tick = 0; tick < 100 && shots.count() == 0; ++tick) {
+            petals.run(world, registry, 1000 + tick * 50, .05, commands);
+            commands.flush();
+        }
+        CHECK(shots.count() > 0);
+        const double base = registry.petalStats(index, Rarity::Super).damage;
+        shots.each([&](Entity, ProjectileTag&, Projectile& shot) {
+            CHECK_NEAR(shot.damage, base * (boost ? kPetDamageTalentScale.back() : 1.0), 1e-6);
+        });
+    }
+}
+
 TEST(todo1106_factory_machines_cover_common_through_eternal) {
     const auto& c=shippedContent();WorldMaps maps;Terrain terrain;std::string error;CHECK(maps.load(dataDir(),&terrain,error));
     NpcSystem npcs;std::vector<std::string> warnings;npcs.loadSites(maps,c,warnings);World w;npcs.placeMissing(w,terrain,c,0);

@@ -1141,7 +1141,7 @@ void App::drawDailyStreak(Canvas& canvas, double time) {
     text(canvas, zh ? "连续签到奖励（星）" : "Consecutive rewards (stars)", center, card.y + 146.0, detail);
     for (int i = 1; i <= static_cast<int>(kDailyStreakRewards.size()); ++i) {
         detail.fill = i == cycleDay ? 0xFFF28Au : kPaper;
-        detail.size = i == cycleDay ? 16.0 : 13.0;
+        detail.size = i == cycleDay ? 14.0 : 12.0;
         text(canvas, std::to_string(dailyStreakReward(i)), card.x + 30.0 + (i - 1) * 40.0, card.y + 165.0, detail);
     }
     detail = countdown;

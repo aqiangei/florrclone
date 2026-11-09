@@ -374,37 +374,77 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
     return rarityGlow ? minimapStaticGlow_.get() : minimapStatic_.get();
 }
 
-void App::drawMinimap(Canvas& canvas) {
-    // The corner belongs to whichever realm the flower is in: the maze draws
-    // its own layout there, and the arena -- which has no map worth showing --
-    // puts its scoreboard there instead, as the reference does.
-    // altMode_ (ALT latch): spawn-band bake. Player dots + names always on.
-    switch (net_.view().realm()) {
-        case Realm::Maze:
-            drawMazeMinimap(canvas);
-            return;
-        case Realm::Arena:
-            drawArenaLeaderboard(canvas);
-            return;
-        case Realm::Overworld:
-            break;
-    }
-    // A map that hides its minimap (florr's `minimap: false`) gets nothing in
-    // the corner at all: the pyramid's maze is to be found, not read.
-    if (const MapData* map = worldMaps_.forRealm(net_.view().realm())) {
-        if (!map->showsMinimap() && !(map->biome() == "pyramid" && net_.pyramidMapRevealed)) return;
-    }
+bool App::canShowMinimap() const {
+    const auto realm = net_.view().realm();
+    if (realm == Realm::Arena) return false;
+    if (realm == Realm::Maze) return true;
+    const auto* map = worldMaps_.forRealm(realm);
+    return !map || map->showsMinimap() || (map->biome() == "pyramid" && net_.pyramidMapRevealed);
+}
 
-    const double x = canvas.width() - kMinimapSize - kMinimapPadding;
-    const double y = kMinimapPadding;
+Rect App::minimapBounds(bool expanded) const {
+    const double w = window_.width();
+    const double h = window_.height();
+    if (!expanded) return {w - kMinimapSize - kMinimapPadding, kMinimapPadding, kMinimapSize, kMinimapSize};
+    const double side = std::max(1.0, std::min({w - 32.0, h - 84.0, 620.0}));
+    return {(w - side) * 0.5, (h - side) * 0.5, side, side};
+}
 
-    // THE WHOLE MAP, fitted into the box. There is no zoom and no scrolling --
-    // the reference's scroll and zoom entry points are both no-ops -- and
-    // there is no longer a window onto the map either: one map is in play at a
-    // time, it says how big it is, and all of it belongs in the corner. A map
-    // that is not square letterboxes rather than stretching; see minimap.h.
+Rect App::minimapCloseBounds() const {
+    const Rect map = minimapBounds(true);
+    return {map.right() - 32.0, map.y - 36.0, 32.0, 30.0};
+}
+
+void App::updateMinimapControls() {
+    if (!canShowMinimap() || menus_.anyOpen()) {
+        minimapExpanded_ = false;
+        return;
+    }
+    const auto mouse = Vec2{window_.mouseX(), window_.mouseY()};
+    const bool key = !keyboardCaptured() && !window_.ctrlHeld() &&
+        (window_.keyPressed(Key::M) || (minimapExpanded_ && window_.keyPressed(Key::Escape)));
+    const bool close = minimapExpanded_ && window_.mousePressed(MouseButton::Left) &&
+        minimapCloseBounds().contains(mouse) && !tutorial_.capturesMouse(mouse);
+    const Rect map = minimapBounds(minimapExpanded_);
+    const auto& touches = window_.touchEvents();
+    const bool tap = !chatOpen_ && std::any_of(touches.begin(), touches.end(), [&](const TouchEvent& event) {
+        if (event.phase != TouchPhase::Began) return false;
+        const Vec2 at{event.point.x, event.point.y};
+        return map.contains(at) && !tutorial_.capturesMouse(at) &&
+               (minimapExpanded_ || !menus_.capturesMouse(at));
+    });
+    if (key || tap || close) {
+        minimapExpanded_ = !minimapExpanded_;
+        minimapControlUsed_ = true;
+    }
+}
+
+void App::drawMinimap(Canvas& canvas, bool expanded) {
     const Realm realm = net_.view().realm();
-    const MinimapFit fit = minimapFit(net_.terrain().realmExtent(realm), kMinimapSize);
+    if (realm == Realm::Arena) {
+        drawArenaLeaderboard(canvas);
+        return;
+    }
+    if (!canShowMinimap()) return;
+    const Rect box = minimapBounds(expanded);
+    if (expanded) {
+        setFill(canvas, 0x10151Bu, 0.72);
+        canvas.fillRect(0, 0, static_cast<float>(window_.width()), static_cast<float>(window_.height()));
+        const Rect close = minimapCloseBounds();
+        const bool hovered = close.contains({window_.mouseX(), window_.mouseY()});
+        drawFlorrClose(canvas, close, hovered, hovered && window_.mouseDown(MouseButton::Left));
+        if (hovered) window_.setCursorShape(CursorShape::Hand);
+    }
+    if (realm == Realm::Maze) {
+        drawMazeMinimap(canvas, box);
+        return;
+    }
+    const double x = box.x;
+    const double y = box.y;
+    const double side = box.w;
+
+    // Fit the whole realm in both views, letterboxing non-square maps.
+    const MinimapFit fit = minimapFit(net_.terrain().realmExtent(realm), side);
     const Vec2 me = net_.view().selfDrawnPosition();
 
     if (const Canvas* baked = minimapStatic(altMode_)) {
@@ -413,13 +453,13 @@ void App::drawMinimap(Canvas& canvas) {
         // which would draw a bake rasterised for a Retina display at twice
         // the size the minimap is meant to be.
         canvas.drawCanvas(*baked, static_cast<float>(x), static_cast<float>(y),
-                          static_cast<float>(kMinimapSize), static_cast<float>(kMinimapSize));
+                          static_cast<float>(side), static_cast<float>(side));
     }
 
     canvas.save();
     canvas.beginPath();
-    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(kMinimapSize),
-                static_cast<float>(kMinimapSize));
+    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(side),
+                static_cast<float>(side));
     canvas.clip();
     const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined,
                          const std::string* label) {
@@ -429,7 +469,7 @@ void App::drawMinimap(Canvas& canvas) {
         // Strictly inside, as the reference tests it: a body outside the map's
         // own rectangle -- in the letterbox bar, or off the map altogether --
         // is not on this map and gets no dot.
-        if (dx <= x || dx >= x + kMinimapSize || dy <= y || dy >= y + kMinimapSize) return;
+        if (dx <= x || dx >= x + side || dy <= y || dy >= y + side) return;
         setFill(canvas, fill);
         canvas.fillCircle(static_cast<float>(dx), static_cast<float>(dy),
                           static_cast<float>(radius));
@@ -516,8 +556,8 @@ void App::drawMinimap(Canvas& canvas) {
     canvas.setLineWidth(2.0f);
     canvas.setLineJoin("miter");
     canvas.beginPath();
-    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(kMinimapSize),
-                static_cast<float>(kMinimapSize));
+    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(side),
+                static_cast<float>(side));
     canvas.stroke();
     canvas.restore();
 
@@ -543,7 +583,7 @@ void App::drawMinimap(Canvas& canvas) {
         caption.baseline = Baseline::Alphabetic;
         const std::string captionText =
             named->displayName().empty() ? named->id() : named->displayName();
-        text(canvas, captionText, x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
+        text(canvas, captionText, x + side * 0.5, y + side + 18.0, caption);
     }
 }
 
@@ -722,23 +762,24 @@ const Canvas* App::mazeMinimapStatic() {
     return mazeMinimapStatic_.get();
 }
 
-void App::drawMazeMinimap(Canvas& canvas) {
+void App::drawMazeMinimap(Canvas& canvas, const Rect& box) {
     const Maze& maze = activeMaze();
-    const double x = canvas.width() - kMinimapSize - kMinimapPadding;
-    const double y = kMinimapPadding;
+    const double x = box.x;
+    const double y = box.y;
+    const double side = box.w;
     const double size = maze.worldSize();
     if (!(size > 0.0)) return;
-    const double scale = kMinimapSize / size;
+    const double scale = side / size;
 
     if (const Canvas* baked = mazeMinimapStatic()) {
         canvas.drawCanvas(*baked, static_cast<float>(x), static_cast<float>(y),
-                          static_cast<float>(kMinimapSize), static_cast<float>(kMinimapSize));
+                          static_cast<float>(side), static_cast<float>(side));
     }
 
     canvas.save();
     canvas.beginPath();
-    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(kMinimapSize),
-                static_cast<float>(kMinimapSize));
+    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(side),
+                static_cast<float>(side));
     canvas.clip();
     // AOI + OnlineRoster (same realm), labeled — roster covers far humans.
     const auto dot = [&](Vec2 world, double radius, std::uint32_t fill, bool outlined,
@@ -809,8 +850,8 @@ void App::drawMazeMinimap(Canvas& canvas) {
     canvas.setLineWidth(2.0f);
     canvas.setLineJoin("miter");
     canvas.beginPath();
-    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(kMinimapSize),
-                static_cast<float>(kMinimapSize));
+    canvas.rect(static_cast<float>(x), static_cast<float>(y), static_cast<float>(side),
+                static_cast<float>(side));
     canvas.stroke();
     canvas.restore();
 
@@ -819,7 +860,7 @@ void App::drawMazeMinimap(Canvas& canvas) {
     caption.align = Align::Centre;
     caption.baseline = Baseline::Alphabetic;
     text(canvas, std::string("Maze \xE2\x80\x94 ") + mazeBiomeLabel(maze.biome()),
-         x + kMinimapSize * 0.5, y + kMinimapSize + 18.0, caption);
+         x + side * 0.5, y + side + 18.0, caption);
 }
 
 void App::drawArenaLeaderboard(Canvas& canvas) {
