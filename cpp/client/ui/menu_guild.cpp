@@ -386,7 +386,11 @@ bool GuildPanel::render(MenuContext& ctx) {
     Form& f = form();
     const std::string me = ctx.net.profile().username;
     const bool leaderIsMe = guild.joined && sameName(guild.leader, me);
-    const bool canInvite = guild.joined && (leaderIsMe || sameName(guild.deputy, me));
+    const auto isGuildDeputy = [&](const std::string& username) {
+        return std::any_of(guild.deputies.begin(), guild.deputies.end(),
+                           [&](const auto& deputy) { return sameName(deputy, username); });
+    };
+    const bool canInvite = guild.joined && (leaderIsMe || isGuildDeputy(me));
     const bool zh = language() == Language::Zh;
     const double centreX = panel.x + panel.w * 0.5;
 
@@ -439,7 +443,7 @@ bool GuildPanel::render(MenuContext& ctx) {
     } else {
         text(canvas, tr(Msg::NoGuild), centreX, panel.y + kNameBaseline,
              cardText(kNameSize, Align::Centre, Baseline::Alphabetic));
-        textAtAlpha(canvas, "Name a guild and pick a tag to start one",
+        textAtAlpha(canvas, tr(Msg::GuildTagHint),
                     centreX, panel.y + kTagBaseline,
                     cardText(kDetailTextSize, Align::Centre, Baseline::Alphabetic), 0.85);
     }
@@ -467,7 +471,7 @@ bool GuildPanel::render(MenuContext& ctx) {
                              kFieldHeight};
         inputField(canvas, nameField, f.createName.value, "Guild name",
                    f.createName.state.focused, ctx.timeSeconds, &f.createName.state);
-        inputField(canvas, tagField, f.createTag.value, "Tag", f.createTag.state.focused,
+        inputField(canvas, tagField, f.createTag.value, tr(Msg::GuildTagField), f.createTag.state.focused,
                    ctx.timeSeconds, &f.createTag.state);
         fields.push_back({&f.createName, nameField, kNameLimit, false});
         fields.push_back({&f.createTag, tagField, ByteWriter::kMaxStringBytes, true});
@@ -620,7 +624,7 @@ bool GuildPanel::render(MenuContext& ctx) {
 
             const bool isSelf = sameName(member.name, me);
             const bool isLeader = sameName(member.name, guild.leader);
-            const bool isDeputy = sameName(member.name, guild.deputy);
+            const bool isDeputy = isGuildDeputy(member.name);
             const bool canSquad = !isSelf && member.online;
             const bool canKick = leaderIsMe && !isSelf;
             const bool hovered = pointing && row.contains(mouse) && (canSquad || canKick);
@@ -763,7 +767,7 @@ bool GuildPanel::render(MenuContext& ctx) {
                 break;
             case Mode::MemberActions:
                 footerQuestion(f.member);
-                rightButtons({{sameName(f.member, guild.deputy) ? (zh ? "撤销副会长" : "Remove deputy")
+                rightButtons({{isGuildDeputy(f.member) ? (zh ? "撤销副会长" : "Remove deputy")
                                                                : (zh ? "设为副会长" : "Make deputy"), GuildAction::SetDeputy},
                               {"Kick member...", GuildAction::Kick}, {"Cancel", GuildAction::Cancel}},
                              kCloseFace, kCloseRim);
@@ -931,7 +935,8 @@ bool GuildPanel::render(MenuContext& ctx) {
                 f.mode = Mode::ConfirmTransfer;
                 break;
             case GuildAction::SetDeputy:
-                ctx.net.sendChat(sameName(f.member, guild.deputy) ? "/guild-deputy" : "/guild-deputy " + f.member);
+                ctx.net.sendChat(std::string(isGuildDeputy(f.member) ? "/guild-undeputy " : "/guild-deputy ") +
+                                 f.member);
                 f.view();
                 break;
             case GuildAction::Confirm:

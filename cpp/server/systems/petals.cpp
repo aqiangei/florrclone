@@ -738,11 +738,16 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         tickArmorStacks(world, registry, player, aggregate, dt);
         applyPassiveHeal(world, registry, player, aggregate, nowMillis, dt);
         updateManaPool(world, player, aggregate, dt);
-        applyRaindropAura(world, registry, player, world.get<PetalSlotState>(player), aggregate,
-                          nowMillis);
-        strikeWornLightning(world, registry, player, nowMillis);
+        const bool underground = isBurrowed(world, player, nowMillis) ||
+                                 startBurrow(world, registry, player, nowMillis);
+        if (!underground) {
+            applyRaindropAura(world, registry, player, world.get<PetalSlotState>(player), aggregate,
+                              nowMillis);
+            strikeWornLightning(world, registry, player, nowMillis);
+        }
         updateRing(world, player, aggregate, dt);
         placePetals(world, registry, player, aggregate, nowMillis, dt, terrain);
+        if (underground) continue;
         runActions(world, registry, player, nowMillis, dt);
         dischargeCapacitors(world, registry, player, dt);
         // Last, so a battery that goes flat is taken off the ring AFTER this
@@ -2613,6 +2618,37 @@ void PetalSystem::stepPetalPhysics(World& world, const ContentRegistry& registry
 // Per-petal actions
 // ---------------------------------------------------------------------------
 
+bool PetalSystem::startBurrow(World& world, const ContentRegistry& registry, Entity player,
+                             double nowMillis) {
+    const auto* input = world.tryGet<PlayerInput>(player);
+    if (!input || !input->current.defending()) return false;
+    const auto* existing = world.tryGet<BurrowState>(player);
+    if (existing && nowMillis < existing->readyAtMillis) return false;
+    if (const auto* swallowed = world.tryGet<WormSwallow>(player);
+        swallowed && swallowed->worm != NULL_ENTITY && nowMillis < swallowed->releaseAtMillis)
+        return false;
+
+    for (const Entity petal : world.get<Loadout>(player).spawned) {
+        const auto* instance = world.tryGet<PetalInstance>(petal);
+        if (!instance || !isStanding(world, petal) || nowMillis < instance->nextActionMillis) continue;
+        const auto& config = registry.petal(instance->configIndex);
+        if (config.burrowDurationMillis <= 0.0) continue;
+        const auto slot = instance->slot;
+        const auto sub = instance->subIndex;
+        const auto stats = instanceStats(world, registry, *instance);
+        auto& burrow = world.ensure<BurrowState>(player);
+        burrow.active = true;
+        burrow.untilMillis = nowMillis + config.burrowDurationMillis;
+        // All shovels on the same flower share a window above ground.
+        burrow.readyAtMillis = burrow.untilMillis + 3000.0;
+        burrow.wormIndex = registry.mobIndex("worm");
+        burrow.desertCentipedeIndex = registry.mobIndex("desert_centipede");
+        spendPetal(world, registry, player, petal, slot, sub, stats, nowMillis);
+        return true;
+    }
+    return false;
+}
+
 void PetalSystem::runActions(World& world, const ContentRegistry& registry, Entity player,
                              double nowMillis, double dt) {
     if (const auto* swallowed = world.tryGet<WormSwallow>(player);
@@ -3179,18 +3215,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         }
         const auto* hyperShot = hyperShotSpec(world, player, technique);
         if (!hyperShot && !hasTimedAction(config, stats)) continue;
-        if(config.burrowDurationMillis>0){
-            if(defending&&nowMillis>=instance->nextActionMillis){
-                const auto* existing=world.tryGet<BurrowState>(player);
-                if(!existing||!existing->active){
-                    const auto slot=instance->slot,sub=instance->subIndex;
-                    auto& burrow=world.ensure<BurrowState>(player);burrow.active=true;burrow.untilMillis=nowMillis+config.burrowDurationMillis;
-                    burrow.wormIndex=registry.mobIndex("worm");burrow.desertCentipedeIndex=registry.mobIndex("desert_centipede");
-                    spendPetal(world,registry,player,petal,slot,sub,stats,nowMillis);
-                }
-            }
-            continue;
-        }
+        if (config.burrowDurationMillis > 0.0) continue;
 
         // A projectile is asked before the defend-only gate below, because a
         // defend-only shooter fires on EITHER input: peas and grapes split on
@@ -3740,7 +3765,8 @@ void PetalSystem::castMagicEye(World& world, const ContentRegistry& registry, En
 
 bool PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double damage,
                                   Rarity rarity, int bounces, double reachScale,
-                                  std::optional<double> magicEyeCastAt, Entity firstTarget) {
+                                  std::optional<double> magicEyeCastAt, Entity firstTarget,
+                                  bool fromBattery) {
     // A strike is a petal hitting something, so it is paid at the PETAL rate --
     // the steep effect table getDamageMultiplier() puts a puff, a pulse and a
     // shot on, not the gentle stat table a body slam takes. The reference hands
@@ -3773,7 +3799,7 @@ bool PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double d
                 return !CombatSystem::canHit(world, e, player, *magicEyeCastAt);
             }), candidates.end());
         }
-        if (firstTarget != NULL_ENTITY) {
+        if (firstTarget != NULL_ENTITY && bounces > 0) {
             for (const Entity e : playerList_) {
                 const auto* target = world.tryGet<Transform>(e);
                 if (target && target->realm == realm && world.has<Body>(e) && isStanding(world, e)) {
@@ -3806,7 +3832,7 @@ bool PetalSystem::strikeLightning(World& world, Entity player, Vec2 at, double d
                 1.0,Rarity::Common,base*scale,0.0});
             world.add<Lifetime>(burst,Lifetime{net::kTickSeconds*1.5});
             world.add<LightningBurst>(burst);
-            world.add<LightningTarget>(burst, LightningTarget{next, magicEyeCastAt.has_value(), rarity});
+            world.add<LightningTarget>(burst, LightningTarget{next, magicEyeCastAt.has_value(), rarity, fromBattery});
         }
         if (events_ && !points.empty()) {
             const auto style = magicEyeCastAt ? net::LightningMagicEye : 0;
@@ -4035,10 +4061,14 @@ void PetalSystem::strikeBatteries(World& world, const ContentRegistry& registry,
     if (state->batteryRetryUntilMillis <= 0.0 || nowMillis > state->batteryRetryUntilMillis)
         return;
     const auto serial = state->batteryHurtSerial;
+    const Entity attacker = health->directHurtPlayer;
     const auto* loadout = world.tryGet<Loadout>(player);
     const auto* transform = world.tryGet<Transform>(player);
-    if (!loadout || !transform || !world.has<Body>(player)) return;
+    const auto* body = world.tryGet<Body>(player);
+    if (!loadout || !transform || !body) return;
     const Vec2 at = transform->position;
+    const Realm realm = transform->realm;
+    const double bodyRadius = body->radius;
 
     batteryList_.clear();
     bool waiting = false;
@@ -4060,8 +4090,15 @@ void PetalSystem::strikeBatteries(World& world, const ContentRegistry& registry,
         const auto slot = instance->slot;
         const auto sub = instance->subIndex;
         const auto* technique = hyperTechniqueInfo("battery", rarity, instance->mimicked);
-        if (!strikeLightning(world, player, at, stats.lightningDamagePerHit, rarity, stats.lightningBounces,
-                             hyperAmount(technique, HyperTechnique::WideArc))) {
+        const double reachScale = hyperAmount(technique, HyperTechnique::WideArc);
+        const auto* attackerAt = world.tryGet<Transform>(attacker);
+        const auto* attackerBody = world.tryGet<Body>(attacker);
+        const bool retaliate = attackerAt && attackerBody && attackerAt->realm == realm &&
+            distance(at, attackerAt->position) < 240.0 * reachScale + bodyRadius + attackerBody->radius &&
+            CombatSystem::canHit(world, attacker, player, nowMillis);
+        if (!strikeLightning(world, player, at, stats.lightningDamagePerHit, rarity,
+                             retaliate ? 0 : stats.lightningBounces, reachScale, std::nullopt,
+                             retaliate ? attacker : NULL_ENTITY, true)) {
             waiting = true;
             continue;
         }

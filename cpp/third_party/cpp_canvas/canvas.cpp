@@ -97,6 +97,21 @@ EM_JS(void, c2d_flush, (int id, const int* ops, int count, const char* text, con
   const x = Module.cppCanvasContexts[id].ctx, S = Module.cppCanvasStrings || [""];
   // Read here, not hoisted: ALLOW_MEMORY_GROWTH detaches the views on a grow.
   const F = HEAPF32, I = HEAP32;
+  const roundRect = (path, left, top, width, height, radius) => {
+    if (path.roundRect) {
+      path.roundRect(left, top, width, height, radius);
+      return;
+    }
+    // Older WebKit has arcTo but not roundRect on Canvas2D or Path2D.
+    const r = Math.min(radius, Math.abs(width) / 2, Math.abs(height) / 2);
+    const right = left + width, bottom = top + height;
+    path.moveTo(left + Math.sign(width) * r, top);
+    path.arcTo(right, top, right, bottom, r);
+    path.arcTo(right, bottom, left, bottom, r);
+    path.arcTo(left, bottom, left, top, r);
+    path.arcTo(left, top, right, top, r);
+    path.closePath();
+  };
   for (let n = 0, p = ops >> 2; n < count; n++, p += 10) {
     const s = S[I[p+9]];
     switch(I[p]) {
@@ -106,7 +121,7 @@ EM_JS(void, c2d_flush, (int id, const int* ops, int count, const char* text, con
       case 14:x.lineWidth=F[p+1];break; case 15:x.lineCap=s;break; case 16:x.lineJoin=s;break; case 17:x.miterLimit=F[p+1];break; case 18:x.lineDashOffset=F[p+1];break;
       case 19:x.shadowColor=s;x.shadowBlur=F[p+1];x.shadowOffsetX=F[p+2];x.shadowOffsetY=F[p+3];break; case 20:x.font=s;break; case 21:x.textAlign=s;break; case 22:x.textBaseline=s;break; case 23:x.direction=s;break; case 24:x.imageSmoothingEnabled=!!F[p+1];break; case 25:x.imageSmoothingQuality=s;break;
       case 30:x.clearRect(F[p+1],F[p+2],F[p+3],F[p+4]);break; case 31:x.fillRect(F[p+1],F[p+2],F[p+3],F[p+4]);break; case 32:x.strokeRect(F[p+1],F[p+2],F[p+3],F[p+4]);break;
-      case 33:x.beginPath();break; case 34:x.closePath();break; case 35:x.moveTo(F[p+1],F[p+2]);break; case 36:x.lineTo(F[p+1],F[p+2]);break; case 37:x.quadraticCurveTo(F[p+1],F[p+2],F[p+3],F[p+4]);break; case 38:x.bezierCurveTo(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5],F[p+6]);break; case 39:x.arc(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5],!!F[p+6]);break; case 40:x.arcTo(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5]);break; case 41:x.ellipse(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5],F[p+6],F[p+7],!!F[p+8]);break; case 42:x.rect(F[p+1],F[p+2],F[p+3],F[p+4]);break; case 43:x.roundRect(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5]);break;
+      case 33:x.beginPath();break; case 34:x.closePath();break; case 35:x.moveTo(F[p+1],F[p+2]);break; case 36:x.lineTo(F[p+1],F[p+2]);break; case 37:x.quadraticCurveTo(F[p+1],F[p+2],F[p+3],F[p+4]);break; case 38:x.bezierCurveTo(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5],F[p+6]);break; case 39:x.arc(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5],!!F[p+6]);break; case 40:x.arcTo(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5]);break; case 41:x.ellipse(F[p+1],F[p+2],F[p+3],F[p+4],F[p+5],F[p+6],F[p+7],!!F[p+8]);break; case 42:x.rect(F[p+1],F[p+2],F[p+3],F[p+4]);break; case 43:roundRect(x,F[p+1],F[p+2],F[p+3],F[p+4],F[p+5]);break;
       case 44:x.fill(s || 'nonzero');break; case 45:x.stroke();break; case 46:x.clip(s || 'nonzero');break;
       case 47:{const t=UTF8ToString(text+I[p+9]);F[p+1] < 0 ? x.fillText(t,F[p+2],F[p+3]) : x.fillText(t,F[p+2],F[p+3],F[p+1]);break;}
       case 48:{const t=UTF8ToString(text+I[p+9]);F[p+1] < 0 ? x.strokeText(t,F[p+2],F[p+3]) : x.strokeText(t,F[p+2],F[p+3],F[p+1]);break;}
@@ -125,7 +140,7 @@ EM_JS(void, c2d_flush, (int id, const int* ops, int count, const char* text, con
       case 53:{
         const n=F[p+4],q=(paths>>2)+F[p+3],P=new Path2D();
         for(let i=0;i<n;i++){const o=q+i*10,cc=!!F[o+1],a=o+2;
-          switch(F[o]){case 0:P.moveTo(F[a],F[a+1]);break;case 1:P.lineTo(F[a],F[a+1]);break;case 2:P.quadraticCurveTo(F[a],F[a+1],F[a+2],F[a+3]);break;case 3:P.bezierCurveTo(F[a],F[a+1],F[a+2],F[a+3],F[a+4],F[a+5]);break;case 4:P.arc(F[a],F[a+1],F[a+2],F[a+3],F[a+4],cc);break;case 5:P.arcTo(F[a],F[a+1],F[a+2],F[a+3],F[a+4]);break;case 6:P.ellipse(F[a],F[a+1],F[a+2],F[a+3],F[a+4],F[a+5],F[a+6],cc);break;case 7:P.rect(F[a],F[a+1],F[a+2],F[a+3]);break;case 8:P.roundRect(F[a],F[a+1],F[a+2],F[a+3],F[a+4]);break;case 9:P.closePath();break;}}
+          switch(F[o]){case 0:P.moveTo(F[a],F[a+1]);break;case 1:P.lineTo(F[a],F[a+1]);break;case 2:P.quadraticCurveTo(F[a],F[a+1],F[a+2],F[a+3]);break;case 3:P.bezierCurveTo(F[a],F[a+1],F[a+2],F[a+3],F[a+4],F[a+5]);break;case 4:P.arc(F[a],F[a+1],F[a+2],F[a+3],F[a+4],cc);break;case 5:P.arcTo(F[a],F[a+1],F[a+2],F[a+3],F[a+4]);break;case 6:P.ellipse(F[a],F[a+1],F[a+2],F[a+3],F[a+4],F[a+5],F[a+6],cc);break;case 7:P.rect(F[a],F[a+1],F[a+2],F[a+3]);break;case 8:roundRect(P,F[a],F[a+1],F[a+2],F[a+3],F[a+4]);break;case 9:P.closePath();break;}}
         if(I[p+9]) (Module.cppCanvasPaths||(Module.cppCanvasPaths=new Map())).set(I[p+9],P);
         const r=F[p+2]?'evenodd':'nonzero';F[p+1]===0?x.fill(P,r):F[p+1]===1?x.stroke(P):x.clip(P,r);
         break;}

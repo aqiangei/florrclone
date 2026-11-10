@@ -1951,7 +1951,9 @@ void NetClient::handleGuildUpdate(ByteReader& reader) {
         next.name = reader.str();
         next.description = reader.str();
         next.leader = reader.str();
-        next.deputy = reader.str();
+        const auto deputyCount = reader.u8();
+        for (std::uint8_t i = 0; i < deputyCount; ++i)
+            next.deputies.push_back(reader.str());
         const std::uint16_t count = reader.u16();
         next.members.reserve(count);
         for (std::uint16_t i = 0; i < count; ++i) {

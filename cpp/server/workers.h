@@ -16,7 +16,8 @@ public:
     explicit ServerWorkers(unsigned count);
     ~ServerWorkers();
     unsigned count() const;
-    void run(std::size_t jobs, unsigned limit, const Job& job);
+    // Optional wall time spent joining other lanes after lane zero has finished its work.
+    void run(std::size_t jobs, unsigned limit, const Job& job, double* joinMs = nullptr);
 
     static unsigned available();
     static unsigned configuredLimit(const char* name, unsigned defaultLimit = kMaxWorkers);

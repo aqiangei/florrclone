@@ -29,6 +29,7 @@
 #include "server/squads.h"
 #include "shared/core/world.h"
 #include "shared/game/components.h"
+#include "shared/game/hyper_board.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/skin_likeness.h"
 #include "shared/game/spatial.h"
@@ -141,6 +142,7 @@ struct ServerConfig {
     bool adaptivePacing = true;
     bool backgroundSave = false;
     bool tickProbe = false;
+    bool contactVisitProbe = false;
     /// The `/admin db` key to use as is, instead of the one in the key file
     /// beside the database. Empty means the file. Only the offline page sets
     /// it: its server is a browser tab with no file anybody can open, and a
@@ -422,6 +424,18 @@ private:
     void handlePracticeBoard(Session&, net::Connection&, ByteReader&);
     void servicePracticeTrials(double nowMillis);
     void handleLeaderboard(const Session&, net::Connection&, ByteReader&);
+    struct LeaderboardCache {
+        ByteWriter rows;
+        ByteWriter playtimes;
+        double refreshAtMillis = -1.0;
+        std::uint32_t users = 0;
+        std::uint32_t activeToday = 0;
+        std::uint8_t shown = 0;
+    };
+    std::array<LeaderboardCache, 2> leaderboardCache_;
+    std::vector<HyperHoldingRow> leaderboardHoldings_;
+    double leaderboardHoldingsRefreshAtMillis_ = -1.0;
+    void refreshLeaderboard(LeaderboardCache&, bool includeAdmins);
     void handleNotifications(net::Connection&, ByteReader&);
     void handleUsePetal(Session&, ByteReader&);
 
@@ -640,7 +654,7 @@ private:
     void guildInvite(Session&, net::Connection&, const std::string& target);
     void guildKick(Session&, net::Connection&, const std::string& target);
     void guildTransfer(Session&, net::Connection&, const std::string& target);
-    void guildDeputy(Session&, net::Connection&, const std::string& target);
+    void guildDeputy(Session&, net::Connection&, const std::string& target, bool remove = false);
     void guildInviteToSquad(Session&, net::Connection&, const std::string& target);
 
     // -- squads ------------------------------------------------------------
@@ -1860,6 +1874,11 @@ private:
     std::string describeTickPhases(double tookMillis) const;
     std::array<TickPhase, 24> tickPhases_{};
     std::size_t tickPhaseCount_ = 0;
+    double contactBeginMs_ = 0;
+    double nextContactVisitBurstMs_ = 0;
+    unsigned contactVisitTicksLeft_ = 0;
+    enum class ContactVisitFrame { None, Trigger, Sample };
+    ContactVisitFrame contactVisitFrame_ = ContactVisitFrame::None;
     std::array<TickPhase, 11> sessionPhases_{};
     std::size_t sessionPhaseCount_ = 0;
     double tickStartedMillis_ = 0;

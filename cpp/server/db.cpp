@@ -2388,8 +2388,8 @@ bool Database::waveDailyStarCapReached(const std::string& userId) const {
         ledger["earned"].asInt() >= kWaveDailyStarCap;
 }
 
-int Database::awardWaveStars(const std::string& userId, bool* reachedDailyCap) {
-    constexpr int kStarsPerWave = 7500;
+int Database::awardWaveStars(const std::string& userId, bool* reachedDailyCap, std::uint64_t round) {
+    const int starsForRound = round >= 20 ? 9000 : round >= 11 ? 8250 : 7500;
     if (reachedDailyCap) *reachedDailyCap = false;
     const std::int64_t today = nowMillis() / 86400000;
     PlayerRecord& record = progress(userId);
@@ -2402,7 +2402,7 @@ int Database::awardWaveStars(const std::string& userId, bool* reachedDailyCap) {
         return 0;
     }
 
-    const int award = std::min(kStarsPerWave, kWaveDailyStarCap - earned);
+    const int award = std::min(starsForRound, kWaveDailyStarCap - earned);
     auto& ledger = record.extra["waveStars"];
     ledger["day"] = static_cast<double>(today);
     ledger["earned"] = earned + award;

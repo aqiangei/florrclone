@@ -241,7 +241,32 @@ public:
     /// When provided, placements mirror a projectile-free main grid.
     void runContactPhase(World& world, const SpatialGrid& grid,
                          const ContentRegistry& content, double nowMillis,
-                         const std::vector<ContactBodyPlacement>* placements = nullptr);
+                         const std::vector<ContactBodyPlacement>* placements = nullptr, bool profile = false,
+                         bool sampleVisits = false);
+    static constexpr double kProbeHotspotRadius = 600.0;
+    static constexpr std::size_t kContactVisitSampleStride = 128;
+    enum class ContactVisitPhase { Lookup, Geometry, Eligibility, Formula, Writeback, Pvp, Count };
+    struct ContactVisitTiming {
+        std::size_t visits = 0;
+        static constexpr auto kPhases = static_cast<std::size_t>(ContactVisitPhase::Count);
+        std::array<double, kPhases> ms{};
+        std::array<std::size_t, kPhases> intervals{};
+    };
+    struct ContactDensity {
+        std::size_t sources = 0, raw = 0, visits = 0, overlaps = 0, peak = 0;
+        std::array<unsigned, 5> local{}, total{}; // players, mobs, petals, shots, pets
+        ContactVisitTiming sampled;
+        Vec2 hotspot{};
+    };
+    struct ContactTiming {
+        double setupMs = 0, parallelSearchMs = 0, fallbackSearchMs = 0, orderedMs = 0;
+        double aurasMs = 0, gatherBodiesMs = 0, hostileGridMs = 0, gatherPetalsMs = 0, fileShotsMs = 0;
+        double densityMs = 0, sampleClockNs = 0;
+        bool sampleVisits = false;
+        std::size_t planned = 0, fallback = 0;
+        std::array<ContactDensity, kMaxRealms> realms{};
+    };
+    const ContactTiming& contactTiming() const { return contactTiming_; }
     void sizeContactGrid(const Terrain& terrain) { hostileTargets_.sizeToRealms(terrain); }
 
     /// Resolves post-movement projectiles/ground fields and closes the tick.
@@ -683,7 +708,7 @@ private:
     void gatherAuras(World& world, const ContentRegistry& content);
     void resolveAuras(World& world, const SpatialGrid& grid, double nowMillis);
     void gatherMeleeTargets();
-    void gatherContact(World& world, const ContentRegistry& content);
+    void gatherContact(World& world, const ContentRegistry& content, double nowMillis);
     /// One pass of lightning at RANGE: which mobs are charged and have somebody
     /// in reach, and the strikes they throw. Runs in the world phase, after
     /// movement. The CONTACT trigger is not here -- it fires inside
@@ -708,9 +733,9 @@ private:
                             double nowMillis);
     void gatherPetals(World& world, const ContentRegistry& content, double nowMillis);
     void resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
-                      double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly);
+                      double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly, ContactTiming* timing);
     void prepareMeleeCandidates(const World& world, const SpatialGrid& grid,
-                                const SpatialGrid& hostileTargets, bool bodyGridOnly);
+                                const SpatialGrid& hostileTargets, bool bodyGridOnly, ContactTiming* timing);
     bool eligibleMeleeCandidate(const MeleeSource& source, Entity victim) const;
     /// A petal swinging at another flower, which is a different collision from
     /// the petal-vs-mob one beside it: gated by the arena/corruption rule
@@ -919,9 +944,11 @@ private:
         bool hostileBody = false;
         bool contacted = false;
     };
+    ContactTiming contactTiming_;
     std::vector<MeleeTarget> meleeTargets_;
     SpatialGrid hostileTargets_;
     struct MeleePlan {
+        std::size_t raw = 0;
         Entity player = NULL_ENTITY;
         std::size_t begin = 0, end = 0;
         unsigned lane = 0;

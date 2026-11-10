@@ -386,12 +386,12 @@
         : '资源下载后会自动启动，请保持页面打开。';
       if(total>0){progress.max=total;progress.value=bytes;}else progress.removeAttribute('value');
     },
-    error(message) {
+    error(message, showGuide = true) {
       failed=true;status.hidden=false;stage.textContent='暂时未能进入游戏';detail.textContent=message;
       progress.hidden=true;retry.hidden=false;meta.textContent='你的账号和存档不会因此丢失。';
-      showStallGuide();
+      if (showGuide) showStallGuide();
     },
-    finish() { if(!failed){status.hidden=true;window.florrMobileReady();} }
+    finish() { status.hidden=true;window.florrMobileReady(); }
   };
   const recoveryKey = '_flix_recover';
   let recovering = false;
@@ -414,7 +414,7 @@
     const stalledFor = performance.now() - lastProgress;
     if (bytes && stalledFor > 10000 && stage.textContent === '正在下载游戏资源')
       detail.textContent=(queued?'已获下载名额。':'')+'当前传输较慢，下载中断会自动重试。';
-    if (stalledFor >= 15000) showStallGuide();
+    if (stalledFor >= 15000 && stage.textContent !== '正在绘制游戏画面') showStallGuide();
   },500);
 
 
@@ -452,12 +452,7 @@
     print: (text) => console.log(text),
     printErr: (text) => console.warn(text),
     setStatus: (text) => {
-      if (!text) {
-        ui.finish();
-        canvas.focus();
-        return;
-      }
-      ui.phase('正在启动游戏', '资源已就绪，正在准备画面和本地设置。');
+      if (text) ui.phase('正在启动游戏', '资源已就绪，正在准备画面和本地设置。');
     },
   };
   window.Module = Module;
@@ -502,6 +497,18 @@
   const quiet = () => booting && !gameStarted;
   const showStatus = game.setStatus;
   game.setStatus = (text) => { if (!quiet()) showStatus(text); };
+  let firstFrameWatchdog;
+  const waitForFirstFrame = () => {
+    ui.phase('正在绘制游戏画面', '游戏引擎已启动，正在准备第一帧。');
+    firstFrameWatchdog = setTimeout(() => {
+      ui.error('游戏画面未能启动。请点「重新连接」，或尝试低清模式。', false);
+    }, 15000);
+  };
+  game.flixFirstFrame = () => {
+    clearTimeout(firstFrameWatchdog);
+    ui.finish();
+    canvas.focus();
+  };
 
   // What the page downloads is bundle.js -- emscripten's runtime glue -- and
   // bundle.wasm, the client itself with mobs.json, petals.json,
@@ -784,6 +791,7 @@
     runtime = new Promise((resolve, reject) => {
       game.onRuntimeInitialized = () => {
         runtimeReady = true;
+        if (gameStarted) waitForFirstFrame();
         resolve();
       };
       runtimeFailed = reject;
@@ -860,7 +868,8 @@
     }
     // A runtime the script already had loaded put nothing on screen to take
     // down; one still loading shows its progress from here on.
-    if (!runtimeReady) status.hidden = false;
+    if (runtimeReady) waitForFirstFrame();
+    else status.hidden = false;
     const started = loadRuntime();
     if (!booting) return;
     started.then(async () => {

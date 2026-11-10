@@ -26,16 +26,24 @@ TEST(assembler_recipe_pool_contains_all_reference_recipes_and_fragment_sawblade)
     const auto& saw=config.npc.recipes.back();
     CHECK_EQ(saw.takes(c.petalIndex("cogwheel")),1u);
     CHECK_EQ(saw.takes(c.petalIndex("fragment")),20u);
+    for (const auto* machineType : {"assembler", "cyber_assembler"}) {
+        for (const auto& recipe : c.mob(c.mobIndex(machineType)).npc.recipes)
+            CHECK(!recipe.outputRarity);
+    }
 }
-TEST(assembler_refreshes_after_twenty_minutes_with_a_new_recipe_and_network_id){
+TEST(assembler_refreshes_after_ten_wall_minutes_even_when_simulation_lags){
     World w;Terrain terrain;NpcSystem npcs;NetIdAllocator ids;npcs.netIds=&ids;
     auto e=npcs.spawnNpc(w,terrain,data(),data().mobIndex("assembler"),Rarity::Super,{1000,1000},Realm::Overworld,1000);
     const auto first=w.get<Npc>(e).recipe;const auto netId=w.get<NetId>(e).value;
-    npcs.run(w,terrain,data(),{},1000+kAssemblerRecipeRefreshMillis-1);CHECK(w.isAlive(e));
-    npcs.run(w,terrain,data(),{},1000+kAssemblerRecipeRefreshMillis);CHECK(!w.isAlive(e));
+    constexpr double slowSimulation = 1000 + kAssemblerRecipeRefreshMillis * 0.5;
+    npcs.run(w,terrain,data(),{},slowSimulation-1,1000+kAssemblerRecipeRefreshMillis-1);
+    CHECK(w.isAlive(e));
+    npcs.run(w,terrain,data(),{},slowSimulation,1000+kAssemblerRecipeRefreshMillis);
+    CHECK(!w.isAlive(e));
     const auto current=machine(w);CHECK(current!=NULL_ENTITY);
     CHECK(w.get<Npc>(current).recipe!=first);CHECK(w.get<NetId>(current).value!=netId);
     CHECK(w.get<Npc>(current).rarity==Rarity::Super);
+    CHECK_NEAR(w.get<Npc>(current).recipeRefreshAtMillis,1000+2*kAssemblerRecipeRefreshMillis,1e-8);
 }
 TEST(assembler_refreshes_while_players_wait_and_follows_its_announced_next_recipe){
     World w;Terrain terrain;NpcSystem npcs;

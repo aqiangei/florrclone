@@ -203,7 +203,14 @@ int main(int argc, char** argv) {
     emscripten_set_main_loop_arg(
         [](void* handle) {
             auto* running = static_cast<flix::App*>(handle);
-            if (running->step()) return;
+            if (running->step()) {
+                static bool firstFrame = true;
+                if (firstFrame) {
+                    firstFrame = false;
+                    EM_ASM({ if (Module.flixFirstFrame) Module.flixFirstFrame(); });
+                }
+                return;
+            }
             running->shutdown();
             emscripten_cancel_main_loop();
         },

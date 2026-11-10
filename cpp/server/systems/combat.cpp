@@ -6,9 +6,14 @@
 #include "server/hyper_petal_loadout.h"
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cmath>
 #include <limits>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "server/loot_eligibility.h"
 #include "server/systems/movement.h"
@@ -18,6 +23,17 @@
 namespace flix {
 
 namespace {
+
+// Visit samples are shorter than most tick phases. Read the WASM monotonic
+// clock directly instead of going through WASI's integer time conversion.
+double contactSampleMillis() {
+#ifdef __EMSCRIPTEN__
+    return emscripten_get_now();
+#else
+    return std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
+}
 
 /// How far a common colony mob reaches to link with another (the psionic
 /// connection), centre to centre. It grows with rarity exactly as a mob's
@@ -1191,7 +1207,14 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
     // comes off, so nothing an NPC is hit by can kill it.
     if (!invulnerable) {
         health.current -= applied;
-        if (applied > 0 && isDirectHit(kind) && source != victim) ++health.directHurtSerial;
+        if (applied > 0 && isDirectHit(kind) && source != victim) {
+            const auto* arc = kind == DamageKind::Lightning ? world.tryGet<LightningTarget>(source) : nullptr;
+            // Two batteries must not feed each other's retaliation.
+            if (!arc || !arc->fromBattery) {
+                ++health.directHurtSerial;
+                if (directPlayerHit) health.directHurtPlayer = creditedPlayer(world, source);
+            }
+        }
         if (health.current < 0.0) health.current = 0.0;
     }
     bool fatal = !invulnerable && health.current <= 0.0;
@@ -2229,7 +2252,19 @@ void CombatSystem::beginTick(World& world, double nowMillis, double dt, EventQue
 
 void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
                                    const ContentRegistry& content, double nowMillis,
-                                   const std::vector<ContactBodyPlacement>* placements) {
+                                   const std::vector<ContactBodyPlacement>* placements, bool profile, bool sampleVisits) {
+    using Clock = std::chrono::steady_clock;
+    auto* timing = profile ? &contactTiming_ : nullptr;
+    if (timing) {
+        *timing = {};
+        timing->sampleVisits = sampleVisits;
+    }
+    auto start = timing ? Clock::now() : Clock::time_point{};
+    const auto mark = [&](double& elapsed) {
+        const auto now = Clock::now();
+        elapsed = std::chrono::duration<double, std::milli>(now - start).count();
+        start = now;
+    };
     melee_.clear();
     auras_.clear();
     // The raindrop field runs in updatePlayerPreMovement, ahead of the movement
@@ -2238,8 +2273,10 @@ void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
     // swings, so the ring neither hits it again nor is credited for it.
     gatherAuras(world, content);
     resolveAuras(world, grid, nowMillis);
+    if (timing) mark(timing->aurasMs);
     gatherMeleeTargets();
-    gatherContact(world, content);
+    gatherContact(world, content, nowMillis);
+    if (timing) mark(timing->gatherBodiesMs);
     if (placements) {
         // Preserve the full grid's pre-aura geometry and bucket order. Only
         // remove bodies that hostile sources already skip before any hit test.
@@ -2252,11 +2289,41 @@ void CombatSystem::runContactPhase(World& world, const SpatialGrid& grid,
             hostileTargets_.insert(body.entity, body.realm, body.position, body.radius);
         }
     }
+    if (timing) mark(timing->hostileGridMs);
     gatherPetals(world, content, nowMillis);
+    if (timing) mark(timing->gatherPetalsMs);
     fileShots(world);
     const auto& hostileTargets = placements ? hostileTargets_ : grid;
-    prepareMeleeCandidates(world, grid, hostileTargets, placements != nullptr);
-    resolveMelee(world, grid, content, nowMillis, hostileTargets, placements != nullptr);
+    if (timing) {
+        mark(timing->fileShotsMs);
+        timing->setupMs = timing->aurasMs + timing->gatherBodiesMs + timing->hostileGridMs +
+                          timing->gatherPetalsMs + timing->fileShotsMs;
+    }
+    prepareMeleeCandidates(world, grid, hostileTargets, placements != nullptr, timing);
+    if (timing) mark(timing->parallelSearchMs);
+    resolveMelee(world, grid, content, nowMillis, hostileTargets, placements != nullptr, timing);
+    if (!timing) return;
+    mark(timing->orderedMs);
+    timing->orderedMs = std::max(0.0, timing->orderedMs - timing->fallbackSearchMs);
+    const auto count = [](ContactDensity& density, Vec2 position, unsigned kind) {
+        ++density.total[kind];
+        if (density.peak && (position - density.hotspot).lengthSq() <= kProbeHotspotRadius * kProbeHotspotRadius)
+            ++density.local[kind];
+    };
+    if (placements) for (const auto& body : *placements) {
+        const auto index = entityIndex(body.entity);
+        if (index >= meleeTargets_.size()) continue;
+        const auto& target = meleeTargets_[index];
+        if (target.entity != body.entity) continue;
+        auto& density = timing->realms[realmIndex(body.realm)];
+        if (target.player) count(density, body.position, 0);
+        if (target.mob) count(density, body.position, 1);
+        if (target.petal) count(density, body.position, 2);
+        if (target.pet) count(density, body.position, 4);
+    }
+    for (const auto& cell : shotCells_)
+        count(timing->realms[cell.key >> 48], filedShots_[cell.slot].position, 3);
+    mark(timing->densityMs);
 }
 
 void CombatSystem::tickMobLightning(World& world, const SpatialGrid& grid,
@@ -2663,7 +2730,7 @@ void CombatSystem::gatherMeleeTargets() {
     });
 }
 
-void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
+void CombatSystem::gatherContact(World& world, const ContentRegistry& content, double nowMillis) {
     queries_->contact.each([&](Entity e, ContactDamage& contact, Transform& transform, Body& body) {
         MeleeSource source;
         source.attacker = e;
@@ -2681,6 +2748,7 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content) {
         source.isNpcBody = target.npc;
         source.isPet = target.pet;
         source.isPlayerBody = target.player;
+        if (source.isPlayerBody && isBurrowed(world, e, nowMillis)) return;
         if (source.isMobBody && !source.isPet && !source.isPlayerBody && !world.has<ProjectileTag>(e)) {
             const auto* side = world.tryGet<Faction>(e);
             source.isHostileBody = !side || side->team == Team::Hostiles;
@@ -2768,6 +2836,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
     queries_->petals.each([&](Entity e, PetalInstance& petal, Transform& transform, Body& body) {
         const PetalConfig& config = content.petal(petal.configIndex);
         if (config.noPhysics) return;   // a pure modifier has no body to hit with
+        if (isBurrowed(world, petal.owner, nowMillis)) return;
         const PetalStats stats = computerSetStats(content,world,petal.owner,petal.configIndex,petal.rarity,content.petalStats(petal.configIndex, petal.rarity));
         // A loose petal swings at mobs only if it has DAMAGE to swing with --
         // the moon does, wax does not. Knockback alone is not enough: wax's
@@ -2854,7 +2923,7 @@ bool CombatSystem::eligibleMeleeCandidate(const MeleeSource& source, Entity vict
 }
 
 void CombatSystem::prepareMeleeCandidates(const World& world, const SpatialGrid& grid,
-                                          const SpatialGrid& hostileTargets, bool bodyGridOnly) {
+                                          const SpatialGrid& hostileTargets, bool bodyGridOnly, ContactTiming* timing) {
     const unsigned limit = workers ? std::min(workerLimit, workers->count()) : 0;
     if (!limit || melee_.size() < 256) {
         meleePlans_.clear();
@@ -2885,6 +2954,7 @@ void CombatSystem::prepareMeleeCandidates(const World& world, const SpatialGrid&
             queryBodies(source.isHostileBody ? hostileTargets : grid, source.realm,
                         source.position, source.radius + kBroadphasePad, scratch.candidates,
                         plan.player, plan.excludePeaceful, source.radius, &scratch.grid, bodyGridOnly);
+            if (timing) plan.raw = scratch.candidates.size();
             // A packed per-lane buffer keeps dense sources from paying for
             // another query merely because their own list is over 192.
             plan.begin = scratch.planned.size();
@@ -2906,7 +2976,43 @@ void CombatSystem::prepareMeleeCandidates(const World& world, const SpatialGrid&
 }
 
 void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
-                                double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly) {
+                                double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly, ContactTiming* timing) {
+    using Clock = std::chrono::steady_clock;
+    using Phase = ContactVisitPhase;
+    struct VisitSample {
+        ContactVisitTiming* timing;
+        Phase phase = Phase::Lookup;
+        double start;
+
+        explicit VisitSample(ContactVisitTiming* timing)
+            : timing(timing), start(timing ? contactSampleMillis() : 0.0) {}
+
+        void mark(Phase next) {
+            if (!timing) return;
+            const double now = contactSampleMillis();
+            const auto index = static_cast<std::size_t>(phase);
+            timing->ms[index] += now - start;
+            ++timing->intervals[index];
+            start = now;
+            phase = next;
+        }
+
+        ~VisitSample() {
+            mark(Phase::Count);
+            if (timing) ++timing->visits;
+        }
+    };
+    // Rotate the sample across ticks and continue the stride across sources,
+    // including those with fewer candidates than the stride.
+    std::size_t sampleOffset = tick_ * 37;
+    const bool sampleVisits = timing && timing->sampleVisits;
+    if (sampleVisits) {
+        constexpr int reads = 32;
+        const double start = contactSampleMillis();
+        double end = start;
+        for (int i = 0; i < reads; ++i) end = contactSampleMillis();
+        timing->sampleClockNs = (end - start) * 1e6 / reads;
+    }
     for (std::size_t i = 0; i < melee_.size(); ++i) {
         const MeleeSource& source = melee_[i];
         if (!world.isAlive(source.attacker) || world.has<Dead>(source.attacker)) continue;
@@ -2928,18 +3034,25 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
         const bool usePlan = plan && plan->ready && plan->player == sourcePlayer &&
                              plan->excludePeaceful == excludePeaceful;
         if (!usePlan) {
+            const auto started = timing ? Clock::now() : Clock::time_point{};
             queryBodies(source.isHostileBody ? hostileTargets : grid,
                         source.realm, source.position, source.radius + kBroadphasePad,
                         candidates_, sourcePlayer, excludePeaceful, source.radius, nullptr, bodyGridOnly);
+            if (timing) timing->fallbackSearchMs +=
+                std::chrono::duration<double, std::milli>(Clock::now() - started).count();
         }
         // Only the candidate search is parallel. Resolve from live transforms
         // and health in the original source and target order.
         const auto& candidates = usePlan ? meleeScratch_[plan->lane].planned : candidates_;
         const auto first = usePlan ? plan->begin : std::size_t{0};
         const auto last = usePlan ? plan->end : candidates.size();
+        std::size_t overlaps = 0;
         bool ricochetHit = false;
-        for (std::size_t at = first; at < last; ++at) {
+        std::size_t at = first;
+        for (; at < last; ++at) {
             if (ricochetHit) break;
+            VisitSample sample(sampleVisits && (sampleOffset++ % kContactVisitSampleStride == 0)
+                ? &timing->realms[realmIndex(source.realm)].sampled : nullptr);
             const Entity victim = candidates[at];
             if (!usePlan && !eligibleMeleeCandidate(source, victim)) continue;
             MeleeTarget& targetBody = meleeTargets_[entityIndex(victim)];
@@ -2951,6 +3064,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 // reference -- applyPvpDamage() has exactly one caller, and it
                 // is the petal loop -- with its own gate, its own throttle and
                 // its own cost to the petal.
+                sample.mark(Phase::Pvp);
                 resolvePetalPvp(world, source, victim, transform->position, targetBody.radius,
                                 nowMillis);
                 continue;
@@ -2958,6 +3072,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // A pet and a wild mob meet in the separation kernel's contact
             // list, which is built with the same gap the kernel keeps between
             // bodies rather than at exact circle overlap.
+            sample.mark(Phase::Geometry);
             const bool petPair = source.isMobBody && targetBody.mob && source.isPet != targetBody.pet;
 
             // A flower and an NPC meet flush, never overlapping: the flower
@@ -2983,13 +3098,19 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                     transform->position,targetBody.radius,targetHalf,transform->angle,
                     (petPair?kMobCollisionBuffer:0)+(flushPair?kNpcTouchSlack:0)).depth<0) continue;
             } else if (offset.lengthSq() > reach * reach) continue;
+            if (targetBody.player && isBurrowed(world, victim, nowMillis) &&
+                !canNoticeBurrowed(world, source.attacker, victim)) continue;
+
+            if (timing) ++overlaps;
 
             // A summoned firefly discharges on the tick its body reaches a wild
             // mob, as a wild one does on reaching a flower -- above the body's
             // own hit, for the reason given there.
             if (petPair && source.isPet && source.lightningRadius > 0.0) {
+                sample.mark(Phase::Writeback);
                 dischargeOnContact(world, grid, source, nowMillis);
             }
+            sample.mark(Phase::Eligibility);
 
             // A TypeScript mob bump is independent of damage: it still lands
             // during respawn invulnerability, is not throttled by the damage
@@ -3002,6 +3123,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                                           world.has<Health>(victim) &&
                                           canDamage(world, source.attacker, victim);
             if (mobTouchesPlayer) {
+                sample.mark(Phase::Writeback);
                 // resolvePlayerMobContact() breaks after its first collision:
                 // one flower wedged in a pile takes one hit/bump per tick, not
                 // a full stack. Preserve that rule across C++'s source-first
@@ -3046,6 +3168,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                 if (source.lightningRadius > 0.0) {
                     dischargeOnContact(world, grid, source, nowMillis);
                 }
+                sample.mark(Phase::Eligibility);
             }
 
             if (const auto* petal = world.tryGet<PetalInstance>(source.attacker)) {
@@ -3090,6 +3213,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
 
             // A claw's bonus is decided here, per victim, off the health the
             // victim has BEFORE this hit.
+            sample.mark(Phase::Formula);
             const double baseDamage = wild ? source.damage * source.wildDamageScale : source.damage;
             double swing = swingDamage(world, baseDamage, source.critDamage, victim);
             if (wild && technique && technique->technique == HyperTechnique::TomatoRipening) {
@@ -3171,6 +3295,7 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                                          HyperTechnique::GuardDisc);
                 }
             }
+            sample.mark(Phase::Writeback);
             const auto beforeHitEvents = events_ ? events_->events().size() : 0;
             // The direct hit's victim was checked above, and only reads and
             // rolls intervene. A shared pool still checks its own recipient.
@@ -3389,6 +3514,19 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             // ending the loop, which is what canHit() refusing above does.
             if (source.isPlayerBody && !hit.refused) break;
         }
+        if (timing) {
+            if (usePlan) ++timing->planned; else ++timing->fallback;
+            const auto raw = usePlan ? plan->raw : candidates.size();
+            auto& density = timing->realms[realmIndex(source.realm)];
+            ++density.sources;
+            density.raw += raw;
+            density.overlaps += overlaps;
+            density.visits += at - first + (at < last && !ricochetHit ? 1 : 0);
+            if (raw > density.peak) {
+                density.peak = raw;
+                density.hotspot = source.position;
+            }
+        }
     }
 }
 
@@ -3541,6 +3679,7 @@ void CombatSystem::resolvePetalPvp(World& world, const MeleeSource& source, Enti
     const PetalInstance* petal = world.tryGet<PetalInstance>(source.attacker);
     if (petal == nullptr) return;
     const Entity owner = petal->owner;
+    if (isBurrowed(world, victim, nowMillis)) return;
     // The reference skips its own flower by id and its splitter half by socket
     // -- one person, however many bodies -- before anything is charged. Here
     // the ring resolves back to its owner for the first, and the second is the
@@ -3806,6 +3945,8 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             const auto impact = candidate.testLive ? sweepLiveShotTarget(world, shot, victim)
                                                   : std::optional<ShotImpact>{candidate.impact};
             if (!impact) continue;
+            if (isBurrowed(world, victim, nowMillis) &&
+                !canNoticeBurrowed(world, shot.entity, victim)) continue;
             // Above canHit() on purpose: a glitch shot marks the flower it
             // touches whether or not the hit itself is refused, and a
             // flower under respawn protection is not in `impacts_` at all.

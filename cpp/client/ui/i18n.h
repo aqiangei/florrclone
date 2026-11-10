@@ -102,6 +102,8 @@ enum class Msg : std::uint16_t {
     Account,
     Stack,
     NoGuild,
+    GuildTagHint,
+    GuildTagField,
     Drops,
     SignedInAs,
     LogOut,

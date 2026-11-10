@@ -1,6 +1,7 @@
 #include "server/workers.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 
 #if defined(__EMSCRIPTEN_PTHREADS__)
@@ -97,7 +98,8 @@ unsigned ServerWorkers::count() const {
 #endif
 }
 
-void ServerWorkers::run(std::size_t jobs, unsigned limit, const Job& job) {
+void ServerWorkers::run(std::size_t jobs, unsigned limit, const Job& job, double* joinMs) {
+    if (joinMs) *joinMs = 0.0;
 #ifdef FLIX_SERVER_THREADS
     const unsigned active = static_cast<unsigned>(std::min<std::size_t>(
         std::min(count(), limit), jobs == 0 ? 0 : jobs - 1));
@@ -112,9 +114,12 @@ void ServerWorkers::run(std::size_t jobs, unsigned limit, const Job& job) {
         }
         impl_->ready.notify_all();
         impl_->drain(0, 0);
+        using Clock = std::chrono::steady_clock;
+        const auto joinStart = joinMs ? Clock::now() : Clock::time_point{};
         std::unique_lock lock(impl_->mutex);
         impl_->active = 0;
         impl_->done.wait(lock, [&] { return impl_->running == 0; });
+        if (joinMs) *joinMs = std::chrono::duration<double, std::milli>(Clock::now() - joinStart).count();
         impl_->job = nullptr;
         return;
     }

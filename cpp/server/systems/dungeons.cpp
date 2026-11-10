@@ -319,14 +319,16 @@ std::string DungeonSystem::waveCommand(World& world, const Terrain& terrain, Ent
         if (start) wave_ = {};
         return "当前状态暂时无法进入 Wave。";
     }
-    return "已进入 Wave 房 " + wave_.code + "，请看顶部准备倒计时。普通波怪有 25% 机会按掉落表结算，奖励波为 50%。永恒／超凡每服分别每 6／12 分钟最多结算一次。";
+    return "已进入 Wave 房 " + wave_.code + "，请看顶部准备倒计时。第 11 波起难度和通关星星提高。永恒／超凡每服分别每 6／12 分钟最多结算一次。";
 }
 
 void DungeonSystem::leaveWave(World& world, const WaveMember& member) {
     if (inWave(world, member.player) && moveToRealm)
         moveToRealm(member.player, member.returnRealm, member.returnAt);
-    if (!inWave(world, member.player) && world.has<WavePlayer>(member.player))
+    if (!inWave(world, member.player) && world.has<WavePlayer>(member.player)) {
         world.remove<WavePlayer>(member.player);
+        world.remove<TotemRegeneration>(member.player);
+    }
 }
 
 void DungeonSystem::summarizeWave(const WaveMember& member, const std::string& reason) const {
@@ -362,7 +364,10 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
     wave_.members.erase(std::remove_if(wave_.members.begin(), wave_.members.end(), [&](const auto& member) {
         const auto* at = world.tryGet<Transform>(member.player);
         if (at && at->realm == wave_.realm) return false;
-        if (world.has<WavePlayer>(member.player)) world.remove<WavePlayer>(member.player);
+        if (world.has<WavePlayer>(member.player)) {
+            world.remove<WavePlayer>(member.player);
+            world.remove<TotemRegeneration>(member.player);
+        }
         return true;
     }), wave_.members.end());
 
@@ -467,6 +472,8 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
     const auto tier = tiers[std::min<std::uint64_t>(round.number - 1, 4)];
     const double healthScale = 1.12 + 0.09 * static_cast<double>(
         std::min<std::uint64_t>(round.number - 1, 24));
+    const double lateProgress = round.number > 10
+        ? static_cast<double>(std::min<std::uint64_t>(round.number - 10, 20)) : 0.0;
     const auto theme = waveTheme(round.number);
     const bool hyper = theme == net::WaveTheme::HyperBoss;
     const bool eternal = theme == net::WaveTheme::EternalBoss;
@@ -543,8 +550,10 @@ void DungeonSystem::runWave(World& world, const Terrain& terrain, const ContentR
         } else if (eternal) {
             health.max = content.mobStats(type, Rarity::Super).health * 1.5;
         }
-        health.max *= healthScale;
+        health.max *= healthScale * (1.0 + 0.02 * lateProgress);
         health.current = health.max;
+        if (auto* contact = world.tryGet<ContactDamage>(enemy))
+            contact->amount *= 1.0 + 0.01 * lateProgress;
         round.enemies.push_back(enemy);
         ++round.queued;
         ++liveEnemies;

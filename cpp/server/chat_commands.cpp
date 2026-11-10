@@ -767,6 +767,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     if (verb == "/guild-kick")   { guildKick(session, connection, argument); return true; }
     if (verb == "/guild-transfer") { guildTransfer(session, connection, argument); return true; }
     if (verb == "/guild-deputy") { guildDeputy(session, connection, argument); return true; }
+    if (verb == "/guild-undeputy") { guildDeputy(session, connection, argument, true); return true; }
     if (verb == "/guild-accept") { handleGuildAccept(session, connection); return true; }
     if (verb == "/guild-decline"){ handleGuildDecline(session, connection); return true; }
     if (verb == "/guild-leave")  { handleGuildLeave(session, connection); return true; }
@@ -781,6 +782,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         const Json& guild = database_.storedTable("guilds")[guildName];
         const Json& members = guild["memberUsernames"];
         const std::string leader = lowerCase(guild["leaderUsername"].asString());
+        const auto deputies = guildDeputies(guild);
         std::string lines;
         for (std::size_t i = 0; i < members.size(); ++i) {
             const std::string member = members[i].asString();
@@ -794,6 +796,8 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             lines += " @" + member;
             if (lowerCase(member) == leader) {
                 lines += " <span style=\"color: #ffd54f;\">(Leader)</span>";
+            } else if (std::find(deputies.begin(), deputies.end(), member) != deputies.end()) {
+                lines += " (Deputy)";
             }
         }
         const std::string description = guild["description"].asString();
@@ -830,6 +834,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         out("Guild commands: /guild-create &lt;tag&gt; [name], /guild-invite &lt;username&gt;, "
             "/guild-accept, /guild-decline, /guild-leave, /guild-kick &lt;username&gt;, "
             "/guild-rename &lt;name&gt;, /guild-description [text], "
+            "/guild-deputy &lt;username&gt;, /guild-undeputy &lt;username&gt;, "
             "/guild-info, /guild-squad, /guild-list");
         return true;
     }
@@ -1022,7 +1027,8 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/guild-create &lt;tag&gt; [name] - Create a new guild (alphanumeric "
                 "tag, optional display name)<br/>";
         help += "/guild-invite &lt;username&gt; - Invite a player (leader or deputy)<br/>";
-        help += "/guild-deputy [username] - Set or remove the invite-only deputy (leader only)<br/>";
+        help += "/guild-deputy &lt;username&gt; - Appoint an invite-only deputy (leader only)<br/>";
+        help += "/guild-undeputy &lt;username&gt; - Remove a deputy (leader only)<br/>";
         help += "/guild-transfer &lt;username&gt; - Transfer leadership (leader only)<br/>";
         help += "/guild-accept / /guild-decline - Respond to a guild invite<br/>";
         help += "/guild-leave - Leave your guild<br/>";
@@ -2060,7 +2066,7 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         const Vec2 at = mine->position;
         const Realm realm = mine->realm;
         const Entity npc = npcs_->spawnNpc(world_, *terrain_, content(), mobIndex, rarity, at,
-                                           realm, clockMillis_, side);
+                                           realm, clockMillis_, side, wallClockMillis_);
         // Read back rather than echoed: the mob's own floor may have raised
         // the tier, and the side may have come from its `npc` block.
         const Rarity placed = world_.isAlive(npc) ? world_.get<Npc>(npc).rarity : rarity;

@@ -2,6 +2,7 @@
 #include "server/workers.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "shared/game/config.h"
@@ -366,7 +367,10 @@ void MovementSystem::runPlayerPhase(World& world, const Terrain& terrain,
 }
 
 void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
-                                   double nowMillis, double dt) {
+                                   double nowMillis, double dt, bool profile) {
+    auto* timing = profile ? &worldPhaseTiming_ : nullptr;
+    if (timing) *timing = {};
+    using Clock = std::chrono::steady_clock;
     bind(world);
     seekTargetsReady_ = false;
     for (auto& discs : meteorDiscs_) discs.clear();
@@ -376,14 +380,17 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
         meteorDiscs_[realmIndex(at.realm)].push_back(
             {at.position, sanitizeCollisionRadius(body.radius), at.realm});
     });
-    moveMobs(world, terrain, nowMillis, dt);
+    const auto mobStepsStarted = timing ? Clock::now() : Clock::time_point{};
+    moveMobs(world, terrain, nowMillis, dt, timing ? &timing->mobStepJoinMs : nullptr);
+    if (timing) timing->mobStepsMs =
+        std::chrono::duration<double, std::milli>(Clock::now() - mobStepsStarted).count();
     // Projectiles after mobs: a shot fired this tick takes its launch bearing
     // from where the mobs ended up, not from where they were.
     moveProjectiles(world, terrain, dt);
     // Separation last, once everything has moved -- the reference resolves
     // mob-vs-mob overlap in its combat phase for the same reason. A pass run
     // before the movers would have its work undone the same tick.
-    separateMobs(world, terrain);
+    separateMobs(world, terrain, timing);
     // Summons must stop at the same solid NPC skin as flowers. Their AI
     // still presses toward a training target, maintaining contact damage.
     collectNpcDiscs();
@@ -596,11 +603,12 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
                     true);
         // Loose petals before NPCs: a wax gives way and an NPC does not, so an
         // NPC is the last word on where the flower may stand, as a wall is.
-        if (!looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
+        const bool underground = isBurrowed(world, e, nowMillis);
+        if (!underground && !looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
         const auto* visuals = world.tryGet<PlayerVisuals>(e);
-        if (!stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter)))
+        if (!underground && !stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter)))
             pushOutOfStationaryMobs(world, terrain, transform, body.radius);
-        if (!npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
+        if (!underground && !npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
         // Discard velocity into a wall while retaining the achieved slide.
         // Otherwise turning away first has to cancel a full inward velocity.
         motion.velocity = velocityAfterStep(velocity, movement, dt, 1.0);
@@ -845,7 +853,7 @@ bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 
 }
 
 void MovementSystem::moveMobs(World& world, const Terrain& terrain,
-                              double nowMillis, double dt) {
+                              double nowMillis, double dt, double* joinMs) {
     const ContentRegistry& registry = content();
     const auto moveMob = [&](Entity e, Transform& transform, Motion& motion, const Body& body) {
         if (const auto* ai = world.tryGet<MobAi>(e); ai && ai->sleeping) return;
@@ -949,7 +957,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         const auto& batch = mobMovementBatches_[index];
         for (std::size_t i = 0; i < batch.size; ++i)
             moveMob(batch.entities[i], batch.transforms[i], batch.motions[i], batch.bodies[i]);
-    });
+    }, joinMs);
 }
 
 void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, double dt) {
@@ -1276,7 +1284,8 @@ void MovementSystem::buildSeparationSet(World& world) {
     });
 }
 
-void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
+void MovementSystem::separateMobs(World& world, const Terrain& terrain, WorldPhaseTiming* timing) {
+    using Clock = std::chrono::steady_clock;
     buildSeparationSet(world);
     if (separationSet_.empty()) return;
 
@@ -1350,16 +1359,20 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
     constexpr std::size_t batchSize = 16;
     const unsigned limit = workers ? std::min(workerLimit, workers->count()) : 0;
     separationScratch_.resize(limit + 1);
+    const auto solveStarted = timing ? Clock::now() : Clock::time_point{};
     if (limit && separationSet_.size() >= 128) {
         workers->run((separationSet_.size() + batchSize - 1) / batchSize, limit,
                      [&](std::size_t batch, unsigned lane) {
             const auto end = std::min((batch + 1) * batchSize, separationSet_.size());
             for (std::size_t i = batch * batchSize; i < end; ++i)
                 accumulatePush(separationSet_[i], separationScratch_[lane]);
-        });
+        }, timing ? &timing->separationJoinMs : nullptr);
     } else {
         for (auto& entry : separationSet_) accumulatePush(entry, separationScratch_[0]);
     }
+
+    if (timing) timing->separationSolveMs =
+        std::chrono::duration<double, std::milli>(Clock::now() - solveStarted).count();
 
     // The cap is on the SUM, not on each pair: a mob wedged in a crowd would
     // otherwise be moved by every neighbour at once.

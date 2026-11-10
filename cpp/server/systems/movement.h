@@ -238,7 +238,13 @@ public:
     /// preserve that ordering while this class still owns all integration.
     void runPlayerPhase(World& world, const Terrain& terrain, double nowMillis, double dt,
                         double controlSeconds = 0.0);
-    void runWorldPhase(World& world, const Terrain& terrain, double nowMillis, double dt);
+    struct WorldPhaseTiming {
+        double mobStepsMs = 0, separationSolveMs = 0;
+        double mobStepJoinMs = 0, separationJoinMs = 0;
+    };
+    void runWorldPhase(World& world, const Terrain& terrain, double nowMillis, double dt,
+                       bool profile = false);
+    const WorldPhaseTiming& lastWorldPhaseTiming() const { return worldPhaseTiming_; }
 
 private:
     /// Queries are cached because rebuilding one per tick throws away the
@@ -380,14 +386,15 @@ private:
     /// never do), and each other (by mass). Runs after separation, so it sees
     /// the mobs where they finally stand this tick.
     void collideLooseBodies(World& world, const Terrain& terrain);
-    void moveMobs(World& world, const Terrain& terrain, double nowMillis, double dt);
+    WorldPhaseTiming worldPhaseTiming_;
+    void moveMobs(World& world, const Terrain& terrain, double nowMillis, double dt, double* joinMs);
     bool stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
                           Vec2& position, double radius, double wallRadius = kMobWallRadius) const;
     void moveProjectiles(World& world, const Terrain& terrain, double dt);
 
     /// Pushes overlapping mobs apart. Runs once everything has moved, so a
     /// shove is never undone by the mover it was computed against.
-    void separateMobs(World& world, const Terrain& terrain);
+    void separateMobs(World& world, const Terrain& terrain, WorldPhaseTiming* timing);
     /// Flattens the eligible mobs into `separationSet_` and files them in
     /// `separationGrid_`.
     void buildSeparationSet(World& world);

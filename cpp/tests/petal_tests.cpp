@@ -59,6 +59,7 @@ const char* const kPetalsJson = R"JSON({
   "mecha_missile":{"name":"Mecha Missile","damage":35,"health":2,"size":1,"cooldown":1500,"count":1,"projectile":{"count":1,"spreadAngle":0,"speed":600,"distance":2400}},
   "antennae":{"name":"Antennae","damage":0,"health":1,"count":0,"noPhysics":true,"equipFlags":"Antennae"},
   "shovel":{"name":"Shovel","damage":0,"health":null,"count":1,"cooldown":3000,"burrowChargeMillis":2000,"burrowDurationMillis":2000},
+  "raindrop":{"name":"Raindrop","damage":20,"health":30,"count":1,"cooldown":1000},
   "pod":      {"name":"Pod","damage":2.5,"health":10,"size":1,"cooldown":1000,"count":4,"clumped":true,"defendOnly":true,"projectile":{"count":1,"spreadAngle":1.5708,"speed":800,"distance":1000},"color":"#8AC255"},
   "peaclump": {"name":"Peaclump","damage":6,"health":5,"size":1,"cooldown":1000,"count":4,"clumped":true,"projectile":{"count":1,"spreadAngle":0,"speed":800,"distance":1000},"color":"#00FF00"},
   "emitter":  {"name":"Emitter","damage":2,"health":null,"size":1,"cooldown":1000,"count":1,"projectile":{"count":2,"spreadAngle":0.3,"speed":400,"distance":400},"color":"#00FF00"},
@@ -1532,6 +1533,37 @@ TEST(a_battery_ignores_self_damage_and_invulnerability) {
     rig.world.get<Health>(rig.player).invulnerableUntilMillis=0;
     combat.applyDamage(rig.world,rig.player,rig.player,1,rig.now);rig.tick();
     CHECK_EQ(countStrikes(rig),0u);CHECK_EQ(batteryCharges(rig),3);
+}
+
+TEST(battery_retaliates_in_pvp_without_triggering_another_battery) {
+    CHECK(contentLoaded());
+    Rig rig;
+    rig.equip(0, "battery");
+    rig.settleEquips();
+    const Vec2 origin = rig.position(rig.player);
+    const auto makePlayer = [&](Vec2 position) {
+        const Entity body = rig.world.create();
+        rig.world.add<PlayerTag>(body);
+        rig.world.add<Faction>(body, Faction{Team::Players, true});
+        rig.world.add<Transform>(body, Transform{position, 0.0});
+        rig.world.add<Body>(body, Body{10, 1});
+        rig.world.add<Health>(body, Health{1000, 1000});
+        return body;
+    };
+    const Entity attacker = makePlayer(origin + Vec2{80, 0});
+    const Entity bystander = makePlayer(origin + Vec2{40, 0});
+    const Entity shot = rig.world.create();
+    rig.world.add<GroundEffect>(shot, GroundEffect{GroundEffectKind::Poison, attacker});
+    CombatSystem combat;
+    CHECK(combat.applyDamage(rig.world, rig.player, shot, 10, rig.now).applied > 0);
+    rig.world.destroy(shot);
+    rig.tick();
+    CHECK_EQ(batteryCharges(rig), 2);
+    ricochetCombatTick(rig, combat);
+    const auto& attackerHealth = rig.world.get<Health>(attacker);
+    CHECK(attackerHealth.current < attackerHealth.max);
+    CHECK_EQ(attackerHealth.directHurtSerial, 0u);
+    CHECK_NEAR(rig.world.get<Health>(bystander).fraction(), 1.0, 1e-9);
 }
 
 // ---------------------------------------------------------------------------
@@ -6397,6 +6429,46 @@ TEST(wiki_mechanism_shovel_charges_spends_reload_and_expires_without_permanent_i
     CHECK(combat.applyDamage(rig.world,rig.player,target,1,rig.now).applied>0);
     rig.setFlags(0);rig.tick(65);CHECK(!rig.world.get<BurrowState>(rig.player).active);
     CHECK(combat.applyDamage(rig.world,rig.player,target,1,rig.now).applied>0);
+}
+
+TEST(shovel_prevents_a_new_volley_and_forces_surface_time_with_two_slots) {
+    CHECK(contentLoaded());
+    Rig rig;
+    // Grapes would fire on defend before the shovels if actions ran in slot order.
+    rig.equip(0, "grapes");
+    rig.equip(1, "shovel");
+    rig.equip(2, "shovel");
+    rig.equip(3, "raindrop");
+    rig.settleEquips();
+    rig.tick(65);
+    auto& cooldown = rig.world.get<PetalSlotState>(rig.player);
+    cooldown.raindropReadyAtMillis = rig.now;
+    rig.setFlags(net::InputDefend);
+    rig.tick();
+    const auto* state = rig.world.tryGet<BurrowState>(rig.player);
+    CHECK(state && state->active);
+    if (!state) return;
+    const double surfaceAt = state->untilMillis;
+    const double readyAt = state->readyAtMillis;
+    Query<ProjectileTag> shots{rig.world};
+    std::vector<Entity> entities;
+    while (rig.now + net::kTickMillis < surfaceAt) {
+        shots.collect(entities);
+        CHECK(entities.empty());
+        CHECK(rig.world.get<PetalSlotState>(rig.player).raindropReadyAtMillis < rig.now);
+        rig.tick();
+    }
+    rig.tick();
+    CHECK(!rig.world.get<BurrowState>(rig.player).active);
+    shots.collect(entities);
+    CHECK(!entities.empty());
+    CHECK(rig.world.get<PetalSlotState>(rig.player).raindropReadyAtMillis > rig.now);
+    while (rig.now + net::kTickMillis < readyAt) {
+        rig.tick();
+        CHECK(!rig.world.get<BurrowState>(rig.player).active);
+    }
+    rig.tick();
+    CHECK(rig.world.get<BurrowState>(rig.player).active);
 }
 
 TEST(wiki_mechanism_lentil_attracts_close_sawblade_and_its_mimic) {

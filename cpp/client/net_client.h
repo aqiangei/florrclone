@@ -174,7 +174,7 @@ struct GuildState {
     std::string name;
     std::string description;
     std::string leader;
-    std::string deputy;
+    std::vector<std::string> deputies;
     std::vector<Member> members;
 
     std::size_t onlineCount() const {

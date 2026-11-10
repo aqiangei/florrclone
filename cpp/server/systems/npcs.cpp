@@ -25,7 +25,6 @@ std::vector<std::uint8_t> availableRecipes(const MobConfig& config,
 
 void NpcSystem::bind(World& world) {
     if (boundWorld_ == &world) return;
-    assemblerRefreshAt_.clear();
     boundWorld_ = &world;
     npcs_.emplace(world);
 }
@@ -129,7 +128,7 @@ Vec2 NpcSystem::pickRoamingSpot(const Terrain& terrain, const ContentRegistry& c
 
 Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRegistry& content,
                            std::uint16_t mobIndex, Rarity rarity, Vec2 at, Realm realm,
-                           double nowMillis, std::optional<Team> side) {
+                           double nowMillis, std::optional<Team> side, double wallMillis) {
     bind(world);
     if (mobIndex >= content.mobCount()) return NULL_ENTITY;
     const MobConfig& config = content.mob(mobIndex);
@@ -207,7 +206,8 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
         const auto current = std::find(recipes.begin(), recipes.end(), npc.recipe);
         npc.nextRecipe = recipes[(static_cast<std::size_t>(current - recipes.begin()) + 1) % recipes.size()];
         if (npc.service == NpcService::Assembler && recipes.size() > 1)
-            npc.recipeRefreshAtMillis = nowMillis + kAssemblerRecipeRefreshMillis;
+            npc.recipeRefreshAtMillis = (wallMillis >= 0.0 ? wallMillis : nowMillis) +
+                kAssemblerRecipeRefreshMillis;
     }
     npc.cruises = !still && config.beeFlight && stats.speed > 0.0;
     const BeeCruiseDrive cruise = beeCruiseDrive(stats.speed, stats.cruiseSpeed);
@@ -217,8 +217,6 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
     npc.cruise.headingPickedMillis = nowMillis;
     npc.cruise.phase = rng_.angle();
     world.add<Npc>(e, npc);
-    if(npc.service==NpcService::Assembler && recipes.size()>1)
-        assemblerRefreshAt_[e]=nowMillis+kAssemblerRecipeRefreshMillis;
 
     world.add<Replicated>(e, Replicated{net::EntityKind::Npc, 0, mobIndex, rarity, 0});
     if (netIds != nullptr) world.add<NetId>(e, NetId{netIds->next()});
@@ -257,7 +255,7 @@ Vec2 NpcSystem::clearAssemblerPosition(const Terrain& terrain, const ContentRegi
 }
 
 void NpcSystem::placeMissing(World& world, const Terrain& terrain, const ContentRegistry& content,
-                             double nowMillis) {
+                             double nowMillis, double wallMillis) {
     bind(world);
     for (Site& site : sites_) {
         if (site.entity != NULL_ENTITY && world.isAlive(site.entity) && world.has<NpcTag>(site.entity)) {
@@ -267,46 +265,43 @@ void NpcSystem::placeMissing(World& world, const Terrain& terrain, const Content
         if (content.mob(site.mobIndex).npc.service == NpcService::Assembler)
             site.position = clearAssemblerPosition(terrain, content, site);
         site.entity = spawnNpc(world, terrain, content, site.mobIndex, site.rarity, site.position,
-                               site.realm, nowMillis);
+                               site.realm, nowMillis, std::nullopt, wallMillis);
     }
 }
 
 void NpcSystem::run(World& world, const Terrain& terrain, const ContentRegistry& content,
-                    const std::vector<RealmPoint>& players, double nowMillis) {
+                    const std::vector<RealmPoint>& players, double nowMillis, double wallMillis) {
     bind(world);
+    if (wallMillis < 0.0) wallMillis = nowMillis;
     // Before the query walk, never inside it: a create relocates rows.
-    placeMissing(world, terrain, content, nowMillis);
+    placeMissing(world, terrain, content, nowMillis, wallMillis);
 
     // Replace the station to publish its new recipe through the existing NPC
     // spawn record. A recipe is not an update field; editing it in place would
     // leave clients displaying the old recipe until they reconnect.
     std::vector<Entity> refresh;
-    for(auto it=assemblerRefreshAt_.begin();it!=assemblerRefreshAt_.end();) {
-        if(!world.isAlive(it->first)||!world.has<Npc>(it->first)) {
-            it=assemblerRefreshAt_.erase(it);continue;
-        }
-        if(nowMillis>=it->second) {
-            refresh.push_back(it->first);
-        }
-        ++it;
-    }
-    for(const auto old:refresh) {
+    npcs_->each([&](Entity entity, NpcTag&, Npc& npc, Transform&) {
+        if (npc.recipeRefreshAtMillis > 0.0 && wallMillis >= npc.recipeRefreshAtMillis)
+            refresh.push_back(entity);
+    });
+    for (const Entity old : refresh) {
         const auto npc=world.get<Npc>(old);
         const auto at=world.get<Transform>(old);
         const auto side=world.get<Faction>(old).team;
-        auto recipes=availableRecipes(content.mob(npc.configIndex),content,npc.rarity);
-        recipes.erase(std::remove(recipes.begin(),recipes.end(),npc.recipe),recipes.end());
-        if(recipes.empty()){assemblerRefreshAt_.erase(old);continue;}
-        const auto recipe=npc.nextRecipe;
-        world.destroy(old);assemblerRefreshAt_.erase(old);
+        const auto recipes = availableRecipes(content.mob(npc.configIndex), content, npc.rarity);
+        const auto announced = std::find(recipes.begin(), recipes.end(), npc.nextRecipe);
+        if (announced == recipes.end() || recipes.size() < 2) {
+            world.get<Npc>(old).recipeRefreshAtMillis = 0.0;
+            continue;
+        }
+        world.destroy(old);
         const auto replacement=spawnNpc(world,terrain,content,npc.configIndex,npc.rarity,
-                                         at.position,at.realm,nowMillis,side);
+                                         at.position,at.realm,nowMillis,side,wallMillis);
         if(replacement!=NULL_ENTITY) {
             auto& next = world.get<Npc>(replacement);
-            next.recipe = recipe;
-            const auto all = availableRecipes(content.mob(npc.configIndex), content, npc.rarity);
-            const auto found = std::find(all.begin(), all.end(), recipe);
-            next.nextRecipe = all[(static_cast<std::size_t>(found - all.begin()) + 1) % all.size()];
+            next.recipe = *announced;
+            next.nextRecipe = recipes[(static_cast<std::size_t>(announced - recipes.begin()) + 1) %
+                                      recipes.size()];
         }
         for(auto& site:sites_)if(site.entity==old)site.entity=replacement;
     }

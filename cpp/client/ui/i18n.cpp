@@ -96,6 +96,8 @@ constexpr Entry kTable[] = {
     {"Account", "账户"},
     {"Stack", "堆叠"},
     {"No guild", "无公会"},
+    {"Tags use letters or digits. Three characters are allowed.", "标签可用英文字母或数字，3 位也可以。"},
+    {"Guild tag", "公会标签"},
     {"Drops:", "掉落："},
     {"Signed in as", "当前登录"},
     {"Log Out", "退出登录"},

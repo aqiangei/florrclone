@@ -712,7 +712,8 @@ public:
     /// authentication; calling it twice on the same UTC day is a no-op that
     /// still reports the current state, which is what a reconnect needs.
     DailyStreakResult processDailyStreak(const std::string& userId);
-    int awardWaveStars(const std::string& userId, bool* reachedDailyCap = nullptr);
+    int awardWaveStars(const std::string& userId, bool* reachedDailyCap = nullptr,
+                       std::uint64_t round = 1);
     bool waveDailyStarCapReached(const std::string& userId) const;
     bool awardWaveBonusHammer(const std::string& userId);
     /// Every userId with a progress record, in stored order. Read with

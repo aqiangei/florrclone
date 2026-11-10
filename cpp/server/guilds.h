@@ -17,9 +17,11 @@
 // Shared between the guild message handlers and the chat commands that reach
 // the same records (`/guild-info`, `/guild-list`, `/admin guild_force_join`).
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "server/text.h"
 #include "shared/core/json.h"
@@ -27,6 +29,7 @@
 namespace flix {
 
 inline constexpr std::size_t kMaxGuildSize = 200;
+inline constexpr std::size_t kMaxGuildDeputies = 2;
 /// A guild invitation lapses after a minute, as the reference's does.
 inline constexpr std::int64_t kGuildInviteMillis = 60000;
 
@@ -94,6 +97,41 @@ inline int guildMemberIndex(const Json& guild, const std::string& username) {
         if (lowerCase(members[i].asString()) == key) return static_cast<int>(i);
     }
     return -1;
+}
+
+inline std::vector<std::string> guildDeputies(const Json& guild) {
+    std::vector<std::string> deputies;
+    const auto leader = lowerCase(guild["leaderUsername"].asString());
+    const auto add = [&](const Json& value) {
+        const auto name = value.asString();
+        if (name.empty() || lowerCase(name) == leader) return;
+        const int index = guildMemberIndex(guild, name);
+        if (index < 0) return;
+        const auto member = guild["memberUsernames"][static_cast<std::size_t>(index)].asString();
+        if (std::find(deputies.begin(), deputies.end(), member) == deputies.end())
+            deputies.push_back(member);
+    };
+    const auto& stored = guild["deputyUsernames"];
+    if (stored.isArray()) {
+        for (const auto& value : stored.items()) {
+            add(value);
+            if (deputies.size() == kMaxGuildDeputies) break;
+        }
+    } else {
+        add(guild["deputyUsername"]);
+    }
+    return deputies;
+}
+
+inline void setGuildDeputies(Json& guild, const std::vector<std::string>& deputies) {
+    guild.erase("deputyUsername");
+    if (deputies.empty()) {
+        guild.erase("deputyUsernames");
+        return;
+    }
+    Json roles = Json::array();
+    for (const auto& name : deputies) roles.push(name);
+    guild["deputyUsernames"] = std::move(roles);
 }
 
 } // namespace flix

@@ -376,6 +376,10 @@ int main(int argc, char** argv) {
         else if (arg == "--no-slow-protection") config.adaptivePacing = false;
         else if (arg == "--background-save") config.backgroundSave = true;
         else if (arg == "--tick-probe") config.tickProbe = true;
+        else if (arg == "--contact-visit-probe") {
+            config.tickProbe = true;
+            config.contactVisitProbe = true;
+        }
         else if (arg == "--cert") config.certPath = next("--cert");
         else if (arg == "--key") config.keyPath = next("--key");
         else if (arg == "--web-root") config.webRoot = next("--web-root");

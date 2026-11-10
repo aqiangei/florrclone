@@ -396,9 +396,9 @@ TEST(guild_chat_commands_take_a_display_name_and_a_description) {
 
     NetClient client;
     CHECK(loginAs(h, client, "leader", "password7"));
-    client.sendChat("/guild-create beta2 Beta Team");
+    client.sendChat("/guild-create bt2 Beta Team");
     CHECK(h.stepUntil({&client}, [&] { return client.guild().joined; }, 200));
-    CHECK_EQ(client.guild().tag, std::string("BETA2"));
+    CHECK_EQ(client.guild().tag, std::string("BT2"));
     CHECK_EQ(client.guild().name, std::string("Beta Team"));
 
     client.sendChat("/guild-description Hello <there>");

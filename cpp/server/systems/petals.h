@@ -400,6 +400,8 @@ private:
     void stepPetalPhysics(World& world, const ContentRegistry& registry, PetalInstance& instance,
                           Transform& transform, Vec2 home, Vec2 orbit, double attractionRadius,
                           double spinSpeed, double nowMillis, double dt);
+    bool startBurrow(World& world, const ContentRegistry& registry, Entity player,
+                     double nowMillis);
     void runActions(World& world, const ContentRegistry& registry, Entity player,
                     double nowMillis, double dt);
 
@@ -496,7 +498,8 @@ private:
     /// fallback on that same ladder for a petal whose `damage` is 0.
     bool strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity,
                          int bounces = -1, double reachScale = 1.0,
-                         std::optional<double> magicEyeCastAt = std::nullopt, Entity firstTarget = NULL_ENTITY);
+                         std::optional<double> magicEyeCastAt = std::nullopt, Entity firstTarget = NULL_ENTITY,
+                         bool fromBattery = false);
     /// The strike's visual half: one event carrying the bolts' endpoints. The
     /// damage half is a field, and a field has nothing on the wire the client
     /// could draw a strike from.

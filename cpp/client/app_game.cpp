@@ -595,7 +595,8 @@ bool App::connectionLost() const {
 void App::drawMovementHelper(Canvas& canvas) {
     // AshFlor Rendering.cc antenna: thin ray from the flower toward the
     // cursor. Default on; skipped for touch HUD (no meaningful second pointer).
-    if (!menus_.settings().movementHelper) return;
+    const auto& settings = menus_.settings();
+    if (!settings.movementHelper || !settings.useMouseControls) return;
     if (touchControlsVisible()) return;
     if (!net_.selfPlaced()) return;
     if (screen_ != Screen::Playing && screen_ != Screen::Dead) return;

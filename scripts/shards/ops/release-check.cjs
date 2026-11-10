@@ -32,10 +32,13 @@ async function check(base,protocol,hash,{councilRealm}={}){
     assert([1,2,3].includes(councilRealm),'Invalid expected council realm');
     assert.equal(council.realm,councilRealm,'Unexpected unified council realm');
     assert.equal(council.totalUnits,3000000,'Unexpected unified council weight total');
-    for(const realm of [1,2,3]){
-      const sum=council.players.filter(row=>row.realm===realm).reduce((n,row)=>n+row.units,0);
-      assert.equal(sum,1000000,'Each realm must contribute one third of the council weights');
-    }
+    const shares = council.realmShares;
+    assert(Array.isArray(shares) && shares.length === 3, 'Invalid global council shares');
+    assert(shares.every(row => row && Number.isSafeInteger(row.units) && row.units >= 0 &&
+                                Number.isSafeInteger(row.players) && row.players >= 0), 'Invalid council realm totals');
+    assert.deepEqual(shares.map(row => row.realm).sort(), [1,2,3], 'Expected one council share per realm');
+    assert.equal(shares.reduce((n,row) => n + row.units, 0), council.totalUnits, 'Council realm weights do not add up');
+    assert.equal(shares.reduce((n,row) => n + row.players, 0), council.playerCount, 'Council realm player counts do not add up');
   }else if(council.players.length){
     assert.equal(council.players.reduce((sum,row)=>sum+row.units,0),1000000,'Council total must be exactly 100%');
   }

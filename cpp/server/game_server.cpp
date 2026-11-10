@@ -758,7 +758,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         if (!session || !session->authenticated() || session->entity != entity) return {};
         auto* live = world_.tryGet<PlayerProgress>(entity);
         bool reachedDailyCap = false;
-        const int stars = database_.awardWaveStars(session->userId, &reachedDailyCap);
+        const int stars = database_.awardWaveStars(session->userId, &reachedDailyCap, cleared);
         const bool hammer = bonus && database_.awardWaveBonusHammer(session->userId);
         if (stars <= 0 && !hammer) return {0, reachedDailyCap};
         if (live && stars > 0) {
@@ -1454,7 +1454,8 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
     const bool sessionsPeak = hasWindow && sessions > window.maxSessions;
     const bool transition = previousRate != rate;
     const bool save = saveProbe_.periodic || saveProbe_.poll.wall >= 25.0;
-    if (lagPeak || workPeak || sessionsPeak || transition || save) {
+    const bool contactVisitFrame = contactVisitFrame_ != ContactVisitFrame::None;
+    if (lagPeak || workPeak || sessionsPeak || transition || save || contactVisitFrame) {
         Json frame = Json::object();
         frame["tick"] = static_cast<double>(tick_);
         frame["wallStartMs"] = wallStart;
@@ -1473,6 +1474,80 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
             const auto& phase = tickPhases_[i];
             stages[phase.name] = phase.endedMillis - previous;
             previous = phase.endedMillis;
+        }
+        if (stages.contains("contact")) {
+            const auto& timing = combat_->contactTiming();
+            Json contact = Json::object();
+            contact["beginTickMs"] = contactBeginMs_;
+            contact["setupMs"] = timing.setupMs;
+            Json setup = Json::object();
+            setup["aurasMs"] = timing.aurasMs;
+            setup["gatherBodiesMs"] = timing.gatherBodiesMs;
+            setup["hostileGridMs"] = timing.hostileGridMs;
+            setup["gatherPetalsMs"] = timing.gatherPetalsMs;
+            setup["fileShotsMs"] = timing.fileShotsMs;
+            contact["prepareMs"] = std::move(setup);
+            contact["densityMs"] = timing.densityMs;
+            contact["residualMs"] = stages["contact"].asDouble() - contactBeginMs_ - timing.setupMs
+                - timing.parallelSearchMs - timing.fallbackSearchMs - timing.orderedMs - timing.densityMs;
+            contact["visitSampleStride"] = static_cast<double>(CombatSystem::kContactVisitSampleStride);
+            contact["sampleClockNs"] = timing.sampleClockNs;
+            contact["parallelSearchMs"] = timing.parallelSearchMs;
+            contact["fallbackSearchMs"] = timing.fallbackSearchMs;
+            contact["orderedMs"] = timing.orderedMs;
+            contact["planned"] = static_cast<double>(timing.planned);
+            contact["fallback"] = static_cast<double>(timing.fallback);
+            contact["hotspotRadius"] = CombatSystem::kProbeHotspotRadius;
+            Json maps = Json::array();
+            constexpr std::array<const char*, 5> kinds{"players", "mobs", "petals", "shots", "pets"};
+            constexpr std::array<const char*, static_cast<std::size_t>(CombatSystem::ContactVisitPhase::Count)>
+                visitPhases{"lookup", "geometry", "eligibility", "formula", "writeback", "pvp"};
+            for (std::size_t i = 0; i < timing.realms.size(); ++i) {
+                const auto& map = timing.realms[i];
+                if (!map.sources && !map.total[3]) continue;
+                Json row = Json::object(), local = Json::object();
+                row["realm"] = static_cast<double>(i);
+                if (const auto* data = worldMaps_.forRealm(static_cast<Realm>(i))) {
+                    row["map"] = data->templateId();
+                    row["prestige"] = data->prestige();
+                }
+                row["sources"] = static_cast<double>(map.sources);
+                row["raw"] = static_cast<double>(map.raw);
+                row["visits"] = static_cast<double>(map.visits);
+                row["nonPvpOverlaps"] = static_cast<double>(map.overlaps);
+                row["peak"] = static_cast<double>(map.peak);
+                if (map.sampled.visits) {
+                    row["sampledVisits"] = static_cast<double>(map.sampled.visits);
+                    Json ns = Json::object(), intervals = Json::object();
+                    for (std::size_t phase = 0; phase < visitPhases.size(); ++phase) {
+                        ns[visitPhases[phase]] = map.sampled.ms[phase] * 1e6 / map.sampled.visits;
+                        intervals[visitPhases[phase]] = static_cast<double>(map.sampled.intervals[phase]);
+                    }
+                    row["sampledNsPerVisit"] = std::move(ns);
+                    row["sampledIntervals"] = std::move(intervals);
+                }
+                for (std::size_t kind = 0; kind < kinds.size(); ++kind) {
+                    row[kinds[kind]] = static_cast<double>(map.total[kind]);
+                    local[kinds[kind]] = static_cast<double>(map.local[kind]);
+                }
+                if (map.peak) {
+                    row["cellX"] = grid_.cellX(static_cast<Realm>(i), map.hotspot.x);
+                    row["cellY"] = grid_.cellY(static_cast<Realm>(i), map.hotspot.y);
+                    row["near"] = std::move(local);
+                }
+                maps.push(std::move(row));
+            }
+            contact["maps"] = std::move(maps);
+            frame["contact"] = std::move(contact);
+        }
+        if (stages.contains("mob movement")) {
+            const auto& timing = movement_->lastWorldPhaseTiming();
+            Json movement = Json::object();
+            movement["mobStepsMs"] = timing.mobStepsMs;
+            movement["mobStepJoinMs"] = timing.mobStepJoinMs;
+            movement["separationSolveMs"] = timing.separationSolveMs;
+            movement["separationJoinMs"] = timing.separationJoinMs;
+            frame["mobMovementMs"] = std::move(movement);
         }
         frame["stagesMs"] = std::move(stages);
         frame["stageOtherMs"] = std::max(0.0, work - (previous - tickStartedMillis_));
@@ -1504,8 +1579,12 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
         persistence["sessionsSnapshotEdits"] = std::move(rowEdits);
         frame["save"] = std::move(persistence);
         const auto line = frame.dump();
-        if (transition || save)
+        if (contactVisitFrame) {
+            const char* label = contactVisitFrame_ == ContactVisitFrame::Trigger ? "contact-trigger" : "contact-sample";
+            std::printf("[tick-probe-frame] %s %s\n", label, line.c_str());
+        } else if (transition || save) {
             std::printf("[tick-probe-frame] %s %s\n", transition ? "transition" : "save", line.c_str());
+        }
         if (lagPeak) {
             window.maxLag = startLag;
             window.lagTick = tick_;
@@ -1577,6 +1656,7 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     wallClockMillis_ = wallMillis;
     clockMillis_ = nowMillis;
     tickPhaseCount_ = 0;
+    contactVisitFrame_ = ContactVisitFrame::None;
     sessionPhaseCount_ = 0;
     if (!bossClocksRestored_) restoreBossClocks(nowMillis);
     tickStartedMillis_ = monotonicMillis();
@@ -1937,14 +2017,28 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // The reference server resolves flower bodies and the petal ring inside
     // the player pipeline, before moveEnemies(). Keep that temporal boundary:
     // a mob cannot escape a petal it was already touching by moving first.
+    const double contactStart = config_.tickProbe ? monotonicMillis() : 0.0;
+    const bool sampleContact = contactVisitTicksLeft_ > 0;
+    const double contactPhaseStart = config_.contactVisitProbe ? tickPhases_[tickPhaseCount_ - 1].endedMillis : 0.0;
     combat_->beginTick(world_, nowMillis, dt, events_);
-    combat_->runContactPhase(world_, grid_, content(), nowMillis, &contactBodies_);
+    if (config_.tickProbe) contactBeginMs_ = monotonicMillis() - contactStart;
+    combat_->runContactPhase(world_, grid_, content(), nowMillis, &contactBodies_, config_.tickProbe, sampleContact);
     markTickPhase("contact");
+    if (sampleContact) {
+        --contactVisitTicksLeft_;
+        contactVisitFrame_ = ContactVisitFrame::Sample;
+    } else if (config_.contactVisitProbe && contactPhaseStart >= nextContactVisitBurstMs_ &&
+               tickPhases_[tickPhaseCount_ - 1].endedMillis - contactPhaseStart >= 30.0) {
+        // The trigger has already run. Sample its successors without replaying a hit.
+        contactVisitFrame_ = ContactVisitFrame::Trigger;
+        contactVisitTicksLeft_ = 4;
+        nextContactVisitBurstMs_ = contactPhaseStart + 10000.0;
+    }
 
     mobAi_->run(world_, *terrain_, mobTargetGrid_, activePlayers_, nowMillis,
                 net::kTickSeconds, commands_, &playerTargetGrid_);
     markTickPhase("mob ai");
-    movement_->runWorldPhase(world_, *terrain_, nowMillis, net::kTickSeconds);
+    movement_->runWorldPhase(world_, *terrain_, nowMillis, net::kTickSeconds, config_.tickProbe);
     markTickPhase("mob movement");
     // After the bodies have moved, as gardn places its segments: whatever
     // pushed a bead this tick swings the chain rather than being undone.
@@ -1991,7 +2085,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // while someone is in them.
     modes_->run(world_, *terrain_, content(), *spawning_, grid_, humanPlayers_, rng_, nowMillis);
     // Every flower, bots included, is somebody an NPC can turn to look at.
-    npcs_->run(world_, *terrain_, content(), activePlayers_, nowMillis);
+    npcs_->run(world_, *terrain_, content(), activePlayers_, nowMillis, wallClockMillis_);
     markTickPhase("modes+npcs");
     // Pickups can only collect drops. Keeping them out of the body grid
     // also keeps stationary loot out of projectile and aura queries.
@@ -3191,12 +3285,13 @@ void GameServer::handleSetUsername(Session& session, net::Connection& connection
     const std::string guildName = guildNameForUser(oldName);
     if (!guildName.empty()) {
         Json& guild = database_.rawTable("guilds")[guildName];
+        auto deputies = guildDeputies(guild);
         if (lowerCase(guild["leaderUsername"].asString()) == oldKey) {
             guild["leaderUsername"] = newName;
         }
-        if (lowerCase(guild["deputyUsername"].asString()) == oldKey) {
-            guild["deputyUsername"] = newName;
-        }
+        for (auto& deputy : deputies)
+            if (lowerCase(deputy) == oldKey) deputy = newName;
+        setGuildDeputies(guild, deputies);
         Json members = guild["memberUsernames"];
         Json renamed = Json::array();
         for (const Json& member : members.items()) {
@@ -4628,6 +4723,10 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     // It offers ONE recipe, its own (Npc::recipe): asking for another is a
     // window that has not caught up with which assembler it is at.
     const Npc& npc = world_.get<Npc>(assembler);
+    if (npc.recipeRefreshAtMillis > 0.0 && wallClockMillis_ >= npc.recipeRefreshAtMillis) {
+        reply(0, "The assembler is changing recipes. Try again in a moment.");
+        return;
+    }
     const std::vector<AssemblyRecipe>& recipes = content().mob(npc.configIndex).npc.recipes;
     if (recipeIndex >= recipes.size() || recipeIndex != npc.recipe) {
         reply(0, "The assembler does not make that.");
@@ -5312,7 +5411,8 @@ void GameServer::bankKills() {
     // Connections already credited for the corpse in hand; see the loop.
     std::vector<net::ConnectionId> paidAccounts;
     for (const CombatSystem::DeathRecord& death : combat_->deaths()) {
-        if (death.wasPlayer || world_.has<WaveEnemy>(death.entity)) continue;
+        if (death.wasPlayer) continue;
+        const bool waveEnemy = world_.has<WaveEnemy>(death.entity);
         const MobType* type = world_.tryGet<MobType>(death.entity);
         if (type == nullptr) continue;
 
@@ -5344,7 +5444,7 @@ void GameServer::bankKills() {
         selectLootRecipients(ranked, lootSlotsForRarity(type->rarity), &squadIndex_, recipients,
                              lootDamageFloor(type->rarity, health != nullptr ? health->max : 0.0));
 
-        const std::string mobId = content().mob(type->configIndex).id;
+        const std::string& mobId = content().mob(type->configIndex).id;
         const int stars = starsForKill(type->rarity);
 
         paidAccounts.clear();
@@ -5370,6 +5470,11 @@ void GameServer::bankKills() {
                 continue;
             }
             paidAccounts.push_back(session->connection);
+            if (waveEnemy) {
+                if (dungeons_->inWave(world_, share.player))
+                    petals_->onKill(world_, content(), share.player, clockMillis_);
+                continue;
+            }
             petals_->onKill(world_, content(), share.player, clockMillis_);
 
             PlayerRecord& record = database_.progress(session->userId);
@@ -5397,7 +5502,7 @@ void GameServer::bankKills() {
             session->profileDue = true;
         }
 
-        announceBossDefeat(death.entity, *type, ranked);
+        if (!waveEnemy) announceBossDefeat(death.entity, *type, ranked);
     }
 }
 
@@ -6422,6 +6527,38 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
         queueSharedView(session,connection,query);return;
     }
 
+    constexpr double kLeaderboardCacheMillis = 5000.0;
+    auto& cache = leaderboardCache_[includeAdmins ? 1 : 0];
+    if (wallClockMillis_ >= cache.refreshAtMillis) {
+        refreshLeaderboard(cache, includeAdmins);
+        cache.refreshAtMillis = wallClockMillis_ + kLeaderboardCacheMillis;
+    }
+    if (wallClockMillis_ >= leaderboardHoldingsRefreshAtMillis_) {
+        leaderboardHoldings_ = hyperHoldingBoard(database_, database_.nowMillis());
+        leaderboardHoldingsRefreshAtMillis_ = wallClockMillis_ + kLeaderboardCacheMillis;
+    }
+
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::Leaderboard));
+    w.u8(cache.shown);
+    w.u32(cache.users);
+    w.u32(session.admin ? cache.activeToday : 0);
+    w.raw(cache.rows.data(), cache.rows.size());
+    const auto& holdings = leaderboardHoldings_;
+    const auto total = static_cast<std::uint32_t>(holdings.size());
+    const auto offset = total ? std::min(requestedOffset / kHyperBoardPageSize,
+        (total - 1) / kHyperBoardPageSize) * kHyperBoardPageSize : 0;
+    const auto end = std::min(total, offset + kHyperBoardPageSize);
+    w.u32(total); w.u32(offset); w.u16(static_cast<std::uint16_t>(end - offset));
+    for (auto i = offset; i < end; ++i) {
+        const auto& row = holdings[i];
+        w.str(row.name); w.str(row.petal); w.u32(row.count); w.u32(row.ownerTotal);
+    }
+    w.raw(cache.playtimes.data(), cache.playtimes.size());
+    connection.send(w);
+}
+
+void GameServer::refreshLeaderboard(LeaderboardCache& cache, bool includeAdmins) {
     // Ranked over ACCOUNTS, not over the players currently online: the board is
     // a record of progress, and a top player who logged off has not lost it.
     struct Row {
@@ -6435,9 +6572,12 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
     // each row's cached text, so one request used to have the next save
     // re-serialise the whole users table on the tick thread (Database::Table).
     const Database& accounts = database_;
+    const std::int64_t dayAgo = accounts.nowMillis() - 24 * 60 * 60 * 1000;
+    cache.activeToday = 0;
     for (const std::string& username : accounts.usernames()) {
         const Account* account = accounts.findUser(username);
         if (account == nullptr) continue;
+        if (account->lastActiveAtMillis >= dayAgo) ++cache.activeToday;
         // Staff are off the board unless the asker ticked "Show Admins on
         // Leaderboard". The browser's getLeaderboard(limit, includeAdmins)
         // honours that for any caller, not only an admin: it reveals names
@@ -6459,39 +6599,21 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
     // how the browser's payload leaves the field out for everyone else -- and 0
     // is the same answer as "absent" to the panel, since the asker is always
     // active today themselves.
-    const std::int64_t dayAgo = database_.nowMillis() - 24 * 60 * 60 * 1000;
-    std::uint32_t activeToday = 0;
-    if (session.admin) {
-        for (const std::string& username : accounts.usernames()) {
-            const Account* account = accounts.findUser(username);
-            if (account && account->lastActiveAtMillis >= dayAgo) ++activeToday;
-        }
-    }
-
-    ByteWriter w;
-    w.u8(static_cast<std::uint8_t>(net::ServerMessage::Leaderboard));
-    w.u8(static_cast<std::uint8_t>(shown));
-    w.u32(static_cast<std::uint32_t>(database_.userCount()));
-    w.u32(activeToday);
+    cache.users = static_cast<std::uint32_t>(accounts.userCount());
+    cache.shown = static_cast<std::uint8_t>(shown);
+    cache.rows.clear();
     for (std::size_t i = 0; i < shown; ++i) {
-        w.str(*rows[i].name);
-        w.u16(static_cast<std::uint16_t>(levelFromTotalXp(rows[i].totalXp).level));
-        w.f64(rows[i].totalXp);
-    }
-    const auto holdings = hyperHoldingBoard(accounts, database_.nowMillis());
-    const auto total = static_cast<std::uint32_t>(holdings.size());
-    const auto offset = total ? std::min(requestedOffset / kHyperBoardPageSize,
-        (total - 1) / kHyperBoardPageSize) * kHyperBoardPageSize : 0;
-    const auto end = std::min(total, offset + kHyperBoardPageSize);
-    w.u32(total); w.u32(offset); w.u16(static_cast<std::uint16_t>(end - offset));
-    for (auto i = offset; i < end; ++i) {
-        const auto& row = holdings[i];
-        w.str(row.name); w.str(row.petal); w.u32(row.count); w.u32(row.ownerTotal);
+        cache.rows.str(*rows[i].name);
+        cache.rows.u16(static_cast<std::uint16_t>(levelFromTotalXp(rows[i].totalXp).level));
+        cache.rows.f64(rows[i].totalXp);
     }
     const auto playtimes = playtimeBoard(accounts, includeAdmins);
-    w.u8(static_cast<std::uint8_t>(playtimes.size()));
-    for (const auto& row : playtimes) { w.str(row.name); w.f64(row.seconds); }
-    connection.send(w);
+    cache.playtimes.clear();
+    cache.playtimes.u8(static_cast<std::uint8_t>(playtimes.size()));
+    for (const auto& row : playtimes) {
+        cache.playtimes.str(row.name);
+        cache.playtimes.f64(row.seconds);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6628,7 +6750,9 @@ ByteWriter GameServer::guildRosterMessage(const Json& guild) {
     w.str(guildDisplayName(guild));
     w.str(guild["description"].asString());
     w.str(guild["leaderUsername"].asString());
-    w.str(guild["deputyUsername"].asString());
+    const auto deputies = guildDeputies(guild);
+    w.u8(static_cast<std::uint8_t>(deputies.size()));
+    for (const auto& deputy : deputies) w.str(deputy);
     w.u16(static_cast<std::uint16_t>(members.size()));
     for (std::size_t i = 0; i < members.size(); ++i) {
         const std::string member = members[i].asString();
@@ -7032,8 +7156,11 @@ void GameServer::guildInvite(Session& session, net::Connection& connection,
     }
     const Json& guild = database_.storedTable("guilds")[guildName];
     const std::string inviter = lowerCase(session.username);
+    const auto deputies = guildDeputies(guild);
     if (lowerCase(guild["leaderUsername"].asString()) != inviter &&
-        lowerCase(guild["deputyUsername"].asString()) != inviter) {
+        std::none_of(deputies.begin(), deputies.end(), [&](const auto& name) {
+            return lowerCase(name) == inviter;
+        })) {
         sendNotice(connection, net::NoticeSeverity::Warning,
                    "Only the guild leader or deputy can invite players.");
         return;
@@ -7174,9 +7301,7 @@ void GameServer::handleGuildLeave(Session& session, net::Connection& connection)
         promoted = guild["memberUsernames"][std::size_t{0}].asString();
         guild["leaderUsername"] = promoted;
     }
-    const std::string deputy = lowerCase(guild["deputyUsername"].asString());
-    if (!deputy.empty() && (deputy == lowerCase(session.username) || deputy == lowerCase(promoted)))
-        guild.erase("deputyUsername");
+    setGuildDeputies(guild, guildDeputies(guild));
     database_.markDirty();
 
     sendGuildSystem(guild, session.username + " has left the guild.");
@@ -7208,14 +7333,14 @@ void GameServer::guildTransfer(Session& session, net::Connection& connection,
     }
     const auto member = guild["memberUsernames"][static_cast<std::size_t>(at)].asString();
     guild["leaderUsername"] = member;
-    if (lowerCase(guild["deputyUsername"].asString()) == lowerCase(member)) guild.erase("deputyUsername");
+    setGuildDeputies(guild, guildDeputies(guild));
     database_.markDirty();
     sendGuildSystem(guild, session.username + " 已将会长转让给 " + member + "。");
     broadcastGuildRoster(guild);
 }
 
 void GameServer::guildDeputy(Session& session, net::Connection& connection,
-                             const std::string& raw) {
+                             const std::string& raw, bool remove) {
     if (!session.authenticated()) return;
     const auto guildName = guildNameForUser(session.username);
     if (guildName.empty()) return;
@@ -7224,22 +7349,38 @@ void GameServer::guildDeputy(Session& session, net::Connection& connection,
         sendNotice(connection, net::NoticeSeverity::Warning, "只有现任会长可以设置副会长。");
         return;
     }
-    const std::string target = trimmed(raw);
+    auto deputies = guildDeputies(guild);
+    std::string target = trimmed(raw);
     if (target.empty()) {
-        if (guild["deputyUsername"].asString().empty()) return;
-        guild.erase("deputyUsername");
-        sendGuildSystem(guild, "已撤销副会长职位。");
-    } else {
-        const int index = guildMemberIndex(guild, target);
-        if (index < 0 || lowerCase(target) == lowerCase(session.username)) {
-            sendNotice(connection, net::NoticeSeverity::Warning, "请选择本公会的其他成员。");
+        if (remove || deputies.size() != 1) {
+            sendNotice(connection, net::NoticeSeverity::Info, "使用 /guild-deputy 名称任命，/guild-undeputy 名称撤销。");
             return;
         }
-        const auto member = guild["memberUsernames"][static_cast<std::size_t>(index)].asString();
-        if (guild["deputyUsername"].asString() == member) return;
-        guild["deputyUsername"] = member;
+        target = deputies.front();
+        remove = true;
+    }
+    const int index = guildMemberIndex(guild, target);
+    if (index < 0 || lowerCase(target) == lowerCase(session.username)) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "请选择本公会的其他成员。");
+        return;
+    }
+    const auto member = guild["memberUsernames"][static_cast<std::size_t>(index)].asString();
+    const auto appointed = std::find(deputies.begin(), deputies.end(), member);
+    if (remove) {
+        if (appointed == deputies.end()) return;
+        deputies.erase(appointed);
+        sendGuildSystem(guild, member + " 的副会长职位已撤销。");
+    } else {
+        if (appointed != deputies.end()) return;
+        if (deputies.size() >= kMaxGuildDeputies) {
+            sendNotice(connection, net::NoticeSeverity::Warning,
+                       "副会长名额已满，最多 " + std::to_string(kMaxGuildDeputies) + " 人。");
+            return;
+        }
+        deputies.push_back(member);
         sendGuildSystem(guild, member + " 已成为副会长，可以邀请新成员。");
     }
+    setGuildDeputies(guild, deputies);
     database_.markDirty();
     broadcastGuildRoster(guild);
 }
@@ -7276,7 +7417,7 @@ void GameServer::guildKick(Session& session, net::Connection& connection,
     const std::string member = guild["memberUsernames"][static_cast<std::size_t>(at)].asString();
     Json& members = guild["memberUsernames"];
     members.items().erase(members.items().begin() + at);
-    if (lowerCase(guild["deputyUsername"].asString()) == lowerCase(member)) guild.erase("deputyUsername");
+    setGuildDeputies(guild, guildDeputies(guild));
     database_.markDirty();
 
     sendGuildSystem(guild, member + " was kicked from the guild by " + session.username + ".");

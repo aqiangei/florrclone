@@ -136,6 +136,7 @@ struct Health {
     /// shield's yellow on every bite would flash for the whole fight.
     double hitCooldownUntilMillis = 0;
     std::uint64_t directHurtSerial = 0; // landed hostile direct hits; battery trigger
+    Entity directHurtPlayer = NULL_ENTITY;
 
     /// Whether either window is refusing damage at `nowMillis`.
     bool shielded(double nowMillis) const {
@@ -1112,6 +1113,7 @@ struct Npc {
     /// makes. 0 for every other NPC.
     std::uint8_t recipe = 0;
     std::uint8_t nextRecipe = 0;
+    /// Monotonic wall-clock deadline, on the same clock as snapshots.
     double recipeRefreshAtMillis = 0;
 };
 
@@ -1544,9 +1546,12 @@ struct LightningTarget {
     Entity victim = NULL_ENTITY;
     bool fromMagicEye = false;
     Rarity rarity = Rarity::Common;
+    bool fromBattery = false;
 };
 struct BurrowState {
-    double untilMillis=0;bool active=false;
+    double untilMillis = 0;
+    double readyAtMillis = 0;
+    bool active = false;
     std::uint16_t wormIndex=UINT16_MAX,desertCentipedeIndex=UINT16_MAX;
 };
 
@@ -1729,6 +1734,11 @@ inline bool isStanding(const World& world, Entity e) {
     const Health* health = world.tryGet<Health>(e);
     return health == nullptr || health->alive();
 }
+inline bool isBurrowed(const World& world, Entity entity, double nowMillis) {
+    const auto* state = world.tryGet<BurrowState>(entity);
+    return state && state->active && nowMillis < state->untilMillis;
+}
+
 inline bool canNoticeBurrowed(const World& world,Entity observer,Entity target){
     const auto* burrow=world.tryGet<BurrowState>(target);
     if(!burrow||!burrow->active)return true;
@@ -1736,6 +1746,7 @@ inline bool canNoticeBurrowed(const World& world,Entity observer,Entity target){
         if(const auto* mob=world.tryGet<MobType>(observer))return mob->configIndex==burrow->wormIndex||mob->configIndex==burrow->desertCentipedeIndex;
         if(const auto* shot=world.tryGet<Projectile>(observer)){observer=shot->owner;continue;}
         if(const auto* field=world.tryGet<GroundEffect>(observer)){observer=field->owner;continue;}
+        if(const auto* petal=world.tryGet<MobRingPetal>(observer)){observer=petal->mob;continue;}
         break;
     }
     return false;

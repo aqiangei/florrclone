@@ -447,6 +447,7 @@ void GameServer::handleUsePetal(Session& session, ByteReader& reader) {
     // on a flower they cannot see. The steered player's own click still lands
     // -- a splitter switch is theirs to make, and the control follows it.
     if (session.controlling != 0) return;
+    if (isBurrowed(world_, session.entity, clockMillis_)) return;
 
     const Loadout* loadout = world_.tryGet<Loadout>(session.entity);
     if (loadout == nullptr) return;

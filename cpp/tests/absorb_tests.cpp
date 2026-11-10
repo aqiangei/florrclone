@@ -101,6 +101,65 @@ TEST(the_basic_hyper_and_universals_cannot_be_absorbed) {
     CHECK(!absorbable(rose, Rarity::Universal));
 }
 
+TEST(legacy_recycle_request_cannot_turn_petals_into_stars) {
+    testsupport::HarnessFiles files("legacy-recycle");
+    ServerConfig config;
+    config.port = 0;
+    config.botCount = 0;
+    config.dataDir = dataDir();
+    config.databasePath = files.dbPath;
+    GameServer server;
+    std::string error;
+    CHECK(server.start(config, error));
+    if (!error.empty()) return;
+
+    net::Connection connection(-1, 86, "127.0.0.1");
+    server.onConnect(connection);
+    const auto send = [&](const ByteWriter& message) {
+        ByteReader reader(message.data(), message.size());
+        server.onMessage(connection, reader);
+        CHECK(reader.ok());
+    };
+    ByteWriter hello;
+    hello.u8(static_cast<std::uint8_t>(net::ClientMessage::Hello));
+    hello.u16(net::kProtocolVersion);
+    hello.u32(content().contentHash());
+    send(hello);
+    ByteWriter guest;
+    guest.u8(static_cast<std::uint8_t>(net::ClientMessage::RegisterGuest));
+    send(guest);
+    ByteWriter join;
+    join.u8(static_cast<std::uint8_t>(net::ClientMessage::JoinGame));
+    join.u16(1280);
+    join.u16(720);
+    join.str("");
+    join.str("Recycle QA");
+    join.boolean(false);
+    send(join);
+
+    const Entity player = onlyPlayer(server.world());
+    CHECK(player != NULL_ENTITY);
+    if (player == NULL_ENTITY) return;
+    const auto userId = server.world().get<PlayerAccount>(player).userId;
+    auto& record = testsupport::GameServerPeer::authorityDb(server).progress(userId);
+    const auto rose = content().petalIndex("rose");
+    record.setItemCount(Rarity::Super, "petal_rose", 10);
+    const auto stars = record.stars;
+    const auto xp = record.totalXp;
+
+    ByteWriter recycle;
+    recycle.u8(static_cast<std::uint8_t>(net::ClientMessage::Absorb));
+    recycle.u8(1);
+    recycle.u16(1);
+    recycle.u16(rose);
+    recycle.u8(static_cast<std::uint8_t>(Rarity::Super));
+    recycle.u32(10);
+    send(recycle);
+    CHECK_EQ(record.itemCount(Rarity::Super, "petal_rose"), 10);
+    CHECK_EQ(record.stars, stars);
+    CHECK_EQ(record.totalXp, xp);
+}
+
 TEST(absorbing_on_the_title_screen_pays_the_account) {
     Harness h("absorb-title", [](const std::string& path) {
         seedUser(path, "eater", "password7");

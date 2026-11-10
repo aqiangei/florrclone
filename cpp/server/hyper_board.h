@@ -34,8 +34,10 @@ inline std::vector<HyperHoldingRow> hyperHoldingBoard(const Database& db, double
         }
         // Two titans can hold the same type. Claims represent the same items,
         // not extra copies; released historical rows have no owner above.
-        for (const auto& [petal, count] : claims[account->id])
-            counts[petal] = std::max(counts[petal], count);
+        if (const auto held = claims.find(account->id); held != claims.end()) {
+            for (const auto& [petal, count] : held->second)
+                counts[petal] = std::max(counts[petal], count);
+        }
         std::uint64_t total = 0;
         for (const auto& [petal, count] : counts) total += count;
         for (const auto& [petal, count] : counts) if (count)

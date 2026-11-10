@@ -243,6 +243,23 @@ TEST(light_and_pollen_gain_petals_with_rarity) {
     CHECK_EQ(r.petalStats(basic, Rarity::Apex).count, r.petal(basic).count);
 }
 
+TEST(light_splits_damage_and_health_between_its_grains) {
+    const auto& registry = shipped().registry;
+    const auto light = registry.petalIndex("light");
+    for (int tier = 0; tier <= rarityIndex(Rarity::Unique); ++tier) {
+        const auto rarity = clampRarity(tier);
+        const auto& stats = registry.petalStats(light, rarity);
+        CHECK_NEAR(stats.damage * stats.count, 13 * petalStrengthScale(rarity), 1e-8);
+        CHECK_NEAR(stats.health * stats.count, 5 * petalStrengthScale(rarity), 1e-8);
+        CHECK_NEAR(stats.reloadMillis, 800.0, 1e-8);
+    }
+    const auto& eternal = registry.petalStats(light, Rarity::Unique);
+    const auto& hyper = registry.petalStats(light, Rarity::Apex);
+    CHECK_EQ(hyper.count, eternal.count);
+    CHECK_NEAR(hyper.damage, 2.0 * eternal.damage, 1e-8);
+    CHECK_NEAR(hyper.health, 1.5 * eternal.health, 1e-8);
+}
+
 TEST(every_shipped_entry_parses_into_something_usable) {
     const ContentRegistry& r = shipped().registry;
     for (std::uint16_t i = 0; i < r.mobCount(); ++i) {

@@ -162,7 +162,7 @@ TEST(jurassic_feedback_bone_stats_and_moon_rock_price) {
     CHECK(!shopSellsRarity(Rarity::Unique));
 }
 
-TEST(guild_deputy_can_invite_but_cannot_manage_or_transfer) {
+TEST(guild_deputies_can_invite_but_cannot_manage_or_transfer) {
     Harness h("guild-deputy", [](const std::string& path) {
         for (const char* name : {"leader", "deputy", "guest", "outsider"})
             seedUser(path, name, "password7");
@@ -185,7 +185,12 @@ TEST(guild_deputy_can_invite_but_cannot_manage_or_transfer) {
     h.step(10, clients);
     CHECK(!guest.guildInvite().waiting);
     boss.sendChat("/guild-deputy deputy");
-    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputy == "deputy"; }));
+    const std::vector<std::string> firstDeputy{"deputy"};
+    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputies == firstDeputy; }));
+    // An existing singleton record still grants its invitation rights.
+    auto& guild = GameServerPeer::authorityDb(h.server).rawTable("guilds")["ALPHA"];
+    guild.erase("deputyUsernames");
+    guild["deputyUsername"] = "deputy";
     deputy.requestGuildInvite("guest");
     CHECK(h.stepUntil(clients, [&] { return guest.guildInvite().waiting; }));
     guest.requestGuildAccept();
@@ -198,17 +203,28 @@ TEST(guild_deputy_can_invite_but_cannot_manage_or_transfer) {
     h.step(20, clients);
     CHECK(guest.guild().joined);
     CHECK_EQ(boss.guild().leader, std::string("leader"));
-    CHECK_EQ(boss.guild().deputy, std::string("deputy"));
+    CHECK(boss.guild().deputies == firstDeputy);
     CHECK(boss.guild().name != "Changed");
 
     boss.sendChat("/guild-deputy guest");
-    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputy == "guest"; }));
-    deputy.requestGuildInvite("outsider");
+    const std::vector<std::string> bothDeputies{"deputy", "guest"};
+    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputies == bothDeputies; }));
+    guest.requestGuildInvite("outsider");
+    CHECK(h.stepUntil(clients, [&] { return outsider.guildInvite().waiting; }));
+    outsider.requestGuildAccept();
+    CHECK(h.stepUntil(clients, [&] { return outsider.guild().joined; }));
+    boss.sendChat("/guild-deputy outsider");
     h.step(10, clients);
-    CHECK(!outsider.guildInvite().waiting);
+    CHECK(boss.guild().deputies == bothDeputies);
     boss.sendChat("/guild-transfer guest");
     CHECK(h.stepUntil(clients, [&] { return boss.guild().leader == "guest"; }));
-    CHECK(boss.guild().deputy.empty());
+    CHECK(boss.guild().deputies == firstDeputy);
+    guest.sendChat("/guild-deputy outsider");
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies.size() == 2; }));
+    guest.sendChat("/guild-undeputy outsider");
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies == firstDeputy; }));
+    deputy.requestGuildLeave();
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies.empty(); }));
 }
 
 TEST(hyper_corruption_exposure_allows_retaliation_and_continue_returns_to_spawn) {
@@ -1502,6 +1518,70 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
     CHECK_NEAR(host.profile().stars, initialStars + 150000.0, 1e-9);
 }
 
+TEST(wave_kills_feed_totem_without_paying_world_kill_rewards) {
+    Harness h("wave-totem", [](const std::string& path) {
+        seedUser(path, "totemhost", "password7");
+        Database db;
+        std::string error;
+        CHECK(db.load(path, error));
+        const auto* account = db.findUser("totemhost");
+        if (!account) { CHECK(false); return; }
+        db.progress(account->id).addItem(Rarity::Uncommon, "petal_totem", 1);
+        db.markDirty();
+        CHECK(db.save());
+    }, dataDir(), 0);
+    NetClient host;
+    if (!h.ready || !logIn(h, host, "totemhost") || !join(h, host, "totemhost", false)) {
+        CHECK(false);
+        return;
+    }
+    World& world = h.server.world();
+    const Entity player = bodyNamed(world, "totemhost");
+    const auto totem = content().petalIndex("totem");
+    host.setLoadoutSlot(0, totem, Rarity::Uncommon);
+    CHECK(h.stepUntil({&host}, [&] {
+        const auto& slot = world.get<Loadout>(player).slots[0];
+        return slot.configIndex == totem && !slot.broken;
+    }));
+    host.sendChat("/wave start");
+    CHECK(h.stepUntil({&host}, [&] { return world.has<WavePlayer>(player); }));
+    h.clock += 30000.0;
+    CHECK(h.stepUntil({&host}, [&] { return Query<WaveEnemy>{world}.count() >= 2; }, 60));
+    const auto enemies = Query<WaveEnemy>{world}.collect();
+    if (enemies.size() < 2) return;
+    world.get<MobType>(enemies[1]).rarity = Rarity::Mythic;
+    auto& db = GameServerPeer::authorityDb(h.server);
+    const auto account = db.findUser("totemhost")->id;
+    const auto oldKills = db.findProgress(account)->mobKills;
+    const auto before = world.get<PlayerProgress>(player);
+    auto& health = world.get<Health>(player);
+    health.invulnerableUntilMillis = std::numeric_limits<double>::infinity();
+    health.current = health.max * 0.5;
+    const double lowHealth = health.current;
+    for (const Entity enemy : {enemies[0], enemies[1]}) {
+        const auto position = world.get<Transform>(enemy);
+        const auto damage = world.get<Health>(enemy).max * 2;
+        const Entity hit = world.create();
+        world.add<GroundEffectTag>(hit);
+        world.add<Transform>(hit, position);
+        world.add<GroundEffect>(hit, GroundEffect{GroundEffectKind::Poison, player, 1.0,
+                                                0.0, 1.0, Rarity::Common, damage});
+        world.add<LightningBurst>(hit);
+        world.add<LightningTarget>(hit, LightningTarget{enemy});
+    }
+    CHECK(h.stepUntil({&host}, [&] {
+        const auto* regeneration = world.tryGet<TotemRegeneration>(player);
+        return regeneration && regeneration->stacks.size() == 2 &&
+            world.get<Health>(player).current > lowHealth;
+    }, 20));
+    CHECK_NEAR(world.get<PlayerProgress>(player).stars, before.stars, 1e-9);
+    CHECK_NEAR(world.get<PlayerProgress>(player).totalXp, before.totalXp, 1e-9);
+    CHECK(db.findProgress(account)->mobKills.dump() == oldKills.dump());
+    host.sendChat("/wave leave");
+    CHECK(h.stepUntil({&host}, [&] { return !world.has<WavePlayer>(player); }, 20));
+    CHECK(!world.has<TotemRegeneration>(player));
+}
+
 TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     World world;
     Terrain terrain;
@@ -1721,6 +1801,9 @@ TEST(wave_stars_accumulate_per_wave_to_the_daily_cap_across_reloads) {
     CHECK(reachedDailyCap);
     CHECK_NEAR(restarted.progress("wave-account").stars, 150000.0, 1e-9);
     CHECK_EQ(restarted.awardWaveStars("other-account"), 7500);
+    CHECK_EQ(restarted.awardWaveStars("other-account", nullptr, 11), 8250);
+    CHECK_EQ(restarted.awardWaveStars("other-account", nullptr, 19), 8250);
+    CHECK_EQ(restarted.awardWaveStars("other-account", nullptr, 20), 9000);
     waveStarClock += 86400000ll;
     CHECK(!restarted.waveDailyStarCapReached("wave-account"));
     CHECK_EQ(restarted.awardWaveStars("wave-account"), 7500);
