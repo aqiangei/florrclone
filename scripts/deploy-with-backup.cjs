@@ -547,8 +547,22 @@ async function main(){
       })().catch(e=>{console.error(e.message);process.exitCode=1});`;
       console.log(ssh(runtime+' -e '+q(check)));
     }
+    let unifiedPublicProbe;
+    if(process.env.FLORR_REQUIRE_UNIFIED_COUNCIL==='1') {
+      unifiedPublicProbe=remote+'/release-check-unified.cjs';
+      scp(path.join(__dirname,'shards/ops/release-check.cjs'),host+':'+unifiedPublicProbe);
+    }
     ssh('rm '+q(marker));opened=true;
-    ssh('PORT='+publicPort+' '+runtime+' '+q(probe));
+    if(unifiedPublicProbe) {
+      const protocol=Number(process.env.FLORR_NEXT_PROTOCOL_VERSION);
+      const hash=Number(process.env.FLORR_NEXT_CONTENT_HASH);
+      assert(Number.isInteger(protocol)&&protocol>0&&protocol<=65535);
+      assert(Number.isInteger(hash)&&hash>=0&&hash<=0xffffffff);
+      const realm=third?3:fresh?2:1;
+      console.log(ssh(runtime+' '+q(unifiedPublicProbe)+' '+q('http://127.0.0.1:'+publicPort)+' '+protocol+' '+hash+' '+realm));
+    } else {
+      ssh('PORT='+publicPort+' '+runtime+' '+q(probe));
+    }
     if(report.operatorRequest)ssh('touch '+q(report.operatorRequest.readyFile)+' && chmod 644 '+q(report.operatorRequest.readyFile));
     if(process.env.FLORR_NEXT_CONTENT_HASH){
       const nextHash=Number(process.env.FLORR_NEXT_CONTENT_HASH);assert(Number.isInteger(nextHash)&&nextHash>=0&&nextHash<=0xffffffff);
