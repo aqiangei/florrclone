@@ -171,7 +171,7 @@ inline constexpr const char* kAshflorQqGroupId = "227990150";
 inline constexpr const char* kAshflorQqInvite = "https://qm.qq.com/q/E0OG9CLIg";
 
 /// AshFlor public feedback board (opened by the title-screen Feedback button).
-inline constexpr const char* kAshflorFeedbackBoard = "https://ashflor.com/feedback.html?";
+inline constexpr const char* kAshflorFeedbackBoard = "https://154.8.157.208/feedback.html?v=prog5";
 
 /// Slots in the icon strip: across the top-left corner, three down the
 /// bottom-left one. Not every one is shown at once -- see drawIconStrip -- and

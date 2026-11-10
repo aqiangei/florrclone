@@ -1,0 +1,22 @@
+[Unit]
+Description=Unified player council
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ashflor-council
+Group=ashflor-council
+WorkingDirectory=/opt/ashflor-council
+ExecStart=/usr/bin/node /opt/ashflor-council/unified-council.cjs /var/lib/ashflor-council/polls.json /opt/ashflor-council/council.html
+Restart=on-failure
+RestartSec=3
+StateDirectory=ashflor-council
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

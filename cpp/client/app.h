@@ -367,9 +367,6 @@ private:
     void drawDeathCard(Canvas&, double time);
     /// The "Collected this run" panel the death card puts over the minimap.
     void drawRunLoot(Canvas&, double time);
-    /// Counts this frame's pickups by the viewer's own flower into runLoot_.
-    /// Before the renderer drains the events, which it does every frame.
-    void tallyRunLoot();
     void drawChat(Canvas&, double time);
     /// The channel strip over the open chat: a tab per channel, its checkbox
     /// filtering the transcript and its name choosing where Enter sends.
@@ -747,18 +744,6 @@ private:
     /// container animation, which translates the whole stack down from above
     /// the screen and eases it back up again when the card goes away.
     double deathCardSlide_ = 0.0;
-    /// Everything the flower has picked up since it joined, one entry per
-    /// petal and tier, for the death card's "Collected this run" panel.
-    /// Counted off the PickedUp cues -- each of the viewer's own is one item
-    /// into the inventory -- and emptied by the next join, not by dying: it is
-    /// the dead run the panel reports on.
-    struct RunLoot {
-        std::uint16_t petalIndex = 0;
-        Rarity rarity = Rarity::Common;
-        std::uint32_t count = 0;
-    };
-    std::vector<RunLoot> runLoot_;
-
     // -- HUD -----------------------------------------------------------------
     /// When invulnerability last ended, in app seconds; negative before the
     /// first time it does. The health bar fades from the invulnerable colour

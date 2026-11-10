@@ -483,30 +483,6 @@ void App::drawDeathCard(Canvas& canvas, double time) {
     button(canvas, card.closeBox, tr(Msg::Close), overClose, overClose && pressing, closeStyle);
 }
 
-void App::tallyRunLoot() {
-    // While this client steers somebody else's flower, the self id is THAT
-    // flower's, and what it picks up goes into its own player's bag.
-    if (net_.controllingFlower()) return;
-    const std::uint32_t self = net_.view().self().netId;
-    if (self == 0) return;
-    for (const ViewEvent& event : net_.view().events()) {
-        // Somebody else's pickup is not the viewer's loot, and a drop pays out
-        // the account once: either split body counts, including off-screen stacks.
-        if (event.kind != net::EventKind::PickedUp || !event.pickupByAccount) continue;
-        const auto petal = static_cast<std::uint16_t>(event.amount);
-        if (petal >= content().petalCount()) continue;
-        const Rarity rarity = clampRarity(static_cast<int>(event.flag));
-        const auto found = std::find_if(runLoot_.begin(), runLoot_.end(), [&](const RunLoot& l) {
-            return l.petalIndex == petal && l.rarity == rarity;
-        });
-        if (found == runLoot_.end()) {
-            runLoot_.push_back({petal, rarity, event.pickupQuantity});
-        } else if (found->count < UINT32_MAX) {
-            found->count += std::min(event.pickupQuantity, UINT32_MAX - found->count);
-        }
-    }
-}
-
 namespace {
 
 /// The "Collected this run" panel, measured off the same screenshot as the
@@ -531,11 +507,11 @@ constexpr double kRunLootFloor = 260.0;
 } // namespace
 
 void App::drawRunLoot(Canvas& canvas, double time) {
-    if (runLoot_.empty()) return;
+    if (net_.runLoot().empty()) return;
 
     // Rarest first, then by name -- the screenshot's order.
-    std::vector<RunLoot> shown = runLoot_;
-    std::sort(shown.begin(), shown.end(), [](const RunLoot& a, const RunLoot& b) {
+    auto shown = net_.runLoot();
+    std::sort(shown.begin(), shown.end(), [](const Profile::Stack& a, const Profile::Stack& b) {
         if (a.rarity != b.rarity) return rarityIndex(a.rarity) > rarityIndex(b.rarity);
         const std::string& an = content().petal(a.petalIndex).name;
         const std::string& bn = content().petal(b.petalIndex).name;
@@ -577,7 +553,7 @@ void App::drawRunLoot(Canvas& canvas, double time) {
         const double rowLeft = left + (width - rowWidth) * 0.5;
         const double rowTop = top + kRunLootGridY + row * kRunLootPitch;
         for (int i = 0; i < inRow; ++i) {
-            const RunLoot& loot = shown[static_cast<std::size_t>(first + i)];
+            const auto& loot = shown[static_cast<std::size_t>(first + i)];
             ItemTile tile;
             tile.petalIndex = loot.petalIndex;
             tile.rarity = loot.rarity;

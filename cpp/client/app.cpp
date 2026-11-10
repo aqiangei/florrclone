@@ -928,7 +928,6 @@ void App::frame(double dt) {
     canvasPhaseMark_ = canvasOpsEmitted();
 #endif
     if (inWorld) {
-        tallyRunLoot();
         renderer_.ingestEvents(net_.view());
         renderer_.update(dt);
         // Bubbles expire on the frame clock, like every other timed visual

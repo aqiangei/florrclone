@@ -432,7 +432,15 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
         e.position = reader.position();
         e.radius = reader.f32();
         e.flag = reader.u8();
-        if (e.kind == net::EventKind::PickedUp) { e.pickupQuantity = reader.u32(); e.pickupByAccount = reader.boolean(); }
+        if (e.kind == net::EventKind::PickedUp) {
+            e.pickupQuantity = reader.u32();
+            e.pickupByAccount = reader.boolean();
+            // The server banks a pickup as a positive inventory count. Ignore
+            // impossible cues without losing the other events in the frame.
+            if (e.pickupQuantity == 0 || e.pickupQuantity > kMaxStackCount ||
+                !(e.amount >= 0 && e.amount < kNoPetal) || e.amount != std::trunc(e.amount) ||
+                e.flag >= kRarityCount) continue;
+        }
         // Lightning carries a variable point tail; see EventKind. A frame
         // that ends inside it hands back zeroes and trips the reader's ok()
         // flag, which the check below turns into a rejected snapshot -- the

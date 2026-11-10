@@ -31,6 +31,32 @@ struct CombatFeedback {
 };
 }
 
+TEST(hyper_magic_bubble_follows_movement_with_more_push_than_eternal) {
+    const auto pop = [](Rarity rarity) {
+        CombatFeedback r;
+        r.equip(0, "mana_orb", Rarity::Apex);
+        r.equip(1, "magic_bubble", rarity);
+        r.prepare();
+        auto& input = r.w.get<PlayerInput>(r.player).current;
+        input.flags = net::InputDefend;
+        input.moveStrength = 1.0;
+        input.moveAngle = 0.0;
+        input.aimAngle = kPi * 0.5;
+        input.aimDistance = 200;
+        r.petals.run(r.w, r.c, 10000.0, .05, r.commands);
+        r.commands.flush();
+        return r.w.get<Motion>(r.player).velocity;
+    };
+    const auto eternal = pop(Rarity::Unique);
+    CHECK(eternal.x > 0.0);
+    CHECK_NEAR(eternal.y, 0.0, 1e-9);
+    for (const auto rarity : {Rarity::Apex, Rarity::PermanentHyper}) {
+        const auto hyper = pop(rarity);
+        CHECK_NEAR(hyper.x, eternal.x * 1.10, 1e-9);
+        CHECK_NEAR(hyper.y, 0.0, 1e-9);
+    }
+}
+
 TEST(magic_eye_eternal_uses_seven_mana_orbs_against_a_super_bee) {
     CombatFeedback r;
     r.equip(0, "magic_eye");

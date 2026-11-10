@@ -17,7 +17,7 @@ Linux 可用 `cmake --build <native-build> --target shard_coordinator` 构建协
 ## 当前数据与功能入口
 
 - 当前发布采用单服数据库：`cpp/server/db.h/.cpp`负责账号和JSON持久化，`game_server.cpp`负责服务端操作校验；生产存档不属于源码或dist发布内容。
-- 议会：`cpp/server/council.h`计算资格、权重与议题快照，`cpp/client/web/council.html`提供页面；修改HTML不能替代服务端计算变更。
+- 议会：`cpp/server/council.h`提供各服账号鉴权、服内权重和玩家详情；`scripts/ops/unified-council.cjs`在北京聚合三服排行，校验发起资格并保存议题快照和投票；`cpp/client/web/council.html`提供页面。各服 Nginx 固定来源服号，`ashflor-council-tunnel.service` 将公网入口通过 SSH 转到北京 `127.0.0.1:19090`，北京通过三个反向端口 `19101–19103` 读取各服 `/api/council`。新议题落盘于北京 `/var/lib/ashflor-council/polls.json`。
 - 商店：`cpp/shared/game/shop.h`定义商品和价格规则，`cpp/server/shop_lock.h`与`game_server.cpp`校验锁定和购买，`cpp/client/ui/menu_shop.cpp`负责展示。
 - 模拟系统：`cpp/server/systems/`；输入、菜单与美术：`cpp/client/ui/`、`cpp/client/render/`。客户端提示与服务端真实效果须配套核对。
 - 运行与构建来源以[current-status.md](current-status.md)为准。工作区的未发布实现不能直接当作线上架构。

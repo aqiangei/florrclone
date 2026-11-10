@@ -602,11 +602,9 @@ bool AccountPanel::render(MenuContext& ctx) {
         p.cy += 30.0;
         // --- another account ------------------------------------------------------
         p.heading(trEnZh("Log In to Another Account", "登录其他账户"));
-        p.note(trEnZh("Old-site account? Use your original username and password here.",
-                      "已有旧站账号？请在这里输入原账号和密码。"), kGuestBadge);
         if (!profile.hasPassword) {
-            p.note(trEnZh("Log in directly; switching leaves this passwordless account.",
-                          "直接登录旧账号即可；切换将离开当前无密码账户。"),
+            p.note(trEnZh("Switching accounts signs you out of this passwordless account.",
+                          "切换账号后，将退出当前无密码账号。"),
                    kGuestBadge);
         }
         p.field(kLoginName, trEnZh("Username", "用户名"));

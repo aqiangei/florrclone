@@ -552,7 +552,7 @@ TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
     CHECK(announced);
 }
 
-TEST(prestige_hel_deep_stock_contains_more_super_mobs) {
+TEST(prestige_hel_stock_is_denser_and_upper_bands_have_more_supers) {
     World world;
     CommandBuffer commands{world};
     Terrain terrain;
@@ -572,27 +572,42 @@ TEST(prestige_hel_deep_stock_contains_more_super_mobs) {
     CHECK(found);
     if (!found) return;
 
+    std::size_t ordinaryStock = 0;
     for (const auto realm : {hel, prestigeHel}) {
         std::vector<SpawnSystem::LatentSite> sites;
         spawner.latentSites(realm, sites);
         int deep = 0;
         int supers = 0;
+        int middle = 0;
+        int middleSupers = 0;
         for (const auto& site : sites) {
+            if (realm == prestigeHel) CHECK(!barredFromPrestige(site.rarity));
+            if (site.difficulty == 50.0) {
+                ++middle;
+                middleSupers += site.rarity == Rarity::Super;
+            }
             if (site.difficulty < 60.0) continue;
             CHECK_EQ(site.difficulty, realm == prestigeHel ? 65.0 : 60.0);
-            if (realm == prestigeHel) CHECK(!barredFromPrestige(site.rarity));
             ++deep;
             supers += site.rarity == Rarity::Super;
         }
         CHECK(deep >= 12);
-        if (realm == prestigeHel) CHECK(supers > deep * 0.4 && supers < deep * 0.9);
-        else CHECK(supers < deep * 0.1);
-        std::printf("Hel deep stock (%s): %d of %d Super\n",
-                    realm == prestigeHel ? "prestige" : "ordinary", supers, deep);
+        if (realm == prestigeHel) {
+            CHECK(sites.size() > ordinaryStock);
+            CHECK(middleSupers > middle * 0.23 && middleSupers < middle * 0.55);
+            CHECK(supers > deep * 0.4 && supers < deep * 0.9);
+            CHECK(supers * middle > middleSupers * deep);
+        } else {
+            ordinaryStock = sites.size();
+            CHECK(supers < deep * 0.1);
+        }
+        std::printf("Hel stock (%s): %zu total, %d/%d middle Super, %d/%d deepest Super\n",
+                    realm == prestigeHel ? "prestige" : "ordinary", sites.size(),
+                    middleSupers, middle, supers, deep);
     }
 }
 
-TEST(prestige_jungle_and_sewers_box_wake_local_mobs_at_the_shared_ambient_limit) {
+TEST(prestige_jungle_sewers_and_hel_wake_local_mobs_at_the_shared_ambient_limit) {
     World world;
     CommandBuffer commands{world};
     Terrain terrain;
@@ -672,6 +687,23 @@ TEST(prestige_jungle_and_sewers_box_wake_local_mobs_at_the_shared_ambient_limit)
     CHECK(boxNearby > 0);
     CHECK(spawner.census().mobs <= kMaxLiveMobs);
     std::printf("[sewers] %d mobs near the box at the ambient budget\n", boxNearby);
+
+    const Realm helRealm = maps.realmOfId("prestige_hel", found);
+    CHECK(found);
+    if (!found) return;
+    const Vec2 hel = terrain.resolveCircle({4252.0, 12721.0}, kPlayerBaseRadius, helRealm);
+    viewers.push_back({hel, helRealm});
+    tick(55'650.0);
+    int helNearby = 0;
+    mobs.each([&](Entity, MobTag&, Transform& at, MobType& type, AmbientMob&) {
+        if (at.realm != helRealm) return;
+        CHECK(!barredFromPrestige(type.rarity));
+        if (std::abs(at.position.x - hel.x) <= 1400.0 &&
+            std::abs(at.position.y - hel.y) <= 1000.0) ++helNearby;
+    });
+    CHECK(helNearby > 0);
+    CHECK(spawner.census().mobs <= kMaxLiveMobs);
+    std::printf("[prestige hel] %d mobs near the upper band at the ambient budget\n", helNearby);
 }
 
 TEST(jungle_refills_near_a_stationary_viewer_after_kills) {

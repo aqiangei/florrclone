@@ -2060,6 +2060,7 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
 
     status_ = Status::Playing;
     dead_ = false;
+    runLoot_.clear();
     revived = false;
     clearViewOnSnapshot_ = false;
     view_.clear();
@@ -2294,10 +2295,24 @@ void NetClient::handleNotice(ByteReader& reader) {
 }
 
 void NetClient::handleDied(ByteReader& reader) {
-    killerName_ = reader.str();
+    auto killer = reader.str();
     reader.u32();   // xp lost
     reader.u32();   // ticks survived
-    if (!reader.ok()) return;
+    const auto count = reader.u32();
+    constexpr std::size_t stackBytes = 7;
+    if (!reader.ok() || reader.remaining() % stackBytes != 0 ||
+        count != reader.remaining() / stackBytes) return;
+    std::vector<Profile::Stack> collected;
+    collected.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto petal = reader.u16();
+        const auto tier = reader.u8();
+        const auto quantity = reader.u32();
+        if (petal < content().petalCount() && tier < kRarityCount && quantity > 0)
+            collected.push_back({petal, static_cast<Rarity>(tier), quantity});
+    }
+    killerName_ = std::move(killer);
+    runLoot_ = std::move(collected);
     dead_ = true;
 }
 

@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -40,6 +41,8 @@ enum class SessionStage : std::uint8_t {
 struct Session {
     net::ConnectionId connection = 0;
     SessionStage stage = SessionStage::Greeting;
+    /// Inventory credits since joining the world, shared by both split bodies.
+    std::map<std::pair<std::uint16_t, Rarity>, std::uint32_t> runLoot;
     /// Where the connection really comes from, worked out once when it opened:
     /// the TCP peer, or the address a trusted proxy in front of the server
     /// named (clientAddress, server/account_limits.h). What every abuse limit

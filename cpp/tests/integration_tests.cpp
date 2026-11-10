@@ -324,15 +324,16 @@ TEST(a_change_password_needs_the_current_one) {
 }
 
 TEST(a_new_password_the_rules_refuse_never_reaches_the_account) {
-    Harness h("changepw-rules");
+    Harness h("changepw-rules", {}, flix::testsupport::dataDir(), 0, [](ServerConfig& config) {
+        config.backgroundSave = true;
+    });
     if (!h.ready) { CHECK(false); return; }
 
     NetClient client;
     CHECK(loginNew(h, client, "hasty", "long-enough-password"));
 
-    // Under Database::validPassword's eight characters. The client's own form
-    // catches this first; the server is what makes it true.
-    client.requestChangePassword("long-enough-password", "short");
+    // Empty passwords are refused by the live rules.
+    client.requestChangePassword("long-enough-password", "");
     CHECK(h.stepUntil({&client}, [&] { return client.passwordOutcome().pending; }));
     CHECK(!client.passwordOutcome().ok);
     CHECK(!client.passwordOutcome().message.empty());
@@ -346,7 +347,9 @@ TEST(a_new_password_the_rules_refuse_never_reaches_the_account) {
 }
 
 TEST(changing_a_password_revokes_the_tokens_it_replaces) {
-    Harness h("changepw-tokens");
+    Harness h("changepw-tokens", {}, flix::testsupport::dataDir(), 0, [](ServerConfig& config) {
+        config.backgroundSave = true;
+    });
     if (!h.ready) { CHECK(false); return; }
 
     NetClient client;
@@ -363,6 +366,14 @@ TEST(changing_a_password_revokes_the_tokens_it_replaces) {
     CHECK(!after.empty());
     CHECK(after != before);
     CHECK(client.sessionTokenRenewed);
+    {
+        Database reloaded;
+        std::string error;
+        CHECK(reloaded.load(h.dbPath, error));
+        CHECK(reloaded.passwordMatches("rotator", "new-password2"));
+        CHECK(!reloaded.resolveSession(before, false));
+        CHECK(reloaded.resolveSession(after, false) != nullptr);
+    }
 
     // A token minted before the change resumes nothing, which is most of the
     // point: a session somebody else was holding is what a password change is
@@ -382,6 +393,44 @@ TEST(changing_a_password_revokes_the_tokens_it_replaces) {
     resumed.resumeSession(after);
     CHECK(h.stepUntil({&resumed}, [&] { return resumed.authAnswered; }));
     CHECK_EQ(static_cast<int>(resumed.authStatus), static_cast<int>(net::AuthStatus::Ok));
+}
+
+TEST(a_background_password_write_failure_restores_the_old_credentials) {
+    Harness h("changepw-write-failure", {}, flix::testsupport::dataDir(), 0, [](ServerConfig& config) {
+        config.backgroundSave = true;
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    const bool loggedIn = loginNew(h, client, "restorepw", "old-password1");
+    CHECK(loggedIn);
+    if (!loggedIn) return;
+    auto& db = const_cast<Database&>(h.server.database());
+    CHECK(db.save());
+    const auto before = client.sessionToken();
+    const auto saved = h.dbPath + ".before";
+    const int moved = std::rename(h.dbPath.c_str(), saved.c_str());
+    CHECK_EQ(moved, 0);
+    if (moved != 0) return;
+    const int blocked = ::mkdir(h.dbPath.c_str(), 0700);
+    CHECK_EQ(blocked, 0);
+    if (blocked == 0) {
+        client.requestChangePassword("old-password1", "new-password2");
+        CHECK(h.stepUntil({&client}, [&] { return client.passwordOutcome().pending; }));
+        CHECK(!client.passwordOutcome().ok);
+        CHECK_EQ(client.sessionToken(), before);
+        CHECK_EQ(::rmdir(h.dbPath.c_str()), 0);
+    }
+    const int restored = std::rename(saved.c_str(), h.dbPath.c_str());
+    CHECK_EQ(restored, 0);
+    if (restored != 0) return;
+    CHECK(db.save());
+    Database reloaded;
+    std::string error;
+    CHECK(reloaded.load(h.dbPath, error));
+    CHECK(reloaded.passwordMatches("restorepw", "old-password1"));
+    CHECK(!reloaded.passwordMatches("restorepw", "new-password2"));
+    CHECK(reloaded.resolveSession(before, false) != nullptr);
 }
 
 TEST(a_content_mismatch_is_reported_rather_than_misparsed) {

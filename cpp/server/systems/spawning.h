@@ -1092,6 +1092,7 @@ private:
     Realm prestigeJungleRealm_ = Realm::Arena; // No world-map candidate can match until loaded.
     Realm ordinaryJungleRealm_ = Realm::Arena;
     Realm prestigeSewersRealm_ = Realm::Arena;
+    Realm prestigeHelRealm_ = Realm::Arena;
     std::array<bool, kMaxRealms> inactivePyramidRealms_{};
     struct MobPlacement { Vec2 position; double radius; };
     std::vector<MobPlacement> mobPlacements_;

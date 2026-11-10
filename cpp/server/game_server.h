@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
@@ -312,6 +313,7 @@ private:
     void handleLogin(Session&, net::Connection&, ByteReader&);
     void handleResume(Session&, net::Connection&, ByteReader&);
     void handleChangePassword(Session&, net::Connection&, ByteReader&);
+    void pollPasswordChange();
     /// A guest picks its name, once. Renames the account everywhere the server
     /// files it by name -- the database's rows, the guild records, a pending
     /// guild invitation -- and tells the squad and the guild.
@@ -973,6 +975,7 @@ private:
     /// database_.save() behind a fresh look at which bosses stand, so the
     /// boss clocks reach the disk exactly as they are. Every save goes
     /// through here: the periodic one and persistAll.
+    void captureBossClocksForSave();
     bool saveDatabase(bool periodic = false, bool stopping = false);
 
     // --- the sacrifice (server/sacrifice.cpp) -------------------------------
@@ -1496,6 +1499,21 @@ private:
     std::string hyperBarrierCaptured_,hyperBarrierApplied_,hyperBarrierReady_;
     struct PendingHyper { Json request; std::string attempt,transaction,user; net::ConnectionId connection=0; std::uint16_t petal=0; bool forge=false; };
     PendingHyper pendingHyper_;
+    struct PasswordChangeResult {
+        bool verified = false;
+        std::string hash, reason;
+    };
+    struct PasswordChangeWork {
+        net::ConnectionId connection = 0;
+        std::string token, address;
+        Account expected;
+        std::future<PasswordChangeResult> future;
+    } passwordChange_;
+    struct PendingLocalHyper;
+    std::unique_ptr<PendingLocalHyper> pendingLocalHyper_;
+    void pollLocalHyper(bool shuttingDown = false);
+    void notifyLocalHyper(const std::string& winner, std::uint16_t input,
+                          const std::vector<std::string>& affected);
     bool serviceHyperBarrier();
     bool beginSharedHyper(Session&,net::Connection&,Json,std::uint16_t,bool);
     void finishSharedHyper(const Json&);

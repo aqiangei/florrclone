@@ -530,6 +530,23 @@ async function main(){
       })().catch(e=>{console.error(e.message);process.exitCode=1})`;
       ssh(runtime+' -e '+q(verifyAssets));
     }
+    if(process.env.FLORR_REQUIRE_UNIFIED_COUNCIL==='1') {
+      const realm=third?3:fresh?2:1;
+      const url='http://127.0.0.1:'+publicPort+'/api/council';
+      const body=JSON.stringify({action:'view'});
+      const check=`(async()=>{
+        const r=await fetch(${JSON.stringify(url)},{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:${JSON.stringify(body)},signal:AbortSignal.timeout(12000)
+        });
+        const j=await r.json();
+        if(!r.ok || j.error || j.realm!==${realm} || j.totalUnits!==3000000 ||
+           !Array.isArray(j.players) || !Array.isArray(j.polls))
+          throw Error('Unified council unavailable at the game entry');
+        console.log('PASS unified council route, realm and three-server weight total');
+      })().catch(e=>{console.error(e.message);process.exitCode=1});`;
+      console.log(ssh(runtime+' -e '+q(check)));
+    }
     ssh('rm '+q(marker));opened=true;
     ssh('PORT='+publicPort+' '+runtime+' '+q(probe));
     if(report.operatorRequest)ssh('touch '+q(report.operatorRequest.readyFile)+' && chmod 644 '+q(report.operatorRequest.readyFile));

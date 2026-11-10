@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 115; // Skin review state, queue and catalog permission flags.
+inline constexpr std::uint16_t kProtocolVersion = 116; // Died carries the server's credited run loot.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -272,7 +272,8 @@ enum class ServerMessage : std::uint8_t {
                         ///< line can also be drawn as a bubble over that body;
                         ///< 0 for anything the server said in its own voice.
     Notice,             ///< u8 severity, str text
-    Died,               ///< str killerName, u32 xpLost, u32 survivedTicks
+    Died,               ///< str killerName, u32 xpLost, u32 survivedTicks, u32 stack count,
+                        ///< then {u16 petal, u8 rarity, u32 credited quantity} per stack
     CraftResult,        ///< u8 success, u16 itemType, u8 rarity, u32 crafted,
                         ///< u8 petalsReturned, str reason, u32 attempts, u32 consumed (v71). `crafted` is how
                         ///< many upgrades the pool produced and

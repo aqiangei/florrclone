@@ -44,6 +44,10 @@ constexpr double kRingAnchorSwitchGlideMillis = 300.0;
 /// universal egg hatches the same three, stronger (see summonPets).
 constexpr int kApexPetCount = 3;
 
+int summonSquadSize(int count, Rarity rarity) {
+    return std::max(0, count) * (ladderRarity(rarity) == Rarity::Apex ? kApexPetCount : 1);
+}
+
 /// Live summons one player may hold, counting every slot's squad together --
 /// and every segment of a summoned centipede, which is a body in the world
 /// like any other.
@@ -3095,7 +3099,8 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
 
         // Bubble pops as soon as the ring is pulled in and propels the flower,
         // then pays its rarity-scaled reload.
-        if ((config.id == "bubble" || config.id == "magic_bubble") && defending) {
+        const bool magicBubble = config.id == "magic_bubble";
+        if ((config.id == "bubble" || magicBubble) && defending) {
             // The body the burst throws: the flower, or the moon its ring is
             // laid out around -- the user's rule: a moon is boosted in the
             // flower's place.
@@ -3116,7 +3121,7 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             // the ring at full charge, and goes the instant a key is pressed.
             // The pop itself is free; its mana was paid when it spawned.
             Vec2 push;
-            if (config.id == "magic_bubble") {
+            if (magicBubble) {
                 const double strength = input != nullptr ? input->current.moveStrength : 0.0;
                 if (!(strength > 0.0)) continue;
                 // The bearing alone, never the strength: a dash is a fixed
@@ -3128,20 +3133,16 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                 push = owner->position + popDisplacement - transform->position;
             }
 
-            if (technique == HyperTechnique::SteeredBubble && input &&
+            if (!magicBubble && technique == HyperTechnique::SteeredBubble && input &&
                 input->current.moveStrength > 0.0 && push.lengthSq() > 0.0) {
-                const bool magic = config.id == "magic_bubble";
-                if (!magic || input->current.aimDistance > 0.0) {
-                    const double wanted = magic ? input->current.aimAngle : input->current.moveAngle;
-                    const double heading = push.angle();
-                    push = Vec2::fromAngle(heading + angleDelta(heading, wanted) * profile->amount, 1.0);
-                }
+                const double heading = push.angle();
+                push = Vec2::fromAngle(
+                    heading + angleDelta(heading, input->current.moveAngle) * profile->amount, 1.0);
             }
             Motion* motion = world.tryGet<Motion>(thrownBody);
             if (owner != nullptr && motion != nullptr && push.lengthSq() > 0.0) {
-                // gardn's reach at every tier: a better bubble reloads faster
-                // and throws no further.
-                const double reach = kBubblePopDistance;
+                const double reach = kBubblePopDistance * (magicBubble
+                    ? hyperAmount(profile, HyperTechnique::SteeredBubble) : 1.0);
                 const Vec2 bearing = push.normalized();
                 // Added to the velocity the flower already has, as the
                 // reference adds it: a pop taken while running carries the run
@@ -4353,13 +4354,12 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     // in the JSON but no spawn path in the reference reads it, and taking it
     // instead pinned every summon to common: mob stats scale by 3 per tier, so
     // an egg above common was worth nothing.
-    const bool apex = ladderRarity(rarity) == Rarity::Apex;
     const auto* tree = world.tryGet<PlayerSkillTree>(player);
     const bool egg = config.id == "egg" || config.id == "beetle_egg";
     const Rarity petRarity = rarity;
     const int squad = egg ? petalCopies(config.petCount, tree ? &tree->skills : nullptr,
         slot, petalTier(rarity), config.stackable) : config.petCount;
-    const int wanted = std::max(0, squad) * (apex ? kApexPetCount : 1);
+    const int wanted = summonSquadSize(squad, rarity);
     if (wanted <= 0) return;
 
     // Counted per SLOT: eggs of one type stack, so a second stick hatches a
@@ -4453,14 +4453,29 @@ void PetalSystem::summonTimedPets(World& world, const ContentRegistry& registry,
                                   double nowMillis) {
     const Transform* ownerTransform = world.tryGet<Transform>(player);
     if (ownerTransform == nullptr) return;
-    // The same apex rule as a squad: the unique trio, for the one payment.
-    const bool apex = ladderRarity(rarity) == Rarity::Apex;
-    const Rarity petRarity = rarity;
-    const int count = std::max(0, config.petCount) * (apex ? kApexPetCount : 1);
-    // At the cap the summon would land nothing, so it is not paid for either.
-    if (count <= 0 || countOwnedPets(world, state) >= kMaxPetEntitiesPerPlayer) return;
+    int room = kMaxPetEntitiesPerPlayer - countOwnedPets(world, state);
+    if (room <= 0) return;
     if (!canAffordMana(world, player, stats.petManaCost)) return;
-    const int spawned = summonPets(world, registry, player, slot, config.petMobIndex, petRarity,
+
+    if (config.id == "magic_stick") {
+        const auto stickIndex = registry.petalIndex("mysterious_stick");
+        if (stickIndex < registry.petalCount()) {
+            const auto& stick = registry.petal(stickIndex);
+            // A faster temporary cast must leave room for equipped Stick squads
+            // to refill. Already active storms still expire on their own timer.
+            for (std::size_t i = 0; i < state.slots.size(); ++i) {
+                const auto& source = state.slots[i];
+                if (source.configIndex != stickIndex) continue;
+                const int missing = summonSquadSize(stick.petCount, source.rarity) -
+                    countPetsOfType(world, state, static_cast<std::uint8_t>(i), stick.petMobIndex);
+                room -= std::max(0, missing);
+            }
+        }
+    }
+    const int count = std::min(room, summonSquadSize(config.petCount, rarity));
+    if (count <= 0) return;
+
+    const int spawned = summonPets(world, registry, player, slot, config.petMobIndex, rarity,
                                    count, ownerTransform->position, state,
                                    strengthBoost(rarity) * hyperSummonScale(config, rarity),
                                    nowMillis + config.petLifetimeMillis);

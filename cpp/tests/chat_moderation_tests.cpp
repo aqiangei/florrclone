@@ -19,6 +19,15 @@ bool blocked(const std::string& line) { return !blockedWordIn(line).empty(); }
 
 } // namespace
 
+TEST(chat_blocks_explicit_chinese_abuse_and_keeps_ordinary_game_talk) {
+    CHECK(blocked("操你妈"));
+    CHECK(blocked("艹<b>你</b>媽"));
+    CHECK(blocked("死\u200B全家"));
+    CHECK(!blocked("好吧这TM的是bug"));
+    CHECK(!blocked("下地狱刷怪，操控分身"));
+    CHECK(!blocked("这只怪怎么还没死，全家都在围观"));
+}
+
 TEST(a_listed_word_is_found_wherever_it_sits_in_the_line) {
     CHECK_EQ(blockedWordIn("what the fuck is that"), std::string("fuck"));
     CHECK_EQ(blockedWordIn("FUCK"), std::string("fuck"));

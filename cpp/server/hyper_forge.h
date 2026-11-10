@@ -93,46 +93,52 @@ inline HyperForgeResult grantTemporaryHyperHammer(Database& db,const std::string
     if(!db.save()){db.progress(userId)=before;db.markDirty();out.reason="存档失败，未补发。";return out;}
     out.ok=true;out.affected.push_back(userId);return out;
 }
-// Caller first persists all live records. Inventory is the BAG internally;
-// worn slots are accounted separately, while presets are references only.
-inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
+struct HyperForgePlan {
+    HyperForgeResult result;
+    std::map<std::string,PlayerRecord> players;
+    std::string forgeKey;
+    Json entry;
+};
+
+// Prepare an isolated transfer. Inventory is the bag, worn slots are
+// accounted separately, and presets are references only.
+inline HyperForgePlan planHyperForge(const Database& db,const std::string& userId,
                                    const std::string& input,std::int64_t now,
                                    const std::string& operatorRequest = {},const std::string& titan={}) {
-    HyperForgeResult out;
-    if(db.deferredCommits()){out.reason="跨服超凡事务暂未就绪，请稍后重试。";return out;}
+    HyperForgePlan plan;
+    auto& out=plan.result;
+    if(db.deferredCommits()){out.reason="跨服超凡事务暂未就绪，请稍后重试。";return plan;}
     if(!hyperForgeEligible(input)){
-        out.reason="超凡锤子只能使用10个永恒碎片，限时永恒锤不能用于争夺。";return out;
+        out.reason="超凡锤子只能使用10个永恒碎片，限时永恒锤不能用于争夺。";return plan;
     }
     const std::string petal=hyperForgeOutput(input);
     const auto forgeKey=hyperForgeKey(petal,titan);
     const auto state=hyperForgeState(db,petal,titan);
-    if(hyperHoldingCount(db,userId)>=kMaxHyperHoldings){out.reason="账号超凡持有已达5份上限；已有物品保留，数量降低后才能继续锻造。";return out;}
+    if(hyperHoldingCount(db,userId)>=kMaxHyperHoldings){out.reason="账号超凡持有已达5份上限；已有物品保留，数量降低后才能继续锻造。";return plan;}
     const int cost=hyperForgeCost(state.claims,input);
-    if(state.owner==userId){out.reason="你已经持有该超凡花瓣。";return out;}
+    if(state.owner==userId){out.reason="你已经持有该超凡花瓣。";return plan;}
     if(state.abandonedBy==userId){
         out.reason=kHyperAbandonedRefusal;
-        return out;
+        return plan;
     }
     if(state.protectedUntil>now){out.reason="保护期尚未结束，剩余"+
-        std::to_string((state.protectedUntil-now+59999)/60000)+"分钟。";return out;}
+        std::to_string((state.protectedUntil-now+59999)/60000)+"分钟。";return plan;}
     const auto* original=db.findProgress(userId);const std::string key="petal_"+petal;
     const std::string material="petal_"+input;
     PlayerRecord available=original?*original:PlayerRecord{};
     if(input=="timed_mjolnir")expireHammerLeases(available,static_cast<double>(now));
     if(!original || available.itemCount(Rarity::Unique,material)<cost){
-        out.reason="需要"+std::to_string(cost)+"个未装备的同种永恒材料。";return out;}
-    std::map<std::string,PlayerRecord> before;before[userId]=*original;
+        out.reason="需要"+std::to_string(cost)+"个未装备的同种永恒材料。";return plan;}
     // Only this titan's registered owner loses ONE copy. Another titan's
     // copy (including one held by the same account) is independent.
-    if(!state.owner.empty())if(const auto* record=db.findProgress(state.owner))before[state.owner]=*record;
-    const Json oldTable=db.storedTable("hyperForges");
+    const auto* previous=state.owner.empty()?nullptr:db.findProgress(state.owner);
+    const Json& oldTable=db.storedTable("hyperForges");
     const auto previousInput=oldTable[forgeKey]["input"].asString(
         petal=="mjolnir"?"fragment":petal);
     const std::string refundMaterial="petal_"+previousInput;
     const int refundPerCopy=hyperForgeRefund(std::max(1,oldTable[forgeKey]["paid"].asInt(5)));
-    for(const auto& [id,record]:before){
-        if(id==userId)continue;
-        auto& changed=db.progress(id);int lost=0;
+    if(previous){
+        auto& changed=plan.players.emplace(state.owner,*previous).first->second;int lost=0;
         rememberHyperHoldings(changed,static_cast<double>(now));
         if(changed.itemCount(Rarity::Apex,key)>0){changed.addItem(Rarity::Apex,key,-1);lost=1;}
         else for(auto& slot:changed.loadout)if(slot&&slot->rarity==Rarity::Apex&&slot->petalType==petal){slot.reset();lost=1;break;}
@@ -146,10 +152,9 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
             expireHammerLeases(changed,static_cast<double>(now));
             for(int n=0;n<refund;++n)addHammerLease(changed,static_cast<double>(now));
         }else changed.addItem(Rarity::Unique,refundMaterial,refund);
-        out.affected.push_back(id);
+        out.affected.push_back(state.owner);
     }
-    auto& winner=db.progress(userId);
-    if(input=="timed_mjolnir")winner=available;
+    auto& winner=plan.players.emplace(userId,std::move(available)).first->second;
     winner.addItem(Rarity::Unique,material,-cost);winner.addItem(Rarity::Apex,key,1);
     if(input=="timed_mjolnir")expireHammerLeases(winner,static_cast<double>(now));
     Json entry=Json::object();entry["owner"]=userId;
@@ -158,12 +163,39 @@ inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
     entry["input"]=input;
     entry["paid"]=cost;
     if(!operatorRequest.empty())entry["operatorRequest"]=operatorRequest;
-    db.rawTable("hyperForges")[forgeKey]=entry;db.markDirty();
+    plan.forgeKey=forgeKey;
+    plan.entry=std::move(entry);
+    out.affected.push_back(userId);out.consumed=cost;out.ok=true;
+    return plan;
+}
+
+inline HyperForgeResult forgeHyper(Database& db,const std::string& userId,
+                                   const std::string& input,std::int64_t now,
+                                   const std::string& operatorRequest = {},const std::string& titan={}) {
+    auto plan=planHyperForge(db,userId,input,now,operatorRequest,titan);
+    auto& out=plan.result;
+    if(!out.ok) return std::move(out);
+    const Json oldTable=db.storedTable("hyperForges");
+    std::map<std::string,PlayerRecord> before;
+    for(auto& [id,record]:plan.players) {
+        auto& live=db.progress(id);
+        before.emplace(id,std::move(live));
+        live=std::move(record);
+    }
+    db.rawTable("hyperForges")[plan.forgeKey]=std::move(plan.entry);
+    db.markDirty();
     if(!db.save()){
+        out.ok=false;
+        out.consumed=0;
+        if (db.backgroundSaveEnabled() && db.commitUncertain()) {
+            out.affected.clear();
+            out.reason = "存档结果未确认，服务器将停止处理请求。";
+            return std::move(out);
+        }
         for(const auto& [id,record]:before)db.progress(id)=record;
         db.rawTable("hyperForges")=oldTable.isObject()?oldTable:Json::object();db.markDirty();
-        out.affected.clear();out.reason="存档写入失败，未完成锻造，请稍后重试。";return out;
+        out.affected.clear();out.reason="存档写入失败，未完成锻造，请稍后重试。";return std::move(out);
     }
-    out.affected.push_back(userId);out.consumed=cost;out.ok=true;return out;
+    return std::move(out);
 }
 }

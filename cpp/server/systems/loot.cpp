@@ -2,6 +2,7 @@
 #include "server/workers.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <tuple>
 #include <map>
@@ -637,6 +638,14 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Re
     // A bot's body carries no connection; see DropItem::humansOnly.
     if (drop->humansOnly && owner == 0) return;
     if (!mayPickUp(*drop, player, owner)) return;
+    if (drop->quantity == 0 || drop->quantity > kMaxStackCount) {
+        std::fprintf(stderr, "[loot] rejected invalid ground stack: petal=%u tier=%u quantity=%u\n",
+                     static_cast<unsigned>(drop->configIndex),
+                     static_cast<unsigned>(rarityIndex(drop->rarity)),
+                     static_cast<unsigned>(drop->quantity));
+        commands.destroy(candidate);
+        return;
+    }
 
     const Pickup pickup{drop->quantity, player, drop->configIndex, drop->rarity};
     pickups_.push_back(pickup);
@@ -728,7 +737,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             const Entity e = entry.entity;
             auto& item = world.get<DropItem>(e);
             const auto& position = world.get<Transform>(e);
-            if (item.configIndex != petal || item.rarity != rarity || position.realm != realm ||
+             if (item.configIndex != petal || item.rarity != rarity || position.realm != realm ||
+                 item.quantity >= kMaxStackCount ||
                 distanceSq(position.position, at) > 150.0 * 150.0 ||
                 item.eligible.size() != eligible.size()) continue;
             bool same = true;

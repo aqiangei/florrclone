@@ -67,6 +67,11 @@ constexpr Listed kBlocked[] = {
     {"kys", Fit::Whole},        {"killyourself", Fit::Inside},
 };
 
+// Exact phrases keep the Chinese filter focused on clear personal abuse.
+constexpr const char* kBlockedChinese[] = {
+    "操你妈", "操你媽", "艹你妈", "艹你媽", "死全家",
+};
+
 /// Real words a listed one sits inside. A match that lies wholly within one
 /// of these is let through.
 constexpr Listed kAllowed[] = {
@@ -297,13 +302,14 @@ struct Drawn {
 
 /// Every character `source` draws, in order, read as a client does --
 /// honouring <a> or dropping it with its content, as `links` says.
-std::vector<Drawn> drawnCharacters(const std::string& source, bool links) {
+std::vector<Drawn> drawnCharacters(const std::string& source, bool links, std::string& visible) {
     MarkupOptions options;
     options.links = links;
     std::vector<Drawn> drawn;
     for (const MarkupSpan& span : parseMarkup(source, options)) {
         if (span.lineBreak || !span.image.empty()) {
             drawn.push_back({Kind::Gap, {}});
+            visible += ' ';
             continue;
         }
         for (std::size_t at = 0; at < span.text.size();) {
@@ -312,6 +318,7 @@ std::vector<Drawn> drawnCharacters(const std::string& source, bool links) {
             Drawn character{Kind::Mark, {}};
             character.kind = read(codePoint, character.cell);
             drawn.push_back(character);
+            if (character.kind != Kind::Hidden) visible.append(span.text, at, length);
             at += length;
         }
     }
@@ -458,7 +465,12 @@ bool findListed(const Word& read, const Listed& listed, Found&& found) {
 
 /// The first listed word `source` draws, read with or without <a>, or null.
 const char* findBlocked(const std::string& source, bool links) {
-    for (const Word& word : wordsIn(drawnCharacters(source, links))) {
+    std::string visible;
+    const auto drawn = drawnCharacters(source, links, visible);
+    for (const char* phrase : kBlockedChinese) {
+        if (visible.find(phrase) != std::string::npos) return phrase;
+    }
+    for (const Word& word : wordsIn(drawn)) {
         std::vector<std::pair<std::size_t, std::size_t>> allowed;
         for (const Listed& listed : kAllowed) {
             findListed(word, listed, [&](std::size_t from, std::size_t to) {

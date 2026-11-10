@@ -24,6 +24,11 @@ constexpr double kSpawnedMobBodyScale = 0.75;
 constexpr double kPrestigeJungleDensityScale = 1.25;
 constexpr double kDeepHelDifficulty = 50.0;
 constexpr double kDeepHelDensityScale = 1.20;
+constexpr double kPrestigeHelDensityScale = 1.20;
+constexpr double kPrestigeHelUpperBand = 45.0;
+constexpr double kPrestigeHelSuperBand = 65.0;
+constexpr double kPrestigeHelMidBandUpperRoll = 0.40;
+constexpr int kPrestigeHelMinAwake = 12;
 constexpr double kDeepJungleDensityScale = 1.20;
 constexpr double kDeepJungleDifficulty = 65.0;
 constexpr double kPrestigeSewersDensityScale = 0.90;
@@ -1669,6 +1674,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     prestigeJungleRealm_ = Realm::Arena;
     ordinaryJungleRealm_ = Realm::Arena;
     prestigeSewersRealm_ = Realm::Arena;
+    prestigeHelRealm_ = Realm::Arena;
     if (worldMaps == nullptr) return;
 
     // Every staged map's bands, each tagged with the realm it belongs to. One
@@ -1690,15 +1696,21 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
         if (prestigeJungle) prestigeJungleRealm_ = map.realm();
         if (ordinaryJungle) ordinaryJungleRealm_ = map.realm();
         if (prestigeSewers) prestigeSewersRealm_ = map.realm();
+        if (prestigeHel) prestigeHelRealm_ = map.realm();
         for (const MapElement& element : map.elements()) {
             if (!element.isSpawnBand() && !element.isMobRegion()) continue;
             SpawnZone zone;
             zone.bounds = element.bounds;
             zone.polygon = element.polygon;
-            // Hel's deepest authored band is 60. At 65 the reference
-            // curve centres on Ultra, which Prestige can promote to Super.
-            zone.difficulty = prestigeHel && element.forceRarity < 0 && element.difficulty >= 60.0
-                ? std::max(65.0, element.difficulty) : element.difficulty;
+            zone.difficulty = element.difficulty;
+            if (prestigeHel && element.forceRarity < 0) {
+                // Raise the approach to the Ultra curve and keep the deepest
+                // band on the curve that Prestige can promote to Super.
+                if (element.difficulty >= 60.0)
+                    zone.difficulty = std::max(kPrestigeHelSuperBand, element.difficulty);
+                else if (element.difficulty >= 40.0)
+                    zone.difficulty = std::max(kPrestigeHelUpperBand, element.difficulty);
+            }
             zone.forceRarity = element.forceRarity;
             zone.realm = map.realm();
             zone.singular = element.singular;
@@ -1749,6 +1761,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
             if (element.forceRarity < 0) {
                 if (prestigeJungle) densityScale = kPrestigeJungleDensityScale;
                 else if (prestigeSewers) densityScale = kPrestigeSewersDensityScale;
+                else if (prestigeHel) densityScale = kPrestigeHelDensityScale;
                 else if (ordinaryJungle && element.difficulty >= kDeepJungleDifficulty)
                     densityScale = kDeepJungleDensityScale;
                 else if (!map.prestige() && map.templateId() == "hel" &&
@@ -2472,10 +2485,18 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         }
     }
     const int forcedTier = roster->forceRarity >= 0 ? roster->forceRarity : zone.forceRarity;
+    double rollDifficulty = zone.difficulty;
+    // The band before the deepest one gets a mix of its own curve and the
+    // deepest curve, so it has more Supers while still being a step below it.
+    if (zone.prestige && zone.realm == prestigeHelRealm_ && forcedTier < 0 &&
+        rollDifficulty >= kDeepHelDifficulty && rollDifficulty < kPrestigeHelSuperBand &&
+        rng.chance(kPrestigeHelMidBandUpperRoll)) {
+        rollDifficulty = kPrestigeHelSuperBand;
+    }
     Rarity rarity = forcedTier >= 0 ? clampLadderRarity(forcedTier)
                                    : (worldMaps && worldMaps->forRealm(zone.realm) && worldMaps->forRealm(zone.realm)->usesReferenceSpawnCurve()
-                                      ? rollReferenceSpawnRarity(zone.difficulty,luck,rng)
-                                      : rollSpawnRarity(zone.difficulty, luck, rng));
+                                      ? rollReferenceSpawnRarity(rollDifficulty,luck,rng)
+                                      : rollSpawnRarity(rollDifficulty, luck, rng));
     if (rarityIndex(rarity) > rarityIndex(Rarity::Super)) rarity = Rarity::Super;
     if (fixedSuper) rarity = managedTier;
     if (zone.prestige) {
@@ -2552,8 +2573,10 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
                 !zone.singular && forcedTier < 0;
             const bool sewersRefill = zone.realm == prestigeSewersRealm_ &&
                 zone.difficulty >= kPrestigeSewersBoxDifficulty && !zone.singular && forcedTier < 0;
+            const bool prestigeHelRefill = zone.prestige && zone.realm == prestigeHelRealm_ &&
+                zone.difficulty >= kPrestigeHelUpperBand && !zone.singular && forcedTier < 0;
             if (jungleDelay) delay = rng.range(kJungleRespawnMinMillis, kJungleRespawnMaxMillis);
-            else if (sewersRefill || (authoredMap && !zone.prestige &&
+            else if (sewersRefill || prestigeHelRefill || (authoredMap && !zone.prestige &&
                      authoredMap->templateId() == "hel" && zone.difficulty >= kDeepHelDifficulty &&
                      !zone.singular && forcedTier < 0)) delay = rng.range(3000.0, 7000.0);
             else delay = rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis);
@@ -2704,14 +2727,18 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
     const int ambientBudget = mobCap >= 128 ? mobCap - 128 : mobCap;
     // At saturation, these areas may borrow existing escort headroom for
     // nearby enemies. The shared live-mob ceiling still applies.
-    constexpr std::array<int, 3> reserveMin{kJungleMinAwake, kJungleMinAwake, kPrestigeSewersMinAwake};
-    const std::array<Realm, 3> reserveRealms{ordinaryJungleRealm_, prestigeJungleRealm_, prestigeSewersRealm_};
+    constexpr std::array reserveMin{kJungleMinAwake, kJungleMinAwake, kPrestigeSewersMinAwake,
+                                    kPrestigeHelMinAwake};
+    const std::array reserveRealms{ordinaryJungleRealm_, prestigeJungleRealm_, prestigeSewersRealm_,
+                                  prestigeHelRealm_};
     std::array<int, reserveMin.size()> awake{};
     std::array<bool, reserveMin.size()> inView{};
     const auto prioritySlot = [&](const SpawnZone& zone) {
         if (zone.realm == ordinaryJungleRealm_) return 0;
         if (zone.realm == prestigeJungleRealm_) return 1;
         if (zone.realm == prestigeSewersRealm_ && zone.difficulty >= kPrestigeSewersBoxDifficulty) return 2;
+        if (zone.prestige && zone.realm == prestigeHelRealm_ && zone.difficulty >= kPrestigeHelUpperBand &&
+            !zone.singular && zone.forceRarity < 0) return 3;
         return -1;
     };
     bool canReserve = false;

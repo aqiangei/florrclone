@@ -5024,7 +5024,7 @@
     "color": "#ffff00",
     "count": 1,
     "visual_scale": 1,
-    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"32\" height=\"32\"><path d=\"m30.546 16-7.273 12.597H8.727L1.454 16 8.728 3.403h14.546Z\" fill=\"#f7cf2f\" stroke=\"#c8a826\" stroke-width=\"2.909\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>  <path d=\"M3.2 16 9.7 4.8h12.6l6.5 11.2-3.6 6.2-4.3-1.3L24 16l-4.4-7.5h-8.2L7 16Z\" fill=\"#ffe787\"/>\n  <path d=\"m5 18.1 4.3 7.5h13.4l4.3-7.5-6 3.8H11Z\" fill=\"#e8b82e\"/>\n  <path d=\"m20.4 16-2.2 3.8h-4.4L11.6 16l2.2-3.8h4.4Z\" fill=\"#fce079\" stroke=\"#d7af38\" stroke-width=\".9\" stroke-linejoin=\"round\"/>\n  <path d=\"m7.2 12 3.1-5.3h5.1\" fill=\"none\" stroke=\"#fff2ab\" stroke-width=\"1.1\" stroke-linecap=\"round\"/>\n</svg>",
+    "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" width=\"32\" height=\"32\"><path d=\"m30.546 16-7.273 12.597H8.727L1.454 16 8.728 3.403h14.546Z\" fill=\"#f7cf2f\" stroke=\"#c8a826\" stroke-width=\"2.909\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
     "zh": "蜡",
     "rarityStats": {
       "0": {
@@ -6090,7 +6090,7 @@
     "damage": 0,
     "health": null,
     "size": 1,
-    "cooldown": 4000,
+    "cooldown": 3000,
     "price": 10,
     "description": "Stick",
     "color": "#90EE90",
@@ -6106,52 +6106,52 @@
       "0": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "1": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "2": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "3": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "4": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "5": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "6": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "7": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "8": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       },
       "9": {
         "damage": 0,
         "health": 1,
-        "reloadMillis": 4000
+        "reloadMillis": 3000
       }
     }
   },

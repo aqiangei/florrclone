@@ -522,6 +522,12 @@ public:
     void requestBackgroundSave();
     void pollBackgroundSave();
     bool finishBackgroundSave();
+    enum class StagedSave { Inactive, Preparing, Ready, Saved, Failed, Uncertain };
+    bool canStageForgeSave() const;
+    bool beginStagedForgeSave(const std::map<std::string, PlayerRecord>& players, Json forges);
+    StagedSave pollStagedForgeSave(bool wait = false);
+    void decideStagedForgeSave(bool publish);
+    std::string playerSnapshotText(const std::string& id) const;
 
     /// The per-tick pump. Writes only when something changed and the rate
     /// limit allows it; because dirty state is only cleared by a successful
@@ -631,6 +637,10 @@ public:
     /// bcrypt here, on the one occasion the password is available.
     bool verifyPassword(const std::string& username, const std::string& password);
     bool passwordMatches(const std::string& username, const std::string& password) const;
+    static bool passwordMatches(const Account& account, const std::string& password);
+    int passwordCost() const { return passwordCost_; }
+    // The caller has verified the old credential and checked that it is still current.
+    bool savePasswordChange(Account& account, std::string hash, std::string& token);
 
     /// Replaces an account's password with a fresh bcrypt hash at the current
     /// cost. Checks the new password against validPassword first and reports
@@ -865,6 +875,7 @@ private:
     bool dirty_ = false;
     bool everWrote_ = false;
     std::int64_t lastWriteMillis_ = 0;
+    void installPasswordHash(Account& account, std::string hash);
     int passwordCost_ = crypto::kBcryptDefaultCost;
     ClockFn clock_ = nullptr;
     CommitSink commitSink_;
@@ -880,7 +891,10 @@ private:
     struct SnapshotWriter;
     std::unique_ptr<SnapshotWriter> snapshotWriter_;
     std::set<std::string> snapshotHyperHolders_;
-    void queueSnapshot(bool finalSave = false);
+    void queueSnapshot(bool finalSave = false,
+                       const std::map<std::string, PlayerRecord>* forgePlayers = nullptr,
+                       Json forgeTable = {});
+    bool stagedForgeSave_ = false;
     void collectSnapshotResult(bool wait);
     bool saveBackgroundNow(bool finalSave = false);
 };

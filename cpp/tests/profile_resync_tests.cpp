@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "client/net_client.h"
@@ -152,6 +153,51 @@ bool checkBroughtProfile(Harness& h, NetClient& client) {
 }
 
 } // namespace
+
+TEST(an_idle_account_without_hammers_does_not_open_snapshot_rows_for_editing) {
+    Harness h("idle-hammer-sweep", [](const std::string& path) {
+        seedTinkerer(path, [](PlayerRecord&) {});
+    }, dataDir(), 0, [](ServerConfig& config) {
+        config.backgroundSave = true;
+        config.tickProbe = true;
+    });
+    NetClient client;
+    CHECK(h.ready);
+    if (!h.ready) return;
+    const bool loggedIn = login(h, client);
+    CHECK(loggedIn);
+    if (!loggedIn) return;
+
+    auto& db = const_cast<Database&>(h.server.database());
+    const auto* account = std::as_const(db).findUser(kName);
+    CHECK(account != nullptr);
+    if (!account) return;
+    const std::string userId = account->id;
+    {
+        // Login sends a Profile, which independently normalizes lease fields.
+        // Isolate the periodic sweep by restoring a record without metadata.
+        auto& extra = db.progress(userId).extra;
+        extra.erase("titanHammerLeases");
+        extra.erase("titanHammerExpiresAt");
+        extra.erase("temporaryHyperHammer");
+    }
+    const auto before = h.server.database().snapshotEdits();
+    // Cross two one-second hammer/council sweeps without entering the world.
+    h.step(45, {&client});
+    const auto after = h.server.database().snapshotEdits();
+    CHECK_EQ(after.attempts, before.attempts);
+    CHECK_EQ(after.copies, before.copies);
+
+    // A writable JSON lookup also materializes missing lease fields even
+    // when the background writer has already released its snapshot.
+    const auto* record = h.server.database().findProgress(userId);
+    CHECK(record != nullptr);
+    if (record) {
+        CHECK(!record->extra.contains("titanHammerLeases"));
+        CHECK(!record->extra.contains("titanHammerExpiresAt"));
+        CHECK(!record->extra.contains("temporaryHyperHammer"));
+    }
+}
 
 TEST(a_profile_digest_ignores_the_order_of_stacks_but_not_of_slots) {
     net::ProfileDigest a;

@@ -814,6 +814,64 @@ TEST(splitter_parked_pickup_is_banked_once_and_bulk_blacklist_preserves_material
     CHECK_EQ(alice.profile().stackCount(petal, Rarity::Rare), initial + 7);
 }
 
+TEST(death_summary_uses_credited_splitter_loot_and_ignores_visual_cues) {
+    Harness h("splitter-death-loot", {}, flix::testsupport::dataDir(), 0);
+    NetClient alice;
+    if (!h.ready || !loginNew(h, alice, "alice", "hunter2!")) { CHECK(false); return; }
+    alice.joinGame(1280, 720, {}, "alice");
+    if (!h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; }) ||
+        !equipSplitter(h, alice, "alice", content().petalIndex(kSplitterPetalId))) {
+        CHECK(false); return;
+    }
+    auto& world = h.server.world();
+    auto* session = GameServerPeer::sessionOf(h.server, "alice");
+    if (!session || !h.stepUntil({&alice}, [&] { return session->split(); })) { CHECK(false); return; }
+
+    const auto active = session->entity;
+    const auto parked = session->splitOther;
+    const auto rock = content().petalIndex("rock");
+    const auto at = world.get<Transform>(parked);
+    auto& record = GameServerPeer::authorityDb(h.server).progress(session->userId);
+    record.setItemCount(Rarity::Rare, "petal_rock", kMaxStackCount - 1);
+    LootSystem fixtureLoot;
+    const auto drop = fixtureLoot.spawnDrop(world, rock, Rarity::Rare, at.position, at.realm, {parked});
+    world.add<NetId>(drop, NetId{4000000000u});
+    world.get<DropItem>(drop).quantity = 7;
+    if (!h.stepUntil({&alice}, [&] { return !world.isAlive(drop); })) { CHECK(false); return; }
+    CHECK_EQ(record.itemCount(Rarity::Rare, "petal_rock"), kMaxStackCount);
+
+    // The legacy event tally included the entire ground stack even though only
+    // one fit. Two plausible-width visual cues can also fabricate a 4.1B row
+    // without any inventory credit. Deliver both through the real death frame.
+    const auto activeId = world.get<NetId>(active).value;
+    auto& events = GameServerPeer::snapshotEvents(h.server);
+    for (std::uint32_t id : {4000000001u, 4000000002u}) {
+        events.pickedUp(id, activeId, at.position, at.realm, rock, Rarity::PermanentHyper,
+                        2050000000u, session->connection);
+    }
+    for (const auto body : {active, parked}) {
+        world.get<Health>(body).current = 0.0;
+        world.add<Dead>(body);
+    }
+    CHECK(h.stepUntil({&alice}, [&] { return alice.dead(); }));
+    h.step(4, {&alice});
+
+    std::uint64_t visualRock = 0, visualGold = 0;
+    for (const auto& cue : alice.view().events()) {
+        if (cue.kind != net::EventKind::PickedUp || !cue.pickupByAccount || cue.amount != rock) continue;
+        if (cue.flag == rarityIndex(Rarity::Rare)) visualRock += cue.pickupQuantity;
+        if (cue.flag == rarityIndex(Rarity::PermanentHyper)) visualGold += cue.pickupQuantity;
+    }
+    CHECK_EQ(visualRock, 7u);
+    CHECK_EQ(visualGold, 4100000000ull);
+    CHECK_EQ(record.itemCount(Rarity::PermanentHyper, "petal_rock"), 0);
+    CHECK_EQ(alice.runLoot().size(), 1u);
+    if (alice.runLoot().size() != 1u) return;
+    CHECK_EQ(alice.runLoot().front().petalIndex, rock);
+    CHECK_EQ(alice.runLoot().front().rarity, Rarity::Rare);
+    CHECK_EQ(alice.runLoot().front().count, 1u);
+}
+
 TEST(splitter_parked_kills_keep_loot_entitlement_for_the_active_body) {
     Harness h("splitter-kill-loot", {}, flix::testsupport::dataDir(), 0);
     CHECK(h.ready); if (!h.ready) return;

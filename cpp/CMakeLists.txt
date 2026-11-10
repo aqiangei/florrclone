@@ -806,7 +806,9 @@ if(EMSCRIPTEN)
   endforeach()
   target_link_libraries(flix_server_parallel PUBLIC flix_shared_parallel)
   set_property(TARGET flowrix_server PROPERTY LINK_LIBRARIES flix_server_parallel)
-  target_link_options(flowrix_server PRIVATE "-pthread" "-sPTHREAD_POOL_SIZE=16"
+  # Up to 15 simulation/replication workers, the snapshot writer and one
+  # independent password computation. Worker quotas themselves are unchanged.
+  target_link_options(flowrix_server PRIVATE "-pthread" "-sPTHREAD_POOL_SIZE=17"
     "-sPTHREAD_POOL_SIZE_STRICT=2" "-sDEFAULT_PTHREAD_STACK_SIZE=2097152")
   add_executable(flix_parallel_snapshot_tests EXCLUDE_FROM_ALL
     tests/runner.cpp tests/parallel_snapshots_tests.cpp)

@@ -412,7 +412,6 @@ void App::enterGame() {
     // killed for real is not something `--frames` can arrange.
     screen_ = config_.autoDead ? Screen::Dead : Screen::Playing;
     deathCardVisible_ = true;
-    runLoot_.clear();
     // The browser starts the tutorial a second after the game's socket
     // authenticates, which is this moment: Game builds the Tutorial, and
     // reaching the world is what a Game exists for.

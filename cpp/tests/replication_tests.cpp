@@ -95,6 +95,50 @@ std::uint32_t netIdOf(World& w, Entity e) { return w.get<NetId>(e).value; }
 
 } // namespace
 
+TEST(snapshot_ignores_invalid_pickup_cues_and_keeps_valid_stacks) {
+    Fixture f;
+    const auto player = netIdOf(f.world, f.viewer);
+    f.events.pickedUp(100, player, {1000, 1000}, Realm::Overworld, 2, Rarity::Ultra, 4100000000u, 1);
+    f.events.pickedUp(101, player, {1000, 1000}, Realm::Overworld, 3, Rarity::Ultra, 2200000000u, 1);
+    f.events.pickedUp(102, player, {1000, 1000}, Realm::Overworld, 4, Rarity::Ultra, 7u, 1);
+
+    WorldView view;
+    f.tick(view, 1, 1000);
+    CHECK_EQ(view.events().size(), 1u);
+    if (view.events().size() != 1u) return;
+    CHECK_EQ(view.events().front().pickupQuantity, 7u);
+    CHECK_NEAR(view.events().front().amount, 4.0, 1e-9);
+    CHECK(view.events().front().pickupByAccount);
+}
+
+TEST(invalid_ground_stack_never_reaches_pickup_accounting) {
+    Fixture f;
+    f.world.add<PlayerModifiers>(f.viewer);
+    LootSystem loot;
+    SpatialGrid grid;
+    const auto drop = [&](std::uint16_t petal, std::uint32_t quantity) {
+        const Vec2 at{1000, 1000};
+        const auto entity = loot.spawnDrop(f.world, petal, Rarity::Ultra, at, Realm::Overworld, {f.viewer});
+        f.world.add<NetId>(entity, NetId{f.ids.next()});
+        f.world.get<DropItem>(entity).quantity = quantity;
+        grid.insert(entity, Realm::Overworld, at, f.world.get<Body>(entity).radius);
+        return entity;
+    };
+    const auto corrupt = drop(2, 4100000000u);
+    const auto valid = drop(3, 7u);
+    CommandBuffer commands{f.world};
+    Rng rng{42};
+    loot.run(f.world, grid, testsupport::shippedContent(), rng, 1000.0, .05, commands, f.events);
+    commands.flush();
+
+    CHECK(!f.world.isAlive(corrupt));
+    CHECK(!f.world.isAlive(valid));
+    CHECK_EQ(loot.pickups().size(), 1u);
+    if (loot.pickups().size() == 1u) CHECK_EQ(loot.pickups().front().quantity, 7u);
+    CHECK_EQ(f.events.events().size(), 1u);
+    if (f.events.events().size() == 1u) CHECK_EQ(f.events.events().front().pickupQuantity, 7u);
+}
+
 TEST(remote_level_theme_prefers_permanent_hyper_over_contested_at_the_same_rank) {
     Fixture f;
     const auto other = f.addPlayer("gold", {1100, 1000});

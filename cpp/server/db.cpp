@@ -591,6 +591,25 @@ EM_JS(int, flix_write_snapshot, (const char* file, const char* text, std::size_t
         if (temp && !renamed) try { fs.unlinkSync(temp); } catch (_) {}
     }
 });
+EM_JS(int, flix_finish_staged_snapshot, (const char* staged, const char* file, bool publish), {
+    const fs = require("node:fs");
+    const stage = UTF8ToString(staged);
+    const path = UTF8ToString(file);
+    let dir, renamed = false;
+    try {
+        if (!publish) return 0;
+        dir = fs.openSync(require("node:path").dirname(path), "r");
+        fs.renameSync(stage, path);
+        renamed = true;
+        fs.fsyncSync(dir);
+        return 1;
+    } catch (_) {
+        return renamed ? 2 : 0;
+    } finally {
+        if (dir !== undefined) try { fs.closeSync(dir); } catch (_) {}
+        if (!renamed) try { fs.unlinkSync(stage); } catch (_) {}
+    }
+});
 #endif
 
 SnapshotOutcome writeSnapshot(const std::string& path, const std::string& text) {
@@ -625,6 +644,26 @@ SnapshotOutcome writeSnapshot(const std::string& path, const std::string& text) 
     return outcome;
 #endif
 }
+
+SnapshotOutcome finishStagedSnapshot(const std::string& stage, const std::string& path, bool publish) {
+#ifdef __EMSCRIPTEN__
+    return static_cast<SnapshotOutcome>(flix_finish_staged_snapshot(stage.c_str(), path.c_str(), publish));
+#else
+    auto outcome = SnapshotOutcome::Failed;
+    if (publish) {
+        const auto slash = path.find_last_of('/');
+        const auto parent = slash == std::string::npos ? "." : path.substr(0, slash + 1);
+        const int dir = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY);
+        if (dir >= 0) {
+            if (::rename(stage.c_str(), path.c_str()) == 0)
+                outcome = ::fsync(dir) == 0 ? SnapshotOutcome::Saved : SnapshotOutcome::Uncertain;
+            ::close(dir);
+        }
+    }
+    if (outcome == SnapshotOutcome::Failed) ::unlink(stage.c_str());
+    return outcome;
+#endif
+}
 } // namespace
 
 struct Database::SnapshotWriter {
@@ -640,6 +679,8 @@ struct Database::SnapshotWriter {
         Changes<Session> sessions;
         Changes<Json> globals;
         std::vector<std::string> topOrder;
+        std::map<std::string, PlayerRecord> forgePlayers;
+        Json forgeTable;
         std::uint64_t generation = 0;
         bool finalSave = false;
         Clock::time_point submittedAt;
@@ -700,8 +741,21 @@ struct Database::SnapshotWriter {
         {
             std::lock_guard lock(mutex);
             busy = true;
+            stageReady = false;
+            stageDecision.reset();
             if (trace) job.submittedAt = Clock::now();
             pending = std::move(job);
+        }
+        ready.notify_one();
+    }
+    bool prepared() {
+        std::lock_guard lock(mutex);
+        return stageReady && !stageDecision.has_value();
+    }
+    void decide(bool publish) {
+        {
+            std::lock_guard lock(mutex);
+            if (!stageDecision.has_value()) stageDecision = publish;
         }
         ready.notify_one();
     }
@@ -747,6 +801,19 @@ private:
         players.apply(job.players, [](const PlayerRecord& row) { return playerToJson(row).dump(0); });
         sessions.apply(job.sessions, [](const Session& row) { return sessionToJson(row).dump(0); });
         globals.apply(job.globals, [](const Json& row) { return row.dump(0); });
+        const bool staged = !job.forgePlayers.empty();
+        std::map<std::string, std::string> previous;
+        std::optional<std::string> previousForges;
+        if (staged) {
+            for (const auto& [id, row] : job.forgePlayers)
+                previous.emplace(id, std::exchange(players.text.at(id), playerToJson(row).dump(0)));
+            if (auto it = globals.text.find("hyperForges"); it != globals.text.end())
+                previousForges = std::exchange(it->second, job.forgeTable.dump(0));
+            else
+                globals.text.emplace("hyperForges", job.forgeTable.dump(0));
+            if (std::find(job.topOrder.begin(), job.topOrder.end(), "hyperForges") == job.topOrder.end())
+                job.topOrder.push_back("hyperForges");
+        }
         const auto encodedAt = trace ? Clock::now() : Clock::time_point{};
         std::string output;
         output.reserve(lastBytes);
@@ -772,7 +839,28 @@ private:
         output += '}';
         lastBytes = output.size();
         const auto assembledAt = trace ? Clock::now() : Clock::time_point{};
-        const auto outcome = writeSnapshot(path, output);
+        auto outcome = SnapshotOutcome::Failed;
+        if (staged) {
+            const std::string stage = path + ".forge-stage";
+            // The regular checkpoint stays authoritative until the main
+            // thread confirms that neither participant changed.
+            const bool prepared = writeSnapshot(stage, output) == SnapshotOutcome::Saved;
+            bool publish = false;
+            if (prepared) {
+                std::unique_lock lock(mutex);
+                stageReady = true;
+                ready.wait(lock, [this] { return stopping || stageDecision.has_value(); });
+                publish = !stopping && stageDecision.value_or(false);
+            }
+            outcome = finishStagedSnapshot(stage, path, publish);
+            if (outcome == SnapshotOutcome::Failed) {
+                for (auto& [id, text] : previous) players.text.at(id) = std::move(text);
+                if (previousForges) globals.text.at("hyperForges") = std::move(*previousForges);
+                else globals.text.erase("hyperForges");
+            }
+        } else {
+            outcome = writeSnapshot(path, output);
+        }
         const auto writtenAt = trace ? Clock::now() : Clock::time_point{};
         const std::string sha = outcome == SnapshotOutcome::Saved && job.finalSave
             ? crypto::sha256Hex(output) : "";
@@ -799,6 +887,8 @@ private:
     std::optional<Job> pending;
     std::optional<Result> result;
     bool busy = false, stopping = false;
+    bool stageReady = false;
+    std::optional<bool> stageDecision;
     std::thread thread;
 };
 #else
@@ -818,6 +908,7 @@ Database::~Database() {
 
 void Database::reset() {
     snapshotWriter_.reset();
+    stagedForgeSave_ = false;
     snapshotHyperHolders_.clear();
     users_.clear();
     players_.clear();
@@ -1240,7 +1331,9 @@ Database::SnapshotEditTiming Database::snapshotEdits() const {
     return total;
 }
 
-void Database::queueSnapshot(bool finalSave) {
+void Database::queueSnapshot(bool finalSave,
+                             const std::map<std::string, PlayerRecord>* forgePlayers,
+                             Json forgeTable) {
 #ifdef FLIX_BACKGROUND_SAVE
     const auto started = std::chrono::steady_clock::now();
     // A checkpoint preserves the legacy observation times for holders of
@@ -1261,6 +1354,10 @@ void Database::queueSnapshot(bool finalSave) {
         snapshotHyperHolders_.erase(id);
     }
     SnapshotWriter::Job job;
+    if (forgePlayers) {
+        job.forgePlayers = *forgePlayers;
+        job.forgeTable = std::move(forgeTable);
+    }
     job.topOrder = topKeyOrder_;
     job.generation = ++mutationGeneration_;
     job.finalSave = finalSave;
@@ -1280,6 +1377,64 @@ void Database::queueSnapshot(bool finalSave) {
                 static_cast<unsigned long long>(generation), rows, millis);
 #else
     (void)finalSave;
+    (void)forgePlayers;
+    (void)forgeTable;
+#endif
+}
+
+std::string Database::playerSnapshotText(const std::string& id) const {
+    const auto* player = findProgress(id);
+    return player ? playerToJson(*player).dump(0) : std::string{};
+}
+
+bool Database::beginStagedForgeSave(const std::map<std::string, PlayerRecord>& players, Json forges) {
+#ifdef FLIX_BACKGROUND_SAVE
+    if (!canStageForgeSave() || players.empty()) return false;
+    for (const auto& [id, record] : players)
+        if (!findProgress(id)) return false;
+    collectSnapshotResult(false);
+    if (commitUncertain_) return false;
+    stagedForgeSave_ = true;
+    queueSnapshot(false, &players, std::move(forges));
+    return true;
+#else
+    (void)players;
+    (void)forges;
+    return false;
+#endif
+}
+
+bool Database::canStageForgeSave() const {
+#ifdef FLIX_BACKGROUND_SAVE
+    return snapshotWriter_ && !stagedForgeSave_ && !commitUncertain_ && !snapshotWriter_->writing();
+#else
+    return false;
+#endif
+}
+
+Database::StagedSave Database::pollStagedForgeSave(bool wait) {
+#ifdef FLIX_BACKGROUND_SAVE
+    if (!stagedForgeSave_) return StagedSave::Inactive;
+    if (!wait && snapshotWriter_->prepared()) return StagedSave::Ready;
+    if (!wait && snapshotWriter_->writing()) return StagedSave::Preparing;
+    collectSnapshotResult(wait);
+    stagedForgeSave_ = false;
+    switch (snapshotWriter_->latest->outcome) {
+        case SnapshotOutcome::Saved: return StagedSave::Saved;
+        case SnapshotOutcome::Failed: return StagedSave::Failed;
+        case SnapshotOutcome::Uncertain: return StagedSave::Uncertain;
+    }
+#else
+    (void)wait;
+#endif
+    return StagedSave::Inactive;
+}
+
+void Database::decideStagedForgeSave(bool publish) {
+#ifdef FLIX_BACKGROUND_SAVE
+    if (stagedForgeSave_) snapshotWriter_->decide(publish);
+#else
+    (void)publish;
 #endif
 }
 
@@ -1329,7 +1484,7 @@ void Database::collectSnapshotResult(bool wait) {
 
 void Database::pollBackgroundSave() {
 #ifdef FLIX_BACKGROUND_SAVE
-    if (!snapshotWriter_ || snapshotWriter_->writing()) return;
+    if (!snapshotWriter_ || stagedForgeSave_ || snapshotWriter_->writing()) return;
     collectSnapshotResult(false);
     if (!commitUncertain_ && snapshotWriter_->requested &&
         std::chrono::steady_clock::now() >= snapshotWriter_->retryAt) queueSnapshot();
@@ -1338,6 +1493,13 @@ void Database::pollBackgroundSave() {
 
 bool Database::saveBackgroundNow(bool finalSave) {
 #ifdef FLIX_BACKGROUND_SAVE
+    if (stagedForgeSave_) {
+        // A different synchronous save can supersede an unapproved forge.
+        // The server fences other writes once it has approved publication.
+        snapshotWriter_->decide(false);
+        collectSnapshotResult(true);
+        stagedForgeSave_ = false;
+    }
     const bool trace = snapshotWriter_->trace;
     const auto now = [trace] {
         return trace ? SnapshotWriter::Clock::now() : SnapshotWriter::Clock::time_point{};
@@ -2050,11 +2212,14 @@ bool Database::verifyPassword(const std::string& username, const std::string& pa
 
 bool Database::passwordMatches(const std::string& username,const std::string& password) const {
     const auto* account=findUser(username);
-    if(!account)return false;
+    return account && passwordMatches(*account,password);
+}
+
+bool Database::passwordMatches(const Account& account,const std::string& password) {
     // A bcrypt hash is never accepted as a plaintext password.
-    if(crypto::isBcryptHash(account->passwordHash))return crypto::bcryptVerify(password,account->passwordHash);
-    if(!account->passwordSalt.empty())return crypto::scryptVerifyHex(password,account->passwordSalt,account->passwordHash);
-    return crypto::constantTimeEquals(account->passwordHash,password);
+    if(crypto::isBcryptHash(account.passwordHash))return crypto::bcryptVerify(password,account.passwordHash);
+    if(!account.passwordSalt.empty())return crypto::scryptVerifyHex(password,account.passwordSalt,account.passwordHash);
+    return crypto::constantTimeEquals(account.passwordHash,password);
 }
 
 bool Database::setPassword(const std::string& username, const std::string& password,
@@ -2068,18 +2233,48 @@ bool Database::setPassword(const std::string& username, const std::string& passw
         return false;
     }
 
-    account->passwordHash = crypto::bcryptHash(password, passwordCost_);
-    account->passwordSalt.clear();
+    installPasswordHash(*account, crypto::bcryptHash(password, passwordCost_));
+    return true;
+}
+
+void Database::installPasswordHash(Account& account, std::string hash) {
+    account.passwordHash = std::move(hash);
+    account.passwordSalt.clear();
     // An account imported with a bare password stops being one here, the same
     // way a successful verify upgrades it: whatever the record was before, it
     // holds a hash now and the flag has to say so.
-    account->isPlainText = false;
+    account.isPlainText = false;
     // A guest's random password is replaced by one somebody typed -- its owner
     // through ChangePassword, or an admin who will tell them -- so from here a
     // change asks for the current one like any other account's.
-    account->passwordChosen = true;
+    account.passwordChosen = true;
     markDirty();
-    return true;
+}
+
+bool Database::savePasswordChange(Account& account, std::string hash, std::string& token) {
+    const Account before = account;
+    std::vector<Session> previous;
+    for (const auto& key : sessions_.keys()) {
+        const auto* row = std::as_const(sessions_).find(key);
+        if (row && row->username == before.username) previous.push_back(*row);
+    }
+    installPasswordHash(account, std::move(hash));
+    account.lastActiveAtMillis = nowMillis();
+    revokeSessionsForUser(before.username);
+    std::string replacement = createSession(before.id, before.username);
+    if (save()) {
+        token = std::move(replacement);
+        return true;
+    }
+    if (!commitUncertain()) {
+        // The failed snapshot already drained the touched keys. Reopen the
+        // row for edit so the retry cannot retain the rejected hash.
+        *findUserById(before.id) = before;
+        revokeSession(replacement);
+        for (const auto& row : previous) sessions_.insert(row.tokenHash) = row;
+        markDirty();
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -2171,7 +2366,7 @@ int Database::pruneExpiredSessions() {
 // ---------------------------------------------------------------------------
 
 PlayerRecord& Database::progress(const std::string& userId) {
-    const bool fresh = players_.find(userId) == nullptr;
+    const bool fresh = std::as_const(players_).find(userId) == nullptr;
     PlayerRecord& record = players_.insert(userId);
     if (fresh) markDirty();
     return record;

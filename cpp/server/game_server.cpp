@@ -554,15 +554,30 @@ net::NotificationKind notificationKind(const std::string& type) {
     return net::NotificationKind::Generic;
 }
 
+struct GameServer::PendingLocalHyper {
+    HyperForgePlan plan;
+    std::map<std::string, std::string> expectedPlayers;
+    std::string expectedForges, user, token;
+    Json forges;
+    net::ConnectionId connection = 0;
+    std::uint16_t input = 0, output = 0;
+    double startedAt = 0, publishAt = 0;
+    bool submitted = false, publishing = false;
+};
+
 GameServer::GameServer() {
     net::web::setCouncilHandler([this](const std::string& token,const std::string& body) {
-        if (persistenceFrozen_) return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
+        if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing))
+            return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
         const auto result = council::request(database_,token,Json::parseOrNull(body)).dump();
         if (!commitBeforeReply()) return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
         return result;
     });
 }
-GameServer::~GameServer() { net::web::setCouncilHandler({}); }
+GameServer::~GameServer() {
+    pollLocalHyper(true);
+    net::web::setCouncilHandler({});
+}
 
 std::string GameServer::adminDbKey() const {
     if (!config_.fixedAdminDbKey.empty()) return config_.fixedAdminDbKey;
@@ -831,6 +846,7 @@ void GameServer::run() {
 void GameServer::shutdown() {
     if(shutdownDone_)return;
     shutdownDone_=true;
+    pollLocalHyper(true);
     // Flush account progress before exiting; an orderly shutdown must not cost
     // anyone their session.
     if (database_.backgroundSaveEnabled()) {
@@ -958,7 +974,7 @@ std::size_t GameServer::persistAll() {
     return saved;
 }
 
-bool GameServer::saveDatabase(bool periodic, bool stopping) {
+void GameServer::captureBossClocksForSave() {
     // Which bosses stand NOW, not as of the last population pass: the file is
     // what a restart -- a crash included -- comes back to, so a boss placed or
     // killed in the last half second has to be on the right side of it.
@@ -966,6 +982,10 @@ bool GameServer::saveDatabase(bool periodic, bool stopping) {
         spawning_->noteStandingBosses(world_, commands_);
         persistBossClocks(true);
     }
+}
+
+bool GameServer::saveDatabase(bool periodic, bool stopping) {
+    captureBossClocksForSave();
     if (periodic && database_.backgroundSaveEnabled()) {
         database_.requestBackgroundSave();
         return true;
@@ -1194,6 +1214,7 @@ bool GameServer::step(double timerLagMillis) {
     const int waitMillis = static_cast<int>(std::max(0.0, nextTickMillis_ - now));
     serviceNetwork(std::min(waitMillis, 5));
     if (persistenceFrozen_) return false;
+    if (pendingLocalHyper_ && pendingLocalHyper_->publishing) return true;
     if(hyperBarrierFrozen_){nextTickMillis_=monotonicMillis();lastTickWorldMillis_=0;lastDropBonusTickWallMillis_=0;return true;}
     // What the handlers just answered -- a Pong, an AuthResult, a CraftResult
     // -- leaves now, not at the next drain. Under Node that drain is the next
@@ -1282,6 +1303,10 @@ bool GameServer::step(double timerLagMillis) {
 }
 
 void GameServer::serviceNetwork(int timeoutMillis) {
+    if (persistenceFrozen_) return;
+    pollLocalHyper();
+    if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing)) return;
+    if (!pendingLocalHyper_) pollPasswordChange();
     if (persistenceFrozen_) return;
     if(database_.commitPending())database_.save();
     std::vector<net::ConnectionId> authWork;
@@ -1547,7 +1572,7 @@ void GameServer::tick(double nowMillis) {
 }
 
 void GameServer::tick(double wallMillis, double nowMillis) {
-    if (persistenceFrozen_) return;
+    if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing)) return;
     ++tick_;
     wallClockMillis_ = wallMillis;
     clockMillis_ = nowMillis;
@@ -1583,8 +1608,9 @@ void GameServer::tick(double wallMillis, double nowMillis) {
             auto& s=entry.second;
             const double elapsed=s.councilSampleAt>0?std::min(1.0,std::max(0.0,(wallMillis-s.councilSampleAt)/1000)):0;
             s.councilSampleAt=wallMillis;
-            const auto* a=database_.findUserById(s.userId);
-            if(!s.playing()||s.councilActiveUntil<wallMillis||!a||a->guest||a->admin||credited[s.userId]) continue;
+            if (!s.playing() || s.councilActiveUntil < wallMillis) continue;
+            const auto* a = std::as_const(database_).findUserById(s.userId);
+            if (!a || a->guest || a->admin || credited[s.userId]) continue;
             credited[s.userId]=true;
             // This counter belongs to the exclusively leased account. The old
             // global table is a read-only historical baseline: a shard's stale
@@ -2048,7 +2074,16 @@ void GameServer::bankPickups() {
 
         // Into the bag the body is playing with: an arena pickup is the run's,
         // not the account's, until the run ends.
-        giveToInventory(liveRecord(*session), pickup.petalIndex, pickup.rarity, pickup.quantity);
+        auto& record = liveRecord(*session);
+        const auto key = inventoryKey(pickup.petalIndex);
+        const int previous = record.itemCount(pickup.rarity, key);
+        const auto credited = std::min(pickup.quantity, static_cast<std::uint32_t>(
+            kMaxStackCount - previous));
+        if (credited > 0) {
+            record.setItemCount(pickup.rarity, key, previous + static_cast<int>(credited));
+            auto& total = session->runLoot[{pickup.petalIndex, pickup.rarity}];
+            total += std::min(credited, UINT32_MAX - total);
+        }
         database_.markDirty();
 
         // Owed, not sent: see sendDueProfiles.
@@ -2142,6 +2177,12 @@ void GameServer::reapDead() {
                     w.str(killerLabel(world_, world_.get<Dead>(e).killer));
                     w.u32(0);
                     w.u32(tick_);
+                    w.u32(static_cast<std::uint32_t>(session->runLoot.size()));
+                    for (const auto& [item, count] : session->runLoot) {
+                        w.u16(item.first);
+                        w.u8(static_cast<std::uint8_t>(item.second));
+                        w.u32(count);
+                    }
                     connection->send(w);
                 }
             } else {
@@ -2943,6 +2984,15 @@ void GameServer::handleChangePassword(Session& session, net::Connection& connect
         sendChangePasswordResult(connection, false, "", "You are not signed in.");
         return;
     }
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    const bool offload = database_.backgroundSaveEnabled();
+    if (offload && passwordChange_.future.valid()) {
+        // Keep the pending request as the only reply for this connection.
+        if (passwordChange_.connection != connection.id())
+            sendChangePasswordResult(connection, false, "", "A password change is in progress. Try again shortly.");
+        return;
+    }
+#endif
 
     // AshFlor BJ: admins may change their password here (same budgets as anyone).
 
@@ -2969,6 +3019,36 @@ void GameServer::handleChangePassword(Session& session, net::Connection& connect
     // on a shared machine is exactly who must not be able to lock its owner out.
     const Account* account = std::as_const(database_).findUserById(session.userId);
     const bool proven = account != nullptr && !account->passwordChosen;
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    if (offload && account) {
+        const int cost = database_.passwordCost();
+        passwordChange_.connection = connection.id();
+        passwordChange_.token = session.token;
+        passwordChange_.address = address;
+        passwordChange_.expected = *account;
+        try {
+            passwordChange_.future = std::async(std::launch::async,
+                [expected = *account, current, next, cost] {
+                    PasswordChangeResult result;
+                    const bool first = !expected.passwordChosen;
+                    result.verified = first || Database::passwordMatches(expected, current);
+                    if (!result.verified) result.reason = "Your current password is not correct.";
+                    else if (!first && current == next) result.reason = "That is already your password.";
+                    else if (Database::validPassword(next, result.reason)) {
+                        if (crypto::secureRandom().seededFromKernel())
+                            result.hash = crypto::bcryptHash(next, cost);
+                        else
+                            result.reason = "Password worker unavailable. Try again shortly.";
+                    }
+                    return result;
+                });
+        } catch (const std::system_error&) {
+            accountLimits_.refundLoginAttempt(address);
+            sendChangePasswordResult(connection, false, "", "Password worker unavailable. Try again shortly.");
+        }
+        return;
+    }
+#endif
     if (!proven && !database_.verifyPassword(session.username, current)) {
         sendChangePasswordResult(connection, false, "", "Your current password is not correct.");
         return;
@@ -3012,6 +3092,53 @@ void GameServer::handleChangePassword(Session& session, net::Connection& connect
     // The Account panel draws its form from the Profile's flags, and an account
     // that just chose its first password has a different form now.
     if (proven) sendProfile(session, connection);
+}
+
+void GameServer::pollPasswordChange() {
+    if (!passwordChange_.future.valid() ||
+        passwordChange_.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    auto work = std::move(passwordChange_);
+    passwordChange_ = {};
+    PasswordChangeResult result;
+    try {
+        result = work.future.get();
+    } catch (const std::exception&) {
+        result.reason = "Password worker unavailable. Try again shortly.";
+    }
+    if (result.verified) accountLimits_.refundLoginAttempt(work.address);
+
+    auto* peer = listener_.find(work.connection);
+    auto* session = sessionFor(work.connection);
+    if (!peer || !session || !session->authenticated() || session->token != work.token ||
+        session->userId != work.expected.id) return;
+    const auto* current = std::as_const(database_).findUserById(work.expected.id);
+    if (!current || current->username != work.expected.username ||
+        current->passwordHash != work.expected.passwordHash ||
+        current->passwordSalt != work.expected.passwordSalt ||
+        current->passwordChosen != work.expected.passwordChosen ||
+        !database_.resolveSession(work.token, false)) {
+        sendChangePasswordResult(*peer, false, "", "Account credentials changed. Sign in again.");
+        return;
+    }
+    if (result.hash.empty()) {
+        sendChangePasswordResult(*peer, false, "", result.reason);
+        return;
+    }
+    const bool first = !current->passwordChosen;
+    auto& account = *database_.findUserById(work.expected.id);
+    std::string token;
+    if (!database_.savePasswordChange(account, std::move(result.hash), token)) {
+        if (database_.commitUncertain()) {
+            persistenceFrozen_ = true;
+            running_.store(false);
+        } else {
+            sendChangePasswordResult(*peer, false, "", "Could not save the new password. Try again shortly.");
+        }
+        return;
+    }
+    session->token = std::move(token);
+    sendChangePasswordResult(*peer, true, session->token, "");
+    if (first) sendProfile(*session, *peer);
 }
 
 void GameServer::sendSetUsernameResult(net::Connection& connection, bool ok,
@@ -3630,6 +3757,7 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     const Vec2 viewport = claimableViewport(world_, entity, content(), width, height);
     world_.get<PlayerLocation>(entity).viewport = viewport;
 
+    session.runLoot.clear();
     views_[session.connection].reset();
 
     ByteWriter w;
@@ -4817,6 +4945,10 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
             if(!beginSharedHyper(session,connection,request,petalIndex,true))reply(false,"超凡事务正在处理，请稍后重试。");
             return;
         }
+        if (pendingLocalHyper_) {
+            reply(false, "超凡事务正在处理，请稍后重试。");
+            return;
+        }
         const auto state=hyperForgeState(database_,hyperForgeOutput(petal.id),titan);
         if(state.owner==session.userId){reply(false,"你已经持有该超凡花瓣。");return;}
         if(state.abandonedBy==session.userId){
@@ -4830,18 +4962,46 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         if(liveRecord(session).itemCount(Rarity::Unique,inventoryKey(petalIndex))<cost){
             reply(false,"需要"+std::to_string(cost)+"个未装备的同种永恒材料。");return;
         }
-        persistAll();
-        const auto result=forgeHyper(database_,session.userId,petal.id,database_.nowMillis(),{},titan);
-        if(!result.ok){reply(false,result.reason);return;}
-        for(auto& [id,other]:sessions_) {
-            if(!other.authenticated()||std::find(result.affected.begin(),result.affected.end(),other.userId)==result.affected.end())continue;
-            if(other.playing())applyAccountToSession(other);
-            if(auto* peer=listener_.find(id)){
-                sendProfile(other,*peer);
-                if(other.userId!=session.userId)sendNotice(*peer,net::NoticeSeverity::Warning,
-                    "你的超凡"+petal.name+"已被其他玩家夺取，已返还原投入材料，净损失1个永恒材料。");
-            }
+        if (database_.authoritative()) {
+            persistAll();
+        } else {
+            // Capture live progress and boss clocks in memory. The forge's
+            // durable save publishes those together with the ownership transfer.
+            captureLiveProgress();
+            captureBossClocksForSave();
         }
+        if (database_.backgroundSaveEnabled()) {
+            auto plan = planHyperForge(database_, session.userId, petal.id, database_.nowMillis(), {}, titan);
+            if (!plan.result.ok) { reply(false, plan.result.reason); return; }
+            auto pending = std::make_unique<PendingLocalHyper>();
+            const auto& forges = database_.storedTable("hyperForges");
+            pending->expectedForges = forges.dump(0);
+            pending->forges = forges;
+            pending->forges[plan.forgeKey] = plan.entry;
+            const auto observedAt = static_cast<double>(database_.nowMillis());
+            for (auto& [id, row] : plan.players) rememberHyperHoldings(row, observedAt);
+            for (const auto& [id, row] : plan.players)
+                pending->expectedPlayers.emplace(id, database_.playerSnapshotText(id));
+            pending->plan = std::move(plan);
+            pending->connection = connection.id();
+            pending->input = petalIndex;
+            pending->output = outputIndex;
+            pending->user = session.userId;
+            pending->token = session.token;
+            pending->startedAt = monotonicMillis();
+            pendingLocalHyper_ = std::move(pending);
+            return;
+        }
+        const auto result=forgeHyper(database_,session.userId,petal.id,database_.nowMillis(),{},titan);
+        if (database_.backgroundSaveEnabled() && database_.commitUncertain()) {
+            // A rename may already have published the transaction. Stop before
+            // answering or accepting another mutation against uncertain state.
+            persistenceFrozen_ = true;
+            running_.store(false);
+            return;
+        }
+        if(!result.ok){reply(false,result.reason);return;}
+        notifyLocalHyper(session.userId, petalIndex, result.affected);
         announceRareCraft(session,outputIndex,Rarity::Apex,1,result.consumed,true);
         reply(true,"");return;
     }
@@ -4875,6 +5035,90 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
 
     reply(true, "", exchange.quantity);
     sendProfile(session, connection);
+}
+
+void GameServer::notifyLocalHyper(const std::string& winner, std::uint16_t input,
+                                  const std::vector<std::string>& affected) {
+    for (auto& [id, other] : sessions_) {
+        if (!other.authenticated() ||
+            std::find(affected.begin(), affected.end(), other.userId) == affected.end()) continue;
+        if (other.playing()) applyAccountToSession(other);
+        if (auto* peer = listener_.find(id)) {
+            sendProfile(other, *peer);
+            if (other.userId != winner)
+                sendNotice(*peer, net::NoticeSeverity::Warning, "你的超凡" + content().petal(input).name +
+                           "已被其他玩家夺取，已返还原投入材料，净损失1个永恒材料。");
+        }
+    }
+}
+
+void GameServer::pollLocalHyper(bool shuttingDown) {
+    if (!pendingLocalHyper_) return;
+    auto& pending = *pendingLocalHyper_;
+    using Save = Database::StagedSave;
+    auto* session = sessionFor(pending.connection);
+    auto* peer = listener_.find(pending.connection);
+    const bool sameSession = session && peer && session->authenticated() &&
+        session->userId == pending.user && session->token == pending.token;
+    const auto stillValid = [&] {
+        captureLiveProgress();
+        return sameSession &&
+            database_.storedTable("hyperForges").dump(0) == pending.expectedForges &&
+            std::all_of(pending.expectedPlayers.begin(), pending.expectedPlayers.end(),
+                [&](const auto& row) { return database_.playerSnapshotText(row.first) == row.second; });
+    };
+    if (!pending.submitted && !shuttingDown && sameSession && !database_.commitUncertain()) {
+        if (!database_.canStageForgeSave()) return;
+        if (stillValid() && database_.beginStagedForgeSave(pending.plan.players, pending.forges)) {
+            pending.submitted = true;
+            // The checkpoint can refresh hold-history timestamps in live rows.
+            for (auto& [id, text] : pending.expectedPlayers) text = database_.playerSnapshotText(id);
+            return;
+        }
+    }
+    if (shuttingDown && !pending.publishing) database_.decideStagedForgeSave(false);
+    const auto outcome = database_.pollStagedForgeSave(shuttingDown);
+    if (outcome == Save::Preparing) return;
+    if (outcome == Save::Ready) {
+        const bool valid = stillValid();
+        pending.publishing = valid;
+        if (valid) pending.publishAt = monotonicMillis();
+        database_.decideStagedForgeSave(valid);
+        return;
+    }
+    if (outcome == Save::Uncertain || database_.commitUncertain()) {
+        persistenceFrozen_ = true;
+        running_.store(false);
+        pendingLocalHyper_.reset();
+        return;
+    }
+    const bool saved = outcome == Save::Saved;
+    if (config_.tickProbe && pending.publishAt > 0) {
+        std::printf("[titan-commit] saved=%d stageMs=%.2f publishMs=%.2f\n",
+                    saved, pending.publishAt - pending.startedAt, monotonicMillis() - pending.publishAt);
+    }
+    if (saved) {
+        // Publication is fenced: nothing can edit these records between the
+        // validation and this point. Other progress remains in the live DB.
+        for (auto& [id, row] : pending.plan.players) database_.progress(id) = std::move(row);
+        database_.rawTable("hyperForges") = std::move(pending.forges);
+        database_.markDirty();
+        if (!shuttingDown) {
+            notifyLocalHyper(pending.user, pending.input, pending.plan.result.affected);
+            if (sameSession)
+                announceRareCraft(*session, pending.output, Rarity::Apex, 1, pending.plan.result.consumed, true);
+        }
+    }
+    if (sameSession && !shuttingDown) {
+        ByteWriter w;
+        w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanForgeResult));
+        w.boolean(saved);
+        w.u16(saved ? pending.output : pending.input);
+        w.str(saved ? "" : "锻造未提交，材料未扣除，请稍后重试。");
+        w.u32(saved ? 1 : 0);
+        peer->send(w);
+    }
+    pendingLocalHyper_.reset();
 }
 
 void GameServer::handleTitanHolder(Session& session, net::Connection& connection,
@@ -8758,15 +9002,17 @@ bool GameServer::expireTimedHammer(PlayerRecord& record) {
     database_.markDirty();return expired;
 }
 void GameServer::serviceTimedHammers(double now) {
-    if(now<nextTimedHammerSweep_)return;nextTimedHammerSweep_=now+1000;
-    for(auto& [id,session]:sessions_) {
-        if(!session.authenticated())continue;
-        auto& record=database_.progress(session.userId);
-        if(record.extra["titanHammerLeases"].size()==0 &&
-           !(record.extra["titanHammerExpiresAt"].asDouble(0)>0)&&
-           !record.extra["temporaryHyperHammer"]["active"].asBool(false))continue;
-        liveRecord(session);
-        if(!expireTimedHammer(record))continue;
+    if (now < nextTimedHammerSweep_) return;
+    nextTimedHammerSweep_ = now + 1000;
+    for (auto& [id, session] : sessions_) {
+        if (!session.authenticated()) continue;
+        // Reading the sweep eligibility must not freeze an account's entire
+        // inventory for a pending save. Only hammer owners need a writable row.
+        const auto* record = database_.findProgress(session.userId);
+        if (!record || (record->extra["titanHammerLeases"].size() == 0 &&
+                       !(record->extra["titanHammerExpiresAt"].asDouble(0) > 0) &&
+                       !record->extra["temporaryHyperHammer"]["active"].asBool(false))) continue;
+        if (!expireTimedHammer(database_.progress(session.userId))) continue;
         if(session.playing())applyAccountToSession(session);
         if(auto* connection=listener_.find(id)) {
             sendNotice(*connection,net::NoticeSeverity::Info,"限时雷神之锤已到期，可前往泰坦重新兑换。");

@@ -671,7 +671,9 @@ std::string SecureRandom::hex(std::size_t byteCount) {
 }
 
 SecureRandom& secureRandom() {
-    static SecureRandom instance;
+    // The password worker generates bcrypt salts while the network thread
+    // can still issue login tokens.
+    thread_local SecureRandom instance;
     return instance;
 }
 

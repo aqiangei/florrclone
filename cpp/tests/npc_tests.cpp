@@ -3363,7 +3363,7 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     Harness h("hyper-network",[](const std::string& path){
         seedAccount(path,"alpha");seedStack(path,"alpha","petal_rose",Rarity::Unique,5);
         seedAccount(path,"beta");seedStack(path,"beta","petal_rose",Rarity::Unique,5);
-    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    },dir,0,[](ServerConfig& config){config.backgroundSave=true;});CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient alpha,beta;CHECK(joinAs(h,alpha,"alpha"));CHECK(joinAs(h,beta,"beta"));
     std::vector<NetClient*> both{&alpha,&beta};h.step(3,both);standAtTitan(h,both,"alpha");standAtTitan(h,both,"beta");
     auto& db=const_cast<Database&>(h.server.database());hyperForgeTestNow=1000;
@@ -3377,6 +3377,27 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     CHECK_EQ(beta.profile().stackCount(rose,Rarity::Unique),5u);
     hyperForgeTestNow=1000+15LL*3600000;
     beta.requestTitanForge(rose,true);CHECK(awaitForge(h,both,beta,out));CHECK(out.success);
+    {
+        Database reloaded; std::string error;
+        CHECK(reloaded.load(h.dbPath,error));
+        const auto* alphaAccount=std::as_const(db).findUser("alpha");
+        const auto* betaAccount=std::as_const(db).findUser("beta");
+        CHECK(alphaAccount&&betaAccount);
+        if(alphaAccount&&betaAccount) {
+            const auto* previous=reloaded.findProgress(alphaAccount->id);
+            const auto* winner=reloaded.findProgress(betaAccount->id);
+            CHECK(previous&&winner);
+            if(previous&&winner) {
+                CHECK_EQ(previous->itemCount(Rarity::Unique,"petal_rose"),4);
+                CHECK_EQ(previous->itemCount(Rarity::Apex,"petal_rose"),0);
+                CHECK_EQ(winner->itemCount(Rarity::Unique,"petal_rose"),0);
+                CHECK_EQ(winner->itemCount(Rarity::Apex,"petal_rose"),1);
+            }
+            const auto& forges=reloaded.storedTable("hyperForges");
+            CHECK_EQ(forges.size(),std::size_t{1});
+            if(forges.size()==1) CHECK_EQ(forges[forges.keys().front()]["owner"].asString(),betaAccount->id);
+        }
+    }
     CHECK(awaitProfile(h,alpha,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==0&&p.stackCount(rose,Rarity::Unique)==4;}));
     CHECK(awaitProfile(h,beta,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
     removeDataDir(dir);
