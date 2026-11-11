@@ -30,6 +30,10 @@ constexpr double kPrestigeHelUpperBand = 45.0;
 constexpr double kPrestigeHelSuperBand = 65.0;
 constexpr double kPrestigeHelMidBandUpperRoll = 0.40;
 constexpr int kPrestigeHelMinAwake = 12;
+constexpr double kPrestigeFactoryDeepDifficulty = 70.0;
+constexpr int kPrestigeFactoryMinAwake = 12;
+constexpr double kPrestigeFactoryRespawnMinMillis = 3000.0;
+constexpr double kPrestigeFactoryRespawnMaxMillis = 7000.0;
 constexpr double kDeepJungleDensityScale = 1.20;
 constexpr double kDeepJungleDifficulty = 65.0;
 constexpr double kPrestigeSewersDensityScale = 0.90;
@@ -1697,6 +1701,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     ordinaryJungleRealm_ = Realm::Arena;
     prestigeSewersRealm_ = Realm::Arena;
     prestigeHelRealm_ = Realm::Arena;
+    prestigeFactoryRealm_ = Realm::Arena;
     if (worldMaps == nullptr) return;
 
     // Every staged map's bands, each tagged with the realm it belongs to. One
@@ -1717,6 +1722,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
         if (ordinaryJungle) ordinaryJungleRealm_ = map.realm();
         if (prestigeSewers) prestigeSewersRealm_ = map.realm();
         if (prestigeHel) prestigeHelRealm_ = map.realm();
+        if (map.prestige() && map.templateId() == "computer") prestigeFactoryRealm_ = map.realm();
         for (const MapElement& element : map.elements()) {
             if (!element.isSpawnBand() && !element.isMobRegion()) continue;
             SpawnZone zone;
@@ -2495,8 +2501,9 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // queen in the room the last one was killed in, every time, which turns a
     // hunt across the map into a farm at one coordinate.
     const double scatter = slot != Slot::TopUp && !zone.singular ? kRespawnScatter : 0.0;
-    const bool jungleRefill = slot == Slot::Killed && scatter > 0.0 && zone.forceRarity < 0 &&
-        (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_) &&
+    const bool refillNearLoss = slot == Slot::Killed && scatter > 0.0 && zone.forceRarity < 0 &&
+        (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_ ||
+         isDeepPrestigeFactory(zone)) &&
         seenBy(viewers, zone.realm, lostAt, 0.0);
     Vec2 at;
     bool placed = false;
@@ -2516,7 +2523,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         if (inBorderBand(candidate, extent)) continue;
         if (terrain.blocked(candidate, zone.realm)) continue;
         if (reuseSpecies && !acceptsReplacement(rosterAt(candidate))) continue;
-        if (jungleRefill && attempt < kZonePlacementAttempts / 2 &&
+        if (refillNearLoss && attempt < kZonePlacementAttempts / 2 &&
             (!seenBy(viewers, zone.realm, candidate, 0.0) ||
              terrain.segmentBlocked(lostAt, candidate, zone.realm))) continue;
         // The nominal body, because the type is not rolled until a point has
@@ -2662,6 +2669,8 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
             const bool prestigeHelRefill = zone.prestige && zone.realm == prestigeHelRealm_ &&
                 zone.difficulty >= kPrestigeHelUpperBand && !zone.singular && forcedTier < 0;
             if (jungleDelay) delay = rng.range(kJungleRespawnMinMillis, kJungleRespawnMaxMillis);
+            else if (isDeepPrestigeFactory(zone))
+                delay = rng.range(kPrestigeFactoryRespawnMinMillis, kPrestigeFactoryRespawnMaxMillis);
             else if (sewersRefill || prestigeHelRefill || (authoredMap && !zone.prestige &&
                      authoredMap->templateId() == "hel" && zone.difficulty >= kDeepHelDifficulty &&
                      !zone.singular && forcedTier < 0)) delay = rng.range(3000.0, 7000.0);
@@ -2833,6 +2842,11 @@ void SpawnSystem::wakeAhead(World& world, const Terrain& terrain, const ContentR
     wokenFrom_.insert(wokenFrom_.end(), wakeSeers_.begin(), wakeSeers_.end());
 }
 
+bool SpawnSystem::isDeepPrestigeFactory(const SpawnZone& zone) const {
+    return zone.realm == prestigeFactoryRealm_ && zone.difficulty >= kPrestigeFactoryDeepDifficulty &&
+           !zone.singular && zone.forceRarity < 0;
+}
+
 void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                                 const ContentRegistry& content, const std::vector<Viewer>& seers,
                                 const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
@@ -2846,9 +2860,9 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
     // At saturation, these areas may borrow existing escort headroom for
     // nearby enemies. The shared live-mob ceiling still applies.
     constexpr std::array reserveMin{kJungleMinAwake, kJungleMinAwake, kPrestigeSewersMinAwake,
-                                    kPrestigeHelMinAwake};
+                                    kPrestigeHelMinAwake, kPrestigeFactoryMinAwake};
     const std::array reserveRealms{ordinaryJungleRealm_, prestigeJungleRealm_, prestigeSewersRealm_,
-                                  prestigeHelRealm_};
+                                  prestigeHelRealm_, prestigeFactoryRealm_};
     std::array<int, reserveMin.size()> awake{};
     std::array<bool, reserveMin.size()> inView{};
     const auto prioritySlot = [&](const SpawnZone& zone) {
@@ -2857,7 +2871,18 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         if (zone.realm == prestigeSewersRealm_ && zone.difficulty >= kPrestigeSewersBoxDifficulty) return 2;
         if (zone.prestige && zone.realm == prestigeHelRealm_ && zone.difficulty >= kPrestigeHelUpperBand &&
             !zone.singular && zone.forceRarity < 0) return 3;
+        if (isDeepPrestigeFactory(zone)) return 4;
         return -1;
+    };
+    const auto inRoom = [&](const Viewer& viewer, Vec2 at) {
+        return std::abs(at.x - viewer.position.x) <= viewer.half.x &&
+               std::abs(at.y - viewer.position.y) <= viewer.half.y &&
+               !terrain.segmentBlocked(viewer.position, at, viewer.realm);
+    };
+    const auto inFactoryView = [&](Vec2 at) {
+        return std::any_of(seers.begin(), seers.end(), [&](const Viewer& viewer) {
+            return viewer.realm == prestigeFactoryRealm_ && inRoom(viewer, at);
+        });
     };
     bool canReserve = false;
     if (ambientBudget < mobCap && census_.mobs >= ambientBudget) {
@@ -2872,7 +2897,9 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                 const auto& zone = zones_[mob.zone];
                 const int slot = prioritySlot(zone);
                 if (slot >= 0 && inView[slot] && awake[slot] < reserveMin[slot] &&
-                    seenBy(seers, zone.realm, mob.position, kLatentWakeMargin)) ++awake[slot];
+                    (isDeepPrestigeFactory(zone) ? inFactoryView(mob.position)
+                                                 : seenBy(seers, zone.realm, mob.position, kLatentWakeMargin)))
+                    ++awake[slot];
             }
         }
         for (std::size_t slot = 0; slot < inView.size(); ++slot)
@@ -2899,18 +2926,14 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         // walking, and on a map with two dozen bands almost none of them are.
         if (!zoneInView(zone.bounds, zone.realm, seers, kLatentWakeMargin)) continue;
 
-        // Deep Jungle rooms can share a band across walls. If a flower has
+        // Deep Jungle and Factory rooms can share a band across walls. If a flower has
         // no nearby mob in its room, keep one ready slot available to move
         // into reach rather than requiring the flower to draw mobs out.
         const Viewer* refillViewer = nullptr;
-        const auto inRoom = [&](const Viewer& viewer, Vec2 at) {
-            return std::abs(at.x - viewer.position.x) <= viewer.half.x &&
-                   std::abs(at.y - viewer.position.y) <= viewer.half.y &&
-                   !terrain.segmentBlocked(viewer.position, at, zone.realm);
-        };
-        if (relocateBlocked && !zone.singular && zone.forceRarity < 0 &&
+        const bool deepJungle = !zone.singular && zone.forceRarity < 0 &&
             zone.difficulty >= kDeepJungleDifficulty &&
-            (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_)) {
+            (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_);
+        if (relocateBlocked && (deepJungle || isDeepPrestigeFactory(zone))) {
             const auto offset = (static_cast<std::size_t>(nowMillis / kPopulationIntervalMillis) + index)
                 % seers.size();
             for (std::size_t i = 0; i < seers.size(); ++i) {
@@ -3037,6 +3060,9 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
             }
             if (!found) continue;
         }
+        // A mob across the factory wall cannot fill the reserve for this room.
+        if (census_.mobs >= ambientBudget && isDeepPrestigeFactory(zone) && !inFactoryView(at))
+            continue;
         wakeList_[attempted++] = candidate;
         const Entity spawned =
             spawnMobAt(world, terrain, content, record.mobIndex, record.rarity, at,

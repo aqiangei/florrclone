@@ -719,6 +719,60 @@ TEST(prestige_jungle_sewers_and_hel_wake_local_mobs_at_the_shared_ambient_limit)
     std::printf("[prestige hel] %d mobs near the upper band at the ambient budget\n", helNearby);
 }
 
+TEST(deep_prestige_factory_refills_at_the_shared_ambient_limit) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    bool found = false;
+    const Realm realm = maps.realmOfId("prestige_computer", found);
+    CHECK(found);
+    if (!found) return;
+
+    World world;
+    CommandBuffer commands{world};
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    spawner.sizePlacementGrids(terrain);
+    Rng rng{42};
+    std::vector<RealmPoint> viewers;
+    const auto tick = [&](double now) {
+        spawner.run(world, terrain, shippedContent(), viewers, rng, now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    for (int pass = 0; pass < 12; ++pass) tick(50'000 + pass * kPopulationIntervalMillis);
+    CHECK(spawner.census().mobs > 0);
+    spawner.mobCap = spawner.census().mobs + 128; // Existing live mobs use the entire normal budget.
+
+    // End of the winding difficulty-70 section on the shipped Factory map.
+    const Vec2 terminal{3456.0, 14464.0};
+    CHECK(!terrain.blocked(terminal, realm));
+    viewers.push_back({terminal, realm});
+    const auto reachable = [&] {
+        std::vector<Entity> local;
+        Query<AmbientMob, MobTag, Transform, MobType> mobs{world};
+        mobs.without<Dead>();
+        mobs.each([&](Entity e, AmbientMob& ambient, MobTag&, Transform& where, MobType& type) {
+            if (ambient.zone != kInvalidIndex && where.realm == realm &&
+                rarityIndex(type.rarity) < rarityIndex(Rarity::Unique) &&
+                std::abs(where.position.x - terminal.x) <= kSpawnViewportHalfWidth &&
+                std::abs(where.position.y - terminal.y) <= kSpawnViewportHalfHeight &&
+                !terrain.segmentBlocked(terminal, where.position, realm)) local.push_back(e);
+        });
+        return local;
+    };
+    tick(55'550); // A new viewer must wake monsters between population passes.
+    const auto cleared = reachable();
+    CHECK(!cleared.empty());
+    for (const Entity entity : cleared) world.add<Dead>(entity);
+    tick(56'000);
+    for (const Entity entity : cleared) world.destroy(entity);
+    for (int pass = 1; pass <= 16; ++pass) tick(56'000 + pass * kPopulationIntervalMillis);
+    CHECK(!reachable().empty());
+    CHECK(spawner.census().mobs <= spawner.mobCap);
+}
+
 TEST(jungle_refills_near_a_stationary_viewer_after_kills) {
     WorldMaps maps;
     Terrain terrain;

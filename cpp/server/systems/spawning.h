@@ -848,6 +848,8 @@ private:
     /// next census looks for it on.
     void noteLiveBandMob(World& world, Entity e, std::uint16_t zone);
 
+    bool isDeepPrestigeFactory(const SpawnZone& zone) const;
+
     /// Brings every record `seers` can now see to life, all in the same pass,
     /// and none of them in any of `viewers`' laps. The cheap half is the
     /// rejection: a band whose box no viewport touches is one rectangle test.
@@ -1105,6 +1107,7 @@ private:
     Realm ordinaryJungleRealm_ = Realm::Arena;
     Realm prestigeSewersRealm_ = Realm::Arena;
     Realm prestigeHelRealm_ = Realm::Arena;
+    Realm prestigeFactoryRealm_ = Realm::Arena;
     std::array<bool, kMaxRealms> inactivePyramidRealms_{};
     struct MobPlacement { Vec2 position; double radius; };
     std::vector<MobPlacement> mobPlacements_;
