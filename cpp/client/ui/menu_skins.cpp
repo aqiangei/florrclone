@@ -440,6 +440,10 @@ Rect browseBody(const Layout& l) {
     return {l.body.x, top, l.body.w, std::max(0.0, l.panel.bottom() - kPad - top)};
 }
 
+Rect skinSearchRect(const Layout& layout) {
+    return {layout.body.x, layout.tabs.bottom() + 5.0, layout.body.w, 29.0};
+}
+
 /// Everything the studio keeps between frames.
 struct Studio {
     enum class Tab : std::uint8_t { Create, Browse, BuiltIn, Review };
@@ -507,6 +511,8 @@ struct Studio {
     /// ordinary field on the footer, so "naming" is just where the caret is.
     TextFieldState textField;
     TextFieldState nameField;
+    TextFieldState skinSearchField;
+    std::string skinSearch;
 
     bool confirming = false;
     std::string confirmId;
@@ -555,7 +561,7 @@ struct Studio {
     void drawTextEditor(Canvas&, Rect, double timeSeconds);
     void drawCommandHelp(Canvas&, Rect);
     void drawFooter(Canvas&, double timeSeconds);
-    void drawBrowse(Canvas&, const std::string& me);
+    void drawBrowse(Canvas&, const std::string& me, double timeSeconds);
     void drawBuiltIn(MenuContext&);
     void drawConfirm(Canvas&, Vec2 mouse);
     /// A button that registers its own hit region, so the input pass that runs
@@ -1088,14 +1094,19 @@ void Studio::drawFooter(Canvas& canvas, double timeSeconds) {
                  publish, kAccent);
 }
 
-void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
+void Studio::drawBrowse(Canvas& canvas, const std::string& me, double timeSeconds) {
     const bool reviewing = tab == Tab::Review;
-    ui::text(canvas, reviewing ? trEnZh("Oldest submissions first", "按提交队列处理，请先检查预览。")
-                                : trEnZh("New skins need approval before use or publication.",
-                                         "新皮肤审核通过后才可穿戴或公开。"),
-             layout.body.x, layout.tabs.bottom() + 16.0, label(kBodySize));
-
-    const Rect view = browseBody(layout);
+    Rect view = browseBody(layout);
+    if (reviewing) {
+        ui::text(canvas, trEnZh("Oldest submissions first", "按提交队列处理，请先检查预览。"),
+                 layout.body.x, layout.tabs.bottom() + 16.0, label(kBodySize));
+    } else {
+        const Rect field = skinSearchRect(layout);
+        inputField(canvas, field, skinSearch, trEnZh("Search by skin name or author", "搜索皮肤名或作者"),
+                   skinSearchField.focused, timeSeconds, &skinSearchField);
+        view.y += 12.0;
+        view.h = std::max(0.0, view.h - 12.0);
+    }
     const auto& skins = reviewing ? net->skinReviewQueue() : catalog();
 
     // Four to a row rather than three: a 135px card fits its own preview,
@@ -1108,11 +1119,17 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
 
     std::vector<const CustomSkin*> sorted;
     sorted.reserve(skins.size());
+    const auto query = reviewing ? std::string{} : lowerCase(skinSearch);
     for (const CustomSkin& skin : skins) {
-        if (reviewing || skin.published || lowerCase(skin.author) == me) sorted.push_back(&skin);
+        const auto author = lowerCase(skin.author);
+        if (!reviewing && !skin.published && author != me) continue;
+        if (!query.empty() && lowerCase(skin.name).find(query) == std::string::npos &&
+            author.find(query) == std::string::npos) continue;
+        sorted.push_back(&skin);
     }
     if (sorted.empty()) {
-        ui::text(canvas, reviewing ? trEnZh("No pending skins", "暂无待审皮肤") : tr(Msg::SkinBrowseEmpty),
+        ui::text(canvas, !query.empty() ? trEnZh("No matching skins", "没有匹配的皮肤") :
+                 reviewing ? trEnZh("No pending skins", "暂无待审皮肤") : tr(Msg::SkinBrowseEmpty),
                  view.x, view.y + 24.0, label(kBodySize));
         return;
     }
@@ -1362,7 +1379,7 @@ void Studio::draw(MenuContext& ctx) {
         }
         drawFooter(canvas, ctx.timeSeconds);
     } else if (tab == Tab::Browse || tab == Tab::Review) {
-        drawBrowse(canvas, lowerCase(ctx.net.profile().username));
+        drawBrowse(canvas, lowerCase(ctx.net.profile().username), ctx.timeSeconds);
     } else {
         drawBuiltIn(ctx);
     }
@@ -1581,6 +1598,7 @@ bool Studio::dispatch(MenuContext& ctx, const Action& a) {
     // clicking off a DOM input does. The box itself never reaches here: it
     // answers for its own press in trackTextMouse.
     nameField.blur();
+    skinSearchField.blur();
 
     switch (a.k) {
         case Act::Close:
@@ -1769,6 +1787,22 @@ bool Studio::handleInput(MenuContext& ctx) {
         if (insideInclusive(field, mouse)) ctx.window.setCursorShape(CursorShape::Text);
     }
 
+    if (tab == Tab::Browse) {
+        const Rect field = skinSearchRect(layout);
+        trackTextMouse(ctx.window, skinSearchField, field,
+                       inputFieldRun(field, skinSearch, skinSearchField), skinSearch, ctx.timeSeconds);
+        if (insideInclusive(field, mouse)) ctx.window.setCursorShape(CursorShape::Text);
+        if (skinSearchField.focused) {
+            ctx.wantsText = true;
+            TextEditOptions typing;
+            typing.maxBytes = 128;
+            if (editText(ctx.window, skinSearch, skinSearchField, ctx.timeSeconds, typing))
+                browseScroll.offset = 0;
+            if (ctx.window.keyPressed(Key::Escape) || ctx.window.keyPressed(Key::Enter))
+                skinSearchField.blur();
+        }
+    }
+
     // Only inside the panel, and raw: one notch is the browser's 100px of
     // deltaY, which is what the other list panels consume too.
     const float wheel = ctx.wheel();
@@ -1838,6 +1872,7 @@ void SkinsPanel::reset() {
     // throw away the skin being drawn.
     Studio& state = studio();
     state.nameField.blur();
+    state.skinSearchField.blur();
     state.textField.dragging = false;
     state.dragging = false;
     state.shapeScroll.thumbGrab.reset();

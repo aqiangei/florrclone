@@ -22,6 +22,7 @@ constexpr double kSpawnedMobBodyScale = 0.75;
 // Prestige Jungle lacks the ordinary Jungle's separately stocked boss populations.
 // More of its own ambient slots can stay latent outside the players' views.
 constexpr double kPrestigeJungleDensityScale = 1.25;
+constexpr double kPrestigeEternalChance = 0.05;
 constexpr double kDeepHelDifficulty = 50.0;
 constexpr double kDeepHelDensityScale = 1.20;
 constexpr double kPrestigeHelDensityScale = 1.20;
@@ -32,6 +33,7 @@ constexpr int kPrestigeHelMinAwake = 12;
 constexpr double kDeepJungleDensityScale = 1.20;
 constexpr double kDeepJungleDifficulty = 65.0;
 constexpr double kPrestigeSewersDensityScale = 0.90;
+constexpr double kOrdinaryInViewRespawnMaxMillis = 8000.0;
 constexpr double kJungleRespawnMinMillis = 2000.0;
 constexpr double kJungleRespawnMaxMillis = 6000.0;
 constexpr int kJungleMinAwake = 12;
@@ -60,7 +62,7 @@ bool isPrestigeJungle(const MapData& map) {
 /// like any other band mob. Nothing above super ever stands in a twin.
 bool alwaysAwake(const ContentRegistry& content, std::uint16_t mobIndex, Rarity rarity,
                  bool prestige) {
-    if (isBossRarity(rarity) && !prestige) return true;
+    if (isBossRarity(rarity) && (!prestige || rarity == Rarity::Unique)) return true;
     return mobIndex < content.mobCount() && content.mob(mobIndex).neverAmbient;
 }
 
@@ -695,7 +697,7 @@ bool SpawnSystem::randomBandPoint(const Terrain& terrain, Realm realm, Rng& rng,
 Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const ContentRegistry& content,
                                std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                                double nowMillis, Rng& rng, int depth, std::uint16_t zone,
-                               std::optional<double> facing, bool clockGated, bool announce) {
+                               std::optional<double> facing, bool clockGated, bool announce, bool prestigePromotion) {
     if (mobIndex >= content.mobCount()) return NULL_ENTITY;
 
     const MobConfig& config = content.mob(mobIndex);
@@ -716,10 +718,10 @@ Entity SpawnSystem::spawnMobAt(World& world, const Terrain& terrain, const Conte
         if(occupied)return NULL_ENTITY;
     }
 
-    // A prestige biome has no boss clocks and never fields a unique or an
-    // apex, whoever asks -- the console and a sacrifice included, which is why
-    // this is not under `clockGated`.
-    if (barredFromPrestige(rarity) && prestigeRealm(realm)) return NULL_ENTITY;
+    // In a prestige twin only the natural promotion can create an Eternal.
+    // Body segments inherit the tier of the head which already passed this gate.
+    if (barredFromPrestige(rarity) && prestigeRealm(realm) &&
+        !(rarity == Rarity::Unique && prestigePromotion)) return NULL_ENTITY;
 
     // A wild unique or apex is its biome's clock's to hand out, and nobody
     // else's. One asked for any other way while that clock is still cooling
@@ -941,8 +943,10 @@ void SpawnSystem::spawnBodyChain(World& world, const Terrain& terrain,
         // Segments belong to the animal, not to the band: the head is the one
         // thing the band counted, and the chain is rebuilt from scratch every
         // time that head comes back to life.
+        const bool prestigeEternalSegment = rarity == Rarity::Unique && prestigeRealm(realm);
         const Entity segment = spawnMobAt(world, terrain, content, config.segmentBodyIndex, rarity,
-                                          at, realm, nowMillis, rng, depth, kInvalidIndex);
+                                          at, realm, nowMillis, rng, depth, kInvalidIndex,
+                                          std::nullopt, true, true, prestigeEternalSegment);
         if (segment == NULL_ENTITY) break;
 
         BodySegment link;
@@ -1700,11 +1704,9 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     // filtering (by viewport, by realm, by tier), and a second level of
     // indirection would buy nothing at these counts.
     for (const MapData& map : worldMaps->maps()) {
-        // Every map's biome, banded or not: the one-unique rule has to know
-        // which biome an operator's spawn landed in wherever it landed.
-        // Except a prestige twin's, which has no clock to keep: nothing
-        // there is ever upgraded, and a unique or apex never stands in one.
-        const std::uint16_t biome = map.prestige() ? kInvalidIndex : bossClockFor(map.biome());
+        // Pyramid layouts share a clock within each of their two map families.
+        const std::uint16_t biome = bossClockFor(map.prestige()
+            ? std::string(kPrestigeMapPrefix) + map.biome() : map.biome());
         realmBiome_[realmIndex(map.realm())] = biome;
         const bool prestigeJungle = isPrestigeJungle(map);
         const bool ordinaryJungle = !map.prestige() && map.templateId() == "jungle";
@@ -1883,7 +1885,14 @@ void SpawnSystem::restoreBossClock(const std::string& biome, double uniqueReadyM
 void SpawnSystem::scatterBossClocks(double nowMillis) {
     std::vector<std::size_t> fresh;
     for (std::size_t i = 0; i < bossClocks_.size(); ++i) {
-        if (!bossClocks_[i].scattered) fresh.push_back(i);
+        auto& clock = bossClocks_[i];
+        if (clock.scattered) continue;
+        if (clock.biome.rfind(kPrestigeMapPrefix, 0) == 0) {
+            clock.uniqueReadyMillis = nowMillis + kUniqueSpawnCooldownMillis;
+            clock.scattered = true;
+        } else {
+            fresh.push_back(i);
+        }
     }
     if (fresh.empty()) return;
 
@@ -1976,7 +1985,7 @@ bool SpawnSystem::topBossTaken(World& world, Rarity rarity, Realm realm, bool in
                 biomeKey(at.realm) == key) ++standing;
         });
     }
-    return standing >= (rarity == Rarity::Unique ? kEternalPopulationTarget : 1);
+    return standing >= (rarity == Rarity::Unique && !prestigeRealm(realm) ? kEternalPopulationTarget : 1);
 }
 
 void SpawnSystem::noteStandingBosses(World& world, const CommandBuffer& commands) {
@@ -2594,8 +2603,8 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // A super may come out a unique or an apex instead, if its biome's clock
     // for that tier has run down. After the type roll, which is safe because a
     // mob that is ambient at super is ambient at every tier above it; and never
-    // for a permanent fixture, which is a DPS post rather than an event. Never
-    // in a prestige twin, which has no clocks.
+    // for a permanent fixture, which is a DPS post rather than an event.
+    // Prestige uses an independent Eternal clock and allows one standing boss.
     bool upgraded = false;
     if (rarity == Rarity::Super && !zone.prestige && !content.mob(type).neverAmbient) {
         if (!fixedSuper) {
@@ -2606,6 +2615,19 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         }
         upgraded = rarity != Rarity::Super;
         if (!fixedSuper && !upgraded) rarity = Rarity::Ultra;
+    }
+
+    const auto& mob = content.mob(type);
+    const bool prestigePromotion = zone.prestige && rarity == Rarity::Super &&
+        !fixedSuper && forcedTier < 0 && !zone.singular &&
+        !mob.neverAmbient && !mob.dungeon.present && !mob.intangible &&
+        bossCooldownLeft(Rarity::Unique, zone.realm, nowMillis) == 0.0 &&
+        std::any_of(viewers.begin(), viewers.end(),
+            [&](const Viewer& viewer) { return viewer.realm == zone.realm; }) &&
+        rng.chance(kPrestigeEternalChance) && !topBossTaken(world, Rarity::Unique, zone.realm);
+    if (prestigePromotion) {
+        rarity = Rarity::Unique;
+        upgraded = true;
     }
 
     // Only the Super leafbug family gets the requested 50/50 variant roll.
@@ -2643,7 +2665,11 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
             else if (sewersRefill || prestigeHelRefill || (authoredMap && !zone.prestige &&
                      authoredMap->templateId() == "hel" && zone.difficulty >= kDeepHelDifficulty &&
                      !zone.singular && forcedTier < 0)) delay = rng.range(3000.0, 7000.0);
-            else delay = rng.range(kInViewRespawnMinMillis, kInViewRespawnMaxMillis);
+            else {
+                const double maxDelay = !zone.prestige && !zone.singular && forcedTier < 0
+                    ? kOrdinaryInViewRespawnMaxMillis : kInViewRespawnMaxMillis;
+                delay = rng.range(kInViewRespawnMinMillis, maxDelay);
+            }
         }
         addLatent(zoneIndex, LatentMob{at, nowMillis + delay, type, rarity});
         return true;
@@ -2673,7 +2699,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     if (census_.mobs >= mobCap) return false;
 
     const Entity spawned = spawnMobAt(world, terrain, content, type, rarity, at, zone.realm,
-                                      nowMillis, rng, 0, zoneIndex, facing);
+                                      nowMillis, rng, 0, zoneIndex, facing, true, true, prestigePromotion);
     if (spawned == NULL_ENTITY) return false;
     world.get<AmbientMob>(spawned).managedPopulation = fixedSuper;
     if (managedVacancy < managedVacancies_.size())
@@ -3072,7 +3098,7 @@ void SpawnSystem::announceIfNotable(const ContentRegistry& content, Entity entit
     if (rarityIndex(rarity) < rarityIndex(kAnnouncedRarity)) return;
     // A prestige twin's supers are its bands' everyday stock, not events: the
     // server would announce one every few seconds.
-    if (prestigeRealm(realm)) return;
+    if (prestigeRealm(realm) && rarity != Rarity::Unique) return;
     // A permanent fixture is not an event. A dummy reaches this through a band
     // that names it outright, up to unique, or the console's spawn, and
     // announcing those would put a line in chat for a post nobody has to

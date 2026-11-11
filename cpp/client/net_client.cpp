@@ -326,6 +326,7 @@ void NetClient::forgetAccount() {
     practiceBoard_ = {};
     leaderboard_.clear();
     playtimeLeaderboard_.clear();
+    ownLevelRank_ = ownPlaytimeRank_ = ownHyperRank_ = 0;
     hyperBoard_.clear(); hyperHoldingsTotal_ = hyperHoldingsOffset_ = 0;
     leaderboardPending_ = false;
     notifications_.clear();
@@ -415,12 +416,16 @@ void NetClient::forgetWorld() {
     revived = false;
 }
 
-void NetClient::sendInput(const net::InputFrame& input) {
-    if (status_ != Status::Playing) return;
+bool NetClient::sendInput(const net::InputFrame& input) {
+    // The next control sample replaces this one. Leave space for ordered
+    // commands and send the newest controls when the connection drains.
+    constexpr std::size_t kInputBacklogLimit = 512;
+    if (status_ != Status::Playing || dialer_.outboundBacklog() >= kInputBacklogLimit) return false;
     ByteWriter w;
     beginMessage(w, net::ClientMessage::Input);
     input.write(w);
     send(w);
+    return true;
 }
 
 void NetClient::sendChat(const std::string& text) {
@@ -1285,15 +1290,20 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::Profile:      handleProfile(reader); break;
         case net::ServerMessage::ProfileDelta: handleProfileDelta(reader); break;
         case net::ServerMessage::JoinAccepted: handleJoinAccepted(reader); break;
-        case net::ServerMessage::Snapshot:
+        case net::ServerMessage::Snapshot: {
             if (clearViewOnSnapshot_) {
                 const Realm currentRealm = view_.realm();
                 view_.clear();
                 view_.setRealm(currentRealm);
                 clearViewOnSnapshot_ = false;
             }
-            view_.applySnapshot(reader);
+            auto next = connection.nextBufferedMessage();
+            const bool queuedSnapshot = next &&
+                next->u8() == static_cast<std::uint8_t>(net::ServerMessage::Snapshot);
+            view_.applySnapshot(reader, renderClockMillis(),
+                                !queuedSnapshot || connection.frameAgeMillis() < 150.0);
             break;
+        }
         case net::ServerMessage::Chat:         handleChat(reader); break;
         case net::ServerMessage::Notice:       handleNotice(reader); break;
         case net::ServerMessage::Died:         handleDied(reader); break;
@@ -1839,7 +1849,13 @@ void NetClient::handleLeaderboard(ByteReader& reader) {
         LeaderboardRow row; row.name = reader.str(); row.totalXp = reader.f64();
         playtimes.push_back(std::move(row));
     }
+    const auto levelRank = reader.u32();
+    const auto playtimeRank = reader.u32();
+    const auto hyperRank = reader.u32();
     if (!reader.ok()) return;
+    ownLevelRank_ = levelRank;
+    ownPlaytimeRank_ = playtimeRank;
+    ownHyperRank_ = hyperRank;
     playtimeLeaderboard_ = std::move(playtimes);
     hyperBoard_ = std::move(holdings);
     hyperHoldingsTotal_ = hyperTotal; hyperHoldingsOffset_ = hyperOffset;

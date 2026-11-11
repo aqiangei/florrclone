@@ -25,9 +25,8 @@ inline bool initializeLegacyActivity(Database& db) {
     if(db.save()) return true;
     db.rawTable("councilLegacyActivity")=previous.isObject()?previous:Json::object();db.markDirty();return false;
 }
-// Percentages use integer millionths: the published allocation sums exactly to 100%.
-inline Json weights(const Database& db) {
-    Json rows=Json::array(); double totals[3]={};
+inline Json weightInputs(const Database& db) {
+    Json rows=Json::array();
     for(const auto& id:db.playerIds()) {
         const auto* a=db.findUserById(id); const auto* p=db.findProgress(id);
         if(!a||a->guest||a->admin||!p) continue;
@@ -44,11 +43,26 @@ inline Json weights(const Database& db) {
             petals+=(r+1)*std::log1p(count);
         }
         Json row=Json::object(); row["id"]=id; row["name"]=a->username;
-        row["seconds"]=seconds; row["level"]=level; row["petals"]=petals;
+        row["level"]=level; row["petals"]=petals;
         row["recordedSeconds"]=seconds;
-        row["timeScore"]=std::log1p(seconds/3600); row["levelScore"]=std::max(0.0,level-1.0);
-        totals[0]+=row["timeScore"].asDouble(); totals[1]+=row["levelScore"].asDouble(); totals[2]+=petals;
+        row["levelScore"]=std::max(0.0,level-1.0);
         rows.push(row);
+    }
+    return rows;
+}
+
+// Percentages use integer millionths: the published allocation sums exactly to 100%.
+inline Json weights(const Database& db) {
+    Json rows=weightInputs(db);
+    double totals[3]={};
+    for (auto& row : rows.items()) {
+        const double seconds = row["recordedSeconds"].asDouble();
+        const double timeScore = std::log1p(seconds / 3600);
+        row["seconds"] = seconds;
+        row["timeScore"] = timeScore;
+        totals[0] += timeScore;
+        totals[1] += row["levelScore"].asDouble();
+        totals[2] += row["petals"].asDouble();
     }
     // Equal level/activity budgets; activity is shrunk toward level shares at cold start.
     // This is a share prior only: it never modifies recorded or credited seconds.
@@ -92,9 +106,21 @@ inline bool canClosePolls(const Database& db,const Account* account) {
 inline Json request(Database& db,const std::string& token,const Json& input,
                     const std::function<bool(const Json&)>& commitPolls={}) {
     auto error=[](const char* message){Json out=Json::object();out["error"]=message;return out;};
+    const std::string action=input["action"].asString("view");
+    if (action == "ranking-data") {
+        Json out = Json::object();
+        out["players"] = weightInputs(db);
+        return out;
+    }
     const auto* session=db.resolveSession(token,false);
     const auto* account=session?db.findUserById(session->userId):nullptr;
-    const std::string action=input["action"].asString("view");
+    if (action == "identity") {
+        Json out = Json::object();
+        out["me"] = account && !account->guest ? account->id : "";
+        out["accountName"] = account && !account->guest ? account->username : "";
+        out["canClose"] = canClosePolls(db, account);
+        return out;
+    }
     if(action=="player") {
         const auto id=input["id"].asString();const auto* a=db.findUserById(id);const auto* p=db.findProgress(id);
         if(!a||a->admin||a->guest||!p) return error("该玩家暂无公开详情");

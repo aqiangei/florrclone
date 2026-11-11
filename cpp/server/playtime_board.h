@@ -6,7 +6,7 @@
 
 namespace flix {
 struct PlaytimeRow { std::string name; double seconds; };
-inline std::vector<PlaytimeRow> playtimeBoard(const Database& db, bool includeAdmins) {
+inline std::vector<PlaytimeRow> playtimeBoard(const Database& db, bool includeAdmins, std::size_t limit = 50) {
     std::vector<PlaytimeRow> rows;
     const auto& activity = db.storedTable("councilActivity");
     for (const auto& name : db.usernames()) {
@@ -18,7 +18,7 @@ inline std::vector<PlaytimeRow> playtimeBoard(const Database& db, bool includeAd
             std::max(0.0, record->extra["councilActiveSeconds"].asDouble());
         if (std::isfinite(seconds)) rows.push_back({name, seconds});
     }
-    const auto shown = std::min<std::size_t>(50, rows.size());
+    const auto shown = std::min(limit, rows.size());
     std::partial_sort(rows.begin(), rows.begin() + shown, rows.end(), [](const auto& a, const auto& b) {
         return a.seconds != b.seconds ? a.seconds > b.seconds : a.name < b.name;
     });

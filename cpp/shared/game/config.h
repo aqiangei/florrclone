@@ -1421,6 +1421,10 @@ inline double eggSummonCombatScale(const PetalConfig& config) {
     return petalIsEgg(config) ? 2.0 : 1.0;
 }
 
+inline double summonDamageScale(const PetalConfig& config) {
+    return config.id == "magic_stick" ? 1.25 : 1.0;
+}
+
 /// Hyper boosts individual summons without adding entities or attack events.
 inline double hyperSummonScale(const PetalConfig& config, Rarity rarity) {
     if (ladderRarity(rarity) != Rarity::Apex) return 1.0;
@@ -1786,7 +1790,7 @@ inline double triangleBonusDamage(Rarity rarity, const TriangleCounts& counts) {
     const int tier = petalTier(rarity);
     const int matches = std::max(0, counts[tier] - 1);
     constexpr std::array<int, kRarityCount> bonus{
-        4, 12, 36, 108, 324, 972, 2916, 8748, 26244, 78732, 236196, 708588};
+        4, 12, 36, 108, 324, 972, 2916, 8748, 32805, 98415, 236196, 708588};
     return static_cast<double>(matches) * bonus[tier];
 }
 

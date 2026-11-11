@@ -9,6 +9,7 @@
 #include "server/game_server.h"
 #include "shared/game/assembler.h"
 #include "server/hyper_forge.h"
+#include "server/crypto.h"
 #include "shared/game/hyper_petal_techniques.h"
 #include "shared/game/dark_mark.h"
 
@@ -155,6 +156,7 @@ constexpr double kDeltaSmoothing = 0.1;
 constexpr double kSlowTickLogMillis = net::kTickMillis * 3.0;
 constexpr double kTickCadenceLogMillis = 10000.0;
 constexpr std::size_t kSnapshotBacklogLimit = 32 * 1024;
+constexpr std::size_t kWorldSnapshotBacklogLimit = 16 * 1024;
 
 /// The batch a craft consumes.
 constexpr int kCraftBatch = 5;
@@ -559,19 +561,40 @@ struct GameServer::PendingLocalHyper {
     HyperForgePlan plan;
     std::map<std::string, std::string> expectedPlayers;
     std::map<std::string, double> councilActivityCredits;
-    std::string expectedForges, user, token;
+    std::string expectedForges, user, token, titan;
     Json forges;
     net::ConnectionId connection = 0;
     std::uint16_t input = 0, output = 0;
     double startedAt = 0, publishAt = 0;
     bool submitted = false, publishing = false;
+    bool cancelledForConflict = false;
+    int retriesRemaining = 1;
+
+    void capturePlan(Database& database, HyperForgePlan next) {
+        const auto& current = database.storedTable("hyperForges");
+        expectedForges = current.dump(0);
+        forges = current;
+        forges[next.forgeKey] = next.entry;
+        expectedPlayers.clear();
+        const auto observedAt = static_cast<double>(database.nowMillis());
+        for (auto& [id, row] : next.players) {
+            rememberHyperHoldings(row, observedAt);
+            expectedPlayers.emplace(id, database.playerSnapshotText(id));
+        }
+        plan = std::move(next);
+    }
 };
 
 GameServer::GameServer() {
     net::web::setCouncilHandler([this](const std::string& token,const std::string& body) {
         if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing))
             return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
-        const auto result = council::request(database_,token,Json::parseOrNull(body)).dump();
+        const auto request = Json::parseOrNull(body);
+        const auto action = request["action"].asString();
+        if (action.rfind("skin-review-", 0) == 0)
+            return relaySkinReview(token, request).dump();
+        const auto result = council::request(database_, token, request).dump();
+        if (action == "identity" || action == "ranking-data") return result;
         if (!commitBeforeReply()) return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
         return result;
     });
@@ -1094,6 +1117,9 @@ void GameServer::serviceSharedViews() {
                 for(const auto& row:view["holdings"].items()){w.str(row["name"].asString());w.str(row["petal"].asString());w.u32(row["count"].asInt());w.u32(row["ownerTotal"].asInt());}
                 w.u8(view["playtime"].size());
                 for (const auto& row : view["playtime"].items()) { w.str(row["name"].asString()); w.f64(row["seconds"].asDouble()); }
+                w.u32(view["levelRank"].asInt());
+                w.u32(view["playtimeRank"].asInt());
+                w.u32(view["hyperRank"].asInt());
             }
             peer->send(w);
         }
@@ -2335,7 +2361,7 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
         // Let reliable messages and earlier snapshots drain before building
         // another delta. ClientView still describes the last queued snapshot
         // so the next one can carry all state changes since then.
-        if (connection->snapshotBacklog() >= kSnapshotBacklogLimit) {
+        if (connection->snapshotBacklog() >= kWorldSnapshotBacklogLimit) {
             if (viewpointOf(session) == session.entity)
                 deferredPickupViews_.emplace(session.connection, &views_.at(session.connection));
             continue;
@@ -2365,6 +2391,7 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
         }
 
         job.viewer = viewpoint;
+        frame.visibility = session.snapshotVisibility;
         job.frame = frame;
     }
     snapshotJobs_.resize(count);
@@ -2667,7 +2694,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
             break;
         case net::ClientMessage::JoinGame:      handleJoin(*session, connection, reader); break;
         case net::ClientMessage::LeaveGame:     handleLeave(*session, connection); break;
-        case net::ClientMessage::Input:         handleInput(*session, reader); break;
+        case net::ClientMessage::Input:         handleInput(*session, connection, reader); break;
         case net::ClientMessage::Chat:          handleChat(*session, connection, reader); break;
         case net::ClientMessage::SetLoadout:    handleSetLoadout(*session, reader); break;
         case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
@@ -3914,15 +3941,24 @@ void GameServer::leaveWorld(Session& session) {
     revokeTempAdmin(session.connection);
 }
 
-void GameServer::handleInput(Session& session, ByteReader& reader) {
-    const net::InputFrame input = net::InputFrame::read(reader);
+void GameServer::handleInput(Session& session, const net::Connection& connection, ByteReader& reader) {
+    auto input = net::InputFrame::read(reader);
     if (!reader.ok() || !session.playing()) return;
-    if (!spend(session.inputAllowance)) return;
 
     // A replayed or reordered input must not move the player twice. TCP gives
     // ordering, but a client is free to send its own duplicates.
     if (input.sequence <= session.lastInputSequence) return;
+    // Inputs replace the whole intent. A later adjacent input supersedes this
+    // one, but a reliable action between them is an ordering boundary.
+    if (auto next = connection.nextBufferedMessage();
+        next && next->u8() == static_cast<std::uint8_t>(net::ClientMessage::Input)) {
+        const auto newer = net::InputFrame::read(*next);
+        if (next->ok() && next->remaining() == 0 && newer.sequence >= input.sequence) return;
+    }
+    if (!spend(session.inputAllowance)) return;
     session.lastInputSequence = input.sequence;
+    session.snapshotVisibility = input.flags & net::kInputVisibilityMask;
+    input.flags &= static_cast<std::uint8_t>(~net::kInputVisibilityMask);
 
     // Which flower the movement, the aim and the two buttons steer. A flower
     // an admin has taken over ignores its own player entirely, whichever half
@@ -5088,15 +5124,8 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
             auto plan = planHyperForge(database_, session.userId, petal.id, database_.nowMillis(), {}, titan);
             if (!plan.result.ok) { reply(false, plan.result.reason); return; }
             auto pending = std::make_unique<PendingLocalHyper>();
-            const auto& forges = database_.storedTable("hyperForges");
-            pending->expectedForges = forges.dump(0);
-            pending->forges = forges;
-            pending->forges[plan.forgeKey] = plan.entry;
-            const auto observedAt = static_cast<double>(database_.nowMillis());
-            for (auto& [id, row] : plan.players) rememberHyperHoldings(row, observedAt);
-            for (const auto& [id, row] : plan.players)
-                pending->expectedPlayers.emplace(id, database_.playerSnapshotText(id));
-            pending->plan = std::move(plan);
+            pending->capturePlan(database_, std::move(plan));
+            pending->titan = titan;
             pending->connection = connection.id();
             pending->input = petalIndex;
             pending->output = outputIndex;
@@ -5181,9 +5210,19 @@ void GameServer::pollLocalHyper(bool shuttingDown) {
             std::all_of(pending.expectedPlayers.begin(), pending.expectedPlayers.end(),
                 [&](const auto& row) { return database_.playerSnapshotText(row.first) == row.second; });
     };
+    std::string refusal = "锻造未提交，材料未扣除，请稍后重试。";
     if (!pending.submitted && !shuttingDown && sameSession && !database_.commitUncertain()) {
         if (!database_.canStageForgeSave()) return;
-        if (stillValid() && database_.beginStagedForgeSave(pending.plan.players, pending.forges)) {
+        bool valid = stillValid();
+        if (!valid) {
+            const auto& input = content().petal(pending.input).id;
+            auto next = planHyperForge(database_, pending.user, input, database_.nowMillis(),
+                                       {}, pending.titan);
+            valid = next.result.ok;
+            if (valid) pending.capturePlan(database_, std::move(next));
+            else refusal = next.result.reason;
+        }
+        if (valid && database_.beginStagedForgeSave(pending.plan.players, pending.forges)) {
             pending.submitted = true;
             // The checkpoint can refresh hold-history timestamps in live rows.
             for (auto& [id, text] : pending.expectedPlayers) text = database_.playerSnapshotText(id);
@@ -5196,6 +5235,7 @@ void GameServer::pollLocalHyper(bool shuttingDown) {
     if (outcome == Save::Ready) {
         const bool valid = stillValid();
         pending.publishing = valid;
+        pending.cancelledForConflict = !valid && sameSession;
         if (valid) pending.publishAt = monotonicMillis();
         database_.decideStagedForgeSave(valid);
         return;
@@ -5204,6 +5244,15 @@ void GameServer::pollLocalHyper(bool shuttingDown) {
         persistenceFrozen_ = true;
         running_.store(false);
         pendingLocalHyper_.reset();
+        return;
+    }
+    // Retry only a stage we deliberately rejected before publishing. A write
+    // error or an uncertain commit must never be retried as a conflict.
+    if (outcome == Save::Failed && pending.cancelledForConflict && !shuttingDown &&
+        sameSession && pending.retriesRemaining > 0) {
+        --pending.retriesRemaining;
+        pending.submitted = false;
+        pending.cancelledForConflict = false;
         return;
     }
     const bool saved = outcome == Save::Saved;
@@ -5234,7 +5283,7 @@ void GameServer::pollLocalHyper(bool shuttingDown) {
         w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanForgeResult));
         w.boolean(saved);
         w.u16(saved ? pending.output : pending.input);
-        w.str(saved ? "" : "锻造未提交，材料未扣除，请稍后重试。");
+        w.str(saved ? "" : refusal);
         w.u32(saved ? 1 : 0);
         peer->send(w);
     }
@@ -6363,7 +6412,7 @@ void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
     }
 }
 
-void GameServer::sendSkinReviewQueue(net::Connection& connection) {
+Json GameServer::localSkinReviewQueue() const {
     const auto& catalog = database_.storedTable("customSkins");
     std::vector<std::pair<double, std::string>> pending;
     for (const auto& id : catalog.keys()) {
@@ -6373,36 +6422,119 @@ void GameServer::sendSkinReviewQueue(net::Connection& connection) {
     }
     const auto count = std::min<std::size_t>(24, pending.size());
     std::partial_sort(pending.begin(), pending.begin() + count, pending.end());
+    Json rows = Json::array();
+    for (std::size_t i = 0; i < count; ++i) {
+        auto row = skinToJson(skinFromJson(catalog[pending[i].second]));
+        row["reviewSubmittedAt"] = pending[i].first;
+        rows.push(std::move(row));
+    }
+    return rows;
+}
+
+void GameServer::sendSkinReviewQueue(net::Connection& connection, const Json& sources) {
+    std::vector<std::pair<double, CustomSkin>> pending;
+    const auto add = [&](const Json& rows, int origin) {
+        for (const auto& row : rows.items()) {
+            auto skin = skinFromJson(row);
+            if (skin.id.empty() || skin.shapes.empty() || skin.review != SkinReviewState::Pending)
+                continue;
+            if (origin) skin.id = "xs" + std::to_string(origin) + "_" + skin.id;
+            pending.emplace_back(row["reviewSubmittedAt"].asDouble(skin.createdAt), std::move(skin));
+        }
+    };
+    add(localSkinReviewQueue(), 0);
+    for (int realm = 1; realm <= 3; ++realm)
+        if (realm != config_.sharedSkinRealm) add(sources[std::to_string(realm)], realm);
+    const auto count = std::min<std::size_t>(24, pending.size());
+    std::partial_sort(pending.begin(), pending.begin() + count, pending.end(),
+        [](const auto& a, const auto& b) {
+            if (a.first != b.first) return a.first < b.first;
+            return a.second.id < b.second.id;
+        });
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinReviewQueue));
     w.u8(static_cast<std::uint8_t>(count));
-    for (std::size_t i = 0; i < count; ++i)
-        writeCustomSkin(w, skinFromJson(catalog[pending[i].second]));
+    for (std::size_t i = 0; i < count; ++i) writeCustomSkin(w, pending[i].second);
     connection.send(w);
+}
+
+Json GameServer::relaySkinReview(const std::string& token, const Json& request) {
+    Json response = Json::object();
+    if (config_.skinReviewKey.size() < 32 || !crypto::constantTimeEquals(token, config_.skinReviewKey)) {
+        response["error"] = "forbidden";
+        return response;
+    }
+    const auto action = request["action"].asString();
+    if (action == "skin-review-list") {
+        response["rows"] = localSkinReviewQueue();
+    } else if (action == "skin-review-approve" || action == "skin-review-reject") {
+        if (pendingLocalHyper_) {
+            response["error"] = "来源服正在提交锻造，请稍后重试审核。";
+            return response;
+        }
+        const auto id = request["id"].asString();
+        const auto error = decideSkinReview(id, action == "skin-review-approve");
+        if (!error.empty()) response["error"] = error;
+        else if (database_.authoritative() ? commitBeforeReply() : database_.save())
+            response["ok"] = true;
+        else response["error"] = "来源服暂未确认存档，请刷新队列。";
+    }
+    return response;
 }
 
 void GameServer::handleSkinReview(Session& session, net::Connection& connection, ByteReader& reader) {
     if (!session.authenticated() || !canModeratePublicSkins(session)) return;
     const auto action = static_cast<net::SkinReviewAction>(reader.u8());
     if (!reader.ok()) return;
-    if (action == net::SkinReviewAction::List) {
+    const bool list = action == net::SkinReviewAction::List;
+    const bool approve = action == net::SkinReviewAction::Approve;
+    if (!list && !approve && action != net::SkinReviewAction::Reject) return;
+    const std::string id = list ? "" : reader.str();
+    if (!reader.ok()) return;
+    const int origin = sharedSkinRealm(id);
+    if (origin && (!config_.sharedSkinReview || origin == config_.sharedSkinRealm)) return;
+    if (!list && !origin) {
+        const auto error = decideSkinReview(id, approve);
+        if (!error.empty()) sendSkinChat(connection, error);
+    }
+    if (!config_.sharedSkinReview) {
         sendSkinReviewQueue(connection);
         return;
     }
-    if (action != net::SkinReviewAction::Approve && action != net::SkinReviewAction::Reject) return;
-    const std::string id = reader.str();
-    if (!reader.ok()) return;
+    Json request = Json::object();
+    request["action"] = origin ? (approve ? "skin-review-approve" : "skin-review-reject")
+                               : "skin-review-list";
+    if (origin) request["id"] = id.substr(4);
+    const auto connectionId = connection.id();
+    const auto token = session.token;
+    config_.sharedSkinReview(origin, request, [this, connectionId, token, origin](Json response) {
+        auto* peer = listener_.find(connectionId);
+        auto* current = sessionFor(connectionId);
+        if (!peer || !current || !current->authenticated() || current->token != token ||
+            !canModeratePublicSkins(*current)) return;
+        const auto error = response["error"].asString();
+        if (!error.empty()) sendSkinChat(*peer, error);
+        else if (origin && response["ok"].asBool()) sendSkinChat(*peer, "已更新来源服的审核结果。");
+        if (origin) {
+            const auto listAction = static_cast<std::byte>(net::SkinReviewAction::List);
+            ByteReader reader(&listAction, 1);
+            handleSkinReview(*current, *peer, reader);
+        } else {
+            sendSkinReviewQueue(*peer, std::as_const(response)["sources"]);
+        }
+    });
+}
+
+std::string GameServer::decideSkinReview(const std::string& id, bool approve) {
     const auto& saved = database_.storedTable("customSkins")[id];
     auto skin = skinFromJson(saved);
     if (skin.id.empty() || skin.review != SkinReviewState::Pending) {
-        sendSkinReviewQueue(connection);
-        return;
+        return "该皮肤已不在待审队列。";
     }
-    if (action == net::SkinReviewAction::Approve) {
+    if (approve) {
         const auto& look = catalogSkinLook(skin);
         if (skinsLookAlike(look, starterLook()) || findLookAlikeSkin(look)) {
-            sendSkinChat(connection, "这张皮肤和已有公开皮肤或初始外观过于相似，请驳回。");
-            return;
+            return "这张皮肤和已有公开皮肤或初始外观过于相似，请驳回。";
         }
         skin.review = SkinReviewState::Approved;
     } else {
@@ -6418,10 +6550,10 @@ void GameServer::handleSkinReview(Session& session, net::Connection& connection,
         const auto* owner = sessionFor(peer.id());
         if (!owner || !owner->authenticated() || owner->userId != ownerId) return;
         peer.send(update);
-        sendSkinChat(peer, action == net::SkinReviewAction::Approve
+        sendSkinChat(peer, approve
             ? "皮肤审核通过，可以穿戴或公开。" : "皮肤审核未通过，请修改后重新保存并提交。");
     });
-    sendSkinReviewQueue(connection);
+    return {};
 }
 
 void GameServer::unequipCustomSkin(const std::string& id, const std::string& exceptUserId) {
@@ -6644,7 +6776,7 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
     if (!reader.ok()) return;
     if(config_.authorityHyper) {
         Json query=Json::object();query["kind"]="leaderboard";query["offset"]=double(requestedOffset);
-        query["includeAdmins"]=includeAdmins;query["admin"]=session.admin;
+        query["includeAdmins"]=includeAdmins;query["admin"]=session.admin;query["account"]=session.userId;
         queueSharedView(session,connection,query);return;
     }
 
@@ -6676,6 +6808,13 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
         w.str(row.name); w.str(row.petal); w.u32(row.count); w.u32(row.ownerTotal);
     }
     w.raw(cache.playtimes.data(), cache.playtimes.size());
+    const auto rankOf = [&](const auto& ranks) {
+        const auto found = ranks.find(session.username);
+        return found == ranks.end() ? 0u : found->second;
+    };
+    w.u32(rankOf(cache.levelRanks));
+    w.u32(rankOf(cache.playtimeRanks));
+    w.u32(hyperHoldingOwnerRank(holdings, session.username));
     connection.send(w);
 }
 
@@ -6712,8 +6851,12 @@ void GameServer::refreshLeaderboard(LeaderboardCache& cache, bool includeAdmins)
     // still one byte on the wire, so the count below stays a u8.
     constexpr std::size_t kRows = 50;
     const std::size_t shown = std::min(kRows, rows.size());
-    std::partial_sort(rows.begin(), rows.begin() + static_cast<long>(shown), rows.end(),
-                      [](const Row& a, const Row& b) { return a.totalXp > b.totalXp; });
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+        return a.totalXp != b.totalXp ? a.totalXp > b.totalXp : *a.name < *b.name;
+    });
+    cache.levelRanks.clear();
+    for (std::size_t i = 0; i < rows.size(); ++i)
+        cache.levelRanks.emplace(*rows[i].name, static_cast<std::uint32_t>(i + 1));
 
     // The count beside the title is over every account, not over the 50 rows
     // sent. The active-today figure rides along only for an admin, which is
@@ -6728,12 +6871,18 @@ void GameServer::refreshLeaderboard(LeaderboardCache& cache, bool includeAdmins)
         cache.rows.u16(static_cast<std::uint16_t>(levelFromTotalXp(rows[i].totalXp).level));
         cache.rows.f64(rows[i].totalXp);
     }
-    const auto playtimes = playtimeBoard(accounts, includeAdmins);
+    const auto playtimes = playtimeBoard(accounts, includeAdmins, accounts.userCount());
+    const auto shownPlaytime = std::min(kRows, playtimes.size());
+    cache.playtimeRanks.clear();
     cache.playtimes.clear();
-    cache.playtimes.u8(static_cast<std::uint8_t>(playtimes.size()));
-    for (const auto& row : playtimes) {
-        cache.playtimes.str(row.name);
-        cache.playtimes.f64(row.seconds);
+    cache.playtimes.u8(static_cast<std::uint8_t>(shownPlaytime));
+    for (std::size_t i = 0; i < playtimes.size(); ++i) {
+        const auto& row = playtimes[i];
+        cache.playtimeRanks.emplace(row.name, static_cast<std::uint32_t>(i + 1));
+        if (i < shownPlaytime) {
+            cache.playtimes.str(row.name);
+            cache.playtimes.f64(row.seconds);
+        }
     }
 }
 

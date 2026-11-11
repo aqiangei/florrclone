@@ -492,7 +492,7 @@ TEST(a_copies_entry_cannot_also_be_prestige) {
 // What grows there
 // ---------------------------------------------------------------------------
 
-TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
+TEST(an_empty_prestige_twin_stocks_regular_mobs_and_leaves_its_eternal_on_cooldown) {
     World world;
     CommandBuffer commands{world};
     Terrain terrain;
@@ -549,10 +549,7 @@ TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
     mobs.each([&](Entity, MobTag&, Transform& transform, MobType& type) {
         if (maps.isPrestige(transform.realm)) CHECK(!barredFromPrestige(type.rarity));
     });
-    // And no clock was dealt for one: a twin is not a boss biome.
-    for (const SpawnSystem::BiomeBossClock& clock : spawner.bossClocks()) {
-        CHECK(clock.biome.rfind(kPrestigeMapPrefix, 0) != 0);
-    }
+    CHECK(spawner.bossCooldownLeft(Rarity::Unique, prestigeGarden, 50000.0) > 0);
     // Spawn a real announcing tier in the ordinary biome. Supers in the
     // cold stock are below the global announcement threshold.
     const auto& content = shippedContent();
@@ -915,7 +912,54 @@ TEST(authored_maps_wake_blocked_ambient_records_without_viewer_movement) {
     }
 }
 
-TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
+TEST(prestige_twin_promotes_a_natural_super_and_starts_its_own_eternal_clock) {
+    const double tile = kTileSize;
+    const auto dir = stageDataDir("prestige-eternal", {{"garden", fixtureMap(40, 40,
+        fixtureDoor("spawn", "Spawn", 2 * tile, 2 * tile, tile, tile, true, 0.0), "",
+        fixtureBand(tile, tile, 38 * tile, 38 * tile, "garden 100%", 200.0))}});
+    CHECK(writeText(dir + "/maps.json", R"({"maps":[{"file":"garden.tmj","prestige":true}]})"));
+    World world;
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dir, &terrain, error));
+    bool found = false;
+    const Realm twin = maps.realmOfId("prestige_garden", found);
+    CHECK(found);
+    if (!found) { removeDataDir(dir); return; }
+
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    spawner.restoreBossClock("prestige_garden", 0.0, 0.0);
+    spawner.restoreBossClock("garden", 800000.0, 800000.0);
+    CommandBuffer commands{world};
+    Rng rng{42};
+    double now = 10000.0;
+    for (int i = 0; i < 60; ++i) {
+        now = 10000.0 + i * kPopulationIntervalMillis;
+        spawner.run(world, terrain, shippedContent(), {{terrain.spawnPoint(twin), twin}},
+                    rng, now, net::kTickSeconds, commands);
+        commands.flush();
+        if (spawner.bossCooldownLeft(Rarity::Unique, twin, now) > 0.0) break;
+    }
+
+    int eternals = 0;
+    Query<MobTag, Transform, MobType> mobs{world};
+    mobs.each([&](Entity, MobTag&, Transform& at, MobType& type) {
+        if (at.realm != twin) return;
+        if (type.rarity == Rarity::Unique) ++eternals;
+        CHECK(type.rarity != Rarity::Apex);
+    });
+    CHECK_EQ(eternals, 1);
+    CHECK_NEAR(spawner.bossCooldownLeft(Rarity::Unique, twin, now), kUniqueSpawnCooldownMillis, 1e-9);
+    CHECK_NEAR(spawner.bossCooldownLeft(Rarity::Unique, Realm::Overworld, now), 800000.0 - now, 1e-9);
+    CHECK(std::any_of(spawner.bossSpawns.begin(), spawner.bossSpawns.end(), [&](const auto& spawn) {
+        return spawn.realm == twin && spawn.rarity == Rarity::Unique;
+    }));
+    removeDataDir(dir);
+}
+
+TEST(manual_spawn_cannot_put_a_unique_or_apex_into_a_prestige_twin) {
     World world;
     Terrain terrain;
     SpawnSystem spawner;
@@ -936,7 +980,7 @@ TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
                            rng) == NULL_ENTITY);
     CHECK(spawner.spawnMob(world, terrain, shippedContent(), bee, Rarity::Apex, at, twin, 0.0,
                            rng) == NULL_ENTITY);
-    // Super is the ceiling, not over it.
+    // A manual Super still works.
     CHECK(spawner.spawnMob(world, terrain, shippedContent(), bee, Rarity::Super, at, twin, 0.0,
                            rng) != NULL_ENTITY);
 }

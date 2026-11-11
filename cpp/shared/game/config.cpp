@@ -2233,7 +2233,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     }
     // The hammers trade the blueberries' range for sustained contact with wild mobs.
     if (graded == Rarity::Unique && (c.id == "mjolnir" || c.id == "timed_mjolnir")) {
-        s.wildLightningScale = 5.0; // 12 -> 60 base lightning per hit.
+        // The one-hour hammer hits wild mobs harder to offset its expiration.
+        s.wildLightningScale = (c.id == "timed_mjolnir" ? 70.0 : 60.0) / 12.0;
         s.wildRecoilScale = 0.5;
         s.reloadMillis = 5000.0;
     }

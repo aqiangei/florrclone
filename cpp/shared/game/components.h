@@ -1212,6 +1212,8 @@ struct PetalInstance {
     /// same petal cannot delay its projectile.
     double nextProjectileMillis = 0;
     double spawnedAtMillis = 0;
+    /// Sub-tick reload time carried forward only by an immediate lightning strike.
+    double lightningReloadCarryMillis = 0;
     bool homing = false;
     /// When the dive home began, so a burst that cannot reach the flower is
     /// still delivered. Zero whenever `homing` is false.

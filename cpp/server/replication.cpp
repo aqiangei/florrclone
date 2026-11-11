@@ -367,11 +367,19 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     const PlayerAccount* viewerAccount = world.tryGet<PlayerAccount>(viewer);
     const net::ConnectionId viewerOwner =
         viewerAccount != nullptr ? viewerAccount->connection : 0;
+    const auto hidden = [&](std::uint8_t flags) {
+        if (!(flags & net::SpawnForeign)) return false;
+        const auto setting = (flags & net::SpawnIsPet) ? net::InputHideForeignPets
+                                                      : net::InputHideForeignPetals;
+        return (frame.visibility & setting) != 0;
+    };
     const auto gather = [&](Entity e, const NetId& id, const Transform& transform) {
         // Cull before looking up claim and ghost components. Only in-view
         // drops can consume a viewer's snapshot budget.
         if (e != viewer && transform.realm != realm) return;
         if (e != viewer && outsideView(transform.position) && !exempt(e)) return;
+        if (frame.visibility && hidden(world.get<Replicated>(e).spawnFlags |
+                                       ownershipFlags(world, e, viewer, viewerOwner))) return;
         if (world.has<GhostTag>(e)) {
             const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
             if (!visuals || !visuals->seesGhosts) return;
@@ -1006,6 +1014,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 if (owned & net::SpawnForeign) flag |= net::LightningForeign;
                 if (owned & net::SpawnIsPet) flag |= net::LightningFromPet;
             }
+            if (event.kind == net::EventKind::Lightning && (flag & net::LightningForeign) &&
+                hidden(net::SpawnForeign | ((flag & net::LightningFromPet) ? net::SpawnIsPet : 0))) continue;
             if (dealtByViewer(event)) flag |= net::DamageByViewer;
             if (offView && event.kind == net::EventKind::Damage) flag |= net::DamageOffView;
             writeEvent(event, tile ? event.wornSlot + 1u : event.otherNetId, flag, ownPickup);

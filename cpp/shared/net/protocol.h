@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 117; // GuildUpdate carries a deputy roster.
+inline constexpr std::uint16_t kProtocolVersion = 119; // Input flags carry per-viewer visibility preferences.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -283,7 +283,8 @@ enum class ServerMessage : std::uint8_t {
     Leaderboard,        ///< u8 count, u32 totalAccounts, u32 dailyActiveUsers,
                         ///< { str name, u16 level, f64 totalXp }*, then u32 hyperTotal,
                         ///< u32 hyperOffset, u16 hyperCount,
-                        ///< { str name, str petal, u32 count, u32 ownerTotal }*.
+                        ///< { str name, str petal, u32 count, u32 ownerTotal }*, u8 playtimeCount,
+                        ///< { str name, f64 seconds }*, then u32 self level, playtime and hyper ranks.
                         ///< `dailyActiveUsers` is 0 for a non-admin, where the
                         ///< TypeScript server's payload left the field out.
     Pong,               ///< u64 clientTimeMillis, u64 serverTimeMillis
@@ -590,7 +591,10 @@ inline constexpr std::size_t kMaxAnnouncementBytes = 120;
 enum InputFlags : std::uint8_t {
     InputAttack  = 1 << 0,
     InputDefend  = 1 << 1,
+    InputHideForeignPetals = 1 << 2,
+    InputHideForeignPets   = 1 << 3,
 };
+inline constexpr std::uint8_t kInputVisibilityMask = InputHideForeignPetals | InputHideForeignPets;
 
 /// One tick of intent from a client.
 ///

@@ -322,6 +322,7 @@ public:
         Entity splitOther = NULL_ENTITY;
         net::WaveHud wave;
         bool loadShedding = false;
+        std::uint8_t visibility = 0;
         /// All current replicated centres, shared read-only by workers.
         const SpatialGrid* entityGrid = nullptr;
         std::optional<double> wallMillis;

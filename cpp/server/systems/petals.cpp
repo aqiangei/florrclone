@@ -1076,7 +1076,8 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
                 const PetalInstance* instance = world.tryGet<PetalInstance>(petal);
                 if (instance && instance->subIndex < slotState.instanceReadyAtMillis.size()) {
                     slotState.instanceReadyAtMillis[instance->subIndex] =
-                        nowMillis + reload * hyperBreakReloadScale(world, player, technique);
+                        nowMillis + reload * hyperBreakReloadScale(world, player, technique) -
+                        instance->lightningReloadCarryMillis;
                 }
                 queueBreakBehaviour(world, registry, petal);
                 removePetal(world, petal);
@@ -1100,6 +1101,8 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
                 // whole slot on cooldown the moment its first instance breaks,
                 // and every later instance in the same pass reads as already
                 // reloading and runs nothing.
+                const auto* first = live.empty() ? nullptr : world.tryGet<PetalInstance>(live.front());
+                const double reloadCarry = first ? first->lightningReloadCarryMillis : 0.0;
                 if (!live.empty()) queueBreakBehaviour(world, registry, live.front());
                 for (const Entity petal : live) {
                     if (world.isAlive(petal) && world.has<Dead>(petal)) removePetal(world, petal);
@@ -1113,7 +1116,8 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
                 // a player's pet the instant something killed the egg.
                 slotState.populated = false;
                 slot.broken = true;
-                slot.reloadReadyAtMillis = nowMillis + reload * hyperBreakReloadScale(world, player, technique);
+                slot.reloadReadyAtMillis =
+                    nowMillis + reload * hyperBreakReloadScale(world, player, technique) - reloadCarry;
             }
         }
 
@@ -1142,6 +1146,7 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
         // the slot waits broken until then rather than coming back empty:
         // the fold above would charge an absent instance as a full loss and
         // break it again on the next tick.
+        const double sharedReadyAt = slot.broken ? slot.reloadReadyAtMillis : 0.0;
         if (slot.broken && !slotState.independent && nowMillis >= slot.reloadReadyAtMillis &&
             spendMana(world, player, manaCost)) {
             slot.broken = false;
@@ -1186,8 +1191,9 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
             // Gated on the cooldown, not on whether the petal can break: an
             // unbreakable petal cannot have been destroyed, but it can have
             // been equipped a moment ago and still owe its reload.
+            const double ready = slotState.independent
+                ? slotState.instanceReadyAtMillis[static_cast<std::size_t>(k)] : sharedReadyAt;
             if (slotState.independent) {
-                const double ready = slotState.instanceReadyAtMillis[static_cast<std::size_t>(k)];
                 // Read before the slot has ever populated as well: that is
                 // exactly when an equip reload is owed.
                 if (nowMillis < ready) continue;
@@ -1203,6 +1209,10 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
                                             static_cast<std::uint8_t>(count), config, stats,
                                             equipped, spawnHealth, nowMillis);
             if (petal == NULL_ENTITY) continue;
+            if (config.id == "lightning" && ready > 0.0 && nowMillis >= ready &&
+                nowMillis - ready < net::kTickMillis) {
+                world.get<PetalInstance>(petal).lightningReloadCarryMillis = nowMillis - ready;
+            }
             // Paid once the grain exists, never before it.
             if (slotState.independent) spendMana(world, player, manaCost);
             live.push_back(petal);
@@ -1275,6 +1285,11 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
                 if (auto* instance = world.tryGet<PetalInstance>(petal))
                     instance->diceFace = static_cast<std::uint8_t>(slotState.diceFace);
             }
+        }
+        else if (config.id == "battery") {
+            slotState.counter = 0.0;
+            for (const Entity petal : live) slotState.counter += world.get<PetalInstance>(petal).charges;
+            if (count > 0) slotState.healthFraction = slotState.counter / (kBatteryCharges * count);
         }
         else if (stats.spongeDamageDurationMillis > 0.0) slotState.counter = storedSpongeDamage;
         else if (stats.armorPerStack > 0.0) slotState.counter = bankedArmorStacks;
@@ -2871,11 +2886,8 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             }
             const auto rarity = instance->rarity;
             const auto index = instance->configIndex;
-            constexpr double lifetimeSeconds = 8.0;
-            const auto meteor = registry.petalIndex("meteor");
-            const double meteorHealth = meteor < registry.petalCount()
-                ? registry.petalStats(meteor, rarity).health : 0.0;
-            const double durability = std::max(stats.health, meteorHealth * 2.0);
+            constexpr double lifetimeSeconds = 12.0;
+            const double durability = stats.health;
             const Vec2 direction = Vec2::fromAngle(angle);
             const Motion* thrower = world.tryGet<Motion>(thrownBody);
             // Keep the bait ahead of a flower running in the throw direction,
@@ -2947,6 +2959,8 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
                     if (const auto* body = world.tryGet<Body>(e)) consider(e, *at, *body);
                 }
             }
+            if (touched == NULL_ENTITY || instance->spawnedAtMillis != nowMillis)
+                instance->lightningReloadCarryMillis = 0.0;
             if (touched != NULL_ENTITY) {
                 const auto slot = instance->slot;
                 const auto sub = instance->subIndex;
@@ -4121,6 +4135,13 @@ void PetalSystem::strikeBatteries(World& world, const ContentRegistry& registry,
         auto& live = world.get<PetalInstance>(petal);
         live.batteryDischargedFor = serial;
         live.nextChargeMillis = nowMillis + kBatteryStrikeIntervalMillis;
+        if (slot < kLoadoutActiveSlots) {
+            auto& gauge = world.get<PetalSlotState>(player).slots[slot];
+            if (gauge.counter > 0.0 && gauge.count > 0) {
+                --gauge.counter;
+                gauge.healthFraction = gauge.counter / (kBatteryCharges * gauge.count);
+            }
+        }
         if (--live.charges == 0) spendPetal(world, registry, player, petal, slot, sub, stats, nowMillis);
     }
     if (!waiting) world.get<PetalSlotState>(player).batteryRetryUntilMillis = 0.0;
@@ -4589,21 +4610,20 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     // top of the ladder: the digger's wild line is tuned for a mob that crawls
     // out of a dying ant hole, and as a permanent escort it outclassed every
     // other egg at the same tier. Every other mob's scales are 1.
-    double combatScale = 1.0;
-    if(const auto* state=world.tryGet<PetalSlotState>(player))if(slot<state->slots.size()){
-        const auto& source=state->slots[slot];
-        if(source.configIndex<registry.petalCount()){
-            combatScale=eggSummonCombatScale(registry.petal(source.configIndex))
-                * hyperSummonPromotionScale(registry.petal(source.configIndex), rarity);
+    const PetalConfig* source = nullptr;
+    if (const auto* state = world.tryGet<PetalSlotState>(player)) {
+        if (slot < state->slots.size()) {
+            const auto index = state->slots[slot].configIndex;
+            if (index < registry.petalCount()) source = &registry.petal(index);
         }
     }
-    strength *= combatScale;
+    if (source) strength *= eggSummonCombatScale(*source) * hyperSummonPromotionScale(*source, rarity);
     mob.health = config.health * ladder * config.petHealthScale * strength * kSummonedMobHealthScale;
-    if(const auto* state=world.tryGet<PetalSlotState>(player))if(slot<state->slots.size()){
-        const auto index=state->slots[slot].configIndex;
-        if(index<registry.petalCount())mob.health*=eggSummonHealthScale(registry.petal(index));
-    }
     mob.damage = config.damage * ladder * config.petDamageScale * strength;
+    if (source) {
+        mob.health *= eggSummonHealthScale(*source);
+        mob.damage *= summonDamageScale(*source);
+    }
     // The Pet Health talent is the Petal Health talent for the squad: the same
     // curve, and on this pool alone. Read at the hatch, as the petal talent is
     // read when the slot's pool is sized, so a tier bought while the squad is

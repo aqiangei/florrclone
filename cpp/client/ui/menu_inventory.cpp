@@ -574,7 +574,9 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 : config.petCount)*(apex?3:1)),12.0};lines.push_back(pet);
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*kSummonedMobHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
-        special("召唤物伤害：", "Summon damage: ",summon.damage*summonScale*summon.petDamageScale*skills.effectScale(SkillId::PetDamage));
+        special("召唤物伤害：", "Summon damage: ",
+                summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config) *
+                skills.effectScale(SkillId::PetDamage));
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
@@ -714,6 +716,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("每段索敌范围：", "Range per jump: ", stats.lightningRange);
         if (stats.batteryCharges > 0) {
             special("每轮放电次数：", "Discharges per reload: ", stats.batteryCharges);
+            lines.push_back({chinese ? "装备槽数字显示当前剩余放电次数。"
+                                     : "The loadout counter shows remaining discharges.", 12.0});
             TooltipLine mechanism{chinese ? "花朵实际掉血时触发。两次放电至少间隔 0.5 秒，期间受到的有效伤害最多保留一次，等间隔结束再放电。3 次用完才开始重装；重装天赋只缩短回满时间。仅接触、护盾全吸收、自伤和无敌不触发。" :
                 "Triggers on actual HP loss. Discharges are at least 0.5s apart, and one qualifying hit can wait until the interval ends. Reload talent only shortens the refill after all 3 charges are spent. Touching alone, fully shielded hits, self-damage and invulnerability do not trigger it.",12.0};
             mechanism.maxWidth=kTooltipWrapWidth; lines.push_back(mechanism);
@@ -904,8 +908,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(pool);
     }
     if (config.id == "honey") {
-        lines.push_back({chinese ? "投出的蜂蜜持续 8 秒，期间不会被怪物咬碎。" :
-                                   "Thrown honey lasts 8 seconds and cannot be broken by mobs.", 12.0});
+        lines.push_back({chinese ? "投出的蜂蜜持续 12 秒，期间不会被怪物咬碎。" :
+                                   "Thrown honey lasts 12 seconds and cannot be broken by mobs.", 12.0});
     }
     if (config.id == "magic_cotton") {
         TooltipLine absorption{

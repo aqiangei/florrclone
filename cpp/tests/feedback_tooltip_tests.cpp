@@ -43,7 +43,7 @@ TEST(hammer_tooltip_matches_wild_lightning_recoil_and_reload) {
         const auto index = content().petalIndex(hyper ? "mjolnir" : "timed_mjolnir");
         const auto stats = content().petalStats(index, rarity);
         CHECK_NEAR(stats.lightningDamagePerHit * stats.wildLightningScale,
-                   (hyper ? 80.0 : 60.0) * petalStrengthScale(rarity), 1e-6);
+                   (hyper ? 80.0 : 70.0) * petalStrengthScale(rarity), 1e-6);
         CHECK_NEAR(stats.wildRecoilScale, hyper ? 0.35 : 0.5, 1e-9);
         CHECK_NEAR(stats.reloadMillis, hyper ? 4000.0 : 5000.0, 1e-6);
         CHECK_EQ(stats.lightningBounces, 0);

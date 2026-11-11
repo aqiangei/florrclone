@@ -46,6 +46,44 @@ EM_JS(int, flix_shared_skin_realm, (), {
     return /^[123]$/.test(realm || '') ? Number(realm) : 0;
 });
 
+namespace {
+std::unordered_map<unsigned, std::function<void(flix::Json)>> skinReviewRequests;
+unsigned nextSkinReviewRequest = 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void flix_finish_skin_review(unsigned id, const char* body) {
+    auto request = skinReviewRequests.extract(id);
+    if (!request.empty() && g_wasmServer) request.mapped()(flix::Json::parseOrNull(body));
+}
+
+EM_JS(void, flix_read_skin_review_key, (char* out), {
+    const key = process.env.FLIX_SKIN_REVIEW_KEY || '';
+    stringToUTF8(/^[a-zA-Z0-9_-]{32,128}$/.test(key) ? key : '', out, 129);
+});
+
+EM_JS(void, flix_request_skin_review, (unsigned id, int realm, int local, const char* request), {
+    const body = JSON.stringify({...JSON.parse(UTF8ToString(request)), realm, local});
+    const finish = text => {
+        const size = lengthBytesUTF8(text) + 1;
+        const buffer = _malloc(size);
+        try {
+            stringToUTF8(text, buffer, size);
+            _flix_finish_skin_review(id, buffer);
+        } finally { _free(buffer); }
+    };
+    fetch('http://127.0.0.1:19571/internal/skin-review', {
+        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(8000),
+        headers: {'Content-Type': 'application/json',
+                  'Authorization': 'Bearer ' + process.env.FLIX_SKIN_REVIEW_KEY},
+        body
+    }).then(async response => {
+        if (!response.ok) throw Error();
+        const data = await response.text();
+        if (data.length > 2 * 1024 * 1024) throw Error();
+        return data;
+    }).then(finish, () => finish(JSON.stringify({error: '跨服皮肤审核暂不可用，请刷新。'})));
+});
+
 EM_JS(void, flix_start_shared_skin_sync, (), {
     if (!process.env.FLIX_SHARED_SKIN_URL) return;
     let url;
@@ -461,6 +499,23 @@ int main(int argc, char** argv) {
     // under it. Everything else stays in MEMFS.
     std::string error;
     config.sharedSkinRealm = flix_shared_skin_realm();
+    char skinReviewKey[129]{};
+    flix_read_skin_review_key(skinReviewKey);
+    config.skinReviewKey = skinReviewKey;
+    if (config.sharedSkinRealm && !config.skinReviewKey.empty()) {
+        config.sharedSkinReview = [local = config.sharedSkinRealm](
+            int realm, const flix::Json& request, std::function<void(flix::Json)> callback) {
+            if (skinReviewRequests.size() >= 32) {
+                flix::Json response = flix::Json::object();
+                response["error"] = "皮肤审核请求过多，请稍后刷新。";
+                callback(std::move(response));
+                return;
+            }
+            const auto id = ++nextSkinReviewRequest;
+            skinReviewRequests.emplace(id, std::move(callback));
+            flix_request_skin_review(id, realm, local, request.dump(0).c_str());
+        };
+    }
     const int authorityMode = flix_authority_init();
     if (authorityMode < 0) {
         std::fprintf(stderr, "could not initialize authoritative account adapter\n");

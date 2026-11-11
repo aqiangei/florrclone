@@ -143,6 +143,8 @@ struct ServerConfig {
     bool backgroundSave = false;
     bool tickProbe = false;
     int sharedSkinRealm = 0;
+    std::string skinReviewKey;
+    std::function<void(int, const Json&, std::function<void(Json)>)> sharedSkinReview;
     bool contactVisitProbe = false;
     /// The `/admin db` key to use as is, instead of the one in the key file
     /// beside the database. Empty means the file. Only the offline page sets
@@ -363,7 +365,7 @@ private:
     /// session's account, bank its pickups into whichever account the socket
     /// had switched to, and be orphaned for good by the next join.
     void leaveWorld(Session&);
-    void handleInput(Session&, ByteReader&);
+    void handleInput(Session&, const net::Connection&, ByteReader&);
     void handleChat(Session&, net::Connection&, ByteReader&);
     void handleSetLoadout(Session&, ByteReader&);
     /// A client's digest of the bag and bar it holds, against the server's
@@ -422,13 +424,17 @@ private:
     void handleEquipSkin(Session&, net::Connection&, ByteReader&);
     void handleDeleteSkin(Session&, net::Connection&, ByteReader&);
     void handleSkinReview(Session&, net::Connection&, ByteReader&);
-    void sendSkinReviewQueue(net::Connection&);
+    Json localSkinReviewQueue() const;
+    Json relaySkinReview(const std::string&, const Json&);
+    std::string decideSkinReview(const std::string&, bool approve);
+    void sendSkinReviewQueue(net::Connection&, const Json& sources = {});
     void handlePracticeBoard(Session&, net::Connection&, ByteReader&);
     void servicePracticeTrials(double nowMillis);
     void handleLeaderboard(const Session&, net::Connection&, ByteReader&);
     struct LeaderboardCache {
         ByteWriter rows;
         ByteWriter playtimes;
+        std::unordered_map<std::string, std::uint32_t> levelRanks, playtimeRanks;
         double refreshAtMillis = -1.0;
         std::uint32_t users = 0;
         std::uint32_t activeToday = 0;

@@ -117,9 +117,9 @@ constexpr double kExplosionLifeSeconds = 1.0;
 constexpr std::uint32_t kExplosionOuter = 0xFF4500u;
 constexpr std::uint32_t kExplosionInner = 0xFFD700u;
 
-/// Lightning: white arms that flash and fade over half a second.
+/// Lightning: electric blue arms that flash and fade over half a second.
 constexpr double kLightningLifeSeconds = 0.5;
-constexpr std::uint32_t kLightningColor = 0xFFFFFFu;
+constexpr std::uint32_t kLightningColor = 0x5CB9FFu;
 constexpr double kLightningWidth = 2.65;
 /// How long one straight run of a bolt is before it breaks again, in world
 /// units. Random per bolt inside the range, so two arms of the same strike

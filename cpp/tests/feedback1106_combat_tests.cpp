@@ -149,7 +149,7 @@ TEST(triangle_stacks_with_its_own_tier_before_talent) {
             if (petal.slot < targets.size())
                 targets[petal.slot] = r.mob(r.w.get<Transform>(e).position);
         });
-        const double bonus = tier == Rarity::Unique ? 26244 : tier == Rarity::Super ? 8748 : 4;
+        const double bonus = tier == Rarity::Unique ? 32805 : tier == Rarity::Super ? 8748 : 4;
         const double base = r.c.petalStats(r.c.petalIndex("triangle"), tier).damage;
         const double expected = (base + bonus) * skills.effectScale(SkillId::Damage);
         r.hit(10000);
@@ -175,7 +175,7 @@ TEST(eternal_triangle_counts_each_additional_eternal_and_ignores_super) {
         if (triangle == NULL_ENTITY) continue;
         const auto target = r.mob(r.w.get<Transform>(triangle).position);
         r.hit(10000);
-        CHECK_NEAR(1e12 - r.w.get<Health>(target).current, 32805 + (copies - 1) * 26244, 1e-3);
+        CHECK_NEAR(1e12 - r.w.get<Health>(target).current, 32805 + (copies - 1) * 32805, 1e-3);
     }
 }
 
@@ -231,7 +231,7 @@ TEST(third_eye_extends_electric_web_throw_without_enlarging_its_field) {
 
 TEST(real_hammers_hit_wild_mobs_harder_and_keep_duel_damage) {
     struct HammerCase { const char* id; Rarity tier; double wildBase; double duelBase; double recoil; };
-    for (const auto& test : {HammerCase{"timed_mjolnir", Rarity::Unique, 60.0, 12.0, 0.50},
+    for (const auto& test : {HammerCase{"timed_mjolnir", Rarity::Unique, 70.0, 12.0, 0.50},
                              {"mjolnir", Rarity::Unique, 60.0, 12.0, 0.50},
                              {"mjolnir", Rarity::Apex, 80.0, 60.0, 0.35}}) {
         for (const bool wild : {false, true}) {

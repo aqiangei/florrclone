@@ -576,7 +576,7 @@ bool SpriteCache::build(const ContentRegistry& content, const std::string& dataD
     mobs_.assign(content.mobCount(), Sprite{});
     mobPictureBounds_.assign(content.mobCount(), PictureBounds{});
     petals_.assign(content.petalCount(), Sprite{});
-    petalCoverage_.assign(content.petalCount(), 0.0);
+    petalExtents_.assign(content.petalCount(), Vec2{});
 
     const auto compile = [this](const std::string& source, std::uint32_t colorRgba,
                                 const std::string& label, Sprite& out) {
@@ -888,12 +888,17 @@ bool SpriteCache::petalAnimated(std::uint16_t index) const {
 }
 
 double SpriteCache::petalCoverage(std::uint16_t index) const {
-    if (index >= petals_.size() || index >= petalCoverage_.size()) return 1.0;
-    double& coverage = petalCoverage_[index];
-    if (coverage > 0.0) return coverage;
-    coverage = 1.0;
+    const Vec2 extent = petalExtent(index);
+    return std::max(extent.x, extent.y);
+}
+
+Vec2 SpriteCache::petalExtent(std::uint16_t index) const {
+    if (index >= petals_.size() || index >= petalExtents_.size()) return {1.0, 1.0};
+    Vec2& extent = petalExtents_[index];
+    if (extent.x > 0.0) return extent;
+    extent = {1.0, 1.0};
     const Sprite& sprite = petals_[index];
-    if (!sprite.usable || !sprite.document) return coverage;
+    if (!sprite.usable || !sprite.document) return extent;
 
     const int side = static_cast<int>(std::ceil(kCoverageProbeReach * kCoverageProbeBox));
     const double centre = side * 0.5;
@@ -904,7 +909,7 @@ double SpriteCache::petalCoverage(std::uint16_t index) const {
         if (!sprite.document->animated()) break;
     }
     const std::vector<std::uint8_t> rgba = probe.getImageData(0, 0, side, side);
-    if (rgba.size() != static_cast<std::size_t>(side) * side * 4) return coverage;
+    if (rgba.size() != static_cast<std::size_t>(side) * side * 4) return extent;
 
     int minX = side, minY = side, maxX = -1, maxY = -1;
     for (int y = 0; y < side; ++y) {
@@ -916,9 +921,9 @@ double SpriteCache::petalCoverage(std::uint16_t index) const {
             maxY = std::max(maxY, y);
         }
     }
-    if (maxX < 0) return coverage;
-    coverage = std::max(maxX + 1 - minX, maxY + 1 - minY) / kCoverageProbeBox;
-    return coverage;
+    if (maxX < 0) return extent;
+    extent = {(maxX + 1 - minX) / kCoverageProbeBox, (maxY + 1 - minY) / kCoverageProbeBox};
+    return extent;
 }
 
 Vec2 SpriteCache::petalOrigin(std::uint16_t index) const {

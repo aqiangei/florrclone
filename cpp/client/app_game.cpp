@@ -200,6 +200,8 @@ void App::sendInputFrame(double dt, bool periodic) {
     // the reference reads them beside whatever the four keys are bound to.
     const ClientSettings& settings = menus_.settings();
     input.rotationStep = static_cast<std::uint8_t>(std::clamp(settings.rotationStep, 1, 4));
+    if (settings.render.hideOtherPetals) input.flags |= net::InputHideForeignPetals;
+    if (settings.render.hideOtherPets) input.flags |= net::InputHideForeignPets;
     Vec2 keyboard{0, 0};
     // A typed key is a character, not a direction. The reference's key handler
     // returns before it records anything once an <input> has focus, so while
@@ -343,7 +345,7 @@ void App::sendInputFrame(double dt, bool periodic) {
     if ((!periodic && !(moved || turned || speedChanged || action)) ||
         now - lastInputSentMillis_ < 20.0) return;
     input.sequence = ++inputSequence_;
-    net_.sendInput(input);
+    if (!net_.sendInput(input)) return;
     lastSentInput_ = input;
     lastInputSentMillis_ = now;
 }

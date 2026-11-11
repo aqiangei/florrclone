@@ -555,7 +555,7 @@ EM_JS(int, flix_ch_listen,
              Object.keys(parsed).some(key=>!["action","title","id","choice"].includes(key) || typeof parsed[key]!=="string")) {
             response.writeHead(400);response.end();return;
           }
-          if(Module.flixAuthority) {
+          if(Module.flixAuthority && !parsed.action?.startsWith("skin-review-")) {
             if(typeof Module.flixAuthority.council!=="function") {
               response.writeHead(503);response.end();return;
             }

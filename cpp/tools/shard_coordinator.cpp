@@ -120,7 +120,7 @@ int main(int argc,char** argv) {
             const auto action=body["action"].asString("view");const auto token=request["token"].asString();
             if(!authority.healthy())output["result"]=failure("authority_frozen");
             else if(!body.isObject()||token.size()>512||body.dump().size()>4096)output["result"]=failure("bad_transaction");
-            else if(action=="view"||action=="player") {
+            else if(action=="view"||action=="player"||action=="identity"||action=="ranking-data") {
                 auto reply=success();reply["body"]=council.view(token,body);output["result"]=reply;
             } else {
                 Json response;

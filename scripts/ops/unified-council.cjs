@@ -112,6 +112,7 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
   let cache = null;
   let loading = null;
   const limits = new Map();
+  const legacyEndpoints = new Map();
 
   async function game(realm, body, token = '', address = '') {
     let response;
@@ -126,10 +127,23 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
     } catch { throw Error(`${realm}服议会接口暂不可用，请稍后重试`); }
   }
 
+  async function readGame(realm, action, token, address) {
+    const key = `${realm}:${action}`;
+    if (now() < (legacyEndpoints.get(key) || 0))
+      return game(realm, {action: 'view'}, token, address);
+    const result = await game(realm, {action}, token, address);
+    // During a rolling upgrade, older game servers reject the two read actions.
+    if (result.error === '未知操作' || result.error === '请先在游戏首页登录正式账号') {
+      legacyEndpoints.set(key, now() + 60_000);
+      return game(realm, {action: 'view'}, token, address);
+    }
+    return result;
+  }
+
   async function ranking(refresh = false, allowRecentSnapshot = false) {
     if (!refresh && cache && now() - cache.at < 15_000) return cache.rows;
     if (!loading) {
-      loading = Promise.all(realms.map(async realm => ({realm, ...(await game(realm, {action: 'view'}))})))
+      loading = Promise.all(realms.map(async realm => ({realm, ...(await readGame(realm, 'ranking-data'))})))
         .then(results => {
           cache = {at: now(), rows: combineRanking(results)};
           return cache.rows;
@@ -137,7 +151,7 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
     }
     if (allowRecentSnapshot && cache && now() - cache.at < 120_000) {
       // Reads can show the last complete ranking while a new one is fetched.
-      // Publishing and voting still wait for the normal freshness rules.
+      // Publishing still requires a fresh complete ranking.
       loading.catch(() => {});
       return cache.rows;
     }
@@ -153,8 +167,12 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
       return game(Number(match[1]), {action, id: match[2]}, '', address);
     }
     if (!['view', 'create', 'vote', 'close'].includes(action)) throw Error('未知操作');
-    const [rows, account] = await Promise.all([ranking(action === 'create', action === 'view'),
-      realm && token ? game(realm, {action: 'view'}, token, address) : null]);
+    const needsRanking = action === 'view' || action === 'create';
+    const [rows, account] = await Promise.all([
+      needsRanking ? ranking(action === 'create', action === 'view') : cache?.rows || [],
+      realm && token ? readGame(realm, 'identity', token, address) : null,
+    ]);
+    if (account?.error) throw Error(account.error);
     const me = account?.me ? accountKey(realm, account.me) : '';
     const canPublish = rows.slice(0, proposalRank).some(row => row.id === me && row.units > 0);
     const canClose = Boolean(me && account.canClose);
@@ -209,6 +227,61 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     const route = req.url.split('?', 1)[0];
+    if (route === '/internal/skin-review') {
+      const token = /^Bearer ([a-zA-Z0-9_-]{32,128})$/.exec(req.headers.authorization || '')?.[1];
+      if (req.method !== 'POST' || req.socket.remoteAddress !== '127.0.0.1' || !token ||
+          req.headers['content-type'] !== 'application/json') {
+        res.writeHead(403).end();
+        return;
+      }
+      try {
+        let size = 0;
+        const chunks = [];
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > 1024) { res.writeHead(413).end(); return; }
+          chunks.push(chunk);
+        }
+        const {realm, local, action, id} = JSON.parse(Buffer.concat(chunks));
+        if (!realms.includes(local) || (action === 'skin-review-list' ? realm !== 0 :
+            !['skin-review-approve', 'skin-review-reject'].includes(action) ||
+            !realms.includes(realm) || realm === local ||
+            typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,120}$/.test(id))) {
+          res.writeHead(400).end();
+          return;
+        }
+        const call = async (target, body) => {
+          const response = await fetch(upstreams[target], {
+            method: 'POST', redirect: 'error', signal: AbortSignal.timeout(6500),
+            headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+            body: JSON.stringify(body)
+          });
+          if (!response.ok) throw Error();
+          return response.json();
+        };
+        let result = {};
+        if (realm) {
+          try { result = await call(realm, {action, id}); }
+          catch { result = {error: '来源服未确认审核结果，请刷新队列。'}; }
+          if (!result.error && result.ok !== true) result.error = '来源服未确认审核结果，请刷新队列。';
+        }
+        const sources = {};
+        if (!realm) {
+          const unavailable = [];
+          await Promise.all(realms.filter(target => target !== local).map(async target => {
+            try {
+              const reply = await call(target, {action: 'skin-review-list'});
+              if (!Array.isArray(reply.rows)) throw Error();
+              sources[target] = reply.rows;
+            } catch { unavailable.push(target); }
+          }));
+          if (unavailable.length) result.error = `${unavailable.sort().join('、')}服审核队列暂不可用。`;
+        }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.end(JSON.stringify({...result, sources}));
+      } catch { res.writeHead(400).end(); }
+      return;
+    }
     if (req.method === 'GET' && route === '/council.html') {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(page);
@@ -252,6 +325,7 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
       res.end(JSON.stringify({error: error instanceof SyntaxError ? '请求格式无效' : error.message}));
     }
   });
+  server.once('listening', () => { ranking().catch(() => {}); });
   return server;
 }
 

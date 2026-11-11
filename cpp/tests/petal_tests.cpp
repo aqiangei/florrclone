@@ -1407,6 +1407,31 @@ double lastStrikeDamage(Rig& rig) {
 }
 
 
+TEST(eternal_lightning_keeps_the_sub_tick_reload_reduction_of_each_golden_leaf) {
+    const auto& registry = testsupport::shippedContent();
+    const auto count = [&](int leaves) {
+        Rig rig(registry);
+        rig.equip(0, "lightning", Rarity::Unique);
+        auto& skills = rig.world.add<PlayerSkillTree>(rig.player).skills;
+        skills.set(SkillId::Reload, 8);
+        for (int i = 1; i <= leaves; ++i) rig.equip(i, "golden_leaf", Rarity::Unique);
+        const auto dummy = ramMob(rig);
+        rig.world.get<Transform>(dummy).position = rig.world.get<Transform>(rig.player).position;
+        rig.world.get<Body>(dummy).radius = 420.0;
+        rig.tick(200);
+        const auto before = countStrikes(rig);
+        rig.tick(600);
+        return countStrikes(rig) - before;
+    };
+    const auto none = count(0);
+    const auto one = count(1);
+    const auto two = count(2);
+    const auto three = count(3);
+    CHECK(none < one);
+    CHECK(one < two);
+    CHECK(two < three);
+}
+
 TEST(a_battery_arrives_with_three_charges_and_spends_only_on_damage) {
     CHECK(contentLoaded()); Rig rig; rig.equip(0,"battery");rig.settleEquips();
     CHECK_EQ(batteryCharges(rig),3);const auto source=ramMob(rig);rig.tick(40);
@@ -1414,12 +1439,18 @@ TEST(a_battery_arrives_with_three_charges_and_spends_only_on_damage) {
     CombatSystem combat;combat.applyDamage(rig.world,rig.player,source,1,rig.now);rig.tick();
     CHECK_EQ(countStrikes(rig),1u);CHECK_EQ(batteryCharges(rig),2);
     CHECK_NEAR(lastStrikeDamage(rig),12,1e-9);
+    const auto& slot = rig.world.get<PetalSlotState>(rig.player).slots[0];
+    CHECK_NEAR(slot.counter, 2.0, 1e-9);
+    CHECK_NEAR(slot.healthFraction, 2.0 / 3.0, 1e-9);
 }
 TEST(a_battery_spends_three_charges_then_reloads_full_without_auto_firing) {
     CHECK(contentLoaded());Rig rig;rig.equip(0,"battery");rig.settleEquips();const auto source=ramMob(rig);CombatSystem combat;
     for(int i=0;i<3;++i){rig.world.get<Health>(rig.player).hitCooldownUntilMillis=0;
         combat.applyDamage(rig.world,rig.player,source,1,rig.now);rig.tick();if(i<2)rig.tick(16);}
-    CHECK_EQ(countStrikes(rig),3u);CHECK(rig.tickUntil([&]{return batteryCharges(rig)==3;},120));
+    CHECK_EQ(countStrikes(rig),3u);
+    CHECK_NEAR(rig.world.get<PetalSlotState>(rig.player).slots[0].counter, 0.0, 1e-9);
+    CHECK(rig.tickUntil([&]{return batteryCharges(rig)==3;},120));
+    CHECK_NEAR(rig.world.get<PetalSlotState>(rig.player).slots[0].counter, 3.0, 1e-9);
     rig.tick(20);CHECK_EQ(countStrikes(rig),3u);
 }
 TEST(a_battery_remembers_one_real_hit_during_its_discharge_interval) {
@@ -7151,9 +7182,23 @@ TEST(hyper_technique_dahlia_returns_faster_and_honey_flies_further) {
 
 TEST(thrown_honey_outlasts_a_wild_mob_hit_and_expires_on_its_own) {
     const auto& registry = testsupport::shippedContent();
+    const auto honeyIndex = registry.petalIndex("honey");
+    const auto meteorIndex = registry.petalIndex("meteor");
+    for (int tier = 0; tier < kRarityCount; ++tier) {
+        const auto rarity = static_cast<Rarity>(tier);
+        CHECK_NEAR(registry.petalStats(honeyIndex, rarity).health,
+                   2.0 * registry.petalStats(meteorIndex, rarity).health, 1e-6);
+    }
     Rig rig(registry);
     rig.equip(0, "honey", Rarity::Unique);
+    rig.equip(1, "meteor", Rarity::Unique);
     rig.settleEquips();
+    CHECK_EQ(rig.petals(0).size(), 1u);
+    CHECK_EQ(rig.petals(1).size(), 1u);
+    if (rig.petals(0).empty() || rig.petals(1).empty()) return;
+    const double wornHoney = rig.world.get<Health>(rig.petals(0).front()).max;
+    const double wornMeteor = rig.world.get<Health>(rig.petals(1).front()).max;
+    CHECK_NEAR(wornHoney, 2.0 * wornMeteor, 1e-6);
     rig.setFlags(net::InputAttack);
     rig.tick();
     rig.setFlags(0);
@@ -7161,14 +7206,17 @@ TEST(thrown_honey_outlasts_a_wild_mob_hit_and_expires_on_its_own) {
     CHECK_EQ(baits.size(), 1u);
     if (baits.empty()) return;
     const auto bait = baits.front();
-    const double meteor = registry.petalStats(registry.petalIndex("meteor"), Rarity::Unique).health;
     const double durability = rig.world.get<Health>(bait).max;
-    CHECK(durability > meteor);
+    const auto meteors = Query<PlantedMeteor>{rig.world}.collect();
+    CHECK_EQ(meteors.size(), 1u);
+    if (meteors.empty()) return;
+    CHECK_NEAR(durability, wornHoney, 1e-6);
+    CHECK_NEAR(durability, 2.0 * rig.world.get<Health>(meteors.front()).max, 1e-6);
     const auto mob = addMob(rig, rig.position(bait) + Vec2{10.0, 0.0});
     CombatSystem combat;
     CHECK(combat.applyDamage(rig.world, bait, mob, durability * 2.0, rig.now).refused);
     CHECK_NEAR(rig.world.get<Health>(bait).current, durability, 1e-8);
-    rig.tick(150);
+    rig.tick(230);
     CHECK(rig.world.isAlive(bait));
     rig.tick(11);
     CHECK(!rig.world.isAlive(bait));
@@ -7797,6 +7845,7 @@ TEST(hyper_final_triangle_counts_only_other_hyper_triangles) {
     CHECK_NEAR(base, stats.damage, 1e-6);
     TriangleCounts counts{};
     counts[rarityIndex(Rarity::Apex)] = 2;
+    CHECK_EQ(triangleBonusDamage(Rarity::Apex, counts), 98415.0);
     CHECK_NEAR(damage(Rarity::Apex), (base + triangleBonusDamage(Rarity::Apex, counts)) * 1.06, 1e-6);
 }
 

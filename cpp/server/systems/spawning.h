@@ -970,7 +970,7 @@ private:
                       std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                       double nowMillis, Rng& rng, int depth, std::uint16_t zone,
                       std::optional<double> facing = std::nullopt, bool clockGated = true,
-                      bool announce = true);
+                      bool announce = true, bool prestigePromotion = false);
 
     /// Lays a centipede's body out behind its head, each segment linked to the
     /// one in front. Driven from spawnMobAt so that every path to a head --

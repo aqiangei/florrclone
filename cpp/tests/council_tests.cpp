@@ -22,6 +22,25 @@ TEST(council_weights_votes_snapshot_and_persistence) {
     auto anonymous=council::request(db,"",view);CHECK_EQ(anonymous["me"].asString(),"");CHECK_EQ(anonymous["players"].size(),2u);
     auto signedIn=council::request(db,at,view);CHECK_EQ(signedIn["me"].asString(),aid);CHECK_EQ(signedIn["accountName"].asString(),"councilAlice");
     auto adminView=council::request(db,mt,view);CHECK_EQ(adminView["accountName"].asString(),"councilAdmin");CHECK(adminView["admin"].asBool());
+    Json identity=Json::object();identity["action"]="identity";
+    const auto councilIdentity=council::request(db,at,identity);
+    CHECK_EQ(councilIdentity["me"].asString(),aid);
+    CHECK_EQ(councilIdentity["accountName"].asString(),"councilAlice");
+    CHECK(!councilIdentity["canClose"].asBool());
+    CHECK(councilIdentity["players"].isNull());
+    CHECK(councilIdentity["polls"].isNull());
+    CHECK(council::request(db,mt,identity)["canClose"].asBool());
+    CHECK_EQ(council::request(db,"invalid",identity)["me"].asString(),"");
+    Json rankingData=Json::object();rankingData["action"]="ranking-data";
+    const auto councilRanking=council::request(db,"",rankingData);
+    CHECK_EQ(councilRanking["players"].size(),2u);
+    for (const auto& row : councilRanking["players"].items()) {
+        CHECK(row["id"].asString() == aid || row["id"].asString() == bid);
+        CHECK_EQ(row["recordedSeconds"].asDouble(),0.0);
+        CHECK(row["levelScore"].asDouble() > 0);
+        CHECK(row["units"].isNull());
+    }
+    CHECK(councilRanking["polls"].isNull());
     Json create=Json::object();create["action"]="create";create["title"]="Balance update";
     CHECK(!council::request(db,mt,create)["error"].isNull());
     auto out=council::request(db,at,create);CHECK(out["error"].isNull());CHECK_EQ(out["polls"].size(),1u);

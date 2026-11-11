@@ -2064,6 +2064,7 @@ TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
     const std::string dir = titanWorld("titan-forge-all");
     Harness h("titan-forge-all", [](const std::string& path) {
         seedAccount(path, "smith");
+        seedAccount(path, "watcher");
         seedStack(path, "smith", "petal_rose", Rarity::Super, 41);
         seedWorn(path, "smith", 0, "rose", Rarity::Super);
         seedStack(path, "smith", "petal_fragment", Rarity::Super, 31);
@@ -2072,9 +2073,10 @@ TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
         seedStack(path, "smith", "petal_leaf", Rarity::Super, 9);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    NetClient client;
+    NetClient client, watcher;
     CHECK(joinAs(h, client, "smith"));
-    const std::vector<NetClient*> clients{&client};
+    CHECK(joinAs(h, watcher, "watcher"));
+    const std::vector<NetClient*> clients{&client, &watcher};
     h.step(3, clients);
     const auto rose = content().petalIndex("rose");
     const auto fragment = content().petalIndex("fragment");
@@ -2096,6 +2098,13 @@ TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
     CHECK_EQ(outcome.quantity, 3u);
     CHECK(outcome.reason.find("获得 6 个永恒") != std::string::npos);
     CHECK(outcome.reason.find("消耗 80 个超级") != std::string::npos);
+    const auto summaryCount = [](const NetClient& player) {
+        return std::count_if(player.chat().begin(), player.chat().end(), [](const auto& message) {
+            return message.text.find("一键锻造完成：共 3 种，获得 6 个永恒") != std::string::npos;
+        });
+    };
+    CHECK_EQ(summaryCount(client), 0);
+    CHECK_EQ(summaryCount(watcher), 0);
     CHECK(awaitProfile(h, client, [&](const Profile& profile) {
         return profile.stackCount(rose, Rarity::Unique) == 3 &&
                profile.stackCount(fragment, Rarity::Unique) == 2 &&
@@ -3449,6 +3458,92 @@ TEST(hyper_forge_network_survives_council_activity_credit) {
     CHECK_EQ(db.findProgress(account)->itemCount(Rarity::Apex, "petal_rose"), 1);
     CHECK_EQ(db.findProgress(account)->itemCount(Rarity::Unique, "petal_rose"), 0);
     removeDataDir(dir);
+}
+
+namespace {
+void checkHyperTakeoverRetry(const char* fixture, const char* input, const char* output, int cost) {
+    const auto dir = titanWorld(fixture);
+    const auto materialKey = std::string("petal_") + input;
+    Harness h(fixture, [&](const std::string& path) {
+        seedAccount(path, "owner");
+        seedAccount(path, "challenger");
+        seedStack(path, "owner", materialKey.c_str(), Rarity::Unique, cost);
+        seedStack(path, "challenger", materialKey.c_str(), Rarity::Unique, cost);
+        seedStack(path, "challenger", "petal_rock", Rarity::Apex, 1);
+        seedStack(path, "challenger", "petal_leaf", Rarity::Apex, 1);
+    }, dir, 0, [](ServerConfig& config) { config.backgroundSave = true; });
+    CHECK(h.ready);
+    if (!h.ready) { removeDataDir(dir); return; }
+
+    NetClient owner, challenger;
+    CHECK(joinAs(h, owner, "owner"));
+    CHECK(joinAs(h, challenger, "challenger"));
+    const std::vector<NetClient*> both{&owner, &challenger};
+    standAtTitan(h, both, "owner");
+    standAtTitan(h, both, "challenger");
+    using Peer = testsupport::GameServerPeer;
+    auto& db = Peer::authorityDb(h.server);
+    hyperForgeTestNow = 1000;
+    db.setClock(+[] { return hyperForgeTestNow; });
+    const auto material = content().petalIndex(input);
+    const auto reward = content().petalIndex(output);
+    TitanForgeOutcome outcome;
+    owner.requestTitanForge(material, true);
+    CHECK(awaitForge(h, both, owner, outcome));
+    CHECK(outcome.success);
+    hyperForgeTestNow += 15LL * 3600000;
+
+    challenger.requestTitanHolder(material);
+    CHECK(h.stepUntil(both, [&] {
+        const auto* holder = challenger.titanHolder(material);
+        return holder && *holder == "owner" && challenger.hyperHoldings() == 2 &&
+               challenger.hyperProtectionLeft(material) == 0 &&
+               challenger.hyperInputCost(material) == cost;
+    }));
+    challenger.requestTitanForge(material, true);
+    for (int i = 0; i < 40 && !Peer::localForgePending(h.server); ++i) {
+        challenger.poll(1);
+        h.server.serviceNetwork(1);
+    }
+    CHECK(Peer::localForgePending(h.server));
+    CHECK(db.canStageForgeSave());
+    h.server.serviceNetwork(0);  // Hand the initial transfer to the writer.
+    CHECK(!db.canStageForgeSave());
+
+    auto& world = h.server.world();
+    auto& progress = world.get<PlayerProgress>(bodyNamed(world, "owner"));
+    const double earnedXp = progress.totalXp + 123.0;
+    progress.totalXp = earnedXp;
+    CHECK(awaitForge(h, both, challenger, outcome));
+    CHECK(outcome.success);
+    CHECK(awaitProfile(h, challenger, [&](const Profile& p) {
+        return p.stackCount(reward, Rarity::Apex) == 1 &&
+               p.stackCount(material, Rarity::Unique) == 0;
+    }));
+    CHECK(awaitProfile(h, owner, [&](const Profile& p) {
+        return p.stackCount(reward, Rarity::Apex) == 0 &&
+               p.stackCount(material, Rarity::Unique) == static_cast<unsigned>(cost - 1);
+    }));
+    const auto* account = std::as_const(db).findUser("owner");
+    CHECK(account);
+    Database reloaded;
+    std::string error;
+    CHECK(reloaded.load(h.dbPath, error));
+    if (account) {
+        const auto* saved = reloaded.findProgress(account->id);
+        CHECK(saved);
+        if (saved) CHECK_NEAR(saved->totalXp, earnedXp, 1e-9);
+    }
+    removeDataDir(dir);
+}
+}  // namespace
+
+TEST(hyper_hammer_takeover_retries_when_the_previous_owner_earns_xp) {
+    checkHyperTakeoverRetry("hyper-hammer-retry", "fragment", "mjolnir", 10);
+}
+
+TEST(hyper_egg_takeover_retries_with_expired_protection_and_two_holdings) {
+    checkHyperTakeoverRetry("hyper-egg-retry", "egg", "egg", 5);
 }
 
 TEST(hyper_hammer_network_forges_mjolnir_from_ten_eternal_fragments) {

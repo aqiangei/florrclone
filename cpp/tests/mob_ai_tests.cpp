@@ -272,6 +272,21 @@ struct Sim {
 /// Middle of the map, well away from the world edge that reads as wall.
 const Vec2 kOrigin{30000.0, 30000.0};
 
+TEST(baby_ant_switches_from_a_nearby_flower_to_visible_honey) {
+    if (!contentReady()) return;
+    Sim sim;
+    const Entity ant = sim.spawnMob("baby_ant", kOrigin);
+    const Entity flower = sim.spawnPlayer(kOrigin + Vec2{-60.0, 0.0});
+    sim.brainOf(ant).target = flower;
+    const Entity bait = sim.world.create();
+    sim.world.add<Transform>(bait, Transform{kOrigin + Vec2{400.0, 0.0}, 0.0});
+    sim.world.add<Health>(bait, Health{1000.0, 1000.0});
+    sim.world.add<HoneyBait>(bait, HoneyBait{flower});
+    sim.tick();
+    CHECK_EQ(sim.brainOf(ant).target, bait);
+    CHECK(sim.velocityOf(ant).x > 0.0);
+}
+
 /// Attaches `self` to the chain behind `ahead`.
 void link(Sim& sim, Entity self, Entity ahead, double spacing) {
     BodySegment segment;

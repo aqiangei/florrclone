@@ -9,7 +9,7 @@
 //
 // A twin's bands raise the ordinary roll a tier through Ultra. At the top of
 // the curve, most natural Ultra rolls become Super, leaving some Ultra in the
-// mix. A twin has no boss clocks and caps at Super.
+// mix. A separate natural-spawn roll can promote a Super to Eternal.
 //
 // The PVP arena and the maze are generated rather than authored, have no map
 // file to copy, and have no prestige version; neither do the instanced dungeon
@@ -38,7 +38,7 @@ inline constexpr const char* kPrestigeLabel = "Prestige";
 /// How many tiers a twin's spawn roll adds.
 inline constexpr int kPrestigeRarityStep = 1;
 
-/// The highest tier that ever stands in a twin.
+/// The highest tier of the ordinary promotion curve.
 inline constexpr Rarity kPrestigeRarityCap = Rarity::Super;
 
 /// The arrow's colour on the title screen and the talent's node colour.
@@ -68,7 +68,7 @@ inline constexpr Rarity prestigeXpRarity(Rarity rarity) {
     return lowered < 0 ? Rarity::Common : static_cast<Rarity>(lowered);
 }
 
-/// True for a tier that can never stand in a prestige realm.
+/// True for tiers barred from regular and manually requested spawns in a twin.
 inline constexpr bool barredFromPrestige(Rarity rarity) {
     return rarityIndex(rarity) > rarityIndex(kPrestigeRarityCap);
 }

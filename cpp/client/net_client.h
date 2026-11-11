@@ -648,7 +648,7 @@ public:
     /// placed the body by then, and that is the truth either way.
     void cancelJoin() { joinPending_ = false; }
     void leaveGame();
-    void sendInput(const net::InputFrame&);
+    bool sendInput(const net::InputFrame&);
     void sendChat(const std::string& text);
     void setLoadoutSlot(int slot, std::uint16_t petalIndex, Rarity rarity);
     void swapLoadoutSlots(int a, int b);
@@ -992,6 +992,9 @@ public:
     const std::vector<HyperHoldingRow>& hyperBoard() const { return hyperBoard_; }
     std::uint32_t hyperHoldingsTotal() const { return hyperHoldingsTotal_; }
     std::uint32_t hyperHoldingsOffset() const { return hyperHoldingsOffset_; }
+    std::uint32_t ownLeaderboardRank(bool playtime, bool hyper) const {
+        return hyper ? ownHyperRank_ : playtime ? ownPlaytimeRank_ : ownLevelRank_;
+    }
     bool leaderboardPending() const { return leaderboardPending_; }
     /// How many accounts the server holds, and how many of them authenticated
     /// in the last day. The second is 0 for a non-admin, which is how the
@@ -1260,6 +1263,7 @@ private:
     std::vector<LeaderboardRow> playtimeLeaderboard_; // totalXp stores seconds in these rows.
     std::vector<HyperHoldingRow> hyperBoard_;
     std::uint32_t hyperHoldingsTotal_ = 0, hyperHoldingsOffset_ = 0;
+    std::uint32_t ownLevelRank_ = 0, ownPlaytimeRank_ = 0, ownHyperRank_ = 0;
     bool leaderboardPending_ = false;
     std::uint32_t totalAccounts_ = 0;
     std::uint32_t dailyActiveUsers_ = 0;

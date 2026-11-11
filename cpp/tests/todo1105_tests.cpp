@@ -81,7 +81,9 @@ TEST(todo1106_stick_summons_use_hyper_stats_and_talent_without_changing_count) {
                 baseDamage=w.get<ContactDamage>(pets[0]).amount;
                 CHECK_EQ(baseCount, 2u);
                 const auto& storm = c.mob(c.mobIndex("sandstorm"));
-                CHECK_NEAR(baseDamage, storm.damage * petalStatScale(Rarity::Unique) * 1.5, 1e-6);
+                const double sourceDamageScale = std::string_view(id) == "magic_stick" ? 1.25 : 1.0;
+                CHECK_NEAR(baseDamage, storm.damage * petalStatScale(Rarity::Unique) * 1.5 *
+                                       sourceDamageScale, 1e-6);
             } else {
                 CHECK_EQ(pets.size(), baseCount*3);
                 for(auto pet : pets) {

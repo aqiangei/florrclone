@@ -208,7 +208,7 @@ void pushSample(RemoteEntity& e, double timeMillis) {
 
 } // namespace
 
-bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
+bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool keepTransientEffects) {
     const std::uint32_t tick = reader.u32();
     const double serverTime = reader.f64();
     const Vec2 selfPosition = reader.position();
@@ -448,9 +448,14 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
         // next event's header.
         if (e.kind == net::EventKind::Lightning) {
             const std::uint8_t targets = reader.u8();
-            e.points.reserve(targets);
-            for (std::uint8_t t = 0; t < targets; ++t) e.points.push_back(reader.position());
+            if (keepTransientEffects) e.points.reserve(targets);
+            for (std::uint8_t t = 0; t < targets; ++t) {
+                const auto point = reader.position();
+                if (keepTransientEffects) e.points.push_back(point);
+            }
         }
+        if (!keepTransientEffects &&
+            (e.kind == net::EventKind::Lightning || e.kind == net::EventKind::Explosion)) continue;
         events.push_back(std::move(e));
     }
     if (!reader.ok()) return false;

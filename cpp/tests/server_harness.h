@@ -786,6 +786,9 @@ inline Entity onlyPlayer(World& world) {
 /// shares the one definition.
 struct GameServerPeer {
     static Database& authorityDb(GameServer& s) { return s.database_; }
+    static Json relaySkinReview(GameServer& server, const std::string& key, const Json& request) {
+        return server.relaySkinReview(key, request);
+    }
     static bool localForgePending(const GameServer& server) {
         return static_cast<bool>(server.pendingLocalHyper_);
     }

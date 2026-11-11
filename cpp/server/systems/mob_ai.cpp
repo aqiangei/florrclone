@@ -2995,7 +2995,8 @@ void MobAiSystem::run(World& world, const Terrain& terrain, const SpatialGrid& g
             }
         }
         const auto* previousTarget = lure != NULL_ENTITY ? world.tryGet<Transform>(ai->target) : nullptr;
-        if (lure != NULL_ENTITY && (!previousTarget || world.has<HoneyBait>(ai->target) ||
+        if (lure != NULL_ENTITY && (ai->kind == AiKind::Passive ||
+            !previousTarget || world.has<HoneyBait>(ai->target) ||
             previousTarget->realm != transform->realm ||
             nearest * (.28 * .28) < distanceSq(transform->position, previousTarget->position))) {
             const Vec2 delta = world.get<Transform>(lure).position - transform->position;

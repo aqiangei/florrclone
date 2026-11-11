@@ -212,3 +212,79 @@ TEST(skin_moderator_can_remove_public_skins_without_admin_access) {
     }));
     CHECK(!artist.findSkin(rejectedId)->published && !other.findSkin(rejectedId));
 }
+
+TEST(shared_skin_review_routes_a_private_submission_back_to_its_source) {
+    const std::string key = "fixture-secret-for-three-realms-123";
+    Harness source("skin-review-source", [](const std::string& path) {
+        seedUser(path, "remote_artist", "password7");
+    }, dataDir(), 0, [&](ServerConfig& config) {
+        config.sharedSkinRealm = 2;
+        config.skinReviewKey = key;
+    });
+    CHECK(source.ready);
+    if (!source.ready) return;
+    NetClient artist;
+    CHECK(loginAs(source, artist, "remote_artist", "password7"));
+    SkinShape shape;
+    shape.r = 32;
+    shape.fill = "#f1009e";
+    artist.publishSkin("Remote Review", {shape}, true);
+    CHECK(source.stepUntil({&artist}, [&] { return !artist.skinCatalog().empty(); }));
+    if (artist.skinCatalog().empty()) return;
+    const auto id = artist.skinCatalog().front().id;
+    CHECK(artist.skinCatalog().front().review == SkinReviewState::Pending);
+
+    int relayCalls = 0;
+    Harness review("skin-review-other-realm", [](const std::string& path) {
+        seedSkinReviewer(path);
+        seedUser(path, "ordinary", "password7");
+    }, dataDir(), 0, [&](ServerConfig& config) {
+        config.sharedSkinRealm = 1;
+        config.sharedSkinReview = [&](int realm, const Json& request, auto reply) {
+            ++relayCalls;
+            Json result = Json::object();
+            const auto forwarded = GameServerPeer::relaySkinReview(source.server, key, request);
+            if (realm == 0) result["sources"]["2"] = forwarded["rows"];
+            else {
+                CHECK_EQ(realm, 2);
+                CHECK_EQ(request["id"].asString(), id);
+                result = forwarded;
+            }
+            reply(std::move(result));
+        };
+    });
+    CHECK(review.ready);
+    if (!review.ready) return;
+    Json request = Json::object();
+    request["action"] = "skin-review-list";
+    CHECK(!GameServerPeer::relaySkinReview(source.server, "invalid", request)["rows"].isArray());
+
+    NetClient reviewer, player;
+    CHECK(loginAs(review, reviewer, "reviewer", "password7"));
+    CHECK(loginAs(review, player, "ordinary", "password7"));
+    player.requestSkinReview(net::SkinReviewAction::List);
+    review.step(5, {&reviewer, &player});
+    CHECK_EQ(relayCalls, 0);
+    CHECK(player.skinReviewQueue().empty());
+
+    reviewer.requestSkinReview(net::SkinReviewAction::List);
+    const auto remoteId = "xs2_" + id;
+    CHECK(review.stepUntil({&reviewer, &player}, [&] {
+        return !reviewer.skinReviewQueue().empty() &&
+               reviewer.skinReviewQueue().front().id == remoteId;
+    }));
+    CHECK(!reviewer.findSkin(remoteId));
+    CHECK(!player.findSkin(remoteId));
+
+    reviewer.requestSkinReview(net::SkinReviewAction::Approve, remoteId);
+    CHECK(review.stepUntil({&reviewer, &player}, [&] { return reviewer.skinReviewQueue().empty(); }));
+    CHECK(source.stepUntil({&artist}, [&] {
+        const auto* skin = artist.findSkin(id);
+        return skin && skin->review == SkinReviewState::Approved && !skin->published;
+    }));
+    Database reloaded;
+    std::string error;
+    CHECK(reloaded.load(source.dbPath, error));
+    CHECK_EQ(reloaded.storedTable("customSkins")[id]["review"].asInt(-1),
+             static_cast<int>(SkinReviewState::Approved));
+}

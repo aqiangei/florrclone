@@ -163,7 +163,9 @@ Entity NpcSystem::spawnNpc(World& world, const Terrain& terrain, const ContentRe
     // one on the players': its body bites what its petals hit.
     const bool fighter = config.npc.wearsPetals();
     if (team != Team::Players || fighter) {
-        world.add<ContactDamage>(e, ContactDamage{stats.damage, kMobHitIntervalMillis});
+        const bool trainingDummy = config.id == "target_dummy" || config.id == "test_dummy";
+        const double damage = trainingDummy ? stats.damage * mobContactScale(ladderRarity(rarity)) : stats.damage;
+        world.add<ContactDamage>(e, ContactDamage{damage, kMobHitIntervalMillis});
     }
     // The ring itself is the petal system's: a loadout, one slot a petal, and
     // the ring geometry it lays them out on. Everything after that -- the fly

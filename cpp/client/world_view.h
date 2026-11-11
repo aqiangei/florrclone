@@ -303,7 +303,8 @@ public:
     /// Consumes a Snapshot payload. The message id must already be read.
     /// receivedMillis uses the same local clock as interpolate().
     /// Returns false when the frame was truncated, in which case nothing is applied.
-    bool applySnapshot(ByteReader& reader, double receivedMillis = renderClockMillis());
+    bool applySnapshot(ByteReader& reader, double receivedMillis = renderClockMillis(),
+                       bool keepTransientEffects = true);
 
     /// Advances every drawn position and facing by one frame. Call once per
     /// rendered frame, not once per snapshot: this is what decouples a 144 Hz

@@ -57,6 +57,23 @@ TEST(a_client_connects_registers_and_joins) {
     CHECK(client.view().self().maxHealth > 0);
     CHECK(client.view().self().health > 0);
     CHECK_EQ(client.view().self().level, 1);
+
+    net::InputFrame controls;
+    controls.sequence = 1;
+    controls.flags = net::InputAttack;
+    CHECK(client.sendInput(controls));
+    controls.sequence = 2;
+    controls.flags = net::kInputVisibilityMask;
+    CHECK(client.sendInput(controls));
+    CHECK(h.stepUntil({&client}, [&] {
+        const auto* session = testsupport::GameServerPeer::sessionOf(h.server, "alice");
+        return session && session->lastInputSequence == 2;
+    }));
+    const auto* session = testsupport::GameServerPeer::sessionOf(h.server, "alice");
+    if (session) {
+        CHECK_EQ(session->snapshotVisibility, net::kInputVisibilityMask);
+        CHECK_EQ(h.server.world().get<PlayerInput>(session->entity).current.flags, 0);
+    }
 }
 
 TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
@@ -86,7 +103,12 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     notice.u8(static_cast<std::uint8_t>(net::ServerMessage::Notice));
     notice.u8(static_cast<std::uint8_t>(net::NoticeSeverity::Info));
     notice.str(std::string(24 * 1024, 'x'));
-    for (int i = 0; i < 3; ++i) slowConnection->send(notice);
+    slowConnection->send(notice);
+    const auto queuedNotice = slowConnection->pendingBytes();
+    GameServerPeer::stageSnapshots(h.server);
+    CHECK_EQ(slowConnection->pendingBytes(), queuedNotice);
+    slowConnection->send(notice);
+    slowConnection->send(notice);
     const auto slowQueued = slowConnection->pendingBytes();
     const auto healthyQueued = healthyConnection->pendingBytes();
 

@@ -6,6 +6,18 @@
 #include <map>
 
 namespace flix {
+inline std::uint32_t hyperHoldingOwnerRank(const std::vector<HyperHoldingRow>& rows,
+                                           const std::string& name) {
+    const std::string* previous = nullptr;
+    std::uint32_t rank = 0;
+    for (const auto& row : rows) {
+        if (!previous || *previous != row.name) ++rank;
+        if (row.name == name) return rank;
+        previous = &row.name;
+    }
+    return 0;
+}
+
 inline std::vector<HyperHoldingRow> hyperHoldingBoard(const Database& db, double now) {
     std::map<std::string, std::map<std::string, std::uint32_t>> claims;
     for (const auto& [key, row] : db.storedTable("hyperForges").members()) {

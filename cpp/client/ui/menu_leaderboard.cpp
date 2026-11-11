@@ -126,8 +126,9 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     const Rect refreshRect{panel.right() - 140.0, panel.y + 10.0, 80.0, 30.0};
     // Inside the card's border on three sides, so neither the rows nor the
     // track ever paint over the frame.
-    const Rect view{panel.x + kMenuBorder, panel.y + kHeaderHeight, panel.w - kMenuBorder * 2,
-                    std::max(0.0, panel.h - kHeaderHeight - kMenuBorder)};
+    const double bodyTop = kHeaderHeight + (damage_ ? 0.0 : 28.0);
+    const Rect view{panel.x + kMenuBorder, panel.y + bodyTop, panel.w - kMenuBorder * 2,
+                    std::max(0.0, panel.h - bodyTop - kMenuBorder)};
     const Rect bar{view.right() - kScrollbarWidth, view.y, kScrollbarWidth, view.h};
 
     // An empty board still reserves a row's worth of height, which is what
@@ -229,6 +230,13 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     pillButton(canvas, hyperTab, "超凡持有", hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, timeTab, "有效游玩时间", playtime_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, damageTab, "伤害统计", damage_ ? 0x85530Cu : kLeaderboardSkin.border);
+    if (!damage_) {
+        const auto rank = ctx.net.ownLeaderboardRank(playtime_, hyper_);
+        const std::string status = pending ? "查询中" : rank ? "第 " + std::to_string(rank) + " 名" : "未上榜";
+        TextStyle info;
+        info.size = 15;
+        text(canvas, "我的排行  " + status, panel.x + 15.0, panel.y + 103.0, info);
+    }
     if (hyper_) {
         const auto pages = std::max(1u, (ctx.net.hyperHoldingsTotal()+kHyperBoardPageSize-1)/kHyperBoardPageSize);
         TextStyle info; info.size=12; info.strokeWidth=0;

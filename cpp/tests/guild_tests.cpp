@@ -61,6 +61,36 @@ TEST(the_leaderboard_carries_the_account_count_beside_its_rows) {
     CHECK_EQ(client.dailyActiveUsers(), 0u);
 }
 
+TEST(the_leaderboard_returns_my_rank_beyond_the_top_fifty) {
+    Harness h("board-own-rank", [](const std::string& path) {
+        seedUser(path, "reader", "password7");
+        Database db;
+        std::string error;
+        if (!db.load(path, error)) return;
+        db.setPasswordCost(4);
+        for (int i = 0; i < 50; ++i) {
+            auto created = db.createUser("larger" + std::to_string(i), "password7");
+            if (!created.ok()) continue;
+            auto& record = db.progress(created.account->id);
+            record.totalXp = 900000 + i;
+            record.extra["councilActiveSeconds"] = 100 + i;
+        }
+        db.markDirty();
+        db.save();
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    CHECK(loginAs(h, client, "reader", "password7"));
+    client.requestLeaderboard();
+    CHECK(h.stepUntil({&client}, [&] { return !client.leaderboardPending(); }, 200));
+    CHECK_EQ(client.leaderboard().size(), std::size_t{50});
+    CHECK_EQ(client.leaderboard().front().name, "larger49");
+    CHECK_EQ(client.ownLeaderboardRank(false, false), 51u);
+    CHECK_EQ(client.ownLeaderboardRank(true, false), 51u);
+    CHECK_EQ(client.ownLeaderboardRank(false, true), 0u);
+}
+
 TEST(the_notification_feed_arrives_newest_first_and_pages_backwards) {
     Harness h("notices", [](const std::string& path) {
         seedUser(path, "reader", "password7");

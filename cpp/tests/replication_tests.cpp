@@ -29,6 +29,8 @@ struct Fixture {
     Entity viewer = NULL_ENTITY;
     Entity splitOther = NULL_ENTITY;
     bool loadShedding = false;
+    std::uint8_t visibility = 0;
+    bool keepTransientEffects = true;
     net::WaveHud wave;
     /// The viewer's squadmates (Replicator::Frame::alwaysVisible), if any.
     std::vector<Entity> squad;
@@ -78,6 +80,7 @@ struct Fixture {
         frame.events = &events;
         frame.splitOther = splitOther;
         frame.loadShedding = loadShedding;
+        frame.visibility = visibility;
         frame.wave = wave;
         frame.alwaysVisible = squad.empty() ? nullptr : &squad;
         replicator.build(world, viewer, view, frame, out);
@@ -85,7 +88,7 @@ struct Fixture {
         ByteReader reader(out.data(), out.size());
         const std::uint8_t id = reader.u8();
         CHECK_EQ(id, static_cast<std::uint8_t>(net::ServerMessage::Snapshot));
-        CHECK(into.applySnapshot(reader, receivedMillis));
+        CHECK(into.applySnapshot(reader, receivedMillis, keepTransientEffects));
         CHECK(reader.ok());
         return out.size();
     }
@@ -1994,6 +1997,71 @@ TEST(todo1106_hide_other_petals_covers_ground_fields_and_lightning_but_not_wild_
     CHECK(!renderer.hiddenByOptions(client.entities().at(netIdOf(f.world,mine))));
     CHECK(!renderer.hiddenByOptions(client.entities().at(netIdOf(f.world,hostile))));
     CHECK(foreign(client,f.world,theirs));CHECK(!foreign(client,f.world,hostile));
+}
+
+TEST(visibility_settings_omit_foreign_equipment_and_restore_it_as_new_state) {
+    Fixture f;
+    WorldView client;
+    const auto other = f.addPlayer("alice", {1100, 1000});
+    f.world.get<PlayerAccount>(other).connection = 2;
+    const auto petal = addOwnedPetal(f, other, {1120, 1000});
+    const auto pet = addPet(f, other, {1100, 1060});
+    const auto shot = addShot(f, pet, other, Team::Players, {1150, 1040});
+    const auto own = addOwnedPetal(f, f.viewer, {1020, 1000});
+    const auto wild = f.addMob({900, 1000});
+    for (int i = 0; i < 30; ++i) {
+        addPet(f, other, {1100.0, 1060.0 + i});
+        addOwnedPetal(f, other, {1120.0, 1000.0 + i});
+    }
+    const auto present = [&](Entity e) { return client.entities().count(netIdOf(f.world, e)) == 1; };
+    const auto fullBytes = f.tick(client, 1, 1000);
+    CHECK(present(petal) && present(pet) && present(shot));
+    f.visibility = net::InputHideForeignPetals;
+    f.tick(client, 2, 1050);
+    CHECK(!present(petal) && present(pet) && present(shot));
+    f.visibility = net::InputHideForeignPets;
+    f.tick(client, 3, 1100);
+    CHECK(present(petal) && !present(pet) && !present(shot));
+    f.visibility = net::kInputVisibilityMask;
+    f.events.lightning({1050, 1000}, 100, Realm::Overworld, {{1060, 1000}}, false, pet);
+    f.events.lightning({1050, 1000}, 100, Realm::Overworld, {{1060, 1000}}, false, wild);
+    f.tick(client, 4, 1150);
+    CHECK(!present(petal) && !present(pet) && !present(shot));
+    CHECK(present(other) && present(own) && present(wild));
+    CHECK_EQ(client.events().size(), 1u);
+
+    f.view = ClientView{};
+    WorldView fresh;
+    f.events.clear();
+    const auto hiddenBytes = f.tick(fresh, 5, 1200);
+    CHECK(hiddenBytes * 2 < fullBytes);
+    std::printf("visibility fixture initial snapshot: %zu -> %zu bytes\n", fullBytes, hiddenBytes);
+    f.world.get<Transform>(pet).position.x = 1200;
+    f.visibility = 0;
+    f.tick(fresh, 6, 1250);
+    CHECK_NEAR(fresh.entities().at(netIdOf(f.world, pet)).targetPosition.x, 1200, 1e-3);
+}
+
+TEST(catching_up_keeps_delta_pickup_and_damage_but_omits_old_lightning) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const auto mob = f.addMob({1100, 1000});
+    const auto id = netIdOf(f.world, mob);
+    f.keepTransientEffects = false;
+    f.events.lightning({1100, 1000}, 80, Realm::Overworld, {{1110, 1000}});
+    f.events.damage(id, 10, {1100, 1000}, Realm::Overworld, 0, f.viewer, 1);
+    f.events.pickedUp(90000, netIdOf(f.world, f.viewer), {1100, 1000}, Realm::Overworld,
+                      0, Rarity::Rare, 2, 1);
+    f.tick(client, 2, 1050);
+    CHECK_EQ(client.events().size(), 2u);
+    CHECK(client.entities().count(id) == 1);
+    CHECK(std::any_of(client.events().begin(), client.events().end(), [](const ViewEvent& event) {
+        return event.kind == net::EventKind::PickedUp && event.pickupQuantity == 2;
+    }));
+    CHECK(std::any_of(client.events().begin(), client.events().end(), [](const ViewEvent& event) {
+        return event.kind == net::EventKind::Damage && (event.flag & net::DamageByViewer);
+    }));
 }
 
 TEST(a_splitter_halfs_petals_and_pets_are_the_viewers_own) {

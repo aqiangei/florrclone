@@ -39,6 +39,7 @@ test('paginated ranking, unified nomination and independently authenticated ball
   const timestamp = 1_800_000_000_000;
   let now = timestamp;
   let firstAvailable = true;
+  let rankRequests = 0;
   for (const realm of [1, 2, 3]) {
     const players = Array.from({length: 12}, (_, index) => ({id: String(index), name: `玩家${index}`,
       levelScore: index ? 80000 : 120000, recordedSeconds: 0, timeScore: 0, petals: 0}));
@@ -47,14 +48,24 @@ test('paginated ranking, unified nomination and independently authenticated ball
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       const body = JSON.parse(Buffer.concat(chunks));
+      if (realm === 1 && body.action === 'ranking-data') ++rankRequests;
       if (realm === 1 && !firstAvailable) {
         res.writeHead(503).end();
         return;
       }
       const match = new RegExp(`^Bearer game${realm}-([0-9]+)$`).exec(req.headers.authorization || '');
-      res.end(JSON.stringify(body.action === 'player' ? {realm, id: body.id} : {
-        players, me: match?.[1] || '', accountName: '同名玩家', canClose: match?.[1] === '0',
-      }));
+      const identity = {me: match?.[1] || '', accountName: '同名玩家', canClose: match?.[1] === '0'};
+      if (realm === 3 && body.action === 'ranking-data') {
+        res.end(JSON.stringify({error: '请先在游戏首页登录正式账号'}));
+      } else if (realm === 3 && body.action === 'identity') {
+        res.end(JSON.stringify({error: '未知操作'}));
+      } else if (body.action === 'player') {
+        res.end(JSON.stringify({realm, id: body.id}));
+      } else if (body.action === 'identity') {
+        res.end(JSON.stringify(identity));
+      } else {
+        res.end(JSON.stringify({players, ...identity}));
+      }
     }));
     upstreams[realm] = url;
   }
@@ -123,4 +134,49 @@ test('paginated ranking, unified nomination and independently authenticated ball
     /1服议会接口暂不可用/);
   now += 120_000;
   assert.match((await request({action: 'view'})).error, /1服议会接口暂不可用/);
+  const previousRankRequests = rankRequests;
+  const duringOutage = await request({...vote, choice: 'abstain'}, 2, 'game2-0');
+  assert.equal(duringOutage.polls.find(p => p.id === poll.id).mine, 'abstain');
+  assert.equal(rankRequests, previousRankRequests);
+  const persisted = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+  assert.equal(persisted[poll.id].votes['2:0'], 'abstain');
+});
+
+test('skin review reads the other realms and sends decisions only to the source', async t => {
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'skin-review-relay-'));
+  t.after(() => fs.rm(folder, {recursive: true, force: true}));
+  const stateFile = path.join(folder, 'polls.json');
+  const pageFile = path.join(folder, 'council.html');
+  await fs.writeFile(stateFile, '{}');
+  await fs.writeFile(pageFile, '');
+  const key = 'fixture-secret-for-three-realms-123';
+  const upstreams = {};
+  const calls = [];
+  for (const realm of [1, 2, 3]) {
+    upstreams[realm] = await listen(t, http.createServer(async (req, res) => {
+      if (req.headers.authorization !== `Bearer ${key}`) {
+        res.writeHead(403).end();
+        return;
+      }
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks));
+      calls.push({realm, ...body});
+      res.end(JSON.stringify(body.action === 'skin-review-list' ? {rows: [{id: 'same'}]} : {ok: true}));
+    }));
+  }
+  const url = await listen(t, await createCouncil({upstreams, stateFile, pageFile}));
+  const send = (body, token = key) => fetch(url + '/internal/skin-review', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', Authorization: `Bearer ${token}`},
+    body: JSON.stringify({local: 1, ...body})
+  });
+  assert.equal((await send({action: 'skin-review-list', realm: 0}, '')).status, 403);
+  const list = await (await send({action: 'skin-review-list', realm: 0})).json();
+  assert.deepEqual(list.sources, {2: [{id: 'same'}], 3: [{id: 'same'}]});
+  assert.equal((await send({action: 'skin-review-reject', realm: 1, id: 'same'})).status, 400);
+  const decision = await (await send({action: 'skin-review-reject', realm: 3, id: 'same'})).json();
+  assert.equal(decision.ok, true);
+  assert.deepEqual(calls.at(-1), {realm: 3, action: 'skin-review-reject', id: 'same'});
+  assert.equal(calls.length, 3);
 });

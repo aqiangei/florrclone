@@ -1012,6 +1012,10 @@ TEST(ground_a_player_has_just_cleared_does_not_refill_in_front_of_them) {
     for (int i = 0; i < 60; ++i) sim.tick(players);
     CHECK(sim.populationIn(band) >= (bandTarget(band) * 3) / 4);
     CHECK(sim.mobsIn(screen) <= cleared / 2);
+
+    // Ordinary visible replacements recover sooner while the flower stands still.
+    for (int i = 0; i < 120; ++i) sim.tick(players);
+    CHECK(sim.mobsIn(screen) >= (cleared + 1) / 2);
 }
 
 TEST(nothing_ever_wakes_in_a_flowers_lap) {

@@ -1197,7 +1197,7 @@
   "target_dummy": {
     "name": "Target Dummy",
     "health": 1000000000,
-    "damage": 10,
+    "damage": 13,
     "size": 1,
     "speed": 0,
     "cooldown": 2000,
@@ -3274,7 +3274,7 @@
   },
   "test_dummy": {
     "name": "Test Dummy",
-    "damage": 10,
+    "damage": 13,
     "health": 10000000000,
     "size": 1,
     "speed": 0.1,
