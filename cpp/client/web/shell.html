@@ -335,7 +335,11 @@
   const meta = document.getElementById('loading-meta');
   const retry = document.getElementById('loading-retry');
   const quality = document.getElementById('loading-quality');
-  const lowGraphics = query.get('quality') === 'low';
+  const isIPad = /iPad/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const legacyIPad = isIPad && typeof CanvasRenderingContext2D.prototype.roundRect !== 'function';
+  const qualityOverride = query.get('quality');
+  const lowGraphics = qualityOverride === 'low' || (qualityOverride !== 'standard' && legacyIPad);
   window.flixLowMemoryGraphics = lowGraphics;
   status.toggleAttribute('data-static', lowGraphics);
   quality.textContent = lowGraphics ? '标准画质' : '低清模式';
@@ -531,7 +535,7 @@
     ui.phase('正在绘制游戏画面', '游戏引擎已启动，正在准备第一帧。');
     firstFrameWatchdog = setTimeout(() => {
       ui.error('游戏画面未能启动。请点「重新连接」，或尝试低清模式。', false);
-    }, 15000);
+    }, gameArguments.includes('--low-memory') ? 30000 : 15000);
   };
   game.flixFirstFrame = () => {
     clearTimeout(firstFrameWatchdog);

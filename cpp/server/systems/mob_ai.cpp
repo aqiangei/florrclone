@@ -2128,13 +2128,17 @@ Vec2 MobAiSystem::volleyInPlace(World& world, Entity self, const MobType& type, 
                          nowMillis, dt, commands);
 }
 
+static double petFollowLimit(const MobAi& ai) {
+    return ai.target == NULL_ENTITY ? kPetFollowDistance : kPetCombatFollowDistance;
+}
+
 bool MobAiSystem::walkToOwner(World& world, const Terrain& terrain, Entity self,
                               const Transform& transform, MobAi& ai, Vec2 ownerPosition,
                               double returnSpeed, double nowMillis, Vec2& desired) {
     const Vec2 toOwner = ownerPosition - transform.position;
     const double gap = toOwner.length();
     if (!ai.petReturning) {
-        if (gap <= kPetFollowDistance) {
+        if (gap <= petFollowLimit(ai)) {
             return false;
         }
         // Off the owner's screen. The fight is DROPPED, not paused: a pet that
@@ -2357,7 +2361,7 @@ void MobAiSystem::preparePetTargets(World& world, const Terrain& terrain,
             if (kind != AiKind::Hostile && kind != AiKind::Neutral) continue;
             const auto& at = *world.tryGet<Transform>(self);
             const auto& ai = *world.tryGet<MobAi>(self);
-            const double leash = ai.petReturning ? kPetHomeDistance : kPetFollowDistance;
+            const double leash = ai.petReturning ? kPetHomeDistance : petFollowLimit(ai);
             if (distanceSq(owner->position, at.position) > leash * leash) continue;
             const double range = ai.aggroRange > 0.0 ? ai.aggroRange : kEnemyChaseRange;
             auto& plan = petTargetPlans_[index];

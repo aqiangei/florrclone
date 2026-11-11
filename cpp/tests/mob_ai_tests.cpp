@@ -1633,7 +1633,38 @@ TEST(a_sandstorm_pet_pulls_ahead_of_a_running_owner_but_stays_on_its_leash) {
     // One tick's travel is all it may overshoot the leash by before turning.
     const double step = kPlayerMaxSpeed * kSandstormPetReturnSpeedFactor * net::kTickSeconds;
     CHECK(farthest <= kSandstormPetLeash + step);
-    CHECK(farthest < kViewportHeight * 0.5);
+    CHECK(farthest > 500.0);
+}
+
+TEST(an_egg_summon_reaches_a_distant_wild_mob_then_returns) {
+    CHECK(contentReady());
+    Sim sim;
+    MovementSystem movement;
+    CombatSystem combat;
+    EventQueue events;
+    const Entity owner = sim.spawnPlayer(kOrigin);
+    const Entity pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{100, 0});
+    sim.world.add<Pet>(pet, Pet{owner, 0});
+    sim.world.get<Faction>(pet).team = Team::Players;
+    sim.world.get<Health>(pet) = Health{1e6, 1e6};
+    const Entity prey = sim.spawnMob("rock", kOrigin + Vec2{1150, 0});
+    sim.world.get<Health>(prey) = Health{1e6, 1e6};
+    bool hit = false;
+    for (int i = 0; i < 400 && !hit; ++i) {
+        sim.tickIntent();
+        movement.runWorldPhase(sim.world, sim.terrain, sim.now, sim.dt);
+        sim.rebuildGrid();
+        combat.beginTick(sim.world, sim.now, sim.dt, events);
+        combat.runContactPhase(sim.world, sim.grid, content(), sim.now);
+        hit = sim.world.get<Health>(prey).current < 1e6;
+        events.clear();
+    }
+    CHECK(hit);
+    CHECK(sim.gap(pet, owner) > 700.0);
+    sim.world.get<Transform>(owner).position.x -= 700.0;
+    sim.tickIntent();
+    CHECK(sim.brainOf(pet).petReturning);
+    CHECK(sim.velocityOf(pet).x < 0.0);
 }
 
 TEST(a_pet_prefers_mobs_nearer_its_owner_at_the_same_tier) {
