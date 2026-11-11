@@ -2,6 +2,54 @@
 #include "server_harness.h"
 using namespace flix;
 using namespace flix::testsupport;
+
+TEST(shared_public_skins_can_be_equipped_but_only_source_controls_withdrawal) {
+    Harness h("shared-skins", seedSkinReviewer, dataDir(), 0, [](ServerConfig& config) {
+        config.sharedSkinRealm = 1;
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient reviewer;
+    CHECK(loginAs(h, reviewer, "reviewer", "password7"));
+
+    SkinShape shape;
+    shape.r = 20;
+    shape.fill = "#e011cc";
+    CustomSkin skin;
+    skin.id = "same";
+    skin.name = "Shared";
+    skin.author = "reviewer";
+    skin.published = true;
+    skin.shapes = {shape};
+    const double capturedAt = h.server.database().nowMillis();
+    Json snapshot = Json::object();
+    snapshot["version"] = 1;
+    for (const std::string realm : {"1", "2", "3"}) {
+        auto& source = snapshot["sources"][realm];
+        source["capturedAt"] = capturedAt;
+        source["skins"] = Json::array();
+        source["skins"].push(skinToJson(skin));
+    }
+    h.server.applySharedSkinSnapshot(snapshot);
+    CHECK(h.stepUntil({&reviewer}, [&] { return reviewer.findSkin("xs2_same") && reviewer.findSkin("xs3_same"); }));
+    CHECK(!reviewer.findSkin("xs1_same"));
+    reviewer.deleteSkin("xs2_same");
+    reviewer.equipSkin("xs2_same");
+    reviewer.requestLeaderboard();
+    CHECK(h.stepUntil({&reviewer}, [&] { return !reviewer.leaderboardPending(); }));
+    CHECK_EQ(reviewer.equippedSkinId(), "xs2_same");
+    CHECK(reviewer.findSkin("xs2_same"));
+
+    snapshot["sources"]["2"]["capturedAt"] = capturedAt + 1;
+    snapshot["sources"]["2"]["skins"] = Json::array();
+    h.server.applySharedSkinSnapshot(snapshot);
+    CHECK(h.stepUntil({&reviewer}, [&] { return !reviewer.findSkin("xs2_same"); }));
+    CHECK(reviewer.equippedSkinId().empty());
+    CHECK(reviewer.findSkin("xs3_same"));
+    const auto* account = h.server.database().findUser("reviewer");
+    CHECK(account && h.server.database().findProgress(account->id)->equippedSkinId.empty());
+}
+
 TEST(private_skin_requires_owner_until_explicit_publication) {
     Harness h("skin-privacy", seedSkinReviewer); CHECK(h.ready); if(!h.ready)return;
     NetClient owner, other, reviewer;

@@ -1158,7 +1158,11 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
 
         ui::text(canvas, clipChars(skin.name, 14), card.x + cardW * 0.5, board.bottom() + 14.0,
                  label(kBodySize, Align::Centre));
-        ui::text(canvas, std::string(tr(Msg::SkinBy)) + clipChars(skin.author, 14),
+        const int origin = sharedSkinRealm(skin.id);
+        const std::string credit = origin
+            ? std::to_string(origin) + trEnZh(" · ", "服 · ") + clipChars(skin.author, 10)
+            : std::string(tr(Msg::SkinBy)) + clipChars(skin.author, 14);
+        ui::text(canvas, credit,
                  card.x + cardW * 0.5, board.bottom() + 30.0,
                  label(kCaptionSize, Align::Centre));
 
@@ -1176,9 +1180,9 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
                          trEnZh("Reject", "驳回"), reject, kDangerFill);
             continue;
         }
-        const bool owned = lowerCase(skin.author) == me;
+        const bool owned = !origin && lowerCase(skin.author) == me;
         const bool approved = skin.review == SkinReviewState::Approved;
-        const bool canDelete = isAdmin() || owned || (skin.published && canReview());
+        const bool canDelete = !origin && (isAdmin() || owned || (skin.published && canReview()));
         if (owned && (approved || skin.review == SkinReviewState::Draft)) {
             Action publish;
             publish.k = Act::PublishSaved;

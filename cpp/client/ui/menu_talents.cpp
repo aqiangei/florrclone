@@ -371,8 +371,9 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                  {fromTo(kDamageTalentPetalScale, tier), kStatDamage}});
             break;
         case SkillId::Absorbing:
-            row({{cn ? "吸收经验：" : "Absorbed XP: "},
+            row({{cn ? "合成 → 吸收花瓣所得经验：" : "Craft → Absorb XP: "},
                  {fromTo(kAbsorbTalentScale, tier), kStatHealth}});
+            row({{cn ? "击杀经验按原规则结算。" : "Kill XP follows the usual rules."}});
             break;
         case SkillId::MovementSpeed:
             row({{cn ? "移动速度：" : "Movement speed: "},
@@ -453,6 +454,8 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                                  (tier==0?"Adds one particle to multi-particle petals.":"Adds two particles to multi-particle petals.")}});
             else row({{cn ? (tier==2?"最左槽可叠加花瓣再增加1粒；不适用于永恒及以上。":"最左槽额外1粒的效果也适用于永恒及以上。") :
                              (tier==2?"Adds one particle to the leftmost stackable petal below Eternal.":"Allows the leftmost extra particle at Eternal and above.")}});
+            if (tier >= 2) row({{cn ? "复制出的单体花瓣各自损坏、各自重装。" :
+                                     "Duplicated single petals break and reload separately."}});
             break;
         case SkillId::Magnetism: {
             if (cn) {

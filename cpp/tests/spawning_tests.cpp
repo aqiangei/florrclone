@@ -6061,3 +6061,214 @@ TEST(jungle_super_population_includes_the_jungle_habitats_not_only_termite_plots
     for(const auto& [id,n]:types)std::printf("  jungle Super %s: %d\n",id.c_str(),n);
     CHECK_EQ(total,30);CHECK(nonTermites>=5);
 }
+
+TEST(mixed_biomes_keep_their_population_mix_after_selective_farming) {
+    for (const std::string roster : {"bush:1 ladybug:4", "termite_mound:1 ladybug:4",
+                                    "rock:1 ladybug:4", "cactus:1 ladybug:4"}) {
+        WorldMaps maps;
+        const Rect band{20000, 20000, 6000, 6000};
+        makeBandedWorld(maps, {band}, roster, 0.0);
+        Sim sim;
+        sim.spawner.worldMaps = &maps;
+        const Vec2 centre{23000, 23000};
+        sim.jump(1000, {centre});
+        for (int warmup = 0; warmup < 20; ++warmup) sim.jump(15000, {centre});
+        const auto countStationary = [&] {
+            int count = 0;
+            Query<MobTag, MobType, AmbientMob> mobs{sim.world};
+            mobs.without<Dead>();
+            mobs.each([&](Entity, MobTag&, MobType& type, AmbientMob& ambient) {
+                if (ambient.zone != kInvalidIndex && rarityIndex(type.rarity) < rarityIndex(Rarity::Super) && shipped().mob(type.configIndex).speed == 0) ++count;
+            });
+            for (const auto& record : sim.latent())
+                if (rarityIndex(record.rarity) < rarityIndex(Rarity::Super) && shipped().mob(record.mobIndex).speed == 0) ++count;
+            return count;
+        };
+        const int initial = countStationary();
+        CHECK(initial > 0);
+        for (int cycle = 0; cycle < 30; ++cycle) {
+            std::vector<Entity> killed;
+            Query<MobTag, MobType, AmbientMob> mobs{sim.world};
+            mobs.without<Dead>();
+            mobs.each([&](Entity e, MobTag&, MobType& type, AmbientMob& ambient) {
+                if (ambient.zone != kInvalidIndex && rarityIndex(type.rarity) < rarityIndex(Rarity::Super) && shipped().mob(type.configIndex).speed > 0)
+                    killed.push_back(e);
+            });
+            for (Entity e : killed) sim.world.add<Dead>(e);
+            sim.jump(1000, {centre});
+            for (Entity e : killed) if (sim.world.isAlive(e)) sim.world.destroy(e);
+            sim.jump(15000, {centre});
+        }
+        const int finalCount = countStationary();
+        std::printf("selective farm %s static=%d -> %d\n", roster.c_str(), initial, finalCount);
+        CHECK(finalCount <= initial);
+    }
+}
+
+TEST(shipped_biomes_are_checked_for_selective_farm_drift) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(testsupport::dataDir(), &terrain, error));
+    for (const auto& map : maps.maps()) {
+        if (map.id() != map.templateId() && !map.prestige()) continue;
+        if (map.templateId() != "garden" && map.templateId() != "desert" &&
+            map.templateId() != "jungle" && map.templateId() != "ocean" &&
+            map.templateId() != "computer" && map.templateId() != "ant_hell" &&
+            map.templateId() != "hel" && map.templateId() != "sewers" &&
+            map.templateId() != "pyramid" && map.templateId() != "cyberspace" &&
+            map.templateId() != "jurassic") continue;
+        const MapElement* deepest = nullptr;
+        for (const auto& band : map.elements()) {
+            if (!band.isSpawnBand() || band.singular || band.forceRarity >= 0) continue;
+            if (!deepest || band.difficulty > deepest->difficulty) deepest = &band;
+        }
+        if (!deepest) continue;
+        Sim sim;
+        sim.terrain = terrain;
+        sim.spawner.worldMaps = &maps;
+        const auto realm = map.realm();
+        const Vec2 at = sim.terrain.resolveCircle(
+            {deepest->bounds.x + deepest->bounds.w * .5,
+             deepest->bounds.y + deepest->bounds.h * .5}, 25, realm);
+        const auto tick = [&] {
+            sim.now += 15000;
+            sim.spawner.run(sim.world, sim.terrain, shipped(), {{at, realm}},
+                            sim.rng, sim.now, 0.0, sim.commands);
+            sim.commands.flush();
+        };
+        // Chance stand-ins (such as Square) can legitimately add a static
+        // animal. Check the authored roster's mix independently of that roll.
+        const auto rosterStatic = [&](std::uint16_t type) {
+            const auto& rare = shipped().standInMobs();
+            return shipped().mob(type).speed == 0 &&
+                std::find(rare.begin(), rare.end(), type) == rare.end();
+        };
+        const auto stationary = [&] {
+            int count = 0, population = 0;
+            Query<AmbientMob, MobType, Transform> mobs{sim.world};
+            mobs.without<Dead>();
+            mobs.each([&](Entity, AmbientMob& ambient, MobType& type, Transform& position) {
+                if (ambient.zone == kInvalidIndex || position.realm != realm ||
+                    rarityIndex(type.rarity) > rarityIndex(Rarity::Super)) return;
+                ++population;
+                if (rosterStatic(type.configIndex)) ++count;
+            });
+            for (const auto& record : sim.latent(realm)) {
+                ++population;
+                if (rosterStatic(record.mobIndex)) ++count;
+            }
+            return std::pair{count, population};
+        };
+        for (int i = 0; i < 10; ++i) tick();
+        const auto before = stationary();
+        int kills = 0;
+        auto midway = before;
+        for (int cycle = 0; cycle < 40; ++cycle) {
+            std::vector<Entity> victims;
+            Query<AmbientMob, MobType, Transform> mobs{sim.world};
+            mobs.without<Dead>();
+            mobs.each([&](Entity e, AmbientMob& ambient, MobType& type, Transform& position) {
+                if (ambient.zone != kInvalidIndex && position.realm == realm &&
+                    rarityIndex(type.rarity) < rarityIndex(Rarity::Unique) &&
+                    shipped().mob(type.configIndex).speed > 0) victims.push_back(e);
+            });
+            kills += victims.size();
+            for (auto e : victims) sim.world.add<Dead>(e);
+            tick();
+            for (auto e : victims) if (sim.world.isAlive(e)) sim.world.destroy(e);
+            tick();
+            if (cycle == 19) midway = stationary();
+        }
+        const auto after = stationary();
+        std::printf("map selective farm %s kills=%d static=%d -> %d population=%d -> %d\n",
+                    map.id().c_str(), kills, before.first, after.first, before.second, after.second);
+        CHECK(after.first - midway.first <= std::max(0, after.second - midway.second));
+        if (map.prestige()) CHECK(after.first - before.first <= std::max(0, after.second - before.second));
+        CHECK(sim.spawner.census().mobs <= sim.spawner.mobCap);
+    }
+}
+
+TEST(managed_super_deaths_do_not_also_refill_ordinary_population) {
+    WorldMaps maps;
+    const Rect band{20000,20000,2400,1800};
+    makeBandedWorld(maps,{band},"rock:1 ladybug:4",0.0);
+    Sim sim;
+    sim.spawner.worldMaps=&maps;
+    const Vec2 centre{21200,20900};
+    for(int cycle=0;cycle<40;++cycle) {
+        sim.jump(35000,{centre});
+        std::vector<Entity> killed;
+        Query<MobTag,MobType,AmbientMob> mobs{sim.world};
+        mobs.without<Dead>();
+        mobs.each([&](Entity e,MobTag&,MobType& type,AmbientMob& ambient){
+            if(ambient.zone!=kInvalidIndex && type.rarity==Rarity::Super)killed.push_back(e);
+        });
+        for(auto e:killed)sim.world.add<Dead>(e);
+        sim.jump(1000,{centre});
+        for(auto e:killed)if(sim.world.isAlive(e))sim.world.destroy(e);
+    }
+    const int total=sim.populationIn(band);
+    std::printf("managed Super farm population=%d target=%d\n",total,bandTarget(band));
+    CHECK(total<=bandTarget(band)+SuperPopulation::target);
+}
+
+TEST(prestige_desert_fire_ant_guards_have_more_room_to_chase) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(testsupport::dataDir(),&terrain,error));
+    for (const char* id : {"desert","prestige_desert"}) {
+        bool found=false;
+        const Realm realm=maps.realmOfId(id,found);
+        CHECK(found);
+        if(!found)continue;
+        World world;
+        SpawnSystem spawn;
+        spawn.worldMaps=&maps;
+        CommandBuffer commands{world};
+        Rng rng{42};
+        const Vec2 at=terrain.spawnPoint(realm);
+        const Entity hole=spawn.spawnMob(world,terrain,shipped(),
+            shipped().mobIndex("fire_ant_hole"),Rarity::Common,at,realm,0,rng);
+        const Entity flower=world.create();
+        world.add<PlayerTag>(flower);
+        world.add<Transform>(flower,Transform{at,0,realm});
+        world.add<Body>(flower,Body{25,1});
+        world.add<Health>(flower,Health{100,100});
+        spawn.run(world,terrain,shipped(),{{at,realm}},rng,1000,0,commands);
+        commands.flush();
+        int guards=0;
+        Query<HoleTether> tethers{world};
+        tethers.each([&](Entity,HoleTether& tether){
+            if(tether.hole!=hole)return;
+            ++guards;
+            CHECK_EQ(tether.retreatScale,std::string(id)=="prestige_desert"?2.0:1.0);
+        });
+        CHECK(guards>0);
+    }
+}
+
+TEST(managed_rare_standins_do_not_pin_the_quota) {
+    WorldMaps maps;
+    const Rect band{20000,20000,6000,6000};
+    makeBandedWorld(maps,{band},"ladybug",0.0);
+    Sim sim; sim.spawner.worldMaps=&maps;
+    const Vec2 centre{23000,23000};
+    for(int i=0;i<20;++i)sim.jump(35000,{centre});
+    Entity victim=NULL_ENTITY;
+    Query<MobTag,MobType,AmbientMob> mobs{sim.world}; mobs.without<Dead>();
+    mobs.each([&](Entity e,MobTag&,MobType& type,AmbientMob& ambient){
+        if(victim==NULL_ENTITY && ambient.managedPopulation && type.rarity==Rarity::Super)victim=e;
+    });
+    CHECK(victim!=NULL_ENTITY);
+    if(victim==NULL_ENTITY)return;
+    sim.world.get<MobType>(victim).configIndex=shipped().mobIndex("square");
+    sim.world.add<Dead>(victim);sim.jump(1000,{centre});sim.world.destroy(victim);
+    for(int i=0;i<5;++i)sim.jump(35000,{centre});
+    int managed=0;
+    mobs.each([&](Entity,MobTag&,MobType& type,AmbientMob& ambient){
+        if(ambient.managedPopulation && type.rarity==Rarity::Super)++managed;
+    });
+    CHECK_EQ(managed,SuperPopulation::target);
+}

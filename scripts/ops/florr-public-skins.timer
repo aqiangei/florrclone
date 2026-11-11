@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh the public cross-server skin gallery
+
+[Timer]
+OnCalendar=*-*-* *:*:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

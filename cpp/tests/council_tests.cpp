@@ -89,7 +89,7 @@ TEST(council_cold_start_does_not_give_one_early_visitor_forty_percent) {
     auto rows=council::weights(db);int total=0;for(const auto& row:rows.items()){total+=row["units"].asInt();CHECK(row["units"].asInt()<26000);}CHECK_EQ(total,1000000);
 }
 
-TEST(council_legacy_level_credit_is_once_only_and_separate_from_real_time) {
+TEST(council_weights_ignore_archived_legacy_level_credit) {
     Database db;std::string error;const std::string path="/tmp/florr-council-legacy.json";std::remove(path.c_str());CHECK(db.load(path,error));
     auto a=db.createUser("legacyPlayer","password123"),m=db.createUser("legacyAdmin","password123");CHECK(a.ok());CHECK(m.ok());a.account->admin=false;m.account->admin=true;
     const auto id=a.account->id;db.progress(id).totalXp=10000000;db.rawTable("councilActivity")[id]=120;
@@ -98,7 +98,7 @@ TEST(council_legacy_level_credit_is_once_only_and_separate_from_real_time) {
     CHECK_NEAR(saved["accounts"][id]["seconds"].asDouble(),credit,0.001);CHECK(saved["accounts"][m.account->id].isNull());
     db.progress(id).totalXp=1e12;auto b=db.createUser("newPlayerLater","password123");b.account->admin=false;db.progress(b.account->id).totalXp=10000000;
     CHECK(council::initializeLegacyActivity(db));CHECK_EQ(db.storedTable("councilLegacyActivity").dump(),saved.dump());
-    const auto rows=council::weights(db);for(const auto& row:rows.items())if(row["id"].asString()==id){CHECK_NEAR(row["recordedSeconds"].asDouble(),120,0.001);CHECK_NEAR(row["creditedSeconds"].asDouble(),credit,0.001);}
+    const auto rows=council::weights(db);for(const auto& row:rows.items())if(row["id"].asString()==id){CHECK_NEAR(row["recordedSeconds"].asDouble(),120,0.001);CHECK_NEAR(row["seconds"].asDouble(),120,0.001);CHECK(row["creditedSeconds"].isNull());}
     db.markDirty();CHECK(db.save());Database reload;CHECK(reload.load(path,error));CHECK(council::initializeLegacyActivity(reload));CHECK_EQ(reload.storedTable("councilLegacyActivity").dump(),saved.dump());
 }
 

@@ -29,6 +29,68 @@ flix::GameServer* g_wasmServer = nullptr;
 extern "C" EMSCRIPTEN_KEEPALIVE void flix_server_wake() {
     if (g_wasmServer) g_wasmServer->serviceArrivals();
 }
+
+EM_JS(void, flix_copy_shared_skins, (char* out), {
+    HEAPU8.set(Module.flixSharedSkinSnapshot, out);
+});
+
+extern "C" EMSCRIPTEN_KEEPALIVE int flix_apply_shared_skins(int size) {
+    if (!g_wasmServer || size <= 0 || size > 8 * 1024 * 1024) return 0;
+    std::string json(static_cast<std::size_t>(size), '\0');
+    flix_copy_shared_skins(json.data());
+    return g_wasmServer->applySharedSkinSnapshot(flix::Json::parseOrNull(json)) ? 1 : 0;
+}
+
+EM_JS(int, flix_shared_skin_realm, (), {
+    const realm = process.env.FLIX_SHARED_SKIN_REALM;
+    return /^[123]$/.test(realm || '') ? Number(realm) : 0;
+});
+
+EM_JS(void, flix_start_shared_skin_sync, (), {
+    if (!process.env.FLIX_SHARED_SKIN_URL) return;
+    let url;
+    try { url = new URL(process.env.FLIX_SHARED_SKIN_URL); }
+    catch (_) { console.error('[skins] Invalid shared gallery URL'); return; }
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && url.hostname === '127.0.0.1')) {
+        console.error('[skins] Shared gallery requires HTTPS');
+        return;
+    }
+    let running = false;
+    let unavailable = false;
+    let etag = '';
+    const fetchGallery = async () => {
+        if (running) return;
+        running = true;
+        try {
+            const headers = etag ? {'If-None-Match': etag} : {};
+            const response = await fetch(url, {headers, redirect: 'error', signal: AbortSignal.timeout(10_000)});
+            if (response.status === 304) {
+                unavailable = false;
+                return;
+            }
+            if (!response.ok) throw Error();
+            const chunks = [];
+            let size = 0;
+            for await (const chunk of response.body) {
+                size += chunk.byteLength;
+                if (size > 8 * 1024 * 1024) throw Error();
+                chunks.push(chunk);
+            }
+            if (!size) throw Error();
+            Module.flixSharedSkinSnapshot = Buffer.concat(chunks, size);
+            try {
+                if (_flix_apply_shared_skins(size)) etag = response.headers.get('etag') || '';
+            } finally { delete Module.flixSharedSkinSnapshot; }
+            if (unavailable) console.log('[skins] Shared gallery connection restored');
+            unavailable = false;
+        } catch (error) {
+            if (!unavailable) console.warn('[skins] Shared gallery temporarily unavailable:', error.name);
+            unavailable = true;
+        } finally { running = false; }
+    };
+    fetchGallery();
+    setInterval(fetchGallery, 30_000).unref();
+});
 #endif
 
 namespace {
@@ -398,6 +460,7 @@ int main(int argc, char** argv) {
     // already names -- and so is the one its backups go in, which is not
     // under it. Everything else stays in MEMFS.
     std::string error;
+    config.sharedSkinRealm = flix_shared_skin_realm();
     const int authorityMode = flix_authority_init();
     if (authorityMode < 0) {
         std::fprintf(stderr, "could not initialize authoritative account adapter\n");
@@ -458,6 +521,7 @@ int main(int argc, char** argv) {
     // has.
     flix_catch_stop_signals();
     g_wasmServer = server;
+    if (config.sharedSkinRealm) flix_start_shared_skin_sync();
     flix_wake_on_arrival(1);
     flix_start_loop(config.tickProbe);
     return 0;

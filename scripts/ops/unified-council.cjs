@@ -7,32 +7,64 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const realms = [1, 2, 3];
-const perRealm = 1_000_000;
-const totalUnits = realms.length * perRealm;
+const totalUnits = 3_000_000;
 const proposalRank = 35;
+const pageSize = 30;
 const day = 86_400_000;
 const choices = new Set(['yes', 'no', 'abstain']);
 const accountKey = (realm, id) => `${realm}:${id}`;
 
 function combineRanking(results) {
-  const ranking = results.flatMap(({ realm, players }) => {
+  const rows = results.flatMap(({ realm, players }) => {
     const ids = new Set();
-    let sum = 0;
     if (!Array.isArray(players)) throw Error(`无法读取${realm}服权重`);
     for (const row of players) {
       if (typeof row.id !== 'string' || !row.id || ids.has(row.id) ||
-          !Number.isSafeInteger(row.units) || row.units < 0) throw Error(`无法读取${realm}服权重`);
+          ![row.levelScore, row.recordedSeconds, row.petals].every(score => Number.isFinite(score) && score >= 0)) {
+        throw Error(`无法读取${realm}服权重`);
+      }
       ids.add(row.id);
-      sum += row.units;
     }
-    if (sum !== perRealm) throw Error(`${realm}服暂无完整权重，暂不能冻结新议题`);
-    return players.map(row => ({...row, realm, id: accountKey(realm, row.id),
-      levelContribution: row.levelContribution / 3,
-      activityContribution: row.activityContribution / 3,
-      petalContribution: row.petalContribution / 3}));
+    // Older game servers still send historical credits in the combined
+    // seconds and timeScore fields. Count recorded play time on every realm.
+    return players.filter(row => row.levelScore > 0 || row.recordedSeconds >= 60)
+      .map(({creditedSeconds, creditLevel, ...row}) => ({...row, realm, id: accountKey(realm, row.id),
+        seconds: row.recordedSeconds, timeScore: Math.log1p(row.recordedSeconds / 3600)}));
   });
-  ranking.sort((a, b) => b.units - a.units || a.realm - b.realm || a.id.localeCompare(b.id, 'en'));
-  return ranking.map((row, index) => ({...row, rank: index + 1}));
+  if (!rows.length) return [];
+
+  const totals = rows.reduce((sum, row) => ({level: sum.level + row.levelScore,
+    time: sum.time + row.timeScore, petals: sum.petals + row.petals}), {level: 0, time: 0, petals: 0});
+  const petalWeight = totals.petals > 0 ? 0.10 : 0;
+  const activityWeight = (1 - petalWeight) / 2;
+  const prior = rows.length * Math.log1p(10);
+  let allocated = 0;
+  const ranking = rows.map(row => {
+    const levelShare = totals.level > 0 ? row.levelScore / totals.level : 1 / rows.length;
+    const levelContribution = activityWeight * levelShare;
+    const activityContribution = activityWeight * (row.timeScore + prior * levelShare) / (totals.time + prior);
+    const petalContribution = petalWeight ? petalWeight * row.petals / totals.petals : 0;
+    const exact = (levelContribution + activityContribution + petalContribution) * totalUnits;
+    const units = Math.floor(exact);
+    allocated += units;
+    return {...row, activityWeight, levelContribution, activityContribution, petalContribution,
+      units, remainder: exact - units};
+  });
+  const tieBreak = (a, b) => a.realm - b.realm || a.id.localeCompare(b.id, 'en');
+  ranking.sort((a, b) => b.remainder - a.remainder || tieBreak(a, b));
+  for (let index = 0; index < totalUnits - allocated; ++index) ++ranking[index].units;
+  ranking.sort((a, b) => b.units - a.units || tieBreak(a, b));
+  return ranking.map(({remainder, ...row}, index) => ({...row, rank: index + 1}));
+}
+
+function rankingPage(rows, input) {
+  const query = typeof input.query === 'string' ? input.query.slice(0, 100).trim() : '';
+  const needle = query.toLowerCase();
+  const matches = needle ? rows.filter(row => row.name.toLowerCase().includes(needle)) : rows;
+  const pages = Math.max(1, Math.ceil(matches.length / pageSize));
+  const page = Number.isSafeInteger(input.page) ? Math.max(1, Math.min(input.page, pages)) : 1;
+  return {players: matches.slice((page - 1) * pageSize, page * pageSize),
+    pagination: {page, pages, pageSize, matches: matches.length, query}};
 }
 
 function importLegacy(realm, polls) {
@@ -54,6 +86,7 @@ function pollView(id, poll, me, now) {
     ++tally.count;
   }
   return {id, title: poll.title, authorName: poll.authorName, realm: poll.realm, scope: poll.scope || 'legacy',
+    weightBasis: poll.scope === 'unified' ? poll.weightBasis || 'equal-realms' : 'legacy',
     createdAt: poll.createdAt, endsAt: poll.endsAt, closed: now >= poll.endsAt,
     legacyWeights: poll.scope !== 'unified' && (poll.weightRule || 0) < 3,
     ...tally, result: tally.yes > tally.no ? 'passed' : tally.no > tally.yes ? 'rejected' : 'tied',
@@ -83,7 +116,8 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
   async function game(realm, body, token = '', address = '') {
     let response;
     try {
-      response = await fetch(upstreams[realm], {method: 'POST', redirect: 'error', signal: AbortSignal.timeout(6500),
+      const timeout = realm === 1 ? 30_000 : 6500;
+      response = await fetch(upstreams[realm], {method: 'POST', redirect: 'error', signal: AbortSignal.timeout(timeout),
         headers: {'Content-Type': 'application/json', ...(token ? {Authorization: `Bearer ${token}`} : {}),
           ...(address ? {'X-Real-IP': address} : {})},
         body: JSON.stringify(body)});
@@ -92,7 +126,7 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
     } catch { throw Error(`${realm}服议会接口暂不可用，请稍后重试`); }
   }
 
-  async function ranking(refresh = false) {
+  async function ranking(refresh = false, allowRecentSnapshot = false) {
     if (!refresh && cache && now() - cache.at < 15_000) return cache.rows;
     if (!loading) {
       loading = Promise.all(realms.map(async realm => ({realm, ...(await game(realm, {action: 'view'}))})))
@@ -101,18 +135,25 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
           return cache.rows;
         }).finally(() => { loading = null; });
     }
+    if (allowRecentSnapshot && cache && now() - cache.at < 120_000) {
+      // Reads can show the last complete ranking while a new one is fetched.
+      // Publishing and voting still wait for the normal freshness rules.
+      loading.catch(() => {});
+      return cache.rows;
+    }
     return loading;
   }
 
   async function handle(realm, token, input, address) {
     const action = input.action ?? 'view';
+    if (action === 'ranking') return rankingPage(await ranking(false, true), input);
     if (action === 'player') {
       const match = /^([123]):(.{1,120})$/.exec(input.id);
       if (!match) throw Error('该玩家暂无公开详情');
       return game(Number(match[1]), {action, id: match[2]}, '', address);
     }
     if (!['view', 'create', 'vote', 'close'].includes(action)) throw Error('未知操作');
-    const [rows, account] = await Promise.all([ranking(action === 'create'),
+    const [rows, account] = await Promise.all([ranking(action === 'create', action === 'view'),
       realm && token ? game(realm, {action: 'view'}, token, address) : null]);
     const me = account?.me ? accountKey(realm, account.me) : '';
     const canPublish = rows.slice(0, proposalRank).some(row => row.id === me && row.units > 0);
@@ -130,7 +171,7 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
           const title = typeof input.title === 'string' ? input.title.trim() : '';
           if (!title || Buffer.byteLength(title) > 240) throw Error('标题为空或过长');
           next[randomUUID()] = {title, authorId: me, authorName: account.accountName, realm,
-            scope: 'unified', createdAt: timestamp, endsAt: timestamp + day,
+            scope: 'unified', weightBasis: 'global', createdAt: timestamp, endsAt: timestamp + day,
             weights: Object.fromEntries(rows.map(row => [row.id, row.units])), votes: {}};
         } else {
           if (!Object.hasOwn(next, input.id)) throw Error('议题不存在');
@@ -153,7 +194,13 @@ async function createCouncil({upstreams, stateFile, pageFile, now = Date.now}) {
       await write;
     }
     const timestamp = now();
-    return {players: rows, totalUnits, proposalRank, me, realm, canPublish, canClose,
+    const realmShares = realms.map(realm => ({realm, players: 0, units: 0}));
+    for (const row of rows) {
+      ++realmShares[row.realm - 1].players;
+      realmShares[row.realm - 1].units += row.units;
+    }
+    return {...rankingPage(rows, input), totalUnits, playerCount: rows.length, realmShares,
+      self: rows.find(row => row.id === me) || null, proposalRank, me, realm, canPublish, canClose,
       accountName: me ? account.accountName : '', polls: Object.entries(polls)
         .map(([id, poll]) => pollView(id, poll, me, timestamp))};
   }

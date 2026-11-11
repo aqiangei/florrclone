@@ -499,7 +499,13 @@ bool AbsorbPanel::render(MenuContext& ctx) {
     sparks_.drawGrains(canvas, dtMs);
 
     // --- the lines ---------------------------------------------------------------
-    outlinedText(canvas, trEnZh("Absorb spare petals for XP; check the preview first", "吸收多余花瓣获得经验，请先查看经验预览"), centreX, panel.y + kLine1Y,
+    std::string xpBreakdown = trEnZh("Absorb spare petals for XP; check the preview first",
+                                        "吸收多余花瓣获得经验，请先查看经验预览");
+    if (!staged_.empty() && absorbXpScale(profile.skills) > 1.0) {
+        xpBreakdown = std::string(trEnZh("Base ", "基础 ")) + florrShort(units) +
+                      trEnZh(" + talent ", " + 天赋 ") + florrShort(plannedXp - units) + " XP";
+    }
+    outlinedText(canvas, xpBreakdown, centreX, panel.y + kLine1Y,
                  panelLabel(kLineSize, Align::Centre, Baseline::Middle), 1.0);
     // A refusal says why where the warning stands, for as long as it is news.
     const bool refused = !refusal_.empty() && nowMs < refusalUntil_;

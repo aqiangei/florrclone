@@ -153,6 +153,7 @@
             justify-content:space-between;gap:8px;padding:8px 10px 8px 14px;background:#6b9dd6;
         }
         .server-notice-header h2 {color:#fff;font-size:20px;-webkit-text-stroke-width:2.6px;}
+        #server-notice-countdown {display:block;font-size:12px;font-weight:normal;-webkit-text-stroke:0;color:#122c48;}
         .server-notice-body {padding:0 14px 14px;}
         #serverNotice p {margin:8px 0;}
         #serverNotice a {display:flex;align-items:center;min-height:44px;margin:5px 0;padding:3px 9px;
@@ -248,7 +249,7 @@
     </section>
     <dialog id="serverNotice" aria-labelledby="server-notice-title">
       <div class="server-notice-header">
-        <h2 id="server-notice-title">服务器指引</h2>
+        <h2 id="server-notice-title">服务器指引<small id="server-notice-countdown">20 秒后自动关闭</small></h2>
         <form method="dialog">
           <button id="closeServerNotice" type="submit" aria-label="关闭服务器指引">×</button>
         </form>
@@ -344,25 +345,53 @@
   quality.href = qualityUrl.href;
   const serverNotice = document.getElementById('serverNotice');
   const noticeKey = 'florr-server-guide-official-site-dismissed';
-  const openNotice = () => {
-    if (!serverNotice.open) serverNotice.showModal();
+  let noticeDismissed = false;
+  try { noticeDismissed = sessionStorage.getItem(noticeKey) === '1'; } catch (_) {}
+  const noticeCountdown = document.getElementById('server-notice-countdown');
+  let noticeTimer = 0, noticeDeadline = 0, noticePointerOutside = false;
+  const updateNoticeCountdown = () => {
+    const seconds = Math.max(0, Math.ceil((noticeDeadline - performance.now()) / 1000));
+    noticeCountdown.textContent = seconds + ' 秒后自动关闭';
+    if (!seconds && serverNotice.open) serverNotice.close();
   };
+  const openNotice = () => {
+    if (serverNotice.open) return;
+    clearInterval(noticeTimer);
+    noticePointerOutside = false;
+    noticeDeadline = performance.now() + 20000;
+    serverNotice.showModal();
+    updateNoticeCountdown();
+    noticeTimer = setInterval(updateNoticeCountdown, 1000);
+  };
+  const outsideNotice = event => {
+    const rect = serverNotice.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right ||
+      event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  serverNotice.addEventListener('pointerdown', event => {
+    noticePointerOutside = event.target === serverNotice && outsideNotice(event);
+  });
+  serverNotice.addEventListener('pointercancel', () => { noticePointerOutside = false; });
+  serverNotice.addEventListener('click', event => {
+    if (noticePointerOutside && event.target === serverNotice && outsideNotice(event)) serverNotice.close();
+    noticePointerOutside = false;
+  });
   document.getElementById('open-server-guide').onclick = openNotice;
   document.getElementById('loading-server-guide').onclick = openNotice;
   serverNotice.addEventListener('close', () => {
+    if (serverNotice.open) return;
+    clearInterval(noticeTimer);
+    noticeTimer = 0;
+    noticeDismissed = true;
     try { sessionStorage.setItem(noticeKey, '1'); } catch (_) {}
   });
   const officialEntry = Array.from(serverNotice.querySelectorAll('[data-server]'), link => link.hostname);
-  if (officialEntry.includes(location.hostname)) {
-    let dismissed = false;
-    try { dismissed = sessionStorage.getItem(noticeKey) === '1'; } catch (_) {}
-    if (!dismissed) openNotice();
-  }
+  if (officialEntry.includes(location.hostname) && !noticeDismissed) openNotice();
   const began = performance.now();
   let failed = false, queued = false, bytes = 0, total = 0, lastProgress = began;
   let stallGuideOpened = false;
   const showStallGuide = () => {
-    if (stallGuideOpened) return;
+    if (stallGuideOpened || noticeDismissed) return;
     stallGuideOpened = true;
     openNotice();
   };

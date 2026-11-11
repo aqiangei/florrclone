@@ -1,5 +1,7 @@
 #include "shared/game/hyper_petal_techniques.h"
 #include "shared/game/computer_set.h"
+#include "shared/game/monstera.h"
+#include "shared/game/computer_set.h"
 // The petal inventory.
 //
 // The screen players spend the most time in, so the muscle memory is real and
@@ -390,6 +392,25 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(body);
     }
 
+    if (computerWeapon(config.id)) {
+        const bool zh = language() == Language::Zh;
+        const auto addSetLine = [&](const char* text) {
+            TooltipLine line{text, 12.0, kPaper};
+            line.maxWidth = kTooltipWrapWidth;
+            lines.push_back(line);
+        };
+        addSetLine(zh ? "电脑套装：主装备栏中，同阶或更高阶的组件按类别计数。"
+                      : "Computer set: count distinct part types of this tier or higher on the active bar.");
+        addSetLine(zh ? "六类组件：程序、内存、芯片、电容器、光标、几何体。"
+                      : "Six part types: software, RAM, chip, capacitor, cursor, and geometry.");
+        addSetLine(zh ? "3 类：基础伤害 +12%；4 类：额外增加 15% 耐久（原耐久须大于 1）；5 类：再缩短 10% 重装。"
+                      : "3 types: +12% base damage. 4: also +15% durability if above 1. 5: also 10% shorter reload.");
+        if (!computerPart(config.id)) {
+            addSetLine(zh ? "这枚花瓣享受套装加成，自身不计作组件。"
+                          : "This petal receives set bonuses and contributes no part type.");
+        }
+    }
+
     if (technique) {
         const bool zh = language() == Language::Zh;
         TooltipLine special{std::string(zh ? "超凡机制 · " : "Hyper technique · ") +
@@ -439,6 +460,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         hit.markup = true;
     }
     lines.push_back(hit);
+    if (config.projectile.present) {
+        const bool zh = language() == Language::Zh;
+        lines.push_back({zh ? "发射物伤害加成：宠物伤害天赋。" :
+            "Projectile damage scales with the Pet Damage talent.", 12.0});
+        lines.push_back({zh ? "耐久天赋提高环上花瓣耐久；已发射物使用该阶基础耐久。" :
+            "Health talents affect the ring petal. Shots use the tier's base health.", 12.0});
+    } else if (config.petMobIndex == kInvalidIndex && stats.damage > 0.0) {
+        lines.push_back({language() == Language::Zh ? "接触伤害加成：花瓣伤害天赋。" :
+            "Contact damage scales with the Petal Damage talent.", 12.0});
+    }
 
     // Burst / passive heal: field value includes kPlayerHealMultiplier (and the
     // Healing talent for the amount the flower actually receives).
@@ -499,6 +530,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         line.alpha = 0.72;line.labelColor = kStatGeneric;lines.push_back(line);
     };
     if (stats.flowerHealthBonus > 0) special("增加花朵生命：+", "Flower health: +", stats.flowerHealthBonus);
+    if (config.id == "monstera") {
+        special("范围治疗（每秒）：", "Area healing per second: ",
+                monsteraHealPerSecond(rarity) * healTalent * kPlayerHealMultiplier);
+        special("治疗半径：", "Healing radius: ", monsteraHealRadius(rarity));
+    }
     if(config.burrowDurationMillis>0){
         special("潜地准备：", "Burrow charge: ",config.burrowChargeMillis/1000.0,"s");
         special("潜地持续：", "Burrow duration: ",config.burrowDurationMillis/1000.0,"s");

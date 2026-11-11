@@ -1049,7 +1049,13 @@ Entity SpawnSystem::spawnEscort(World& world, const Terrain& terrain, const Cont
     if (const Transform* anchor = world.tryGet<Transform>(parent)) home = anchor->position;
     // Emerging: it was put down in the middle of its parent, and the two must
     // not shove each other apart while it climbs out.
-    world.add<HoleTether>(child, HoleTether{parent, home, false, true});
+    HoleTether tether{parent, home, false, true};
+    const auto* map = worldMaps ? worldMaps->forRealm(realm) : nullptr;
+    const auto* parentType = world.tryGet<MobType>(parent);
+    if (map && map->prestige() && map->templateId() == "desert" && parentType &&
+        content.mob(parentType->configIndex).id == "fire_ant_hole")
+        tether.retreatScale = 2.0;
+    world.add<HoleTether>(child, tether);
     return child;
 }
 
@@ -1304,7 +1310,10 @@ void SpawnSystem::takeCensus(World& world, const ContentRegistry& content,
         ++census_.mobs;
         if (ambient.zone < zones_.size()) {
             ++zones_[ambient.zone].liveMobs;
-            censusMobs_.push_back(CensusMob{e, transform.position, ambient.zone});
+            censusMobs_.push_back(CensusMob{e, transform.position, ambient.zone,
+                                           ambient.managedPopulation,
+                                           rarityIndex(type.rarity) <= rarityIndex(Rarity::Super)
+                                               ? type.configIndex : kInvalidIndex});
         }
         // The placement record the stocking pass spaces its next spawns
         // against.
@@ -1412,7 +1421,14 @@ void SpawnSystem::noteLiveBandMob(World& world, Entity e, std::uint16_t zone) {
     if (transform == nullptr) return;
     const Body* body = world.tryGet<Body>(e);
     notePlacement(transform->realm, transform->position, body != nullptr ? body->radius : 0.0);
-    if (zone < zones_.size()) censusMobs_.push_back(CensusMob{e, transform->position, zone});
+    if (zone < zones_.size()) {
+        const auto* ambient = world.tryGet<AmbientMob>(e);
+        const auto* type = world.tryGet<MobType>(e);
+        censusMobs_.push_back(CensusMob{e, transform->position, zone,
+                                      ambient && ambient->managedPopulation,
+                                      type && rarityIndex(type->rarity) <= rarityIndex(Rarity::Super)
+                                          ? type->configIndex : kInvalidIndex});
+    }
 }
 
 bool SpawnSystem::seenBy(const std::vector<Viewer>& viewers, Realm realm, Vec2 position,
@@ -1642,6 +1658,7 @@ void SpawnSystem::setActivePyramidRealms(Realm ordinary, Realm prestige) {
     for (SpawnZone& zone : zones_) {
         if (!inactive[realmIndex(zone.realm)]) continue;
         zone.latent.clear();
+        zone.pendingSpecies.clear();
         zone.liveMobs = 0;
     }
     censusMobs_.erase(std::remove_if(censusMobs_.begin(), censusMobs_.end(), [&](const CensusMob& mob) {
@@ -1665,6 +1682,7 @@ void SpawnSystem::rebuildZones(const ContentRegistry& content) {
     zoneMaps_ = worldMaps;
     zoneContentHash_ = content.contentHash();
     zones_.clear();
+    managedVacancies_.clear();
     regions_.clear();
     // Band indices are about to mean other bands, so a slot owed to one of
     // the old ones is owed to nobody.
@@ -2388,13 +2406,17 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
         // half a minute is half a minute of a player watching mobs trickle in.
         const int owed = zone.targetMobs - static_cast<int>(zone.latent.size()) - zone.liveMobs;
         for (int n = 0; n < owed; ++n) {
+            const auto replacement = zone.pendingSpecies.empty() ? kInvalidIndex
+                                                                 : zone.pendingSpecies.back();
             if (!stockZone(world, terrain, content, zone, static_cast<std::uint16_t>(index),
-                           viewers, rng, nowMillis)) {
+                           viewers, rng, nowMillis, Slot::TopUp, {}, false, Rarity::Super,
+                           false, replacement)) {
                 // The outline had nowhere to put this one, so it has nowhere
                 // to put the next either: drop the rest of the debt rather
                 // than spinning on a band the terrain has since walled over.
                 break;
             }
+            if (!zone.pendingSpecies.empty()) zone.pendingSpecies.pop_back();
         }
     }
 }
@@ -2402,8 +2424,20 @@ void SpawnSystem::stockSpawnZones(World& world, const Terrain& terrain,
 bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                             SpawnZone& zone, std::uint16_t zoneIndex,
                             const std::vector<Viewer>& viewers, Rng& rng, double nowMillis,
-                            Slot slot, Vec2 lostAt, bool fixedSuper, Rarity managedTier, bool superFarm) {
+                            Slot slot, Vec2 lostAt, bool fixedSuper, Rarity managedTier, bool superFarm,
+                            std::uint16_t replacementType) {
     if (inactivePyramidRealms_[realmIndex(zone.realm)]) return false;
+    std::size_t managedVacancy = managedVacancies_.size();
+    if (fixedSuper) {
+        for (std::size_t i = 0; i < managedVacancies_.size(); ++i) {
+            const auto& vacancy = managedVacancies_[i];
+            if (vacancy.zone >= zones_.size() || zones_[vacancy.zone].realm != zone.realm ||
+                vacancy.rarity != managedTier || vacancy.superFarm != superFarm) continue;
+            replacementType = vacancy.mobIndex;
+            managedVacancy = i;
+            break;
+        }
+    }
     const auto* authoredMap = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
     // The dedicated farm uses the capped Super population and its vacancy
     // timer. Ordinary fill and casualty paths cannot create lower tiers here.
@@ -2412,6 +2446,40 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // drawn on has its own size, its own walls and its own population, and the
     // same numbers on the overworld describe somewhere else entirely.
     const Vec2 extent = terrain.realmExtent(zone.realm);
+    const auto rosterAt = [&](Vec2 point) -> const SpawnZone& {
+        for (const auto& region : regions_)
+            if (region.realm == zone.realm && zoneContains(region.bounds, region.polygon, point))
+                return region;
+        return zone;
+    };
+    const auto acceptsReplacement = [&](const SpawnZone& roster) {
+        if (replacementType == kInvalidIndex) return false;
+        const auto& previous = content.mob(replacementType);
+        if (previous.neverAmbient) return false;
+        const auto inGroup = [&](std::uint16_t group) {
+            return group != kInvalidIndex &&
+                std::any_of(previous.groups.begin(), previous.groups.end(),
+                    [&](const MobGroupMember& member) {
+                        return member.group == group && member.weight > 0.0;
+                    });
+        };
+        if (roster.resolved.empty() && authoredMap)
+            return inGroup(content.mobGroupIndex(authoredMap->defaultMobGroup()));
+        return std::any_of(roster.resolved.begin(), roster.resolved.end(),
+            [&](const auto& row) {
+                return row.weight > 0.0 && (row.mob == replacementType || inGroup(row.group));
+            });
+    };
+    bool reuseSpecies = acceptsReplacement(zone);
+    if (!reuseSpecies) {
+        for (const auto& region : regions_)
+            if (region.realm == zone.realm && region.bounds.left() < zone.bounds.right() &&
+                region.bounds.right() > zone.bounds.left() && region.bounds.top() < zone.bounds.bottom() &&
+                region.bounds.bottom() > zone.bounds.top() && acceptsReplacement(region)) reuseSpecies = true;
+    }
+    // A managed vacancy can move between eligible habitats as before, but
+    // cannot turn a mobile casualty into another surviving static species.
+    if (managedVacancy < managedVacancies_.size() && !reuseSpecies) return false;
     // A singular band gets its one mob back ANYWHERE in its outline. The
     // scatter exists to keep a big band evenly full, and a band of one has no
     // evenness to keep; handing the slot back where it fell would put the next
@@ -2438,6 +2506,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
         if (!zoneContains(zone.bounds, zone.polygon, candidate)) continue;
         if (inBorderBand(candidate, extent)) continue;
         if (terrain.blocked(candidate, zone.realm)) continue;
+        if (reuseSpecies && !acceptsReplacement(rosterAt(candidate))) continue;
         if (jungleRefill && attempt < kZonePlacementAttempts / 2 &&
             (!seenBy(viewers, zone.realm, candidate, 0.0) ||
              terrain.segmentBlocked(lostAt, candidate, zone.realm))) continue;
@@ -2477,13 +2546,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     // (below): a band steep enough to roll uniques on its own would spawn them
     // far faster than kUniqueSpawnCooldownMillis allows.
     // Species-only overlays retain the band's threat while overriding its roster.
-    const SpawnZone* roster = &zone;
-    for (const SpawnZone& region : regions_) {
-        if (region.realm == zone.realm && zoneContains(region.bounds, region.polygon, at)) {
-            roster = &region;
-            break;
-        }
-    }
+    const SpawnZone* roster = &rosterAt(at);
     const int forcedTier = roster->forceRarity >= 0 ? roster->forceRarity : zone.forceRarity;
     double rollDifficulty = zone.difficulty;
     // The band before the deepest one gets a mix of its own curve and the
@@ -2506,6 +2569,7 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     }
     std::uint16_t type = roster == &zone ? chooseZoneMobType(content, zone, at, rarity, rng)
                                         : rollResolvedRows(content, roster->resolved, rarity, rng);
+    if (reuseSpecies) type = replacementType;
     if (type == kInvalidIndex) return false;
     if (superFarm && content.mob(type).dungeon.present) return false;
     // A band naming a mob outright can name one below its own tier; the mob's
@@ -2611,6 +2675,9 @@ bool SpawnSystem::stockZone(World& world, const Terrain& terrain, const ContentR
     const Entity spawned = spawnMobAt(world, terrain, content, type, rarity, at, zone.realm,
                                       nowMillis, rng, 0, zoneIndex, facing);
     if (spawned == NULL_ENTITY) return false;
+    world.get<AmbientMob>(spawned).managedPopulation = fixedSuper;
+    if (managedVacancy < managedVacancies_.size())
+        managedVacancies_.erase(managedVacancies_.begin() + static_cast<std::ptrdiff_t>(managedVacancy));
     if (superFarm) world.add<SuperFarmMob>(spawned);
     ++zone.liveMobs;
     // Charged only now that the boss is standing. Every refusal above hands
@@ -2633,7 +2700,11 @@ void SpawnSystem::bankCasualties(World& world, const Terrain& terrain,
     casualtyList_.clear();
     casualties_->each([&](Entity e, MobTag&, Transform& transform, AmbientMob& ambient, Dead&) {
         if (ambient.zone >= zones_.size()) return;
-        casualtyList_.push_back(Casualty{e, transform.position, ambient.zone});
+        const auto* type = world.tryGet<MobType>(e);
+        const auto replacement = type && rarityIndex(type->rarity) <= rarityIndex(Rarity::Super)
+            ? type->configIndex : kInvalidIndex;
+        casualtyList_.push_back(Casualty{e, transform.position, ambient.zone, replacement,
+                                       ambient.managedPopulation});
         // Claimed, once and for all. A corpse lies around for a while before
         // the reaper takes it, and a band that banked it on every pass in
         // between would breed a mob per pass out of one kill.
@@ -2658,9 +2729,25 @@ void SpawnSystem::bankCasualties(World& world, const Terrain& terrain,
             *tracked = censusMobs_.back();
             censusMobs_.pop_back();
         }
+        if (casualty.managedPopulation) {
+            const auto* type = world.tryGet<MobType>(casualty.entity);
+            // Rare stand-ins are independent chance events, not a permanent
+            // roster slot. Reroll their vacancy instead of pinning the quota
+            // to a species that none of the authored habitats accepts.
+            const auto& standIns = content.standInMobs();
+            if (type && std::find(standIns.begin(), standIns.end(), type->configIndex) == standIns.end())
+                managedVacancies_.push_back({casualty.zone, type->configIndex, type->rarity,
+                                             world.has<SuperFarmMob>(casualty.entity)});
+            continue;
+        }
         if (world.has<SuperFarmMob>(casualty.entity)) continue;
-        stockZone(world, terrain, content, zones_[casualty.zone], casualty.zone, viewers, rng,
-                  nowMillis, Slot::Killed, casualty.position);
+        const bool stocked = stockZone(world, terrain, content, zones_[casualty.zone], casualty.zone, viewers, rng,
+                  nowMillis, Slot::Killed, casualty.position, false, Rarity::Super, false,
+                  casualty.mobIndex);
+        auto& zone = zones_[casualty.zone];
+        if (!stocked && casualty.mobIndex != kInvalidIndex &&
+            zone.pendingSpecies.size() < static_cast<std::size_t>(zone.targetMobs))
+            zone.pendingSpecies.push_back(casualty.mobIndex);
     }
 }
 
@@ -2677,9 +2764,14 @@ void SpawnSystem::returnVanished(World& world, const Terrain& terrain,
     // ground, so there is no cleared screen to keep clear. Whatever cannot be
     // placed falls through to the top-up, as a casualty does.
     for (const CensusMob& lost : vanished_) {
-        if (lost.zone >= zones_.size()) continue;
-        stockZone(world, terrain, content, zones_[lost.zone], lost.zone, viewers, rng, nowMillis,
-                  Slot::Vanished, lost.position);
+        if (lost.zone >= zones_.size() || lost.managedPopulation) continue;
+        auto& zone = zones_[lost.zone];
+        const bool stocked = stockZone(world, terrain, content, zone, lost.zone, viewers, rng,
+                                       nowMillis, Slot::Vanished, lost.position, false,
+                                       Rarity::Super, false, lost.mobIndex);
+        if (!stocked && lost.mobIndex != kInvalidIndex &&
+            zone.pendingSpecies.size() < static_cast<std::size_t>(zone.targetMobs))
+            zone.pendingSpecies.push_back(lost.mobIndex);
     }
     vanished_.clear();
 }

@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <unordered_set>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -588,6 +589,8 @@ std::string GameServer::adminDbKey() const {
 
 bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     config_ = config;
+    sharedSkinSources_ = {};
+    nextSharedSkinExpiryCheck_ = 0;
     // The configured bot population, if the caller named one. Same field
     // `/admin set_bot_count` writes, so the two cannot disagree.
     botCountOverride_ = config.botCount;
@@ -603,7 +606,6 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     if (config.authorityCommit) {
         if (!database_.loadAuthoritative(config.authoritySnapshot, config.authorityCommit, errorOut)) return false;
     } else if (!database_.load(config.databasePath, errorOut)) return false;
-    if (!council::initializeLegacyActivity(database_)) {errorOut="Could not persist council legacy activity credit";return false;}
     if(!config_.authorityHyper)foldLookAlikeSkins();
 
     // Kept in a file beside the database, never anywhere a client can reach:
@@ -1677,6 +1679,11 @@ void GameServer::tick(double wallMillis, double nowMillis) {
         reapSessionsWithoutSockets();
     }
     markSessionPhase("socketAudit");
+
+    if (config_.sharedSkinRealm && wallMillis >= nextSharedSkinExpiryCheck_) {
+        nextSharedSkinExpiryCheck_ = wallMillis + 10'000.0;
+        expireSharedSkinSources();
+    }
 
     for (auto& entry : sessions_) refillAllowances(entry.second, wallMillis);
     markSessionPhase("allowances");
@@ -5926,6 +5933,8 @@ void GameServer::handleSetSkin(Session& session, net::Connection& connection, By
 
 namespace {
 
+constexpr double kSharedSkinFreshMillis = 20.0 * 60'000.0;
+
 /// The studio's own reply channel. Every outcome the reference reports --
 /// success included -- is a chat line from "Skins", not a notice or a toast.
 void sendSkinChat(net::Connection& connection, const std::string& text) {
@@ -6032,6 +6041,88 @@ bool GameServer::canModeratePublicSkins(const Session& session) const {
         database_.storedTable("skinModerators")[account->id].asBool();
 }
 
+void GameServer::broadcastSharedSkinRemoval(const std::string& id) {
+    ByteWriter message;
+    message.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinDeleted));
+    message.str(id);
+    broadcastToAuthenticated(message);
+}
+
+void GameServer::expireSharedSkinSources() {
+    const auto now = database_.nowMillis();
+    for (auto& source : sharedSkinSources_) {
+        if (!source.available || now - source.capturedAt <= kSharedSkinFreshMillis) continue;
+        for (const auto& [id, skin] : source.skins) broadcastSharedSkinRemoval(id);
+        source.skins.clear();
+        source.available = false;
+    }
+}
+
+bool GameServer::applySharedSkinSnapshot(const Json& snapshot) {
+    const int localRealm = config_.sharedSkinRealm;
+    if (localRealm < 1 || localRealm > 3 || snapshot["version"].asInt() != 1 || persistenceFrozen_) return false;
+    const auto now = database_.nowMillis();
+    for (int realm = 1; realm <= 3; ++realm) {
+        if (realm == localRealm) continue;
+        auto& current = sharedSkinSources_[realm - 1];
+        const auto& entry = snapshot["sources"][std::to_string(realm)];
+        const double capturedAt = entry["capturedAt"].asDouble();
+        const auto& rows = entry["skins"];
+        if (!rows.isArray() || capturedAt <= current.capturedAt || capturedAt > now + 60'000.0 ||
+            now - capturedAt > kSharedSkinFreshMillis) continue;
+
+        std::unordered_map<std::string, CustomSkin> next;
+        bool valid = true;
+        const std::string prefix = "xs" + std::to_string(realm) + "_";
+        for (const Json& row : rows.items()) {
+            auto skin = skinFromJson(row);
+            if (skin.id.empty() || skin.id.size() > 120 || !skin.published || !row["published"].asBool(false) ||
+                skin.review != SkinReviewState::Approved || skin.shapes.empty() || next.count(prefix + skin.id)) {
+                valid = false;
+                break;
+            }
+            skin.id = prefix + skin.id;
+            const std::string id = skin.id;
+            next.emplace(id, std::move(skin));
+        }
+        if (!valid) continue;
+
+        std::unordered_set<std::string> removed;
+        for (const auto& [id, skin] : current.skins) if (!next.count(id)) removed.insert(id);
+        // The old in-memory catalog is empty just after a restart. Check saved
+        // outfits then as well, but only after an authoritative fresh source.
+        if (!current.available) for (const auto& userId : database_.playerIds()) {
+            const auto* record = database_.findProgress(userId);
+            if (record && sharedSkinRealm(record->equippedSkinId) == realm && !next.count(record->equippedSkinId))
+                removed.insert(record->equippedSkinId);
+        }
+        for (const auto& id : removed) {
+            unequipCustomSkin(id);
+            broadcastSharedSkinRemoval(id);
+        }
+        if (!removed.empty()) database_.markDirty();
+        for (const auto& [id, skin] : next) {
+            const auto old = current.skins.find(id);
+            if (old != current.skins.end() && old->second.name == skin.name && old->second.author == skin.author &&
+                old->second.createdAt == skin.createdAt &&
+                skinShapesHash(old->second.shapes) == skinShapesHash(skin.shapes)) continue;
+            ByteWriter message;
+            message.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+            writeCustomSkin(message, skin);
+            broadcastToAuthenticated(message);
+        }
+        const bool restored = !current.available;
+        current = {capturedAt, true, std::move(next)};
+        if (restored) listener_.each([&](net::Connection& connection) {
+            auto* session = sessionFor(connection.id());
+            if (!session || !session->authenticated()) return;
+            const auto* record = database_.findProgress(session->userId);
+            if (record && sharedSkinRealm(record->equippedSkinId) == realm) sendSkinCatalog(*session, connection);
+        });
+    }
+    return true;
+}
+
 void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) {
     // storedTable, not rawTable: this only reads, and rawTable drops the
     // table's cached text (Database::Table). Sent on every sign-in, that made
@@ -6050,6 +6141,18 @@ void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) 
     w.str(record.equippedSkinId);
     const std::size_t at = w.reserveU16();
     std::uint16_t count = 0;
+    std::vector<ByteWriter> overflow;
+    const auto addSkin = [&](const CustomSkin& skin) {
+        ByteWriter entry;
+        entry.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+        writeCustomSkin(entry, skin);
+        if (w.size() + entry.size() >= net::kMaxFrameBytes) {
+            overflow.push_back(std::move(entry));
+        } else {
+            w.raw(entry.data() + 1, entry.size() - 1);
+            ++count;
+        }
+    };
     for (const std::string& id : skins.keys()) {
         const CustomSkin skin = skinFromJson(skins[id]);
         if (skin.id.empty() || skin.shapes.empty()) continue;
@@ -6062,11 +6165,12 @@ void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) 
             }
         }
         if (!visible) continue;
-        writeCustomSkin(w, skin);
-        ++count;
+        addSkin(skin);
     }
+    for (const auto& source : sharedSkinSources_) for (const auto& [id, skin] : source.skins) addSkin(skin);
     w.patchU16(at, count);
     connection.send(w);
+    for (const auto& entry : overflow) connection.send(entry);
     const CustomSkin worn = skinFromJson(skins[record.equippedSkinId]);
     if (!worn.id.empty() && !worn.published && worn.review == SkinReviewState::Approved) {
         ByteWriter appearance;
@@ -6206,12 +6310,15 @@ void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
 
     // Read-only, so storedTable: see sendSkinCatalog.
     const Json& catalog = database_.storedTable("customSkins");
-    if (!id.empty() && !catalog[id].isObject()) {
+    const int origin = sharedSkinRealm(id);
+    const bool shared = origin && sharedSkinSources_[origin - 1].skins.count(id);
+    if (!id.empty() && (origin ? !shared : !catalog[id].isObject())) {
         sendSkinChat(connection, "That skin no longer exists.");
+        if (origin) sendSkinCatalog(session, connection);
         return;
     }
 
-    if (!id.empty()) {
+    if (!id.empty() && !shared) {
         const CustomSkin skin = skinFromJson(catalog[id]);
         const bool owner = catalog[id]["ownerId"].isString()
             ? catalog[id]["ownerId"].asString() == session.userId

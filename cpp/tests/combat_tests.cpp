@@ -909,7 +909,7 @@ TEST(a_dead_body_stops_dealing_contact_damage_in_the_same_tick) {
 // Knockback
 // ---------------------------------------------------------------------------
 
-TEST(knockback_replaces_the_pending_displacement_and_is_scaled_by_mass) {
+TEST(knockback_keeps_the_strongest_pending_displacement_and_is_scaled_by_mass) {
     Arena a;
     const Entity light = a.actor({1000, 1000}, 10.0, 100.0, Team::Hostiles, 1.0);
     const Entity heavy = a.actor({1000, 1000}, 10.0, 100.0, Team::Hostiles, 4.0);
@@ -920,6 +920,9 @@ TEST(knockback_replaces_the_pending_displacement_and_is_scaled_by_mass) {
     // ring does not launch a mob farther for each overlapping instance.
     CHECK_NEAR(a.world.get<Knockback>(light).impulse.x, 5.0, 1e-9);
     CHECK_NEAR(a.world.get<Knockback>(light).impulse.y, 0.0, 1e-12);
+    a.combat.applyKnockback(a.world, light, Vec2{5, 0}, 500.0);
+    a.combat.applyKnockback(a.world, light, Vec2{-5, 0}, 5.0);
+    CHECK_NEAR(a.world.get<Knockback>(light).impulse.x, 500.0, 1e-9);
 
     a.combat.applyKnockback(a.world, heavy, Vec2{5, 0}, 5.0);
     CHECK_NEAR(a.world.get<Knockback>(heavy).impulse.x, 5.0 / 4.0, 1e-9);

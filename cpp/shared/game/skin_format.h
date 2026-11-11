@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "shared/core/json.h"
@@ -31,6 +32,12 @@ inline constexpr int kMaxPolyPoints = 16;
 /// Per author, not per server: the catalog is shared, so one player cannot
 /// fill it.
 inline constexpr int kMaxSkinsPerUser = 64;
+
+// Minted by the destination server for public skins from another realm.
+inline int sharedSkinRealm(std::string_view id) {
+    return id.size() > 4 && id[0] == 'x' && id[1] == 's' && id[2] >= '1' && id[2] <= '3' && id[3] == '_'
+        ? id[2] - '0' : 0;
+}
 
 /// Local-space bound. The flower body radius is ~25, so 64 leaves room for a
 /// skin that overhangs it without letting one cover the screen.

@@ -2,6 +2,7 @@
 #include "server/systems/petals.h"
 
 #include "shared/game/berry_projectile.h"
+#include "shared/game/monstera.h"
 
 #include <algorithm>
 #include <array>
@@ -738,16 +739,11 @@ void PetalSystem::run(World& world, const ContentRegistry& registry, double nowM
         tickArmorStacks(world, registry, player, aggregate, dt);
         applyPassiveHeal(world, registry, player, aggregate, nowMillis, dt);
         updateManaPool(world, player, aggregate, dt);
-        const bool underground = isBurrowed(world, player, nowMillis) ||
-                                 startBurrow(world, registry, player, nowMillis);
-        if (!underground) {
-            applyRaindropAura(world, registry, player, world.get<PetalSlotState>(player), aggregate,
-                              nowMillis);
-            strikeWornLightning(world, registry, player, nowMillis);
-        }
+        applyRaindropAura(world, registry, player, world.get<PetalSlotState>(player), aggregate,
+                          nowMillis);
+        strikeWornLightning(world, registry, player, nowMillis);
         updateRing(world, player, aggregate, dt);
         placePetals(world, registry, player, aggregate, nowMillis, dt, terrain);
-        if (underground) continue;
         runActions(world, registry, player, nowMillis, dt);
         dischargeCapacitors(world, registry, player, dt);
         // Last, so a battery that goes flat is taken off the ring AFTER this
@@ -1023,7 +1019,11 @@ void PetalSystem::reconcileSlots(World& world, const ContentRegistry& registry, 
             // petals that break and reload one at a time, not one health bar
             // shared four ways. `independentHealth` is the second, rarer way
             // the same thing is declared (light, whose grains orbit apart).
-            slotState.independent = (config.independentHealth || config.clumped) && count > 1;
+            // The left-slot Duplicator creates a second complete body from
+            // a single petal. Give those bodies separate health and reloads
+            // without changing the health model of native multi-petal slots.
+            const bool duplicatedSingle = stats.breakable && stats.count == 1 && count > 1;
+            slotState.independent = (config.independentHealth || config.clumped || duplicatedSingle) && count > 1;
             slotState.poolMax = stats.health;
             slotState.poolHealth = stats.health;
             slotState.syncedHealth = stats.health;
@@ -2180,6 +2180,34 @@ void PetalSystem::applyPassiveHeal(World& world, const ContentRegistry& registry
         for (const auto& stack : stacks) healing += stack.perSecond;
     }
     healPlayer(world, player, healing * dt, nowMillis);
+
+    const auto* timers = world.tryGet<HyperPetalTimers>(player);
+    if (timers && nowMillis < timers->monsteraAuraReadyAtMillis) return;
+    const auto* loadout = world.tryGet<Loadout>(player);
+    const auto* owner = world.tryGet<Transform>(player);
+    if (!loadout || !owner) return;
+    double amount = 0.0;
+    double radius = 0.0;
+    for (int i = 0; i < kLoadoutActiveSlots; ++i) {
+        if (loadout->slots[i].broken) continue;
+        const auto worn = equippedPetal(registry, *loadout, i);
+        if (worn.empty() || registry.petal(worn.configIndex).id != "monstera") continue;
+        amount = std::max(amount, monsteraHealPerSecond(worn.rarity));
+        radius = std::max(radius, monsteraHealRadius(worn.rarity));
+    }
+    if (amount <= 0.0) return;
+    const Vec2 centre = owner->position;
+    const Realm realm = owner->realm;
+    const auto* skills = world.tryGet<PlayerSkillTree>(player);
+    if (skills) amount *= skills->skills.effectScale(SkillId::Medic);
+    world.ensure<HyperPetalTimers>(player).monsteraAuraReadyAtMillis = nowMillis + 1000.0;
+    for (const Entity target : playerList_) {
+        const auto* at = world.tryGet<Transform>(target);
+        if (!at || at->realm != realm || playerIsDown(world, target) ||
+            (target != player && CombatSystem::canDamage(world, player, target)) ||
+            distanceSq(centre, at->position) > radius * radius) continue;
+        healPlayer(world, target, amount, nowMillis);
+    }
 }
 
 void PetalSystem::updateManaPool(World& world, Entity player, const Aggregate& aggregate,
@@ -2618,37 +2646,6 @@ void PetalSystem::stepPetalPhysics(World& world, const ContentRegistry& registry
 // Per-petal actions
 // ---------------------------------------------------------------------------
 
-bool PetalSystem::startBurrow(World& world, const ContentRegistry& registry, Entity player,
-                             double nowMillis) {
-    const auto* input = world.tryGet<PlayerInput>(player);
-    if (!input || !input->current.defending()) return false;
-    const auto* existing = world.tryGet<BurrowState>(player);
-    if (existing && nowMillis < existing->readyAtMillis) return false;
-    if (const auto* swallowed = world.tryGet<WormSwallow>(player);
-        swallowed && swallowed->worm != NULL_ENTITY && nowMillis < swallowed->releaseAtMillis)
-        return false;
-
-    for (const Entity petal : world.get<Loadout>(player).spawned) {
-        const auto* instance = world.tryGet<PetalInstance>(petal);
-        if (!instance || !isStanding(world, petal) || nowMillis < instance->nextActionMillis) continue;
-        const auto& config = registry.petal(instance->configIndex);
-        if (config.burrowDurationMillis <= 0.0) continue;
-        const auto slot = instance->slot;
-        const auto sub = instance->subIndex;
-        const auto stats = instanceStats(world, registry, *instance);
-        auto& burrow = world.ensure<BurrowState>(player);
-        burrow.active = true;
-        burrow.untilMillis = nowMillis + config.burrowDurationMillis;
-        // All shovels on the same flower share a window above ground.
-        burrow.readyAtMillis = burrow.untilMillis + 3000.0;
-        burrow.wormIndex = registry.mobIndex("worm");
-        burrow.desertCentipedeIndex = registry.mobIndex("desert_centipede");
-        spendPetal(world, registry, player, petal, slot, sub, stats, nowMillis);
-        return true;
-    }
-    return false;
-}
-
 void PetalSystem::runActions(World& world, const ContentRegistry& registry, Entity player,
                              double nowMillis, double dt) {
     if (const auto* swallowed = world.tryGet<WormSwallow>(player);
@@ -2665,6 +2662,14 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
     const PlayerInput* input = world.tryGet<PlayerInput>(player);
     const bool defending = input && input->current.defending();
     const bool attackHeld = input && input->current.attacking();
+    bool hasEquippedCorruption = false;
+    for (int slot = 0; slot < kLoadoutActiveSlots; ++slot) {
+        const auto& equipped = world.get<Loadout>(player).slots[slot];
+        if (!equipped.empty() && registry.petal(equipped.configIndex).id == "corruption") {
+            hasEquippedCorruption = true;
+            break;
+        }
+    }
     const bool attacking = attackHeld && !defending;
 
     // Snapshotted because an action creates entities, and a petal's slot state
@@ -3215,7 +3220,18 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
         }
         const auto* hyperShot = hyperShotSpec(world, player, technique);
         if (!hyperShot && !hasTimedAction(config, stats)) continue;
-        if (config.burrowDurationMillis > 0.0) continue;
+        if(config.burrowDurationMillis>0){
+            if(defending && !hasEquippedCorruption && nowMillis>=instance->nextActionMillis){
+                const auto* existing=world.tryGet<BurrowState>(player);
+                if(!existing||!existing->active){
+                    const auto slot=instance->slot,sub=instance->subIndex;
+                    auto& burrow=world.ensure<BurrowState>(player);burrow.active=true;burrow.untilMillis=nowMillis+config.burrowDurationMillis;
+                    burrow.wormIndex=registry.mobIndex("worm");burrow.desertCentipedeIndex=registry.mobIndex("desert_centipede");
+                    spendPetal(world,registry,player,petal,slot,sub,stats,nowMillis);
+                }
+            }
+            continue;
+        }
 
         // A projectile is asked before the defend-only gate below, because a
         // defend-only shooter fires on EITHER input: peas and grapes split on

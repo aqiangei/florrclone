@@ -16,6 +16,7 @@ Linux 可用 `cmake --build <native-build> --target shard_coordinator` 构建协
 
 ## 当前数据与功能入口
 
+- 跨服皮肤目录：北京 `florr-public-skins.timer` 读取 `florr-save-backup` 最新已验证归档，经 SHA256 复核后只导出公开图案及作者、来源服。游戏端从 `https://154.8.157.208/public-skins.json` 拉取目录，每服通过 `FLIX_SHARED_SKIN_REALM` 指定服号，外服皮肤在内存以 `xs<服号>_` 隔离编号。游戏数据库仅持久化实际穿戴的编号，皮肤本体和审核继续由来源服管理。
 - 当前发布采用单服数据库：`cpp/server/db.h/.cpp`负责账号和JSON持久化，`game_server.cpp`负责服务端操作校验；生产存档不属于源码或dist发布内容。
 - 议会：`cpp/server/council.h`提供各服账号鉴权、服内权重和玩家详情；`scripts/ops/unified-council.cjs`在北京聚合三服排行，校验发起资格并保存议题快照和投票；`cpp/client/web/council.html`提供页面。各服 Nginx 固定来源服号，`ashflor-council-tunnel.service` 将公网入口通过 SSH 转到北京 `127.0.0.1:19090`，北京通过三个反向端口 `19101–19103` 读取各服 `/api/council`。新议题落盘于北京 `/var/lib/ashflor-council/polls.json`。
 - 商店：`cpp/shared/game/shop.h`定义商品和价格规则，`cpp/server/shop_lock.h`与`game_server.cpp`校验锁定和购买，`cpp/client/ui/menu_shop.cpp`负责展示。

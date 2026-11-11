@@ -1,0 +1,15 @@
+[Unit]
+Description=Extract the public skin gallery from verified Beijing backups
+After=florr-save-backup.service
+
+[Service]
+Type=oneshot
+User=florr-save-backup
+StateDirectory=florr-public-skins
+StateDirectoryMode=0755
+ExecStart=/usr/bin/python3 /usr/local/libexec/florr-public-skins.py /var/lib/florrclone-backup /var/lib/florr-public-skins/skins.json
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes

@@ -603,12 +603,11 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
                     true);
         // Loose petals before NPCs: a wax gives way and an NPC does not, so an
         // NPC is the last word on where the flower may stand, as a wall is.
-        const bool underground = isBurrowed(world, e, nowMillis);
-        if (!underground && !looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
+        if (!looseDiscs_.empty()) shoveLooseBodies(terrain, transform, body);
         const auto* visuals = world.tryGet<PlayerVisuals>(e);
-        if (!underground && !stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter)))
+        if (!stationaryMobGrid_.empty() && (!visuals || !(visuals->equipFlags & EquipCutter)))
             pushOutOfStationaryMobs(world, terrain, transform, body.radius);
-        if (!underground && !npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
+        if (!npcDiscs_.empty()) pushOutOfNpcs(terrain, transform, body.radius);
         // Discard velocity into a wall while retaining the achieved slide.
         // Otherwise turning away first has to cancel a full inward velocity.
         motion.velocity = velocityAfterStep(velocity, movement, dt, 1.0);

@@ -1438,7 +1438,7 @@ bool MobAiSystem::walkHome(World& world, Entity self, const Transform& transform
     const Body* nestBody = world.tryGet<Body>(tether->hole);
     const double rim = nestBody != nullptr ? nestBody->radius : 0.0;
 
-    if (!tether->returning && gap > rim + kSummonRetreatRadius) {
+    if (!tether->returning && gap > rim + kSummonRetreatRadius * tether->retreatScale) {
         // The target is DROPPED, not merely ignored for the walk: an escort
         // that kept it would turn round and resume the chase the moment it got
         // home, which is the kiting this leash exists to stop.

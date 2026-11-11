@@ -910,6 +910,7 @@ struct HoleTether {
     /// body aside. Cleared by the separation pass the first time it finds the
     /// pair apart, and never set again.
     bool emerging = false;
+    double retreatScale = 1.0;
 };
 
 /// A mob nothing in the world can touch -- the config's `intangible`.
@@ -1550,7 +1551,6 @@ struct LightningTarget {
 };
 struct BurrowState {
     double untilMillis = 0;
-    double readyAtMillis = 0;
     bool active = false;
     std::uint16_t wormIndex=UINT16_MAX,desertCentipedeIndex=UINT16_MAX;
 };
@@ -1734,11 +1734,6 @@ inline bool isStanding(const World& world, Entity e) {
     const Health* health = world.tryGet<Health>(e);
     return health == nullptr || health->alive();
 }
-inline bool isBurrowed(const World& world, Entity entity, double nowMillis) {
-    const auto* state = world.tryGet<BurrowState>(entity);
-    return state && state->active && nowMillis < state->untilMillis;
-}
-
 inline bool canNoticeBurrowed(const World& world,Entity observer,Entity target){
     const auto* burrow=world.tryGet<BurrowState>(target);
     if(!burrow||!burrow->active)return true;
@@ -1746,7 +1741,6 @@ inline bool canNoticeBurrowed(const World& world,Entity observer,Entity target){
         if(const auto* mob=world.tryGet<MobType>(observer))return mob->configIndex==burrow->wormIndex||mob->configIndex==burrow->desertCentipedeIndex;
         if(const auto* shot=world.tryGet<Projectile>(observer)){observer=shot->owner;continue;}
         if(const auto* field=world.tryGet<GroundEffect>(observer)){observer=field->owner;continue;}
-        if(const auto* petal=world.tryGet<MobRingPetal>(observer)){observer=petal->mob;continue;}
         break;
     }
     return false;

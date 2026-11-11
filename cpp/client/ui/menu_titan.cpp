@@ -368,7 +368,7 @@ bool TitanPanel::render(MenuContext& ctx) {
                     continue;
                 }
             }
-            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需10个永恒碎片；限时锤不能参与争夺。","锤耗10返9，其他耗5返4；两处独立，总计最多5份。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:!eternalFragment_?std::array<const char*,3>{"15个超级碎片 → 1把永恒限时锤（1小时）","限时锤不能用于超凡争夺，不返还碎片。","可持有多把，每把独立计时1小时，离线计时。"}[i]:kLines[i]);
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需10个永恒碎片；限时锤不能参与争夺。","争夺超凡上限为5份，背包、装备与两处泰坦登记均计入。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:!eternalFragment_?std::array<const char*,3>{"15个超级碎片 → 1把永恒限时锤（1小时）","限时锤不能用于超凡争夺，不返还碎片。","可持有多把，每把独立计时1小时，离线计时。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;
@@ -385,12 +385,27 @@ bool TitanPanel::render(MenuContext& ctx) {
         else drawSlotLine(canvas, line, "本次消耗：" + std::to_string(costOf(stagedPetal_)) + (eternalInput?" 个同种永恒，成功率100%":" 个同种超级，成功率100%"));
     }
 
-    if(hyper_&&knownPetal(stagedPetal_)){
-        if(now-askedAt_>1){ctx.net.requestTitanHolder(stagedPetal_);askedAt_=now;}
-        const auto* holder=ctx.net.titanHolder(stagedPetal_);
-        SlotCardLayout line=card;line.lineY=panel.y+113;
-        const auto wait=ctx.net.hyperProtectionLeft(stagedPetal_);
-        drawSlotLine(canvas,line,std::string("持有者：")+(holder&&!holder->empty()?*holder:"暂无")+"  保护剩余："+std::to_string(static_cast<int>(std::ceil(wait/60000)))+"分钟  已持有 "+std::to_string(ctx.net.hyperHoldings())+"/5");
+    if (hyper_ && knownPetal(stagedPetal_)) {
+        if (now - askedAt_ > 1) {
+            ctx.net.requestTitanHolder(stagedPetal_);
+            askedAt_ = now;
+        }
+        SlotCardLayout line = card;
+        line.lineY = panel.y + 113;
+        const auto held = ctx.net.hyperHoldings();
+        const auto wait = ctx.net.hyperProtectionLeft(stagedPetal_);
+        if (!holder) {
+            drawSlotLine(canvas, line, "正在查询泰坦…请站在泰坦附近。");
+        } else if (held >= kMaxHyperHoldings) {
+            drawSlotLine(canvas, line, "争夺超凡已持有 " + std::to_string(held) + "/" +
+                         std::to_string(kMaxHyperHoldings) + "，已达上限。", kSlotCardRefusalInk);
+        } else if (*holder == profile.username) {
+            drawSlotLine(canvas, line, "你已经持有这位泰坦的该超凡。", kSlotCardRefusalInk);
+        } else {
+            drawSlotLine(canvas, line, std::string("持有者：") + (holder->empty() ? "暂无" : *holder) +
+                         "  保护剩余：" + std::to_string(static_cast<int>(std::ceil(wait / 60000))) +
+                         "分钟  已持有 " + std::to_string(held) + "/" + std::to_string(kMaxHyperHoldings));
+        }
     }
 
     // --- the grid ----------------------------------------------------------

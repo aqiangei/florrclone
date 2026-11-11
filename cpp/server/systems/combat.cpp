@@ -1727,13 +1727,16 @@ void CombatSystem::applyKnockback(World& world, Entity victim, Vec2 offset, doub
     if (direction.lengthSq() < 1e-12) return;   // exactly co-located: no direction to push along
     strength *= knockbackTakenScale(world, victim);
 
-    // This mirrors playerState.ts: `effectiveKnockback` is the petal stat
-    // divided by mob mass, and setMobKnockback() REPLACES the old vector.
+    // Effective knockback is the petal stat divided by mob mass.
     // Movement drains it next tick: a flower's becomes momentum its friction
     // spends (shoveSpeed), a mob's is spent over about a third of a second
     // (kKnockbackSpendDecay). Worn rubbers scale it (knockbackTakenScale,
     // above), and no second mass division is involved.
-    world.ensure<Knockback>(victim).impulse = direction * (strength / mass);
+    auto& pending = world.ensure<Knockback>(victim).impulse;
+    const Vec2 impulse = direction * (strength / mass);
+    // Several petals can hit in one tick. A later weak contact must not erase
+    // a Heavy or Jelly hit, and overlapping copies must not add their forces.
+    if (impulse.lengthSq() >= pending.lengthSq()) pending = impulse;
 }
 
 namespace {
@@ -2748,7 +2751,6 @@ void CombatSystem::gatherContact(World& world, const ContentRegistry& content, d
         source.isNpcBody = target.npc;
         source.isPet = target.pet;
         source.isPlayerBody = target.player;
-        if (source.isPlayerBody && isBurrowed(world, e, nowMillis)) return;
         if (source.isMobBody && !source.isPet && !source.isPlayerBody && !world.has<ProjectileTag>(e)) {
             const auto* side = world.tryGet<Faction>(e);
             source.isHostileBody = !side || side->team == Team::Hostiles;
@@ -2836,7 +2838,6 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
     queries_->petals.each([&](Entity e, PetalInstance& petal, Transform& transform, Body& body) {
         const PetalConfig& config = content.petal(petal.configIndex);
         if (config.noPhysics) return;   // a pure modifier has no body to hit with
-        if (isBurrowed(world, petal.owner, nowMillis)) return;
         const PetalStats stats = computerSetStats(content,world,petal.owner,petal.configIndex,petal.rarity,content.petalStats(petal.configIndex, petal.rarity));
         // A loose petal swings at mobs only if it has DAMAGE to swing with --
         // the moon does, wax does not. Knockback alone is not enough: wax's
@@ -3098,8 +3099,6 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
                     transform->position,targetBody.radius,targetHalf,transform->angle,
                     (petPair?kMobCollisionBuffer:0)+(flushPair?kNpcTouchSlack:0)).depth<0) continue;
             } else if (offset.lengthSq() > reach * reach) continue;
-            if (targetBody.player && isBurrowed(world, victim, nowMillis) &&
-                !canNoticeBurrowed(world, source.attacker, victim)) continue;
 
             if (timing) ++overlaps;
 
@@ -3679,7 +3678,6 @@ void CombatSystem::resolvePetalPvp(World& world, const MeleeSource& source, Enti
     const PetalInstance* petal = world.tryGet<PetalInstance>(source.attacker);
     if (petal == nullptr) return;
     const Entity owner = petal->owner;
-    if (isBurrowed(world, victim, nowMillis)) return;
     // The reference skips its own flower by id and its splitter half by socket
     // -- one person, however many bodies -- before anything is charged. Here
     // the ring resolves back to its owner for the first, and the second is the
@@ -3945,8 +3943,6 @@ void CombatSystem::tickProjectiles(World& world, const SpatialGrid& grid,
             const auto impact = candidate.testLive ? sweepLiveShotTarget(world, shot, victim)
                                                   : std::optional<ShotImpact>{candidate.impact};
             if (!impact) continue;
-            if (isBurrowed(world, victim, nowMillis) &&
-                !canNoticeBurrowed(world, shot.entity, victim)) continue;
             // Above canHit() on purpose: a glitch shot marks the flower it
             // touches whether or not the hit itself is refused, and a
             // flower under respawn protection is not in `impacts_` at all.

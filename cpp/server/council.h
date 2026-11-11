@@ -31,11 +31,8 @@ inline Json weights(const Database& db) {
     for(const auto& id:db.playerIds()) {
         const auto* a=db.findUserById(id); const auto* p=db.findProgress(id);
         if(!a||a->guest||a->admin||!p) continue;
-        double recorded=std::max(0.0,db.storedTable("councilActivity")[id].asDouble())+
+        const double seconds=std::max(0.0,db.storedTable("councilActivity")[id].asDouble())+
             std::max(0.0,p->extra["councilActiveSeconds"].asDouble());
-        const auto& legacy=db.storedTable("councilLegacyActivity")["accounts"][id];
-        double credited=std::max(0.0,legacy["seconds"].asDouble());
-        double seconds=recorded+credited;
         int level=levelFromTotalXp(p->totalXp).level;
         if(level<2 && seconds<60) continue;
         double petals=0;
@@ -48,7 +45,7 @@ inline Json weights(const Database& db) {
         }
         Json row=Json::object(); row["id"]=id; row["name"]=a->username;
         row["seconds"]=seconds; row["level"]=level; row["petals"]=petals;
-        row["recordedSeconds"]=recorded;row["creditedSeconds"]=credited;row["creditLevel"]=legacy["level"];
+        row["recordedSeconds"]=seconds;
         row["timeScore"]=std::log1p(seconds/3600); row["levelScore"]=std::max(0.0,level-1.0);
         totals[0]+=row["timeScore"].asDouble(); totals[1]+=row["levelScore"].asDouble(); totals[2]+=petals;
         rows.push(row);

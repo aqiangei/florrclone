@@ -4410,6 +4410,38 @@ TEST(icosahedron_equipped_copies_do_not_cancel_each_others_second_hit_protection
     }
 }
 
+TEST(duplicated_wing_survives_when_only_the_other_copy_hits_a_mob) {
+    CHECK(contentLoaded());
+    if (!contentLoaded()) return;
+    Rig rig;
+    buyDuplicator(rig, 2);
+    rig.equip(0, "wing");
+    rig.freezeRing();
+    rig.settleEquips();
+    rig.settleRing();
+    const Entity first = rig.petalWithSub(0, 0);
+    const Entity second = rig.petalWithSub(0, 1);
+    CHECK(first != NULL_ENTITY && second != NULL_ENTITY);
+    if (first == NULL_ENTITY || second == NULL_ENTITY) return;
+    const double secondHealth = rig.healthOf(second);
+    const Entity mob = addMob(rig, rig.position(first));
+    rig.world.add<ContactDamage>(mob, ContactDamage{10000});
+    CombatSystem combat;
+    ricochetCombatTick(rig, combat);
+    CHECK(rig.world.has<Dead>(first));
+    CHECK(!rig.world.has<Dead>(second));
+    rig.reap();
+    rig.tick();
+    CHECK_EQ(rig.petals(0).size(), std::size_t(1));
+    CHECK(!rig.slot(0).broken);
+    CHECK_EQ(rig.petalWithSub(0, 1), second);
+    if (!rig.world.isAlive(second)) return;
+    CHECK_NEAR(rig.healthOf(second), secondHealth, 1e-9);
+    CHECK(rig.tickUntil([&] { return rig.petals(0).size() == 2; }));
+    CHECK_EQ(rig.petalWithSub(0, 1), second);
+    CHECK_NEAR(rig.healthOf(rig.petalWithSub(0, 0)), secondHealth, 1e-9);
+}
+
 TEST(duplicator_adds_one_copy_to_a_clump_and_triplicator_two) {
     if (!contentLoaded()) return;
     for (int tier = 0; tier < 2; ++tier) {
@@ -6431,44 +6463,28 @@ TEST(wiki_mechanism_shovel_charges_spends_reload_and_expires_without_permanent_i
     CHECK(combat.applyDamage(rig.world,rig.player,target,1,rig.now).applied>0);
 }
 
-TEST(shovel_prevents_a_new_volley_and_forces_surface_time_with_two_slots) {
-    CHECK(contentLoaded());
-    Rig rig;
-    // Grapes would fire on defend before the shovels if actions ran in slot order.
-    rig.equip(0, "grapes");
-    rig.equip(1, "shovel");
-    rig.equip(2, "shovel");
-    rig.equip(3, "raindrop");
-    rig.settleEquips();
-    rig.tick(65);
-    auto& cooldown = rig.world.get<PetalSlotState>(rig.player);
-    cooldown.raindropReadyAtMillis = rig.now;
-    rig.setFlags(net::InputDefend);
-    rig.tick();
-    const auto* state = rig.world.tryGet<BurrowState>(rig.player);
-    CHECK(state && state->active);
-    if (!state) return;
-    const double surfaceAt = state->untilMillis;
-    const double readyAt = state->readyAtMillis;
-    Query<ProjectileTag> shots{rig.world};
-    std::vector<Entity> entities;
-    while (rig.now + net::kTickMillis < surfaceAt) {
-        shots.collect(entities);
-        CHECK(entities.empty());
-        CHECK(rig.world.get<PetalSlotState>(rig.player).raindropReadyAtMillis < rig.now);
+TEST(shovel_blocks_only_equipped_corruption_and_has_no_shared_surface_delay) {
+    const auto& registry = testsupport::shippedContent();
+    for (bool equipped : {false, true}) {
+        Rig rig(registry);
+        rig.equip(0, "shovel");
+        rig.equip(1, "shovel");
+        if (equipped) rig.equip(2, "corruption");
+        rig.settleEquips();
+        rig.tick(65);
+        // Passive corruption effects alone must not block the shovel.
+        rig.world.ensure<PlayerVisuals>(rig.player).nearbyCorruption = true;
+        rig.setFlags(net::InputDefend);
         rig.tick();
+        const auto* state = rig.world.tryGet<BurrowState>(rig.player);
+        CHECK_EQ(state && state->active, !equipped);
+        if (!equipped && state) {
+            const double expires = state->untilMillis;
+            while (rig.now <= expires) rig.tick();
+            CHECK(rig.world.get<BurrowState>(rig.player).active);
+            CHECK(rig.world.get<BurrowState>(rig.player).untilMillis > expires);
+        }
     }
-    rig.tick();
-    CHECK(!rig.world.get<BurrowState>(rig.player).active);
-    shots.collect(entities);
-    CHECK(!entities.empty());
-    CHECK(rig.world.get<PetalSlotState>(rig.player).raindropReadyAtMillis > rig.now);
-    while (rig.now + net::kTickMillis < readyAt) {
-        rig.tick();
-        CHECK(!rig.world.get<BurrowState>(rig.player).active);
-    }
-    rig.tick();
-    CHECK(rig.world.get<BurrowState>(rig.player).active);
 }
 
 TEST(wiki_mechanism_lentil_attracts_close_sawblade_and_its_mimic) {
@@ -7936,4 +7952,32 @@ TEST(hyper_technique_privet_berry_saves_short_poison_and_cleanses_long_poison) {
     rig.tick();
     CHECK(!rig.world.get<Health>(berry).alive());
     CHECK_NEAR(rig.world.get<Afflictions>(rig.player).poisonUntilMillis, expires - 1250.0, 1e-7);
+}
+
+TEST(monstera_heals_wounded_flowers_once_per_second_with_range_and_faction_checks) {
+    Rig rig(testsupport::shippedContent());
+    rig.equip(0, "monstera", Rarity::Legendary);
+    rig.settleEquips();
+    const Vec2 centre = rig.position(rig.player);
+    const Entity ally = addFlower(rig, centre + Vec2{40, 0});
+    const Entity distant = addFlower(rig, centre + Vec2{1000, 0});
+    const Entity enemy = addFlower(rig, centre + Vec2{50, 0});
+    rig.world.get<Faction>(enemy).team = Team::Hostiles;
+    rig.world.get<Health>(enemy).current = rig.world.get<Health>(enemy).max * .25;
+    const double enemyBefore = rig.world.get<Health>(enemy).current;
+    for (const auto e : {rig.player, ally, distant}) {
+        auto& hp = rig.world.get<Health>(e);
+        hp.current = hp.max * .25;
+    }
+    const double ownBefore = rig.world.get<Health>(rig.player).current;
+    const double allyBefore = rig.world.get<Health>(ally).current;
+    const double distantBefore = rig.world.get<Health>(distant).current;
+    rig.tick(21);
+    CHECK(rig.world.get<Health>(rig.player).current > ownBefore + 1);
+    CHECK(rig.world.get<Health>(ally).current > allyBefore + 1);
+    CHECK(rig.world.get<Health>(distant).current <= distantBefore + 10);
+    CHECK(rig.world.get<Health>(enemy).current <= enemyBefore + 10);
+    const double healed = rig.world.get<Health>(ally).current;
+    rig.tick(2);
+    CHECK(rig.world.get<Health>(ally).current <= healed + 1);
 }

@@ -400,8 +400,6 @@ private:
     void stepPetalPhysics(World& world, const ContentRegistry& registry, PetalInstance& instance,
                           Transform& transform, Vec2 home, Vec2 orbit, double attractionRadius,
                           double spinSpeed, double nowMillis, double dt);
-    bool startBurrow(World& world, const ContentRegistry& registry, Entity player,
-                     double nowMillis);
     void runActions(World& world, const ContentRegistry& registry, Entity player,
                     double nowMillis, double dt);
 

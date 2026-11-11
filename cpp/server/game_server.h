@@ -142,6 +142,7 @@ struct ServerConfig {
     bool adaptivePacing = true;
     bool backgroundSave = false;
     bool tickProbe = false;
+    int sharedSkinRealm = 0;
     bool contactVisitProbe = false;
     /// The `/admin db` key to use as is, instead of the one in the key file
     /// beside the database. Empty means the file. Only the offline page sets
@@ -178,6 +179,7 @@ public:
     /// the server has stopped.
     void serviceArrivals();
     double nextStepDelayMillis() const;
+    bool applySharedSkinSnapshot(const Json& snapshot);
 
     /// Flushes every playing account and the database, then drops the
     /// listener. run() does this on the way out; the emscripten build calls it
@@ -1040,6 +1042,8 @@ private:
     /// profile: a client that has not seen a skin cannot draw whoever wears it.
     bool canModeratePublicSkins(const Session&) const;
     void sendSkinCatalog(Session&, net::Connection&);
+    void expireSharedSkinSources();
+    void broadcastSharedSkinRemoval(const std::string& id);
     void unequipCustomSkin(const std::string& skinId, const std::string& exceptUserId = {});
     /// A published skin's sampled look (skin_likeness.h), sampled again only
     /// when the shapes filed under its id change -- `/admin db` can edit a
@@ -1810,6 +1814,13 @@ private:
     double lastDropBonusTickWallMillis_ = 0;
     double wallClockMillis_ = 0;
     double nextCouncilSampleMillis_ = 0;
+    double nextSharedSkinExpiryCheck_ = 0;
+    struct SharedSkinSource {
+        double capturedAt = 0;
+        bool available = false;
+        std::unordered_map<std::string, CustomSkin> skins;
+    };
+    std::array<SharedSkinSource, 3> sharedSkinSources_;
 
     /// How long tick() itself took, drained once a second into a DebugStats
     /// broadcast. The mean says what the server costs at rest; the worst

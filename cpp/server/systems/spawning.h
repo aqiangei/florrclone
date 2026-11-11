@@ -105,6 +105,8 @@ struct AmbientMob {
     /// apexes): the later of them is the one that goes. A sequence rather
     /// than a time, because a band stocks dozens in one tick.
     std::uint64_t spawnOrder = 0;
+    /// Replaced by a dedicated quota, never by the ordinary band refill.
+    bool managedPopulation = false;
 };
 
 /// A nest working through the escalating `spawn_waves` list in its config.
@@ -761,6 +763,8 @@ private:
         /// band: "is this band worth walking at all" is one rectangle test
         /// against the viewports, and "is this band full" is a size().
         std::vector<LatentMob> latent;
+        /// Species owed by kills whose replacement could not yet be placed.
+        std::vector<std::uint16_t> pendingSpecies;
         /// Live mobs this band placed, as of the last census. Stale by up to
         /// one census between passes, which self-corrects: an over-count
         /// delays a replacement by half a second, an under-count is spent on a
@@ -819,7 +823,8 @@ private:
     bool stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                    SpawnZone& zone, std::uint16_t zoneIndex, const std::vector<Viewer>& viewers,
                    Rng& rng, double nowMillis, Slot slot = Slot::TopUp, Vec2 lostAt = Vec2{},
-                   bool fixedSuper = false, Rarity managedTier = Rarity::Super, bool superFarm = false);
+                   bool fixedSuper = false, Rarity managedTier = Rarity::Super, bool superFarm = false,
+                   std::uint16_t replacementType = kInvalidIndex);
 
     /// Gives each band back the population that died in it, where it died.
     ///
@@ -1027,6 +1032,13 @@ private:
     /// once. Bands from EVERY staged map, each tagged with its realm, each
     /// holding its own share of the world's latent population.
     std::vector<SpawnZone> zones_;
+    struct ManagedVacancy {
+        std::uint16_t zone = kInvalidIndex;
+        std::uint16_t mobIndex = kInvalidIndex;
+        Rarity rarity = Rarity::Common;
+        bool superFarm = false;
+    };
+    std::vector<ManagedVacancy> managedVacancies_;
     /// The mob regions, in map order. Same shape as a band and rebuilt beside
     /// them, but kept apart because they own no population: a region says which
     /// ROSTER belongs to a patch of map, and a band standing on it with no
@@ -1103,14 +1115,26 @@ private:
     /// Where each of this pass's dead fell, and which band is owed it.
     /// Collected before any of it is spent, because spending it creates
     /// entities and that moves the very rows the walk is holding.
-    struct Casualty { Entity entity = NULL_ENTITY; Vec2 position; std::uint16_t zone = kInvalidIndex; };
+    struct Casualty {
+        Entity entity = NULL_ENTITY;
+        Vec2 position;
+        std::uint16_t zone = kInvalidIndex;
+        std::uint16_t mobIndex = kInvalidIndex;
+        bool managedPopulation = false;
+    };
     std::vector<Casualty> casualtyList_;
     /// Every live band mob as of the last census, plus those that have come
     /// to life since, with the band holding its slot and where it was last
     /// counted. A KILLED one is taken off as it is banked, so whatever the
     /// next census cannot find any more went away without dying, and
     /// `vanished_` is that pass's list of them.
-    struct CensusMob { Entity entity = NULL_ENTITY; Vec2 position; std::uint16_t zone = kInvalidIndex; };
+    struct CensusMob {
+        Entity entity = NULL_ENTITY;
+        Vec2 position;
+        std::uint16_t zone = kInvalidIndex;
+        bool managedPopulation = false;
+        std::uint16_t mobIndex = kInvalidIndex;
+    };
     std::vector<CensusMob> censusMobs_;
     std::vector<CensusMob> vanished_;
     /// Current connected roots, independent of the chain's birth cohort.
