@@ -438,13 +438,14 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     const auto& iconId = content().petal(petalIndex).id;
     const bool egg = iconId == "egg";
     const bool beetleEgg = iconId == "beetle_egg";
+    const bool battery = iconId == "battery";
     const bool canFan = equipmentFan && drawCount > 1;
     const bool polygon = equipmentFan && drawCount >= 3 &&
         (iconId == "stinger" || iconId == "magic_stinger" ||
          iconId == "blood_stinger" || iconId == "triangle");
     const Vec2 extent = canFan ? sprites.petalExtent(petalIndex) : Vec2{1.0, 1.0};
     const bool slender = std::max(extent.x, extent.y) >= 1.4 * std::min(extent.x, extent.y);
-    const bool fan = canFan && !polygon && (egg || beetleEgg || slender);
+    const bool fan = canFan && !polygon && (egg || beetleEgg || battery || slender);
     const double upright = !egg && !beetleEgg && extent.x > extent.y ? -kPi * 0.5 : 0.0;
     ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
     const int authoredCount = std::max(1, content().petalStats(petalIndex, rarity).count);
@@ -480,7 +481,8 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
 
     const auto paintCluster = [&](Canvas& into, double ox, double oy) {
         if (drawCount == 1) {
-            sprites.drawPetal(into, petalIndex, rarity, ox, oy, diameter, shape.tilt,
+            const double tilt = battery ? -kPi / 5.5 : shape.tilt;
+            sprites.drawPetal(into, petalIndex, rarity, ox, oy, diameter, tilt,
                               timeSeconds);
             return;
         }
@@ -508,7 +510,7 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
             const double anchorY = oy + fanDiameter * .32;
             const double stem = fanDiameter * (egg ? .40 : beetleEgg ? .35 :
                 .42 * std::max(extent.x, extent.y));
-            const double spread = egg ? .65 : .49;
+            const double spread = (egg || battery) ? .65 : .49;
             for (int i = 0; i < drawCount; ++i) {
                 const double turn = spread * (2.0 * i / (drawCount - 1) - 1.0);
                 const double x = ox + std::sin(turn) * stem;
