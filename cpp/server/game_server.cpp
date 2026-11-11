@@ -558,6 +558,7 @@ net::NotificationKind notificationKind(const std::string& type) {
 struct GameServer::PendingLocalHyper {
     HyperForgePlan plan;
     std::map<std::string, std::string> expectedPlayers;
+    std::map<std::string, double> councilActivityCredits;
     std::string expectedForges, user, token;
     Json forges;
     net::ConnectionId connection = 0;
@@ -1702,8 +1703,15 @@ void GameServer::tick(double wallMillis, double nowMillis) {
             // This counter belongs to the exclusively leased account. The old
             // global table is a read-only historical baseline: a shard's stale
             // copy must never overwrite another shard's activity or block saves.
-            auto& activity=database_.progress(s.userId).extra["councilActiveSeconds"];
-            activity=std::max(0.0,activity.asDouble())+elapsed;database_.markDirty();
+            // Apply these seconds after the forge finishes so an activity
+            // sample cannot invalidate the two inventory snapshots in flight.
+            if (pendingLocalHyper_ && pendingLocalHyper_->expectedPlayers.count(s.userId)) {
+                pendingLocalHyper_->councilActivityCredits[s.userId] += elapsed;
+            } else {
+                auto& activity = database_.progress(s.userId).extra["councilActiveSeconds"];
+                activity = std::max(0.0, activity.asDouble()) + elapsed;
+                database_.markDirty();
+            }
         }
     }
     markSessionPhase("council");
@@ -5214,6 +5222,12 @@ void GameServer::pollLocalHyper(bool shuttingDown) {
             if (sameSession)
                 announceRareCraft(*session, pending.output, Rarity::Apex, 1, pending.plan.result.consumed, true);
         }
+    }
+    for (const auto& [id, elapsed] : pending.councilActivityCredits) {
+        if (elapsed <= 0 || !database_.findProgress(id)) continue;
+        auto& activity = database_.progress(id).extra["councilActiveSeconds"];
+        activity = std::max(0.0, activity.asDouble()) + elapsed;
+        database_.markDirty();
     }
     if (sameSession && !shuttingDown) {
         ByteWriter w;

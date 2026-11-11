@@ -3402,6 +3402,55 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     CHECK(awaitProfile(h,beta,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
     removeDataDir(dir);
 }
+TEST(hyper_forge_network_survives_council_activity_credit) {
+    const auto dir = titanWorld("hyper-active-council");
+    Harness h("hyper-active-council", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_rose", Rarity::Unique, 5);
+    }, dir, 0, [](ServerConfig& config) { config.backgroundSave = true; });
+    CHECK(h.ready);
+    if (!h.ready) { removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const std::vector<NetClient*> clients{&client};
+    standAtTitan(h, clients, "smith");
+    using Peer = testsupport::GameServerPeer;
+    auto* session = Peer::sessionOf(h.server, "smith");
+    CHECK(session);
+    if (!session) { removeDataDir(dir); return; }
+    auto& db = Peer::authorityDb(h.server);
+    const std::string account = session->userId;
+    const auto before = db.findProgress(account)->extra["councilActiveSeconds"].asDouble();
+    const auto rose = content().petalIndex("rose");
+
+    client.requestTitanForge(rose, true);
+    for (int i = 0; i < 20 && !Peer::localForgePending(h.server); ++i) {
+        client.poll(1);
+        h.server.serviceNetwork(1);
+    }
+    CHECK(Peer::localForgePending(h.server));
+    if (!Peer::localForgePending(h.server)) { removeDataDir(dir); return; }
+
+    // Force an ordinary activity sample between request capture and staging.
+    // The claimant's materials, ownership and protection are untouched.
+    h.clock += 1000;
+    session->councilSampleAt = h.clock - 1000;
+    session->councilActiveUntil = h.clock + 1000;
+    Peer::makeCouncilSampleDue(h.server, h.clock);
+    h.server.tick(h.clock);
+    session->councilActiveUntil = 0;
+
+    TitanForgeOutcome outcome;
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(outcome.success);
+    CHECK_NEAR(db.findProgress(account)->extra["councilActiveSeconds"].asDouble(),
+               before + 1, 1e-9);
+    CHECK_EQ(db.findProgress(account)->itemCount(Rarity::Apex, "petal_rose"), 1);
+    CHECK_EQ(db.findProgress(account)->itemCount(Rarity::Unique, "petal_rose"), 0);
+    removeDataDir(dir);
+}
+
 TEST(hyper_hammer_network_forges_mjolnir_from_ten_eternal_fragments) {
     const auto dir=titanWorld("hyper-hammer-network");
     Harness h("hyper-hammer-network",[](const std::string& path){seedAccount(path,"smith");seedStack(path,"smith","petal_fragment",Rarity::Unique,10);},dir,0);

@@ -982,7 +982,15 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 ((viewerOwner != 0 && event.dealtByConnection == viewerOwner) ||
                  (world.tryGet<NetId>(viewer) && event.otherNetId == world.get<NetId>(viewer).value));
             if (event.wearerOnly && !tile) continue;
-            const bool offView = event.positional && outsideView(event.position);
+            bool offView = event.positional && outsideView(event.position);
+            // Large mobs can strike a visible flower while their centre is
+            // outside the streamed view. Keep the bolt when an endpoint is
+            // visible, without exposing effects from another realm.
+            if (offView && event.kind == net::EventKind::Lightning) {
+                for (const Vec2& endpoint : event.points) {
+                    if (!outsideView(endpoint)) { offView = false; break; }
+                }
+            }
             if (event.positional && !tile && !ownPickup &&
                 (event.realm != realm || (offView && !squadmateHit(event)))) {
                 continue;

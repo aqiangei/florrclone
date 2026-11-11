@@ -1562,6 +1562,9 @@ void CombatSystem::awardBounty(World& world, Entity victim) {
                 account ? account->connection : 0, maxHealth);
             xp *= tenths / 10.0;
         }
+        if (const auto* tree = world.tryGet<PlayerSkillTree>(recipient)) {
+            xp *= tree->skills.effectScale(SkillId::Absorbing);
+        }
         xp = std::round(xp);
         if (!grantXp(world, recipient, xp)) continue;
         // The arena leaderboard counts the XP earned inside the ring

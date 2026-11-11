@@ -371,9 +371,8 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                  {fromTo(kDamageTalentPetalScale, tier), kStatDamage}});
             break;
         case SkillId::Absorbing:
-            row({{cn ? "合成 → 吸收花瓣所得经验：" : "Craft → Absorb XP: "},
+            row({{cn ? "打怪与吸收花瓣经验：" : "Monster and petal absorption XP: "},
                  {fromTo(kAbsorbTalentScale, tier), kStatHealth}});
-            row({{cn ? "击杀经验按原规则结算。" : "Kill XP follows the usual rules."}});
             break;
         case SkillId::MovementSpeed:
             row({{cn ? "移动速度：" : "Movement speed: "},

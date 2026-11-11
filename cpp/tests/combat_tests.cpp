@@ -1204,6 +1204,20 @@ TEST(each_ranked_contributor_receives_the_mobs_full_xp) {
     CHECK_NEAR(a.world.get<PlayerProgress>(second).totalXp, 120.0, 1e-9);
 }
 
+TEST(monster_xp_uses_each_recipients_absorption_talent) {
+    Arena a;
+    const Entity trained = a.player({1000, 1000});
+    const Entity untrained = a.player({1000, 1000});
+    const Entity mob = a.mob({1000, 1000}, 100.0, 120.0);
+    a.world.add<PlayerSkillTree>(trained).skills.set(SkillId::Absorbing, 4);
+
+    a.combat.applyDamage(a.world, mob, trained, 75.0, 0.0);
+    a.combat.applyDamage(a.world, mob, untrained, 25.0, 10.0);
+
+    CHECK_NEAR(a.world.get<PlayerProgress>(trained).totalXp, 302.0, 1e-9);
+    CHECK_NEAR(a.world.get<PlayerProgress>(untrained).totalXp, 120.0, 1e-9);
+}
+
 TEST(a_squad_is_paid_the_mobs_xp_including_the_members_who_missed_it) {
     // The XP half of the same rule the drops use, through the real kill path:
     // one squadmate lands every hit, and the mob's full XP reaches the other

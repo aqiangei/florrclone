@@ -2082,3 +2082,16 @@ TEST(craft_quantity_and_cost_are_translated_in_replayed_system_messages) {
     CHECK(text.find("crafted")==std::string::npos);CHECK(text.find("合成 ×85")!=std::string::npos);CHECK(text.find("消耗 ×19996")!=std::string::npos);
     ui::setLanguage(old);
 }
+
+TEST(wild_lightning_visible_endpoint_survives_offscreen_source) {
+    Fixture f;
+    WorldView client;
+    const auto wild = f.addMob({10000, 1000}, Rarity::Apex, 9000);
+    f.events.lightning({10000,1000}, 9300, Realm::Overworld, {{1000,1000}}, false, wild);
+    f.tick(client, 1, 1000);
+    CHECK_EQ(client.events().size(), 1u);
+    if (client.events().empty()) return;
+    CHECK_EQ(client.events()[0].points.size(), 1u);
+    CHECK_EQ(client.events()[0].flag & net::LightningForeign, 0);
+    CHECK_EQ(client.events()[0].flag & net::LightningFromPet, 0);
+}

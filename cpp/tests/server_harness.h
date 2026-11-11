@@ -786,6 +786,13 @@ inline Entity onlyPlayer(World& world) {
 /// shares the one definition.
 struct GameServerPeer {
     static Database& authorityDb(GameServer& s) { return s.database_; }
+    static bool localForgePending(const GameServer& server) {
+        return static_cast<bool>(server.pendingLocalHyper_);
+    }
+    static void makeCouncilSampleDue(GameServer& server, double now) {
+        server.nextCouncilSampleMillis_ = now;
+    }
+
     static void releaseAuthority(GameServer& s) { s.releaseUnusedAuthority(); }
 
     // Drive the production death reporter without a transport poll.
