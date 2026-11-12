@@ -5076,7 +5076,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     if (permanentHyper) {
         if (!permanentHyperForgeEligible(petal.id) || petal.isAdminPetal ||
             !petalComesAt(petal, Rarity::Unique)) {
-            reply(false, "雷神之锤、碎片和血祭不能兑换永久超凡。");
+            reply(false, "此花瓣不能兑换永久超凡。雷神之锤、限时锤和碎片不参与兑换。");
             return;
         }
         PlayerRecord& record = liveRecord(session);
@@ -5855,9 +5855,9 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     // click on a store that has since changed.
     double price = shopPrice(petalIndex, rarity);
     std::int64_t purchaseRotation = shopRotation(shopClockNow());
-    if (offerSlot == net::kNoShopOffer && (rarity == Rarity::Ultra || rarity == Rarity::Super)) {
+    if (offerSlot == net::kNoShopOffer && rarity == Rarity::Super) {
         sendShopResult(connection, net::ShopResultKind::Purchase, false, 0,
-                       "U/S花瓣只能购买当前或锁定商店中的商品。");
+                       "S花瓣只能购买当前或锁定商店中的商品。");
         return;
     }
     if (offerSlot != net::kNoShopOffer) {

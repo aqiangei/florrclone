@@ -66,22 +66,24 @@ bool overworldBandPoint(const GameServer& server, bool rough, Vec2& out) {
     return false;
 }
 
-/// Wears an apex sacrifice in slot 0, the way a player does.
+/// Wears a sacrifice in slot 0, the way a player does.
 bool wearSacrifice(Harness& h, NetClient& client, const char* account, std::uint16_t sacrifice,
-                   NetClient* peer = nullptr) {
+                   NetClient* peer = nullptr, Rarity rarity = Rarity::Apex) {
     if (!h.server.grantAdmin(client.sessionToken())) return false;
     std::vector<NetClient*> clients{&client};
     if (peer) clients.push_back(peer);
-    client.sendChat(std::string("/admin give ") + account + " " + kSacrificePetalId + " apex 1");
+    client.sendChat(std::string("/admin give ") + account + " " + kSacrificePetalId +
+                    " " + rarityName(rarity) + " 1");
     if (!h.stepUntil(clients, [&] {
-            return client.profile().stackCount(sacrifice, Rarity::Apex) > 0;
+            return client.profile().stackCount(sacrifice, rarity) > 0;
         })) {
         return false;
     }
-    client.setLoadoutSlot(0, sacrifice, Rarity::Apex);
+    client.setLoadoutSlot(0, sacrifice, rarity);
     return h.stepUntil(clients, [&] {
         return !client.profile().loadout.empty() &&
-               client.profile().loadout[0].petalIndex == sacrifice;
+               client.profile().loadout[0].petalIndex == sacrifice &&
+               client.profile().loadout[0].rarity == rarity;
     });
 }
 
@@ -109,7 +111,7 @@ int apexMobsNear(World& world, Vec2 at, double reach) {
 
 } // namespace
 
-TEST(dying_with_a_sacrifice_on_rough_ground_summons_an_apex_there_and_spends_it) {
+static void checkApexSacrificeSummon(Rarity rarity) {
     Harness h("sacrifice-summon", {}, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
     const std::uint16_t sacrifice = content().petalIndex(kSacrificePetalId);
@@ -119,7 +121,7 @@ TEST(dying_with_a_sacrifice_on_rough_ground_summons_an_apex_there_and_spends_it)
     CHECK(loginNew(h, alice, "alice", "hunter2!"));
     alice.joinGame(1280, 720, {}, "alice");
     CHECK(h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; }));
-    CHECK(wearSacrifice(h, alice, "alice", sacrifice));
+    CHECK(wearSacrifice(h, alice, "alice", sacrifice, nullptr, rarity));
 
     World& world = h.server.world();
     const Entity body = soleBody(world, "alice");
@@ -137,13 +139,14 @@ TEST(dying_with_a_sacrifice_on_rough_ground_summons_an_apex_there_and_spends_it)
     CHECK(h.stepUntil({&alice}, [&] {
         return !alice.profile().loadout.empty() && alice.profile().loadout[0].empty();
     }));
-    CHECK_EQ(alice.profile().stackCount(sacrifice, Rarity::Apex), 0u);
+    CHECK_EQ(alice.profile().stackCount(sacrifice, rarity), 0u);
     const std::vector<Entity> rituals = ritualsIn(world);
     CHECK_EQ(rituals.size(), std::size_t(1));
     if (rituals.size() != 1) return;
     const Entity ritual = rituals.front();
     CHECK(distance(world.get<Transform>(ritual).position, at) < 1.0);
     CHECK(world.get<Replicated>(ritual).kind == net::EntityKind::Effect);
+    CHECK(world.get<SacrificeRitual>(ritual).offeredRarity == rarity);
     CHECK_EQ(apexMobsNear(world, at, 400.0), 0);
 
     // Five seconds on, the pentagram is complete and the mob comes out at its
@@ -166,6 +169,14 @@ TEST(dying_with_a_sacrifice_on_rough_ground_summons_an_apex_there_and_spends_it)
     CHECK(h.stepUntil({&alice}, [&] { return !world.isAlive(ritual); }, 10));
 }
 
+TEST(dying_with_a_sacrifice_on_rough_ground_summons_an_apex_there_and_spends_it) {
+    checkApexSacrificeSummon(Rarity::Apex);
+}
+
+TEST(a_permanent_hyper_sacrifice_summons_an_apex_and_spends_the_permanent_item) {
+    checkApexSacrificeSummon(Rarity::PermanentHyper);
+}
+
 TEST(contended_apex_sacrifices_reserve_one_slot_and_refund_if_the_summon_fails) {
     Harness h("sacrifice-contended", {}, flix::testsupport::dataDir(), 0);
     if (!h.ready) { CHECK(false); return; }
@@ -178,7 +189,7 @@ TEST(contended_apex_sacrifices_reserve_one_slot_and_refund_if_the_summon_fails) 
     CHECK(h.stepUntil({&alice, &bob}, [&] {
         return alice.status() == NetClient::Status::Playing && bob.status() == NetClient::Status::Playing;
     }));
-    CHECK(wearSacrifice(h, alice, "alice", petal, &bob));
+    CHECK(wearSacrifice(h, alice, "alice", petal, &bob, Rarity::PermanentHyper));
     CHECK(wearSacrifice(h, bob, "bob", petal, &alice));
 
     World& world = h.server.world();
@@ -192,12 +203,17 @@ TEST(contended_apex_sacrifices_reserve_one_slot_and_refund_if_the_summon_fails) 
     world.get<Transform>(a).position = at;
     world.get<Transform>(b).position = at;
     kill(world, a);
-    kill(world, b);
-    CHECK(h.stepUntil({&alice, &bob}, [&] { return ritualsIn(world).size() == 1; }, 10));
+    CHECK(h.stepUntil({&alice, &bob}, [&] {
+        return ritualsIn(world).size() == 1 && alice.profile().loadout[0].empty();
+    }, 10));
     const auto rituals = ritualsIn(world);
     if (rituals.size() != 1) return;
     const Entity ritual = rituals.front();
-    CHECK(alice.profile().loadout[0].empty() != bob.profile().loadout[0].empty());
+    CHECK(world.get<SacrificeRitual>(ritual).offeredRarity == Rarity::PermanentHyper);
+    kill(world, b);
+    h.step(4, {&alice, &bob});
+    CHECK_EQ(ritualsIn(world).size(), std::size_t{1});
+    CHECK(bob.profile().loadout[0].rarity == Rarity::Apex);
 
     // Another live Apex appears during the pentagram (for example from an
     // operator). Completing the accepted ritual must not lose the offering.
@@ -210,7 +226,9 @@ TEST(contended_apex_sacrifices_reserve_one_slot_and_refund_if_the_summon_fails) 
     world.add<MobType>(blocker, MobType{content().mobIndex("bee"), Rarity::Apex, 1.0});
     CHECK(h.stepUntil({&alice, &bob}, [&] { return !world.isAlive(ritual); }, 120));
     CHECK(h.stepUntil({&alice, &bob}, [&] {
-        return !alice.profile().loadout[0].empty() && !bob.profile().loadout[0].empty();
+        return !alice.profile().loadout[0].empty() &&
+               alice.profile().loadout[0].rarity == Rarity::PermanentHyper &&
+               !bob.profile().loadout[0].empty() && bob.profile().loadout[0].rarity == Rarity::Apex;
     }, 10));
 }
 

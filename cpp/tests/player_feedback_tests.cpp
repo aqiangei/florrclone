@@ -202,18 +202,17 @@ TEST(feedback_talent_vision_changes_camera_and_does_not_stack_with_antennae) {
     p.loadout.resize(kLoadoutSlots);p.loadout[0].petalIndex=content().petalIndex("antennae");p.loadout[0].rarity=Rarity::Super;
     CHECK_NEAR(loadoutCameraZoom(p,content()),std::min(.5,petalCameraZoom(content(),p.loadout[0].petalIndex,Rarity::Super)),1e-9);
 }
-TEST(feedback_shop_each_hour_has_exactly_two_super_offers_at_the_shared_price) {
+TEST(feedback_shop_each_hour_has_five_super_offers_at_the_shared_price) {
     CHECK(feedbackContent());
     for (int rotation=0;rotation<200;++rotation) {
-        const auto offers=shopOffers(rotation);int supers=0;
+        const auto offers=shopOffers(rotation);
         CHECK_EQ(offers.size(),static_cast<std::size_t>(kShopOfferCount));
         for (const auto& offer:offers) {
-            supers += offer.rarity==Rarity::Super;
+            CHECK(offer.rarity==Rarity::Super);
             CHECK(shopSellsPetal(offer.petalIndex));
             CHECK(shopSellsRarity(offer.rarity));
-            CHECK_NEAR(offer.price,std::floor(shopPrice(offer.petalIndex,offer.rarity)*(100-offer.discountPercent)/100.0),1e-9);
+            CHECK_NEAR(offer.price,shopOfferPrice(offer.petalIndex,offer.rarity,offer.discountPercent),1e-9);
         }
-        CHECK_EQ(supers,2);
         CHECK_EQ(shopRotationEnd(rotation)-shopRotationEnd(rotation-1),3600);
     }
 }
@@ -222,7 +221,7 @@ TEST(feedback_scarce_shop_petals_keep_their_authored_price_premium) {
     const auto mimic=content().petalIndex("mimic");
     const auto basic=content().petalIndex("basic");
     const double price=shopPrice(mimic,Rarity::Super);
-    CHECK_NEAR(price,10500,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*6);
+    CHECK_NEAR(price,45000,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*6);
     CHECK(!shopSellsRarity(Rarity::Unique));
     CHECK(shopPrice(mimic,Rarity::Ultra)>shopPrice(basic,Rarity::Ultra)*4);
 }

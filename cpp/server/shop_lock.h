@@ -50,13 +50,27 @@ inline std::vector<ShopOffer> lockedShopOffers(const PlayerRecord& record) {
     if(!rows.isArray() || record.extra["lockedShopOffersRotation"].asDouble(-1)!=rotation)
         return shopOffers(rotation); // Legacy state is captured on login.
     std::vector<ShopOffer> result;
-    for(const auto& row:rows.items()) {
-        ShopOffer offer;offer.petalIndex=content().petalIndex(row["petalType"].asString());
-        offer.rarity=parseRarity(row["rarity"].asString());
-        if(offer.petalIndex==kInvalidIndex || !shopSellsPetal(offer.petalIndex) || !shopSellsRarity(offer.rarity))continue;
-        offer.discountPercent=clamp(row["discountPercent"].asInt(),0,30);
-        offer.price=shopOfferPrice(offer.petalIndex,offer.rarity,offer.discountPercent);
-        result.push_back(offer);
+    const auto alreadyListed = [&](std::uint16_t petalIndex) {
+        return std::any_of(result.begin(), result.end(), [&](const ShopOffer& offer) {
+            return offer.petalIndex == petalIndex;
+        });
+    };
+    for (const auto& row : rows.items()) {
+        if (result.size() == kShopOfferCount) break;
+        if (row["rarity"].asString() != rarityName(Rarity::Super)) continue;
+        const auto petalIndex = content().petalIndex(row["petalType"].asString());
+        if (!shopSellsPetal(petalIndex) || alreadyListed(petalIndex)) continue;
+        const int discount = clamp(row["discountPercent"].asInt(), 0, 30);
+        result.push_back({petalIndex, Rarity::Super,
+                          shopOfferPrice(petalIndex, Rarity::Super, discount), discount});
+    }
+    // Older locks contain Ultra offers. Fill their empty slots from the same
+    // hour while preserving any saved Super offers and their discounts.
+    if (result.size() < kShopOfferCount) {
+        for (const auto& offer : shopOffers(rotation)) {
+            if (!alreadyListed(offer.petalIndex)) result.push_back(offer);
+            if (result.size() == kShopOfferCount) break;
+        }
     }
     return result;
 }

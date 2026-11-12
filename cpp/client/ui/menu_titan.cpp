@@ -351,7 +351,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             if (permanentHyper_) {
                 constexpr std::array<const char*, 3> rules = {
                     "30 个未装备的同种永恒 → 1 个永久超凡",
-                    "雷神之锤、碎片和血祭不参与兑换",
+                    "雷神之锤、限时锤和碎片不参与兑换",
                     "数值与技能等同超凡，永久归属"
                 };
                 drawSlotLine(canvas, line, rules[i]);
@@ -509,7 +509,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             refusal_.clear();
         } else {
             const auto& id=content().petal(hovered->petalIndex).id;
-            refusal_=permanentHyper_?"需要 30 个同种永恒，雷神之锤、碎片和血祭不参与兑换。":
+            refusal_=permanentHyper_?"需要 30 个未装备的同种永恒花瓣。雷神之锤、限时锤和碎片不参与兑换。":
                 hyper_&&(id=="timed_mjolnir"||id=="mjolnir")?"超凡锤子需10个永恒碎片，限时锤不能参与争夺。":
                 "材料不足或不可锻造；超凡需5个未装备的同种永恒。";
             refusalUntil_=now+kRefusalSeconds;

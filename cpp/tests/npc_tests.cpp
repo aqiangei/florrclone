@@ -2155,14 +2155,22 @@ TEST(permanent_hyper_exchange_consumes_only_bagged_eternals_and_saves_the_new_id
         CHECK_EQ(outcome.success, succeeds);
         CHECK_EQ(outcome.quantity, succeeds ? 1u : 0u);
     };
+    const auto blood = content().petalIndex("blood_sacrifice");
     exchange(rose, false); // Outside the titan's service radius.
+    exchange(blood, false);
     standAtTitan(h, clients, "smith");
-    for (const char* id : {"mjolnir", "timed_mjolnir", "fragment", "blood_sacrifice"}) {
+    for (const char* id : {"mjolnir", "timed_mjolnir", "fragment"}) {
         const auto index = content().petalIndex(id);
         const auto before = client.profile().stackCount(index, Rarity::Unique);
         exchange(index, false);
         CHECK_EQ(client.profile().stackCount(index, Rarity::Unique), before);
     }
+    exchange(blood, true);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(blood, Rarity::Unique) == 0 &&
+               p.stackCount(blood, Rarity::PermanentHyper) == 1;
+    }));
+    exchange(blood, false);
     const auto wing = content().petalIndex("wing");
     exchange(wing, false);
     CHECK_EQ(client.profile().stackCount(wing, Rarity::Unique), 30u);
@@ -2209,6 +2217,8 @@ TEST(permanent_hyper_exchange_consumes_only_bagged_eternals_and_saves_the_new_id
         const auto* record = restored.findProgress(user->id);
         CHECK(record && record->loadout[0] && record->loadout[0]->rarity == Rarity::PermanentHyper);
         CHECK(record && record->itemCount(Rarity::PermanentHyper, "petal_rose") == 1);
+        CHECK(record && record->itemCount(Rarity::PermanentHyper, "petal_blood_sacrifice") == 1);
+        CHECK(record && record->itemCount(Rarity::Unique, "petal_blood_sacrifice") == 0);
     }
     removeDataDir(dir);
 }

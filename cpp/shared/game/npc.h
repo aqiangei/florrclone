@@ -160,7 +160,7 @@ inline bool hyperForgeEligible(const std::string& input) {
 inline constexpr int kPermanentHyperCost = 30;
 inline constexpr std::uint8_t kPermanentHyperForgeMode = 5;
 inline bool permanentHyperForgeEligible(const std::string& input) {
-    return input != "fragment" && hyperForgeEligible(input);
+    return input == "blood_sacrifice" || (input != "fragment" && hyperForgeEligible(input));
 }
 inline constexpr std::int64_t hyperProtectionMillis(int claims) {
     return static_cast<std::int64_t>(claims<15?16-std::max(1,claims):1)*3600000;

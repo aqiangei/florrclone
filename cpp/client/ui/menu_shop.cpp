@@ -46,9 +46,7 @@ namespace {
 
 // --- the window -------------------------------------------------------------
 
-/// Sized to the Shop tab's content: 13 + five 140 cells + 13 across; the title
-/// row, the tab strip, 8, the two header lines, two 160 rows, 10, the two
-/// footer lines and 13 down.
+/// Shared window size for the offers, daily bonus and star guide tabs.
 constexpr double kWindowWidth = 746.0;
 constexpr double kWindowHeight = 541.4;
 constexpr double kWindowPad = 13.0;
@@ -97,14 +95,14 @@ constexpr std::uint32_t kLockFace = 0x72D862u;
 
 // --- the store's grid -------------------------------------------------------
 
-/// Two rows of five 140x160 cells; each holds a 120x140 plate 20 in and 10
-/// down, the tile and the price button on it.
+/// Five 120x140 plates in a single row, spaced 140 units apart.
 constexpr double kGridLeft = kWindowPad + 20.0;
 constexpr double kGridTop = kHeaderTop + kHeaderHeight + 10.0;
 constexpr double kCellWidth = 140.0;
-constexpr double kCellHeight = 160.0;
+constexpr double kGridHeight = 320.0;
 constexpr double kPlateWidth = 120.0;
 constexpr double kPlateHeight = 140.0;
+constexpr double kPlateTop = kGridTop - 10.0 + (kGridHeight - kPlateHeight) * 0.5;
 constexpr double kPlateRadius = 5.0;
 constexpr double kTile = 80.0;
 constexpr double kTileLeft = 20.0;
@@ -131,7 +129,7 @@ constexpr double kBadgeSize = 20.0;
 /// The footer: the balance plate in the bottom-right corner -- 5 in, the star
 /// in a 20 box, the number at 20, 5 in -- and two 14 lines right-aligned 10
 /// left of it.
-constexpr double kFooterTop = kGridTop + 2.0 * kCellHeight + 10.0;
+constexpr double kFooterTop = kGridTop + kGridHeight + 10.0;
 constexpr double kFooterSize = 14.0;
 constexpr double kFooterMiddle = kFooterTop + kFooterSize * kLineHeight;
 constexpr double kBalanceHeight = 38.0;
@@ -758,9 +756,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         std::array<Rect, kShopOfferCount> tiles{};
         for (std::size_t i = 0; i < state.offers.size() && i < kShopOfferCount; ++i) {
             const ShopOffer& offer = state.offers[i];
-            const int column = static_cast<int>(i) % kShopOfferColumns;
-            const int row = static_cast<int>(i) / kShopOfferColumns;
-            const Vec2 plateAt = at(kGridLeft + column * kCellWidth, kGridTop + row * kCellHeight);
+            const Vec2 plateAt = at(kGridLeft + static_cast<double>(i) * kCellWidth, kPlateTop);
             fillQuadRound(canvas, {plateAt.x, plateAt.y, kPlateWidth, kPlateHeight}, kPlateRadius,
                           kWindowRim);
 
@@ -872,14 +868,9 @@ bool ShopPanel::render(MenuContext& ctx) {
                     "击杀这些稀有度的怪物时，参与者都会获得对应星星。"),
              panel.x + panel.w * 0.5, panel.y + kSubMiddle, shopText(kSubSize));
 
-        // One card a tier on the store's own grid, in the row centred down the
-        // two the store fills: the tier's colour framed florr's way where a
-        // petal would stand, and what it pays where a price would.
-        const double gridHeight = 2.0 * kCellHeight;
-        const double top = kGridTop - 10.0 + (gridHeight - kPlateHeight) * 0.5;
         for (std::size_t i = 0; i < kChallenges.size(); ++i) {
             const StarChallenge& challenge = kChallenges[i];
-            const Vec2 plateAt = at(kGridLeft + static_cast<double>(i) * kCellWidth, top);
+            const Vec2 plateAt = at(kGridLeft + static_cast<double>(i) * kCellWidth, kPlateTop);
             fillQuadRound(canvas, {plateAt.x, plateAt.y, kPlateWidth, kPlateHeight}, kPlateRadius,
                           kWindowRim);
 

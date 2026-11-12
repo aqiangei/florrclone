@@ -1,3 +1,4 @@
+#include <set>
 #include "test.h"
 #include "server_harness.h"
 #include "server/shop_lock.h"
@@ -29,8 +30,8 @@ TEST(shop_stock_locked_moon_rock_uses_the_new_discounted_price) {
     if (!h.ready) return;
     NetClient buyer;
     CHECK(loginAs(h, buyer, "buyer", "password"));
-    CHECK(h.stepUntil({&buyer}, [&] { return buyer.lockedShopOffers.size() == 1; }));
-    if (buyer.lockedShopOffers.size() != 1) return;
+    CHECK(h.stepUntil({&buyer}, [&] { return buyer.lockedShopOffers.size() == kShopOfferCount; }));
+    if (buyer.lockedShopOffers.size() != kShopOfferCount) return;
     const auto moon = content().petalIndex("moon_rock");
     CHECK_EQ(buyer.lockedShopOffers.front().petalIndex, moon);
     CHECK_NEAR(buyer.lockedShopOffers.front().price, 31500.0, 1e-9);
@@ -66,8 +67,8 @@ TEST(shop_stock_unlimited_locked_offers_ignore_old_sold_out_records_and_keep_pri
     },dataDir(),0);
     CHECK(h.ready);if(!h.ready)return;
     NetClient buyer;CHECK(loginAs(h,buyer,"buyer","password"));
-    CHECK(h.stepUntil({&buyer},[&]{return buyer.lockedShopOffers.size()==2;}));
-    if(buyer.lockedShopOffers.size()!=2)return;
+    CHECK(h.stepUntil({&buyer},[&]{return buyer.lockedShopOffers.size()==kShopOfferCount;}));
+    if(buyer.lockedShopOffers.size()!=kShopOfferCount)return;
     const auto basic=content().petalIndex("basic");
     auto buy=[&](Rarity rarity,int slot,int quantity,bool expected){
         buyer.shopOutcome().pending=false;
@@ -75,26 +76,31 @@ TEST(shop_stock_unlimited_locked_offers_ignore_old_sold_out_records_and_keep_pri
         CHECK(h.stepUntil({&buyer},[&]{return buyer.shopOutcome().pending;}));
         CHECK_EQ(buyer.shopOutcome().ok,expected);
     };
-    double expectedStars=buyer.profile().stars;
-    for(int slot=0;slot<2;++slot){
-        const auto rarity=slot==0?Rarity::Super:Rarity::Ultra;
-        CHECK_EQ(buyer.lockedShopOffers[slot].remaining,-1);
-        const double price=shopOfferPrice(basic,rarity,10);
-        CHECK_NEAR(buyer.lockedShopOffers[slot].price,price,1e-9);
-        buy(rarity,slot,6,true);buy(rarity,slot,6,true);
-        expectedStars-=12*price;
-        CHECK_EQ(buyer.profile().stackCount(basic,rarity),12);
-        CHECK_NEAR(buyer.profile().stars,expectedStars,1e-9);
-        CHECK_EQ(buyer.lockedShopOffers[slot].remaining,-1);
-        buy(rarity,net::kNoShopOffer,1,false);
-        buy(rarity,9,1,false);
-        buy(rarity,slot,10001,false);
-        CHECK_NEAR(buyer.profile().stars,expectedStars,1e-9);
+    const auto& savedSuper = buyer.lockedShopOffers.front();
+    CHECK_EQ(savedSuper.petalIndex, basic);
+    CHECK_EQ(savedSuper.remaining, -1);
+    const double price = shopOfferPrice(basic, Rarity::Super, 10);
+    CHECK_NEAR(savedSuper.price, price, 1e-9);
+    const double startingStars = buyer.profile().stars;
+    buy(Rarity::Super, 0, 6, true);
+    buy(Rarity::Super, 0, 6, true);
+    const double expectedStars = startingStars - 12 * price;
+    CHECK_EQ(buyer.profile().stackCount(basic, Rarity::Super), 12);
+    CHECK_EQ(buyer.lockedShopOffers.front().remaining, -1);
+    buy(Rarity::Super, net::kNoShopOffer, 1, false);
+    buy(Rarity::Super, kShopOfferCount, 1, false);
+    buy(Rarity::Super, 0, 10001, false);
+    buy(Rarity::Ultra, 1, 1, false); // Previously present at this slot.
+    buy(Rarity::Ultra, net::kNoShopOffer, 1, false);
+    CHECK_EQ(buyer.profile().stackCount(basic, Rarity::Ultra), 0);
+    CHECK_NEAR(buyer.profile().stars, expectedStars, 1e-9);
+    for (const auto& offer : buyer.lockedShopOffers) {
+        CHECK(offer.rarity == Rarity::Super);
     }
     buyer.disconnect();h.step(3,{});
     NetClient returning;CHECK(loginAs(h,returning,"buyer","password"));
-    CHECK(h.stepUntil({&returning},[&]{return returning.lockedShopOffers.size()==2;}));
-    if(returning.lockedShopOffers.size()!=2)return;
+    CHECK(h.stepUntil({&returning},[&]{return returning.lockedShopOffers.size()==kShopOfferCount;}));
+    if(returning.lockedShopOffers.size()!=kShopOfferCount)return;
     CHECK_EQ(returning.lockedShopOffers[0].remaining,-1);
     CHECK_EQ(returning.profile().stackCount(basic,Rarity::Super),12);
     CHECK_NEAR(returning.profile().stars,expectedStars,1e-9);
@@ -128,9 +134,9 @@ TEST(shop_stock_current_offers_unlimited_but_still_require_stars) {
     CHECK_EQ(buyer.profile().stackCount(offer.petalIndex,offer.rarity),before+6);
     NetClient poor;CHECK(loginAs(h,poor,"poor","password"));
     const auto poorStars=poor.profile().stars;
-    CHECK(poorStars<offer.price);
+    const auto unaffordable = static_cast<std::uint32_t>(std::floor(poorStars / offer.price)) + 1;
     const auto poorBefore=poor.profile().stackCount(offer.petalIndex,offer.rarity);
-    poor.requestBuyPetal(offer.petalIndex,offer.rarity,slot,1);
+    poor.requestBuyPetal(offer.petalIndex,offer.rarity,slot,unaffordable);
     CHECK(h.stepUntil({&poor},[&]{return poor.shopOutcome().pending;}));
     CHECK(!poor.shopOutcome().ok);
     CHECK_EQ(poor.profile().stars,poorStars);
@@ -138,16 +144,18 @@ TEST(shop_stock_current_offers_unlimited_but_still_require_stars) {
     CHECK_EQ(buyer.profile().stackCount(offer.petalIndex,offer.rarity),before+6);
 }
 
-TEST(shop_stock_regular_rotation_has_eight_ultras_and_two_supers) {
+TEST(shop_stock_regular_rotation_has_five_distinct_supers) {
     Harness h("shop-stock-tiers");
+    CHECK(h.ready);
+    CHECK(!shopSellsRarity(Rarity::Ultra));
     for (std::uint64_t rotation = 100; rotation < 200; ++rotation) {
         const auto offers = shopOffers(rotation);
-        CHECK_EQ(offers.size(), std::size_t(10));
-        int supers = 0;
+        CHECK_EQ(offers.size(), std::size_t(5));
+        std::set<std::uint16_t> petals;
         for (const auto& offer : offers) {
-            CHECK(offer.rarity == Rarity::Ultra || offer.rarity == Rarity::Super);
-            if (offer.rarity == Rarity::Super) ++supers;
+            CHECK(offer.rarity == Rarity::Super);
+            CHECK(shopSellsPetal(offer.petalIndex));
+            CHECK(petals.insert(offer.petalIndex).second);
         }
-        CHECK_EQ(supers, 2);
     }
 }
