@@ -1552,7 +1552,7 @@ Entity PetalSystem::spawnPetal(World& world, Entity player, Loadout& loadout, st
     if (!config.noPhysics) {
         world.add<Body>(petal, Body{stats.radius, loose ? kLoosePetalMass : 1.0});
         world.add<ContactDamage>(petal,
-                                 ContactDamage{config.lightningDamage && stats.lightningDamagePerHit > 0 ? stats.lightningDamagePerHit : stats.damage,
+                                 ContactDamage{petalContactDamage(config, stats, rarity),
                                                std::max(0.0, stats.damageIntervalMillis)});
         world.add<HitCooldowns>(petal);
     }
@@ -3247,13 +3247,12 @@ void PetalSystem::runActions(World& world, const ContentRegistry& registry, Enti
             continue;
         }
 
-        // A projectile is asked before the defend-only gate below, because a
-        // defend-only shooter fires on EITHER input: peas and grapes split on
-        // attack and on defend alike. Defend-only is what keeps them from
-        // swinging out with the ring -- gardn's `defend_only` -- not what
-        // decides when they shoot. Every other shooter fires on attack only.
-        const bool shooting = attacking || (config.defendOnly && defending) ||
-                              (attackHeld && (config.id == "spaceship" || hyperShot));
+        // These three stay close to the flower but only launch on attack.
+        // Defend takes precedence when both buttons are held, including Mimics.
+        const bool berryShooter = config.id == "peas" || config.id == "grapes" ||
+                                  config.id == "magic_peas";
+        const bool shooting = attacking || (!berryShooter &&
+            ((config.defendOnly && defending) || (attackHeld && (config.id == "spaceship" || hyperShot))));
         if ((config.projectile.present || hyperShot) && shooting &&
             nowMillis >= instance->nextProjectileMillis) {
             // No mana is asked here: a magic missile paid for itself when it

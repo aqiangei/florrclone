@@ -347,9 +347,10 @@ stands on and what service it offers. That one entry is two creatures:
   allows, and carries its mob's `ContactDamage`, so its body bumps and bites a
   flower and a petal striking it pays its recoil, as on the mob. Flower-vs-NPC
   body contact is measured with `kNpcTouchSlack`, because the flower is always
-  flush, never overlapping. The dummy's DPS readout counts only damage events
-  the replicator marks `net::DamageByViewer` (the viewer's own hits, either
-  split half included). `NpcSystem` keeps every map site stocked and sets each
+  flush, never overlapping. The server counts each connection's actual damage
+  to the dummy, including either split body, over a rolling ten wall-clock seconds.
+  Snapshots carry the absolute DPS and total for the viewer. `NpcSystem` keeps
+  every map site stocked and sets each
   NPC's facing -- a cruiser's is the step it just took, a stander's the
   nearest flower -- which is all its eye needs. The client draws the mob's
   plate over it, the bar full and in the spawn-shield yellow a flower's turns;

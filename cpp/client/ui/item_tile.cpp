@@ -440,10 +440,10 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     const bool beetleEgg = iconId == "beetle_egg";
     const bool battery = iconId == "battery";
     const bool canFan = equipmentFan && drawCount > 1;
-    const bool polygon = equipmentFan && drawCount >= 3 &&
+    const bool polygon = drawCount >= 3 &&
         (iconId == "stinger" || iconId == "magic_stinger" ||
          iconId == "blood_stinger" || iconId == "triangle");
-    const Vec2 extent = canFan ? sprites.petalExtent(petalIndex) : Vec2{1.0, 1.0};
+    const Vec2 extent = canFan || polygon ? sprites.petalExtent(petalIndex) : Vec2{1.0, 1.0};
     const bool slender = std::max(extent.x, extent.y) >= 1.4 * std::min(extent.x, extent.y);
     const bool fan = canFan && !polygon && (egg || beetleEgg || battery || slender);
     const double upright = !egg && !beetleEgg && extent.x > extent.y ? -kPi * 0.5 : 0.0;

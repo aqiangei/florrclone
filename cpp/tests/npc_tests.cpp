@@ -786,8 +786,7 @@ TEST(a_hostile_npc_bites_the_flower_touching_it_and_breaks_the_petals_striking_i
 TEST(a_dummy_counts_a_hit_as_yours_only_on_your_own_wire) {
     // Two flowers, one dummy, one of them hitting it. The hitter's snapshots
     // mark every number on the dummy as theirs; the watcher is sent the same
-    // numbers, none of them marked -- so the watcher's DPS readout stays at
-    // zero while the hitter's climbs.
+    // numbers, none of them marked. The absolute meter is sent only to the hitter.
     const double dummyX = kTileSize * 8.0;
     const double y = kTileSize * 8.0;
     const std::string dir =
@@ -842,6 +841,9 @@ TEST(a_dummy_counts_a_hit_as_yours_only_on_your_own_wire) {
     CHECK_EQ(count(hitter, false), 0);
     CHECK(count(watcher, false) > 3);
     CHECK_EQ(count(watcher, true), 0);
+    CHECK(hitter.view().practiceMeter(dummyId).dps > 0);
+    CHECK(hitter.view().practiceMeter(dummyId).total > 0);
+    CHECK_NEAR(watcher.view().practiceMeter(dummyId).total, 0, 1e-9);
     removeDataDir(dir);
 }
 
@@ -3461,7 +3463,8 @@ TEST(hyper_forge_network_survives_council_activity_credit) {
 }
 
 namespace {
-void checkHyperTakeoverRetry(const char* fixture, const char* input, const char* output, int cost) {
+void checkHyperTakeoverRetry(const char* fixture, const char* input, const char* output, int cost,
+                             bool continuedProgress = false) {
     const auto dir = titanWorld(fixture);
     const auto materialKey = std::string("petal_") + input;
     Harness h(fixture, [&](const std::string& path) {
@@ -3512,8 +3515,20 @@ void checkHyperTakeoverRetry(const char* fixture, const char* input, const char*
 
     auto& world = h.server.world();
     auto& progress = world.get<PlayerProgress>(bodyNamed(world, "owner"));
-    const double earnedXp = progress.totalXp + 123.0;
+    double earnedXp = progress.totalXp + 123.0;
     progress.totalXp = earnedXp;
+    if (continuedProgress) {
+        // Wait for the first cancellation to clear, before the server
+        // starts its retry. Change XP after the second snapshot is captured.
+        for (int i = 0; i < 400 && !db.canStageForgeSave(); ++i)
+            h.server.serviceNetwork(1);
+        CHECK(Peer::localForgePending(h.server));
+        CHECK(db.canStageForgeSave());
+        h.server.serviceNetwork(0);
+        CHECK(!db.canStageForgeSave());
+        earnedXp += 1.0;
+        world.get<PlayerProgress>(bodyNamed(world, "owner")).totalXp = earnedXp;
+    }
     CHECK(awaitForge(h, both, challenger, outcome));
     CHECK(outcome.success);
     CHECK(awaitProfile(h, challenger, [&](const Profile& p) {
@@ -3544,6 +3559,10 @@ TEST(hyper_hammer_takeover_retries_when_the_previous_owner_earns_xp) {
 
 TEST(hyper_egg_takeover_retries_with_expired_protection_and_two_holdings) {
     checkHyperTakeoverRetry("hyper-egg-retry", "egg", "egg", 5);
+}
+
+TEST(hyper_egg_takeover_commits_when_the_previous_owner_keeps_earning_xp) {
+    checkHyperTakeoverRetry("hyper-egg-continuous-progress", "egg", "egg", 5, true);
 }
 
 TEST(hyper_hammer_network_forges_mjolnir_from_ten_eternal_fragments) {

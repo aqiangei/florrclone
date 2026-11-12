@@ -107,11 +107,6 @@ const double kMobHeadingEaseSeconds = easeTimeConstant(0.2);
 /// correction, a realm hop -- and the legs should not race to cover it.
 constexpr double kMaxWalkUnitsPerMs = 3.0;
 
-/// The window the TypeScript server averaged a dummy's DPS over. This client
-/// works the figure out itself, from the viewer's own hits (dummyDamage_),
-/// over the same window.
-constexpr double kDpsWindowSeconds = 10.0;
-
 /// Explosion: a ring pair plus debris, all of it over one second.
 constexpr double kExplosionLifeSeconds = 1.0;
 constexpr std::uint32_t kExplosionOuter = 0xFF4500u;
@@ -827,9 +822,6 @@ bool WorldRenderer::hiddenByOptions(const RemoteEntity& entity) const {
 }
 
 void WorldRenderer::ingestEvents(WorldView& view) {
-    if(dummyViewerNetId_!=view.self().netId){
-        dummyViewerNetId_=view.self().netId;dummyDamage_.clear();dummyTotalDamage_.clear();
-    }
     const auto isPlayer = [&view](std::uint32_t netId) {
         const auto it = view.entities().find(netId);
         return it != view.entities().end() && it->second.kind == net::EntityKind::Player;
@@ -838,22 +830,6 @@ void WorldRenderer::ingestEvents(WorldView& view) {
     const auto isHidden = [this, &view](std::uint32_t netId) {
         const auto it = view.entities().find(netId);
         return it != view.entities().end() && hiddenByOptions(it->second);
-    };
-    // The dummy exists to be hit at, so it reports what it is being hit for --
-    // by YOU. The same ten-second window the browser build's server kept, but
-    // over the damage events the server marks as this viewer's own
-    // (net::DamageByViewer): a dummy is a measure of your build, and one that
-    // summed everybody's hits would credit you with the flower beside you.
-    const auto isTargetDummy = [this, &view](std::uint32_t netId) {
-        if (!content_) return false;
-        const auto it = view.entities().find(netId);
-        if (it == view.entities().end()) return false;
-        // The mob the admin spawns, or the NPC a map stands on its plot: the
-        // same dummy, counted the same way.
-        if (it->second.kind != net::EntityKind::Mob && it->second.kind != net::EntityKind::Npc) {
-            return false;
-        }
-        return content_->mob(it->second.typeIndex).id == "target_dummy";
     };
     const auto pushNumber = [this](Vec2 at, double value, double size, NumberChannel channel) {
         if (effects_.size() >= maxEffects) return;
@@ -952,10 +928,6 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                         shakeHeld_ = true;
                     }
                 }
-                if ((event.flag & net::DamageByViewer) != 0 && isTargetDummy(event.netId)) {
-                    dummyDamage_[event.netId].emplace_back(nowSeconds_, event.amount);
-                    if(std::isfinite(event.amount)&&event.amount>0)dummyTotalDamage_[event.netId]+=event.amount;
-                }
                 // A squadmate's hit far off screen is here for the party HUD's
                 // flash only (net::DamageOffView).
                 if (!options.damageNumbers || isHidden(event.netId) ||
@@ -1023,9 +995,6 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                     }
                     damageTextAt_.erase(key);
                 }
-                dummyDamage_.erase(event.netId);
-                dummyTotalDamage_.erase(event.netId);
-
                 // The snapshot erased the entity before this event was read, so
                 // the death animation replays the last state it was DRAWN in:
                 // a petal's or a shot's the view set aside as it erased it,
@@ -1348,18 +1317,6 @@ void WorldRenderer::update(double dt) {
         if (nowSeconds_ - it->second > kBucketIdleSeconds) {
             damagePending_.erase(it->first);
             it = damageTextAt_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    for (auto it = dummyDamage_.begin(); it != dummyDamage_.end();) {
-        std::deque<std::pair<double, double>>& log = it->second;
-        while (!log.empty() && nowSeconds_ - log.front().first > kDpsWindowSeconds) {
-            log.pop_front();
-        }
-        if (log.empty()) {
-            it = dummyDamage_.erase(it);
         } else {
             ++it;
         }
@@ -2864,8 +2821,9 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         // the server put it down at.
         rotation = entity.angle;
     } else if (config && config->id == "blood_stinger") {
-        // The artwork points along +X; follow each grain's outward bearing.
+        // The artwork points along +X. Turn clumped grains toward each other.
         rotation = entity.angle;
+        if (content_->petalStats(entity.typeIndex, entity.rarity).count > 1) rotation += kPi;
     } else if (config && config->hasFixedDirection) {
         rotation = config->fixedDirection;
     } else if (config && config->clumpFacesInward &&
@@ -2957,7 +2915,16 @@ void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
     // A user-created skin outranks a built-in one, as it does in
     // player-drawing.ts: the server keeps the two mutually exclusive, and this
     // is the tie-break if an old account row ever carries both.
-    if (const CustomSkin* skin = wornSkin(entity)) {
+    const CustomSkin* skin = wornSkin(entity);
+    const bool pumpkin = (entity.renderFlags & PlayerRenderPumpkin) != 0;
+    const bool robot = (entity.renderFlags & PlayerRenderRobot) != 0;
+    if (!skin && !pumpkin && !robot) {
+        drawDefaultFlower(canvas, entity, timeSeconds);
+        return;
+    }
+    if (entity.equipFlags & EquipCutter) drawCutterBlade(canvas, entity.equipFlags, timeSeconds);
+
+    if (skin) {
         // kFlowerArtRadius, not the flower's grown radius: the caller has
         // already scaled into the artwork's own radius-25 space, which is the
         // space the studio authors in.
@@ -2990,31 +2957,15 @@ void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
                                })) {
             renderSkinShapes(canvas, skin->shapes, kFlowerArtRadius);
         }
-        // A worn bandage shows through any body: the face's wrap, over the
-        // skin.
-        if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
-            drawUndeadWrap(canvas, timeSeconds);
-        }
-        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
-        return;
-    }
-    // Registration order in player-skins.ts is Pumpkin, then Robot. Preserve
-    // that deterministic priority when a saved account somehow has both bits.
-    if (entity.renderFlags & PlayerRenderPumpkin) {
+    } else if (pumpkin) {
         drawPumpkin(canvas, entity);
-        if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
-            drawUndeadWrap(canvas, timeSeconds);
-        }
-        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
-    } else if (entity.renderFlags & PlayerRenderRobot) {
-        drawRobot(canvas, entity);
-        if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
-            drawUndeadWrap(canvas, timeSeconds);
-        }
-        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
     } else {
-        drawDefaultFlower(canvas, entity, timeSeconds);
+        drawRobot(canvas, entity);
     }
+    if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
+        drawUndeadWrap(canvas, timeSeconds);
+    }
+    if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
 }
 
 void WorldRenderer::drawDefaultFlower(Canvas& canvas, const RemoteEntity& entity,
@@ -3785,7 +3736,8 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
     canvas.restore();
 }
 
-void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const MobDraw& mob) const {
+void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const MobDraw& mob,
+                                 const WorldView* view) const {
     // The plate fades in with the mob and out once a chain bead heals: florr
     // multiplies everything on it, text included, by one eased opacity.
     if (mob.plateOpacity <= 0.0) return;
@@ -3908,22 +3860,15 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
               rowY);
     }
 
-    // The dummy is the one mob that reports what it is being hit for -- by
-    // this viewer -- and it reports a zero rather than disappearing when
-    // nothing is hitting it.
     if (config && config->id == "target_dummy") {
-        double total = 0;
-        const auto damage = dummyDamage_.find(mob.netId);
-        if (damage != dummyDamage_.end()) {
-            for (const auto& sample : damage->second) total += sample.second;
-        }
-        const std::string dps = "DPS: " + ui::formatCompact(total / kDpsWindowSeconds);
+        const auto meter = view ? view->practiceMeter(mob.netId) : net::PracticeMeter{};
+        const std::string dps = "DPS: " + ui::formatCompact(meter.dps);
         label(dps, kMobTierSize, ui::kPaper, halfSpan - boxWidth(dps, kMobTierSize),
               lineY + kMobDpsDrop);
-        const auto cumulative=dummyTotalDamage_.find(mob.netId);
-        const std::string sum=(ui::language()==ui::Language::Zh?"总伤害: ":"Total damage: ")+
-            ui::formatCompact(cumulative==dummyTotalDamage_.end()?0:cumulative->second);
-        label(sum,kMobTierSize,ui::kPaper,halfSpan-boxWidth(sum,kMobTierSize),lineY+kMobDpsDrop+kMobTierSize*1.4);
+        const std::string sum = (ui::language() == ui::Language::Zh ? "总伤害: " : "Total damage: ") +
+                                ui::formatCompact(meter.total);
+        label(sum, kMobTierSize, ui::kPaper, halfSpan - boxWidth(sum, kMobTierSize),
+              lineY + kMobDpsDrop + kMobTierSize * 1.4);
     }
     canvas.restore();
 }
@@ -4612,12 +4557,12 @@ void WorldRenderer::draw(Canvas& canvas, const WorldView& view, const Camera& ca
                          Vec2 selfDrawn, double timeSeconds) const {
     realm_ = view.realm();
     if (shakeOffset_.x == 0.0 && shakeOffset_.y == 0.0) {
-        draw(canvas, view.entities(), camera, selfDrawn, timeSeconds);
+        draw(canvas, view.entities(), camera, selfDrawn, timeSeconds, &view);
         return;
     }
     // The world, the viewer's flower with it, is drawn through a camera
     // pushed by the shake; the caller's stays where the cursor expects it.
-    draw(canvas, view.entities(), shakenCamera(camera), selfDrawn, timeSeconds);
+    draw(canvas, view.entities(), shakenCamera(camera), selfDrawn, timeSeconds, &view);
 }
 
 Camera WorldRenderer::shakenCamera(const Camera& camera) const {
@@ -4644,7 +4589,7 @@ void WorldRenderer::chargeOps(int& bucket) const {
 }
 
 void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera& camera,
-                         Vec2 selfDrawn, double timeSeconds) const {
+                         Vec2 selfDrawn, double timeSeconds, const WorldView* view) const {
     // What lies under the entities is the realm's business. The arena and
     // the maze are generated and draw themselves; every other realm is an
     // authored map with a tile grid and annotations -- teleporters, spawn-zone
@@ -4993,7 +4938,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
             drawLive(entity);
         }
         chargeOps(ops_.mobs);
-        for (const MobDraw& mob : mobLabels_) drawMobLabel(canvas, camera, mob);
+        for (const MobDraw& mob : mobLabels_) drawMobLabel(canvas, camera, mob, view);
         chargeOps(ops_.labels);
     }
 

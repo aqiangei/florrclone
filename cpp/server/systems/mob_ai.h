@@ -911,11 +911,11 @@ private:
     void roam(const Terrain& terrain, const Transform& transform, Motion& motion, MobAi& ai,
               const Drive& drive, double speed, double nowMillis, double dt);
 
-    /// Weather. Blows toward a point re-picked on its own fast clock, and from
-    /// kSandstormSuckRarity up drags the players around it in as it goes.
-    Vec2 steerSandstorm(World& world, const SpatialGrid& grid, Entity self, const MobType& type,
-                        const Transform& transform, MobAi& ai, double speed, double nowMillis,
-                        double dt);
+    /// Follows bulb glow when visible, otherwise blows toward a point re-picked
+    /// on its own clock. From kSandstormSuckRarity up it also drags nearby players.
+    Vec2 steerSandstorm(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                        Entity self, const MobType& type, const Transform& transform,
+                        MobAi& ai, double speed, double nowMillis, double dt);
     /// Drags every player within kSandstormSuckRange toward `from`, which is
     /// where the storm ends this tick rather than where it started it.
     void suckPlayers(World& world, const SpatialGrid& grid, Vec2 from, Realm realm, double dt);

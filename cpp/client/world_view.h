@@ -401,6 +401,7 @@ public:
 
     /// Events from the most recent snapshot. Drained by the effects layer.
     std::vector<ViewEvent>& events() { return events_; }
+    net::PracticeMeter practiceMeter(std::uint32_t netId) const;
     /// The petals and shots those same snapshots erased, as they were last
     /// drawn. A Killed event names one only after it is gone, and its death
     /// animation replays this record. Drained with events().
@@ -458,6 +459,7 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> ringAnchors_;
     std::unordered_map<std::string,std::string> guildNames_;
     std::vector<ViewEvent> events_;
+    std::vector<net::PracticeMeter> practiceMeters_;
     std::vector<RemoteEntity> removedPetals_;
     SelfState self_;
     Realm realm_ = Realm::Overworld;

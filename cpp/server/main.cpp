@@ -51,9 +51,24 @@ std::unordered_map<unsigned, std::function<void(flix::Json)>> skinReviewRequests
 unsigned nextSkinReviewRequest = 0;
 }
 
-extern "C" EMSCRIPTEN_KEEPALIVE void flix_finish_skin_review(unsigned id, const char* body) {
+EM_JS(void, flix_copy_skin_review_reply, (char* out), {
+    HEAPU8.set(Module.flixSkinReviewReply, out);
+});
+
+extern "C" EMSCRIPTEN_KEEPALIVE void flix_finish_skin_review(unsigned id, int size) {
     auto request = skinReviewRequests.extract(id);
-    if (!request.empty() && g_wasmServer) request.mapped()(flix::Json::parseOrNull(body));
+    if (request.empty() || !g_wasmServer) return;
+    flix::Json reply;
+    if (size > 0 && size <= 2 * 1024 * 1024) {
+        std::string body(static_cast<std::size_t>(size), '\0');
+        flix_copy_skin_review_reply(body.data());
+        reply = flix::Json::parseOrNull(body);
+    }
+    if (!reply.isObject()) {
+        reply = flix::Json::object();
+        reply["error"] = "跨服皮肤审核暂不可用，请刷新。";
+    }
+    request.mapped()(std::move(reply));
 }
 
 EM_JS(void, flix_read_skin_review_key, (char* out), {
@@ -63,25 +78,35 @@ EM_JS(void, flix_read_skin_review_key, (char* out), {
 
 EM_JS(void, flix_request_skin_review, (unsigned id, int realm, int local, const char* request), {
     const body = JSON.stringify({...JSON.parse(UTF8ToString(request)), realm, local});
-    const finish = text => {
-        const size = lengthBytesUTF8(text) + 1;
-        const buffer = _malloc(size);
-        try {
-            stringToUTF8(text, buffer, size);
-            _flix_finish_skin_review(id, buffer);
-        } finally { _free(buffer); }
+    const fetchReply = async () => {
+        const response = await fetch('http://127.0.0.1:19571/internal/skin-review', {
+            method: 'POST', redirect: 'error', signal: AbortSignal.timeout(8000),
+            headers: {'Content-Type': 'application/json',
+                      'Authorization': 'Bearer ' + process.env.FLIX_SKIN_REVIEW_KEY},
+            body
+        });
+        if (!response.ok) throw Error('skin review HTTP status ' + response.status);
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+            size += chunk.byteLength;
+            if (size > 2 * 1024 * 1024) throw Error('skin review reply too large');
+            chunks.push(chunk);
+        }
+        return Buffer.concat(chunks, size);
     };
-    fetch('http://127.0.0.1:19571/internal/skin-review', {
-        method: 'POST', redirect: 'error', signal: AbortSignal.timeout(8000),
-        headers: {'Content-Type': 'application/json',
-                  'Authorization': 'Bearer ' + process.env.FLIX_SKIN_REVIEW_KEY},
-        body
-    }).then(async response => {
-        if (!response.ok) throw Error();
-        const data = await response.text();
-        if (data.length > 2 * 1024 * 1024) throw Error();
-        return data;
-    }).then(finish, () => finish(JSON.stringify({error: '跨服皮肤审核暂不可用，请刷新。'})));
+    fetchReply().catch(() => null).then(reply => {
+        // Allocate in C++ and copy bytes during the synchronous callback, as
+        // the shared gallery does. The release JS does not export malloc/free.
+        Module.flixSkinReviewReply = reply;
+        try {
+            _flix_finish_skin_review(id, reply ? reply.byteLength : 0);
+        } finally {
+            delete Module.flixSkinReviewReply;
+        }
+    }).catch(error => {
+        console.error('[skins] Skin review callback failed:', error);
+    });
 });
 
 EM_JS(void, flix_start_shared_skin_sync, (), {

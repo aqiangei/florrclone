@@ -1344,11 +1344,11 @@ Vec2 MobAiSystem::steerIdle(World& world, const Terrain& terrain, Entity self,
     return Vec2::fromAngle(ai.wanderAngle);
 }
 
-Vec2 MobAiSystem::steerSandstorm(World& world, const SpatialGrid& grid, Entity self,
+Vec2 MobAiSystem::steerSandstorm(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                                 Entity self,
                                  const MobType& type, const Transform& transform, MobAi& ai,
                                  double speed, double nowMillis, double dt) {
-    // It never had a target and never will; clearing it means nothing that
-    // reads MobAi can mistake a sandstorm for something that is hunting.
+    // Bulb attraction steers the storm without giving it a combat target.
     ai.target = NULL_ENTITY;
 
     WanderTarget* wander = world.tryGet<WanderTarget>(self);
@@ -1370,7 +1370,16 @@ Vec2 MobAiSystem::steerSandstorm(World& world, const SpatialGrid& grid, Entity s
     }
 
     Vec2 blow{0, 0};
-    const Vec2 offset = wander->destination - transform.position;
+    Vec2 offset = wander->destination - transform.position;
+    if (realmAggro_[realmIndex(transform.realm)].raised) {
+        const double range = (ai.aggroRange > 0.0 ? ai.aggroRange : kEnemyChaseRange) * 1.30;
+        ++stats_.targetScans;
+        const Entity glow = acquireTarget(world, terrain, grid, self, transform.position,
+                                          transform.realm, range, true, targetScratch_);
+        if (glow != NULL_ENTITY) {
+            offset = world.get<Transform>(glow).position - transform.position;
+        }
+    }
     const double gap = offset.length();
     // Weather travels at its FULL speed, not the stroll a mob walks a wander
     // destination at.
@@ -1892,7 +1901,7 @@ void MobAiSystem::steerMob(World& world, const Terrain& terrain, const SpatialGr
         return;
 
     case AiKind::Sandstorm:
-        desired = steerSandstorm(world, grid, self, type, transform, ai, speed, nowMillis, dt);
+        desired = steerSandstorm(world, terrain, grid, self, type, transform, ai, speed, nowMillis, dt);
         driven = true;
         break;
 

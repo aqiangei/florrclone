@@ -3562,9 +3562,7 @@ TEST(a_projectile_petal_fires_its_fan_and_respects_its_cooldown) {
 }
 
 TEST(a_defend_only_projectile_petal_fires_on_attack_and_on_defend) {
-    // The shipped peas and grapes: defend-only keeps them in on attack, and
-    // either input fires them. Behind the defend-only action gate they once
-    // needed defend AND attack at once, which the input cannot say.
+    // Generic defend-only shooters can still fire on either input.
     if (!contentLoaded()) return;
     Rig rig;
     rig.equip(0, "pod");
@@ -6973,7 +6971,13 @@ TEST(high_tier_blueberries_deal_less_damage_at_the_original_volley_rate) {
         rig.equip(2, "magic_leaf", rarity);
         rig.settleEquips();
         rig.settleRing();
-        rig.setFlags(net::InputAttack | net::InputDefend);
+        const auto berries = rig.petals(0);
+        CHECK_EQ(berries.size(), std::size_t(4));
+        for (const Entity berry : berries) {
+            CHECK_NEAR(rig.world.get<ContactDamage>(berry).amount,
+                       rarity == Rarity::Super ? damagePerBerry : damagePerBerry * 0.5, 1e-6);
+        }
+        rig.setFlags(net::InputAttack);
 
         const auto nextVolley = [&] {
             return rig.tickUntil([&] { return Query<ProjectileTag, Projectile>{rig.world}.count() > 0; }, 30);
@@ -7003,7 +7007,7 @@ TEST(berry_reload_is_visible_before_a_held_attack_fires) {
         Rig rig(content);
         rig.equip(0, id);
         rig.equip(1, "mana_orb", Rarity::Unique);
-        rig.setFlags(net::InputAttack | net::InputDefend);
+        rig.setFlags(net::InputAttack);
         CHECK(rig.tickUntil([&] { return !rig.petals(0).empty(); }));
         const auto ammo = rig.petals(0);
         CHECK(!ammo.empty());
@@ -7018,6 +7022,32 @@ TEST(berry_reload_is_visible_before_a_held_attack_fires) {
 
         for (const auto& event : rig.events.events()) {
             CHECK(event.kind != net::EventKind::Explosion);
+        }
+    }
+}
+
+TEST(berries_only_launch_with_attack_and_stop_launching_in_defense) {
+    const auto& registry = testsupport::shippedContent();
+    for (const auto* id : {"peas", "grapes", "magic_peas"}) {
+        for (bool copied : {false, true}) {
+            Rig rig(registry);
+            rig.equip(0, id);
+            if (copied) rig.equip(1, "mimic");
+            rig.equip(2, "mana_orb", Rarity::Unique);
+            rig.settleEquips();
+            Query<Projectile> shots{rig.world};
+            for (int flags : {int(net::InputDefend), net::InputAttack | net::InputDefend}) {
+                rig.setFlags(flags);
+                rig.tick(30);
+                CHECK_EQ(shots.count(), 0u);
+            }
+            rig.setFlags(net::InputAttack);
+            CHECK(rig.tickUntil([&] { return shots.count() > 0; }, 100));
+            if (copied) CHECK_EQ(shots.count(), 8u);
+            for (const auto shot : shots.collect()) rig.world.destroy(shot);
+            rig.setFlags(net::InputDefend);
+            rig.tick(100);
+            CHECK_EQ(shots.count(), 0u);
         }
     }
 }

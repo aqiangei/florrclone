@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "server/admin_tiers.h"
@@ -56,6 +57,36 @@ struct Session {
         double damage = 0.0;
         std::array<std::uint32_t, kLoadoutActiveSlots> loadout{};
     } practiceTrial;
+
+    struct DummyDamage {
+        struct Sample {
+            double atMillis;
+            double damage;
+        };
+        std::deque<Sample> recent;
+        double recentDamage = 0;
+        double total = 0;
+
+        void expire(double wallMillis) {
+            const double cutoff = wallMillis - 1000.0 * net::kPracticeWindowSeconds;
+            while (!recent.empty() && recent.front().atMillis <= cutoff) {
+                recentDamage -= recent.front().damage;
+                recent.pop_front();
+            }
+            if (recent.empty()) recentDamage = 0;
+        }
+
+        void record(double wallMillis, double damage) {
+            expire(wallMillis);
+            if (recent.empty() || recent.back().atMillis != wallMillis) {
+                recent.push_back({wallMillis, 0});
+            }
+            recent.back().damage += damage;
+            recentDamage += damage;
+            total += damage;
+        }
+    };
+    std::unordered_map<Entity, DummyDamage> dummyDamage;
 
     bool splitCreatedSoloSquad = false;
     bool pyramidMapRevealed = false;

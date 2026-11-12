@@ -565,12 +565,14 @@ std::vector<CombatSystem::PracticeDamage> CombatSystem::practiceDamage(
 void CombatSystem::recordPracticeDamage(const World& world, Entity dummy, Entity source,
                                         DamageKind kind, double amount, double nowMillis) {
     const auto* npc = world.tryGet<Npc>(dummy);
+    const auto* mob = !npc && onPracticeHit ? world.tryGet<MobType>(dummy) : nullptr;
     const auto& registry = content();
-    if (!npc || registry.mob(npc->configIndex).id != "target_dummy") return;
+    if ((!npc && !mob) || registry.mob(npc ? npc->configIndex : mob->configIndex).id != "target_dummy") return;
     const Entity player = creditedPlayer(world, source);
     if (player == NULL_ENTITY) return;
 
     if (onPracticeHit) onPracticeHit(player, dummy, amount, nowMillis);
+    if (!npc) return; // Admin-spawned mobs have the live meter only.
     auto& target = practiceDamage_[player];
     if (target.dummy != NULL_ENTITY && target.dummy != dummy) {
         if (world.isAlive(target.dummy) && nowMillis - target.lastHitMillis < 1000.0 * kPracticeSeconds) return;
@@ -1224,7 +1226,9 @@ DamageResult CombatSystem::applyDamageOnce(World& world, Entity victim, Entity s
         health.flashUntilMillis = std::max(health.flashUntilMillis, nowMillis + kHurtFlashMillis);
     }
     result.applied = applied;
-    if (invulnerable && applied > 0.0) recordPracticeDamage(world, victim, source, kind, applied, nowMillis);
+    if (applied > 0.0 && (invulnerable || (onPracticeHit && world.has<MobTag>(victim)))) {
+        recordPracticeDamage(world, victim, source, kind, applied, nowMillis);
+    }
     if (directPlayerHit) {
         health.hitCooldownUntilMillis =
             std::max(health.hitCooldownUntilMillis,
@@ -2860,7 +2864,7 @@ void CombatSystem::gatherPetals(World& world, const ContentRegistry& content, do
         source.position = transform.position;
         source.realm = transform.realm;
         source.radius = body.radius;
-        source.damage = config.lightningDamage && stats.lightningDamagePerHit > 0 ? stats.lightningDamagePerHit : stats.damage;
+        source.damage = petalContactDamage(config, stats, petal.rarity);
         if (!petal.mimicked) {
             source.wildDamageScale = stats.wildLightningScale;
             source.wildRecoilScale = stats.wildRecoilScale;

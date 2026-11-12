@@ -30,16 +30,6 @@ TEST(feedback_hyper_loot_accepts_a_single_effective_hit_below_one_percent){
     w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,1e12});Bounty tally;tally.credit(player,1);w.add<Bounty>(corpse,tally);w.add<Dead>(corpse,Dead{player});
     loot.run(w,grid,c,rng,0,0,commands,events);commands.flush();int count=0;Query<DropTag,DropItem> drops{w};drops.each([&](Entity,DropTag&,DropItem& d){count+=d.quantity;});CHECK(count>0);
 }
-TEST(feedback_dummy_total_preserves_old_hits_and_excludes_other_players){
-    const auto& c=testsupport::shippedContent();WorldRenderer renderer;renderer.setContent(&c);WorldView view;
-    RemoteEntity dummy;dummy.netId=123;dummy.kind=net::EntityKind::Npc;dummy.typeIndex=c.mobIndex("target_dummy");view.seedForTest(dummy);
-    ViewEvent hit;hit.kind=net::EventKind::Damage;hit.netId=123;hit.amount=50;hit.flag=net::DamageByViewer;
-    view.events().push_back(hit);renderer.ingestEvents(view);renderer.update(20);
-    hit.flag=0;hit.amount=999;view.events().push_back(hit);renderer.ingestEvents(view);
-    hit.flag=net::DamageByViewer;hit.amount=25;view.events().push_back(hit);renderer.ingestEvents(view);
-    CHECK_NEAR(renderer.dummyTotalDamage(123),75,1e-8);
-    hit.kind=net::EventKind::Killed;view.events().push_back(hit);renderer.ingestEvents(view);CHECK_NEAR(renderer.dummyTotalDamage(123),0,1e-8);
-}
 TEST(feedback_ant_holes_use_lower_tier_soldiers_and_one_same_tier_queen_below_half){
     const auto& c=testsupport::shippedContent();
     for(int tier=0;tier<kLadderRarityCount;++tier){World w;CommandBuffer commands{w};SpawnSystem spawn;Terrain terrain;Rng rng{71};

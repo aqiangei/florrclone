@@ -702,8 +702,10 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     combat_->onPracticeHit = [this](Entity player, Entity dummy, double amount, double nowMillis) {
         const auto* account = world_.tryGet<PlayerAccount>(player);
         auto* session = account ? sessionFor(account->connection) : nullptr;
-        if (!session || session->practiceTrial.player != player) return;
+        if (!session || !session->owns(player)) return;
+        if (std::isfinite(amount)) session->dummyDamage[dummy].record(wallClockMillis_, amount);
         auto& trial = session->practiceTrial;
+        if (trial.player != player) return;
         if (trial.dummy == dummy && nowMillis < trial.endsAt) trial.damage += amount;
     };
     combat_->sizeContactGrid(*terrain_);
@@ -2393,6 +2395,20 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
         job.viewer = viewpoint;
         frame.visibility = session.snapshotVisibility;
         job.frame = frame;
+        if (viewpoint == session.entity) {
+            for (auto meter = session.dummyDamage.begin(); meter != session.dummyDamage.end();) {
+                const auto* id = world_.tryGet<NetId>(meter->first);
+                if (!id || world_.has<Dead>(meter->first)) {
+                    meter = session.dummyDamage.erase(meter);
+                    continue;
+                }
+                auto& damage = meter->second;
+                damage.expire(wallMillis);
+                job.frame.practiceMeters.push_back(
+                    {id->value, std::max(0.0, damage.recentDamage) / net::kPracticeWindowSeconds, damage.total});
+                ++meter;
+            }
+        }
     }
     snapshotJobs_.resize(count);
     if (!deferredPickupViews_.empty()) {
@@ -5248,14 +5264,35 @@ void GameServer::pollLocalHyper(bool shuttingDown) {
     }
     // Retry only a stage we deliberately rejected before publishing. A write
     // error or an uncertain commit must never be retried as a conflict.
-    if (outcome == Save::Failed && pending.cancelledForConflict && !shuttingDown &&
-        sameSession && pending.retriesRemaining > 0) {
-        --pending.retriesRemaining;
-        pending.submitted = false;
-        pending.cancelledForConflict = false;
-        return;
+    bool saved = outcome == Save::Saved;
+    bool savedDirectly = false;
+    if (outcome == Save::Failed && pending.cancelledForConflict && !shuttingDown && sameSession) {
+        if (pending.retriesRemaining > 0) {
+            --pending.retriesRemaining;
+            pending.submitted = false;
+            pending.cancelledForConflict = false;
+            return;
+        }
+
+        // A participant can keep earning progress through every async stage.
+        // Replan against the latest rows and finish once on the simulation
+        // thread, using the same durable commit and rollback as a direct forge.
+        captureLiveProgress();
+        captureBossClocksForSave();
+        const double started = monotonicMillis();
+        pending.plan.result = forgeHyper(database_, pending.user, content().petal(pending.input).id,
+                                         database_.nowMillis(), {}, pending.titan);
+        if (database_.commitUncertain()) {
+            persistenceFrozen_ = true;
+            running_.store(false);
+            pendingLocalHyper_.reset();
+            return;
+        }
+        saved = savedDirectly = pending.plan.result.ok;
+        if (!saved) refusal = pending.plan.result.reason;
+        if (config_.tickProbe)
+            std::printf("[titan-commit] fallback saved=%d workMs=%.2f\n", saved, monotonicMillis() - started);
     }
-    const bool saved = outcome == Save::Saved;
     if (config_.tickProbe && pending.publishAt > 0) {
         std::printf("[titan-commit] saved=%d stageMs=%.2f publishMs=%.2f\n",
                     saved, pending.publishAt - pending.startedAt, monotonicMillis() - pending.publishAt);
@@ -5263,9 +5300,11 @@ void GameServer::pollLocalHyper(bool shuttingDown) {
     if (saved) {
         // Publication is fenced: nothing can edit these records between the
         // validation and this point. Other progress remains in the live DB.
-        for (auto& [id, row] : pending.plan.players) database_.progress(id) = std::move(row);
-        database_.rawTable("hyperForges") = std::move(pending.forges);
-        database_.markDirty();
+        if (!savedDirectly) {
+            for (auto& [id, row] : pending.plan.players) database_.progress(id) = std::move(row);
+            database_.rawTable("hyperForges") = std::move(pending.forges);
+            database_.markDirty();
+        }
         if (!shuttingDown) {
             notifyLocalHyper(pending.user, pending.input, pending.plan.result.affected);
             if (sameSession)
@@ -8741,6 +8780,7 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     if (session.pyramidMapRealm != realm) session.pyramidMapRevealed = false;
     session.entity = entity;
     session.stage = SessionStage::Playing;
+    session.dummyDamage.clear();
     // A fresh body has a death of its own still to announce.
     session.deathReported = false;
     session.hasDeathSite = false;
@@ -8950,6 +8990,7 @@ void GameServer::despawnPlayer(Session& session, bool persist) {
 
     session.entity = NULL_ENTITY;
     session.stage = SessionStage::Authenticated;
+    session.dummyDamage.clear();
     views_[session.connection].reset();
     // Same reason as the spawn: the id this member was known by is gone, and a
     // roster still naming it points every squadmate's HUD at nothing.

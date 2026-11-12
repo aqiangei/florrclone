@@ -341,8 +341,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     const double chargeScale = hyperAmount(technique, HyperTechnique::QuickCharge);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
     const double damageScale = skills.effectScale(SkillId::Damage);
-    const double baseDamage = config.lightningDamage && stats.lightningDamagePerHit > 0
-        ? stats.lightningDamagePerHit : stats.damage;
+    const double baseDamage = petalContactDamage(config, stats, rarity);
     const double damage = std::round((baseDamage + triangleBonus) * damageScale);
 
     std::vector<TooltipLine> lines;
@@ -436,7 +435,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     lines.push_back(hp);
 
     const std::string damageLabel = config.id == "battery" || config.id == "lightning" ||
-        config.id == "mecha_missile"
+        config.id == "mecha_missile" || config.id == "magic_peas"
         ? (language() == Language::Zh ? "接触伤害：" : "Contact damage: ") : tipDamage();
     TooltipLine hit{damageLabel + abbreviate(damage), 12.0};
     hit.alpha = 0.56;
@@ -453,7 +452,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // Petal/Attribute/Damage/Lightning, "Damage: X (lightning)" with the
     // note in lightning cyan.
     if (config.lightningDamage) {
-        const std::string label = colourMarkup(tipDamage(), kStatDamage);
+        const std::string label = colourMarkup(damageLabel, kStatDamage);
         const std::string note = " " + colourMarkup(tipLightning(), kStatLightning);
         hit.text = label + " " + abbreviate(damage) + note;
         hit.altText = label + " " + exactNumber(damage) + note;
@@ -703,7 +702,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 chinese ? "/秒，持续10秒，可叠加" : "/s for 10s, stacking");
     }
     if (stats.lightningDamagePerHit > 0) {
-        if(config.id=="magic_peas")lines.push_back({chinese?"四颗蓝莓分别造成闪电伤害，不会连锁跳跃。":"Four blueberries deal lightning damage individually, with no chain jumps.",12.0});
+        if (config.id == "magic_peas") {
+            lines.push_back({chinese ? "四颗蓝莓分别造成闪电伤害，不会连锁跳跃。" :
+                "Four blueberries deal lightning damage individually, with no chain jumps.", 12.0});
+            special("单颗发射伤害：", "Projectile damage per berry: ",
+                    stats.lightningDamagePerHit * skills.effectScale(SkillId::PetDamage));
+        }
         lines.push_back({chinese ? "闪电无视护甲和闪避。" : "Lightning bypasses armor and dodge.",12.0});
         special("基础闪电伤害：", "Base lightning damage: ", stats.lightningDamagePerHit);
         if (showHyperTechnique && stats.wildLightningScale > 1.0) {

@@ -5,6 +5,7 @@
 #include "client/render/mob_art.h"
 #include "client/render/sprites.h"
 #include "client/render/world_renderer.h"
+#include "client/ui/item_tile.h"
 #include "client/world_view.h"
 #include "shared/core/types.h"
 #include "shared/game/config.h"
@@ -333,6 +334,97 @@ TEST(a_dandelions_seeds_go_down_under_its_head) {
     const int stem = brightnessAt(frame, Vec2{-seed.radius * 1.5, 0.0});
     if (stem < 200) std::printf("    the seed's stem shows over the head (%d)\n", stem);
     CHECK(stem >= 200);
+}
+
+TEST(nazar_beetle_mandibles_face_its_heading) {
+    for (double angle : {0.0, kPi * 0.5, kPi, kPi * 1.5}) {
+        const auto frame = mobFrame("nazar_beetle", angle, 0, {});
+        Vec2 mandibles{};
+        int count = 0;
+        for (int y = 0; y < kRingSize; ++y) {
+            for (int x = 0; x < kRingSize; ++x) {
+                const auto i = static_cast<std::size_t>(4 * (y * kRingSize + x));
+                // The imported SVG uses #333 only for the mandibles.
+                if (frame[i] != 0x33 || frame[i + 1] != 0x33 || frame[i + 2] != 0x33) continue;
+                mandibles += Vec2{x + 0.5, y + 0.5};
+                ++count;
+            }
+        }
+        CHECK(count > 0);
+        if (count == 0) continue;
+        const Vec2 offset = mandibles / count - Vec2{kRingSize * 0.5, kRingSize * 0.5};
+        const Vec2 forward{std::cos(angle), std::sin(angle)};
+        const Vec2 sideways{-forward.y, forward.x};
+        CHECK(offset.x * forward.x + offset.y * forward.y > 5.0);
+        CHECK(std::abs(offset.x * sideways.x + offset.y * sideways.y) < 3.0);
+    }
+}
+
+TEST(cutter_remains_visible_with_builtin_and_custom_flower_skins) {
+    CustomSkin skin;
+    skin.id = "test-cutter";
+    SkinShape body;
+    body.t = SkinShapeType::Circle;
+    body.r = 25;
+    body.fill = "#e011cc";
+    skin.shapes.push_back(body);
+    const std::vector<CustomSkin> catalog{skin};
+    const Vec2 at{1000, 1000};
+    for (auto flags : {std::uint32_t{0}, std::uint32_t{PlayerRenderPumpkin},
+                       std::uint32_t{PlayerRenderRobot}, std::uint32_t{PlayerRenderPumpkin | PlayerRenderRobot}}) {
+        const auto frame = [&](std::uint16_t equip) {
+            WorldRenderer renderer;
+            renderer.setContent(&shipped());
+            renderer.setSprites(&shippedSprites());
+            renderer.setSkinCatalog(&catalog);
+            WorldView view;
+            RemoteEntity player;
+            player.netId = 1;
+            player.kind = net::EntityKind::Player;
+            player.position = player.targetPosition = at;
+            player.radius = playerRadiusForLevel(1);
+            player.level = 1;
+            player.renderFlags = flags;
+            player.equipFlags = equip;
+            if (flags == (PlayerRenderPumpkin | PlayerRenderRobot)) player.equippedSkinId = skin.id;
+            view.seedForTest(player);
+            Canvas canvas = Canvas::createVirtual(kRingSize, kRingSize);
+            renderer.draw(canvas, view, testsupport::frameCamera(kRingSize, at), at, 0.0);
+            return canvas.getImageData(0, 0, kRingSize, kRingSize);
+        };
+        CHECK(differingPixels(frame(EquipNone), frame(EquipCutter)) > 20);
+    }
+}
+
+TEST(mythic_blood_stinger_tile_forms_a_triangle_in_inventory_and_loadout) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+    const auto petal = content().petalIndex("blood_stinger");
+    CHECK_EQ(content().petalStats(petal, Rarity::Mythic).count, 3);
+    for (int slot : {-1, 0}) {
+        Canvas canvas = Canvas::createVirtual(120, 120);
+        ui::ItemTile tile;
+        tile.petalIndex = petal;
+        tile.rarity = Rarity::Mythic;
+        tile.loadoutSlot = slot;
+        tile.showName = false;
+        ui::drawItemTile(canvas, shippedSprites(), {0, 0, 120, 120}, tile);
+        const auto frame = canvas.getImageData(0, 0, 120, 120);
+        std::vector<int> redWidths(120);
+        for (int y = 0; y < 120; ++y) for (int x = 0; x < 120; ++x) {
+            const auto i = static_cast<std::size_t>(4 * (y * 120 + x));
+            if (frame[i] > 50 && frame[i] > 2 * frame[i + 1] && frame[i] > 2 * frame[i + 2]) ++redWidths[y];
+        }
+        const auto top = std::find_if(redWidths.begin(), redWidths.end(), [](int n) { return n > 2; });
+        CHECK(top != redWidths.end());
+        if (top == redWidths.end()) continue;
+        const auto bottom = std::find_if(redWidths.rbegin(), redWidths.rend(), [](int n) { return n > 2; }).base();
+        CHECK(bottom - top > 20);
+        if (bottom - top > 20) {
+            CHECK(*(top + (bottom - top) / 5) < *(top + (bottom - top) * 4 / 5));
+        }
+    }
 }
 
 TEST(shooters_do_not_draw_a_separate_loaded_ammunition_overlay) {

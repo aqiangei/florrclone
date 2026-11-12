@@ -1098,6 +1098,27 @@ TEST(sandstorm_ignores_a_player_standing_in_it) {
     CHECK_NEAR(sim.angleOf(mob), 0.0, 1e-12);
 }
 
+TEST(a_wild_sandstorm_follows_bulb_glow_and_resumes_wandering_when_it_goes_out) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity storm = sim.spawnMob("sandstorm", kOrigin);
+    const Entity flower = sim.spawnPlayer(kOrigin + Vec2{150, 0});
+    sim.spawnPlayer(kOrigin + Vec2{-50, 0});
+    sim.tickIntent();
+    sim.world.get<WanderTarget>(storm).destination = kOrigin + Vec2{-100, 0};
+
+    const auto bulb = content().petalIndex("bulb");
+    auto& modifiers = sim.world.get<PlayerModifiers>(flower);
+    modifiers.aggroRangeScale = content().petalStats(bulb, Rarity::Common).modifiers.aggroRange;
+    sim.tickIntent();
+    CHECK(sim.velocityOf(storm).x > 0.0);
+    CHECK_EQ(sim.brainOf(storm).target, NULL_ENTITY);
+
+    modifiers.aggroRangeScale = 1.0;
+    sim.tickIntent();
+    CHECK(sim.velocityOf(storm).x < 0.0);
+}
+
 TEST(a_sandstorm_holds_its_heading_until_its_own_clock_re_rolls_it) {
     // Re-rolled outright, three times a second, and never in between: a storm
     // that swung its old heading instead would cross the map as a cloud on a

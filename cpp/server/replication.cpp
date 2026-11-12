@@ -932,6 +932,15 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // --- events -----------------------------------------------------------
     const std::size_t eventCountAt = out.reserveU16();
     std::uint16_t eventCount = 0;
+    for (const auto& meter : frame.practiceMeters) {
+        if (eventCount == UINT16_MAX) break;
+        if (view.tracked.find(meter.netId) == view.tracked.end()) continue;
+        out.u8(static_cast<std::uint8_t>(net::EventKind::PracticeMeter));
+        out.u32(meter.netId);
+        out.f64(meter.dps);
+        out.f64(meter.total);
+        ++eventCount;
+    }
     const auto writeEvent = [&](const WireEvent& event, std::uint32_t other, std::uint8_t flag,
                                 bool ownPickup) {
         out.u8(static_cast<std::uint8_t>(event.kind));
@@ -950,8 +959,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         ++eventCount;
     };
     if (!view.deferredPickups.empty() && view.deferredPickups.front().dealtByConnection == viewerOwner) {
-        for (const auto& pickup : view.deferredPickups)
+        for (const auto& pickup : view.deferredPickups) {
+            if (eventCount == UINT16_MAX) break;
             writeEvent(pickup, pickup.otherNetId, pickup.flag, true);
+        }
         view.deferredPickups.clear();
     }
     if (frame.events) {

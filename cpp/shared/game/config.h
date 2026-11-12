@@ -1259,6 +1259,13 @@ struct PetalStats {
 /// mechanic lives in code and a flag would only be a second place to forget.
 inline constexpr const char* kSplitterPetalId = "splitter";
 
+inline double petalContactDamage(const PetalConfig& config, const PetalStats& stats, Rarity rarity) {
+    const double damage = config.lightningDamage && stats.lightningDamagePerHit > 0.0
+        ? stats.lightningDamagePerHit : stats.damage;
+    return config.id == "magic_peas" && ladderIndex(rarity) >= rarityIndex(Rarity::Unique)
+        ? damage * 0.5 : damage;
+}
+
 /// Whether this petal DOES something when its slot is clicked on the bar.
 ///
 /// The TypeScript build reached the same action with a U+slot chord; this

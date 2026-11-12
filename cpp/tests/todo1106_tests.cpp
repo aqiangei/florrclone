@@ -731,7 +731,8 @@ TEST(todo1107_berry_ranges_and_blueberry_tooltip_use_current_stats) {
     CHECK(base > 0);
     SkillSet skills;
     skills.set(SkillId::Damage, 2);
-    const auto damageText = std::to_string(std::llround(base * skills.effectScale(SkillId::Damage)));
+    skills.set(SkillId::PetDamage, 3);
+    const auto damageText = std::to_string(std::llround(base * 0.5 * skills.effectScale(SkillId::Damage)));
     const auto lines = ui::petalTooltipLines(blueberry, Rarity::Unique, skills, 1.0);
     CHECK(std::any_of(lines.begin(), lines.end(), [&](const auto& line) {
         auto actual = line.altText;

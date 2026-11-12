@@ -87,6 +87,7 @@ void HealthBarEase::step(double targetHealth, double targetShield, double nowMil
 void WorldView::clear() {
     entities_.clear();
     events_.clear();
+    practiceMeters_.clear();
     removedPetals_.clear();
     self_ = SelfState{};
     realm_ = Realm::Overworld;
@@ -207,6 +208,13 @@ void pushSample(RemoteEntity& e, double timeMillis) {
 }
 
 } // namespace
+
+net::PracticeMeter WorldView::practiceMeter(std::uint32_t netId) const {
+    for (const auto& meter : practiceMeters_) {
+        if (meter.netId == netId) return meter;
+    }
+    return {};
+}
 
 bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool keepTransientEffects) {
     const std::uint32_t tick = reader.u32();
@@ -422,11 +430,20 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
 
     const std::uint16_t eventCount = reader.u16();
     std::vector<ViewEvent> events;
+    std::vector<net::PracticeMeter> practiceMeters;
     events.reserve(eventCount);
     for (std::uint16_t i = 0; i < eventCount; ++i) {
         ViewEvent e;
         e.kind = static_cast<net::EventKind>(reader.u8());
         e.netId = reader.u32();
+        if (e.kind == net::EventKind::PracticeMeter) {
+            const double dps = reader.f64();
+            const double total = reader.f64();
+            if (std::isfinite(dps) && dps >= 0 && std::isfinite(total) && total >= 0) {
+                practiceMeters.push_back({e.netId, dps, total});
+            }
+            continue;
+        }
         e.otherNetId = reader.u32();
         e.amount = reader.f32();
         e.position = reader.position();
@@ -636,6 +653,7 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool ke
     }
 
     events_.insert(events_.end(), events.begin(), events.end());
+    practiceMeters_ = std::move(practiceMeters);
     return true;
 }
 

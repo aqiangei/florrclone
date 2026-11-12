@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 119; // Input flags carry per-viewer visibility preferences.
+inline constexpr std::uint16_t kProtocolVersion = 120; // Snapshots carry authoritative target dummy meters.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -1022,11 +1022,20 @@ enum class EventKind : std::uint8_t {
     Explosion,      ///< Positional burst. Berry launches use the colour byte
                     ///< for their style and the existing amount slot for heading.
     /// A lightning strike: `position` is where it landed and `radius` its
-    /// reach. The ONLY event with a variable tail -- u8 count, then that many
+    /// reach. Its tail is a u8 count, then that many
     /// f32 x, f32 y -- because a bolt is drawn to each mob the strike hit and
     /// the client has no way to work out which those were: the strike's damage
     /// is resolved a tick later, by which time the dead are gone.
     Lightning,
+    /// Absolute viewer-only state, repeated while the damaged dummy is visible.
+    /// Its record contains only u32 dummy net id, f64 DPS, f64 total damage.
+    PracticeMeter,
+};
+
+struct PracticeMeter {
+    std::uint32_t netId = 0;
+    double dps = 0;
+    double total = 0;
 };
 
 /// How many struck mobs ride a Lightning event.

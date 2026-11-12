@@ -8,7 +8,6 @@
 
 #include <array>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <unordered_map>
@@ -179,9 +178,6 @@ public:
 
     /// Turns this frame's server events into effects. Drains `view.events()`.
     void ingestEvents(WorldView& view);
-    double dummyTotalDamage(std::uint32_t id) const {
-        const auto it=dummyTotalDamage_.find(id);return it==dummyTotalDamage_.end()?0:it->second;
-    }
 
     /// Ages effects and retires expired ones.
     void update(double dt);
@@ -228,7 +224,7 @@ public:
     /// to, passed in rather than looked up so the body and the camera cannot
     /// disagree.
     void draw(Canvas&, const EntityMap&, const Camera&, Vec2 selfDrawn,
-              double timeSeconds) const;
+              double timeSeconds, const WorldView* view = nullptr) const;
 
     /// The same, reading the entities out of a live view. Taking the map
     /// separately as well is what lets a tool or a replay render a scene it
@@ -476,7 +472,7 @@ private:
     /// the tier below it, and (for a dummy) DPS under that. A pet's tier row
     /// also says "Summon"; an NPC's bar is its invulnerable one; a chain's
     /// body bead wears the bar alone.
-    void drawMobLabel(Canvas&, const Camera&, const MobDraw&) const;
+    void drawMobLabel(Canvas&, const Camera&, const MobDraw&, const WorldView*) const;
     /// The digger: a grey flower carrying a spinning cutter, never its SVG.
     void drawDiggerMob(Canvas&, const MobDraw&, double radius, double timeSeconds) const;
     /// A mob that carries an orbiting ring of petals: the glitch flower, whose
@@ -725,12 +721,6 @@ private:
     double shakeHitSeconds_ = 0.0;
     bool shakeHeld_ = false;
     Vec2 shakeOffset_;
-
-    /// Damage landed on each target dummy over the last ten seconds, which is
-    /// the window the TypeScript server reported DPS over.
-    mutable std::unordered_map<std::uint32_t, std::deque<std::pair<double, double>>> dummyDamage_;
-    std::unordered_map<std::uint32_t,double> dummyTotalDamage_;
-    std::uint32_t dummyViewerNetId_=0;
 
     /// Built on first use from the content registry; the registry is immutable
     /// after load, so one pass is enough.

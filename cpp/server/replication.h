@@ -326,6 +326,7 @@ public:
         /// All current replicated centres, shared read-only by workers.
         const SpatialGrid* entityGrid = nullptr;
         std::optional<double> wallMillis;
+        std::vector<net::PracticeMeter> practiceMeters;
     };
 
     /// Appends a complete Snapshot payload (message id included) to `out`.

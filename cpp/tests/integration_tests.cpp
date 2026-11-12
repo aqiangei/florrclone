@@ -112,6 +112,29 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     const auto slowQueued = slowConnection->pendingBytes();
     const auto healthyQueued = healthyConnection->pendingBytes();
 
+    // A real training hit during skipped snapshots must survive even though
+    // its floating number will never be sent to the stalled client.
+    World& world = h.server.world();
+    const Entity dummy = world.create();
+    constexpr std::uint32_t dummyId = 900000;
+    const auto dummyType = content().mobIndex("target_dummy");
+    world.add<NetId>(dummy, NetId{dummyId});
+    world.add<Replicated>(dummy, Replicated{net::EntityKind::Npc, 0, dummyType, Rarity::Apex});
+    world.add<Transform>(dummy, world.get<Transform>(slowSession->entity));
+    world.add<NpcTag>(dummy);
+    world.add<Npc>(dummy, Npc{dummyType, Rarity::Apex});
+    world.add<Faction>(dummy, Faction{Team::Hostiles, false});
+    world.add<Health>(dummy, Health{100, 100});
+    auto& combat = GameServerPeer::practiceCombat(h.server);
+    const auto hit = [&](Entity attacker, double amount) {
+        CHECK_NEAR(combat.applyDamage(world, dummy, attacker, amount, h.clock).applied, amount, 1e-6);
+    };
+    constexpr double firstHit = 7'000'000'006.0;
+    constexpr double nextHit = 10'300'000'009.0;
+    constexpr double observerHit = 19'000'000'000.0;
+    hit(slowSession->entity, firstHit);
+    hit(healthySession->entity, observerHit);
+
     // While old bytes are still waiting, health changes twice. Only the
     // healthy connection should be encoded before the slow one can drain.
     auto& health = h.server.world().get<Health>(slowSession->entity);
@@ -125,6 +148,7 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     GameServerPeer::stageOnlineRoster(h.server, h.clock + 2000.0);
     health.current = health.max * 0.5;
     const double latest = health.current;
+    hit(slowSession->entity, nextHit);
     events.pickedUp(900002, ownNetId, at.position, at.realm, 0, Rarity::Common, 3, slowSession->connection);
     GameServerPeer::stageSnapshots(h.server);
     const double rosterAt = h.clock + 4000.0;
@@ -169,10 +193,39 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     };
     CHECK_EQ(ownPicked(slow), std::uint32_t{5});
     CHECK_EQ(ownPicked(healthy), std::uint32_t{0});
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).total, firstHit + nextHit, 1e-6);
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).dps, (firstHit + nextHit) / 10.0, 1e-6);
+    CHECK_NEAR(healthy.view().practiceMeter(dummyId).total, observerHit, 1e-6);
+
+    const Entity spawnedDummy = world.create();
+    constexpr std::uint32_t spawnedDummyId = 900003;
+    world.add<NetId>(spawnedDummy, NetId{spawnedDummyId});
+    world.add<Replicated>(spawnedDummy, Replicated{net::EntityKind::Mob, 0, dummyType, Rarity::Common});
+    world.add<Transform>(spawnedDummy, world.get<Transform>(dummy));
+    world.add<MobTag>(spawnedDummy);
+    world.add<MobType>(spawnedDummy, MobType{dummyType, Rarity::Common, 1});
+    world.add<Health>(spawnedDummy, Health{100, 100});
+    CHECK_NEAR(combat.applyDamage(world, spawnedDummy, slowSession->entity, 25, h.clock).applied, 25, 1e-6);
+    GameServerPeer::stageSnapshots(h.server);
+    drain();
+    CHECK_NEAR(slow.view().practiceMeter(spawnedDummyId).total, 25, 1e-6);
+    CHECK_NEAR(healthy.view().practiceMeter(spawnedDummyId).total, 0, 1e-6);
+    world.destroy(spawnedDummy);
+    CHECK(std::none_of(slow.view().events().begin(), slow.view().events().end(), [&](const ViewEvent& event) {
+        return event.kind == net::EventKind::Damage && event.netId == dummyId;
+    }));
     slow.view().events().clear();
     GameServerPeer::stageSnapshots(h.server);
     drain();
     CHECK_EQ(ownPicked(slow), std::uint32_t{0});
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).total, firstHit + nextHit, 1e-6);
+
+    // No rendered frames during this interval, but ten seconds still pass on
+    // the server. The cumulative amount survives the expired DPS window.
+    h.server.tick(h.clock + 10'000);
+    drain();
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).dps, 0, 1e-6);
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).total, firstHit + nextHit, 1e-6);
 }
 
 TEST(a_wrong_password_is_refused_and_a_right_one_is_not) {
