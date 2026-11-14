@@ -4,6 +4,10 @@ const path = require('node:path');
 if (process.env.FLIX_LOAD_SHED === '1' ||
     (process.env.FLIX_LOAD_SHED !== '0' && fs.existsSync(path.join(__dirname, 'server.load-shed'))))
   process.argv.push('--load-shed');
+const snapshotRateFile = path.join(__dirname, 'server.snapshot-rate');
+const snapshotRate = process.env.FLIX_SNAPSHOT_RATE || (fs.existsSync(snapshotRateFile)
+  ? fs.readFileSync(snapshotRateFile, 'utf8').trim() : '');
+if (snapshotRate) process.argv.push('--snapshot-rate', snapshotRate);
 if (fs.existsSync(path.join(__dirname, 'server.background-save')))
   process.argv.push('--background-save');
 if (fs.existsSync(path.join(__dirname, 'server.tick-probe')))

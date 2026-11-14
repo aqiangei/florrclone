@@ -198,6 +198,7 @@ void usage(const char* program) {
         "  --load-shed        reduce ambient mobs, distant snapshots and volley load\n"
         "  --tick-probe       log aligned tick, timer and save diagnostics\n"
         "  --no-slow-protection keep the 20 Hz target under load shedding\n"
+        "  --snapshot-rate <hz>  cap world snapshot frequency (default: protocol rate)\n"
         "  --full-mob-simulation run wild mob AI every tick throughout the map\n"
 #ifdef __EMSCRIPTEN__
         "  --cert <path>      TLS certificate. Without it, cert.crt then\n"
@@ -498,6 +499,17 @@ int main(int argc, char** argv) {
         else if (arg == "--db") config.databasePath = next("--db");
         else if (arg == "--seed") config.worldSeed = std::strtoull(next("--seed"), nullptr, 10);
         else if (arg == "--bots") config.botCount = std::atoi(next("--bots"));
+        else if (arg == "--snapshot-rate") {
+            const std::string value = next("--snapshot-rate");
+            char* end = nullptr;
+            const auto rate = std::strtoul(value.c_str(), &end, 10);
+            if (end == value.c_str() || *end != '\0' ||
+                rate < 1 || rate > flix::net::kSnapshotsPerSecond) {
+                std::fprintf(stderr, "invalid snapshot rate: %s\n", value.c_str());
+                return 1;
+            }
+            config.snapshotRate = static_cast<unsigned>(rate);
+        }
         else if (arg == "--load-shed") config.loadShedding = true;
         else if (arg == "--no-slow-protection") config.adaptivePacing = false;
         else if (arg == "--full-mob-simulation") config.fullMobSimulation = true;

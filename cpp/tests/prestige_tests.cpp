@@ -12,6 +12,7 @@
 #include "server/db.h"
 #include "server/practice_board.h"
 #include "server/systems/spawning.h"
+#include "server/systems/mob_ai.h"
 #include "server/systems/combat.h"
 #include "server/systems/dungeons.h"
 #include "server/systems/loot.h"
@@ -2342,6 +2343,12 @@ TEST(apex_crab_uses_the_existing_ocean_hyper_slot) {
             CHECK(slots <= 1);
         }
         if (wildApex != NULL_ENTITY) {
+            const auto& registry = shippedContent();
+            const auto crab = registry.mobIndex("crab");
+            const double expected = registry.mobStats(crab, Rarity::Apex).health * 12.5;
+            const auto& health = world.get<Health>(wildApex);
+            CHECK_NEAR(health.current / expected, 1.0, 1e-12);
+            CHECK_NEAR(health.max / expected, 1.0, 1e-12);
             sawApex = true;
             const double now = 20000.0 + 3 * kPopulationIntervalMillis;
             world.add<Dead>(wildApex);
@@ -3571,4 +3578,100 @@ TEST(practice_history_round_trips_real_timed_trial_and_publication) {
     CHECK(h.stepUntil({&owner, &viewer}, [&] {
         return !viewer.practiceBoard().pending && viewer.practiceBoard().published.empty();
     }));
+}
+
+TEST(zorr_dna_hatches_bio_and_other_eggs_at_the_actual_tier) {
+    const auto& registry = shippedContent();
+    const auto trial = [&](const char* id, Rarity eggTier, Rarity dnaTier,
+                           Rarity normal, bool hasDna, bool canPromote) {
+        World world;
+        CommandBuffer commands{world};
+        PetalSystem petals;
+        const Entity flower = world.create();
+        world.add<PlayerTag>(flower);
+        world.add<Transform>(flower, Transform{{15000, 15000}, 0});
+        world.add<Body>(flower, Body{25, 1});
+        world.add<Health>(flower, Health{100, 100});
+        world.add<Loadout>(flower);
+        world.add<PlayerModifiers>(flower);
+        world.add<PetalRing>(flower);
+        auto& bar = world.get<Loadout>(flower).slots;
+        const auto eggIndex = registry.petalIndex(id);
+        CHECK(eggIndex < registry.petalCount());
+        if (eggIndex >= registry.petalCount()) return;
+        bar[0] = {eggIndex, eggTier};
+        if (hasDna) bar[1] = {registry.petalIndex("dna"), dnaTier};
+
+        int checked = 0, upgraded = 0;
+        for (int tick = 1; tick < 10000 && checked < 4000; ++tick) {
+            petals.run(world, registry, tick * 60000.0, net::kTickSeconds, commands);
+            commands.flush();
+            for (const Entity entity : Query<Pet, MobType>{world}.collect()) {
+                const auto& type = world.get<MobType>(entity);
+                if (type.configIndex == registry.petal(eggIndex).petMobIndex) {
+                    const bool higher = rarityIndex(type.rarity) == rarityIndex(normal) + 1;
+                    CHECK(type.rarity == normal || (higher && canPromote));
+                    upgraded += higher;
+                    ++checked;
+                }
+                world.destroy(entity);
+            }
+        }
+        std::printf("DNA %s egg=%d dna=%d hatch=%d total=%d upgraded=%d\n",
+                    id, rarityIndex(eggTier), hasDna ? rarityIndex(dnaTier) : -1,
+                    rarityIndex(normal), checked, upgraded);
+        CHECK(checked >= 4000);
+        if (canPromote) CHECK(upgraded >= 8 && upgraded <= 40);
+        else CHECK_EQ(upgraded, 0);
+    };
+    trial("bio_bacteria_egg", Rarity::Rare, Rarity::Rare, Rarity::Rare, true, true);
+    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, true, true);
+    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Legendary, Rarity::Legendary, true, false);
+    trial("arctic_spider_egg", Rarity::Mythic, Rarity::Mythic, Rarity::Legendary, false, false);
+    trial("bio_bacteria_egg", Rarity::Unique, Rarity::Unique, Rarity::Unique, true, false);
+}
+
+TEST(zorr_bio_blood_cells_fire_their_own_ammo) {
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+    if (!error.empty()) return;
+    const auto& registry = shippedContent();
+    for (bool white : {false, true}) {
+        World world;
+        Terrain terrain;
+        SpatialGrid grid;
+        Rng rng{42};
+        CommandBuffer commands{world};
+        SpawnSystem spawner;
+        MobAiSystem ai{world};
+        const Vec2 at{5000, 5000};
+        const Vec2 target = at + Vec2{160, 0};
+        const Entity flower = world.create();
+        world.add<PlayerTag>(flower);
+        world.add<Transform>(flower, Transform{target, 0});
+        world.add<Body>(flower, Body{25, 1});
+        world.add<Health>(flower, Health{1000, 1000});
+        world.add<Faction>(flower, Faction{Team::Players, false});
+        world.add<Motion>(flower);
+        const auto index = registry.mobIndex(white ? "bio_white_blood_cell" : "bio_red_blood_cell");
+        const Entity mob = spawner.spawnMob(world, terrain, registry, index, Rarity::Common,
+                                           at, Realm::Overworld, 0, rng);
+        CHECK(mob != NULL_ENTITY);
+        if (mob == NULL_ENTITY) continue;
+        int shots = 0;
+        for (int i = 1; i <= 150 && shots == 0; ++i) {
+            grid.clear();
+            grid.insert(flower, Realm::Overworld, target, 25);
+            grid.insert(mob, Realm::Overworld, at, world.get<Body>(mob).radius);
+            ai.run(world, terrain, grid, {{target, Realm::Overworld}}, i * 50.0, .05, commands);
+            commands.flush();
+            Query<Projectile>{world}.each([&](Entity, Projectile& shot) {
+                if (shot.owner != mob) return;
+                ++shots;
+                CHECK_EQ(shot.petalConfigIndex, registry.petalIndex(white ? "antibody" : "bubble"));
+                CHECK_NEAR(shot.damage, white ? 3.0 : 4.0, 1e-9);
+            });
+        }
+        CHECK_EQ(shots, white ? 4 : 3);
+    }
 }

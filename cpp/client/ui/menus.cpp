@@ -1863,6 +1863,7 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
     if (metrics.secondaryPicker && hovered < 0 && insideInclusive(layout.trash, mouse)) {
         hovered = kLoadoutTrashSlot;
     }
+    if (panelRect_.w > 0 && panelRect_.contains(mouse)) hovered = -1;
     loadoutHovered_ = hovered;
     // The bar owns the click for every owned slot -- empty ones included -- so
     // a tap on an empty primary/secondary still column-swaps instead of firing
@@ -2392,6 +2393,18 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
         if (!window.pointerIsTouch() && window.mousePressed(MouseButton::Left) &&
             adjustRotation({window.mouseX(), window.mouseY()})) return;
     }
+    const Vec2 mouse{window.mouseX(), window.mouseY()};
+    if (panelRect_.w > 0 && panelRect_.contains(mouse)) {
+        // The popup and the bar read the same input edges. A release on the
+        // popup cancels a bar gesture instead of swapping or unequipping.
+        if (window.mouseReleased(MouseButton::Left)) {
+            drag_.clear();
+            loadoutPressSlot_ = -1;
+            loadoutPressSaved_ = false;
+        }
+        return;
+    }
+
     // The bar's own view of the loadout, not the profile's: a petal picked up
     // one frame after a swap was sent must be the one the player can SEE in
     // that slot. See expectedLoadout_.
@@ -2505,7 +2518,7 @@ void MenuSystem::updateLoadoutInput(Window& window, NetClient& net, double timeS
     }
 
     // Anywhere else that is not a slot sends the petal back to the inventory
-    // -- including the trash, and including a drop over an open panel. gardn
+    // -- including the trash. A drop over an open panel was handled above. gardn
     // has no such rule: it throws a petal away on its Delete slot and floats
     // everything else home. This game keeps the rule because its bar has no
     // Delete slot to offer instead.

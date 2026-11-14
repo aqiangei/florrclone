@@ -1920,10 +1920,22 @@ PetalSystem::Aggregate PetalSystem::recomputeModifiers(World& world,
                     aggregate.modifiers.fireResistance =
                         std::max(aggregate.modifiers.fireResistance, resistance);
                 }
+                if (worn.id == "void_eyeball") {
+                    aggregate.modifiers.homingMissileMaxTier = std::max(
+                        aggregate.modifiers.homingMissileMaxTier, petalTier(equipped.rarity));
+                }
+                if (worn.id == "void_gunpowder") {
+                    constexpr std::array<int, kLadderRarityCount> speedBonus{
+                        5, 10, 15, 20, 25, 30, 35, 40, 55, 70
+                    };
+                    aggregate.modifiers.missileSpeedScale = std::max(
+                        aggregate.modifiers.missileSpeedScale,
+                        1.0 + speedBonus[ladderIndex(equipped.rarity)] / 100.0);
+                }
                 if (worn.id == "void_soap") {
-                    const int tier = ladderIndex(equipped.rarity);
                     aggregate.modifiers.spillRadiusScale = std::min(
-                        1.5, aggregate.modifiers.spillRadiusScale + (10.0 + 1.2 * tier * tier) / 100.0);
+                        kSoapMaxSpillRadiusScale,
+                        aggregate.modifiers.spillRadiusScale + soapSpillRadiusBonus(equipped.rarity));
                 }
                 if (worn.id == "rna") {
                     const int tier = std::min(petalTier(equipped.rarity), rarityIndex(Rarity::Apex));
@@ -3985,7 +3997,14 @@ bool PetalSystem::fireProjectiles(World& world, const ContentRegistry& registry,
     const bool guided = config.id == "mecha_missile" && visuals && (visuals->equipFlags & EquipObserver);
     const auto* input = world.tryGet<PlayerInput>(player);
     const bool defending = input && input->current.defending();
-    double shotSpeed = spec.speed;
+    const std::string_view id = config.id;
+    const std::string_view missileSuffix = "missile";
+    const bool missile = id.size() >= missileSuffix.size() &&
+        id.substr(id.size() - missileSuffix.size()) == missileSuffix;
+    const auto* modifiers = world.tryGet<PlayerModifiers>(player);
+    const bool eyeballHoming = missile && modifiers &&
+        petalTier(rarity) <= modifiers->homingMissileMaxTier;
+    double shotSpeed = spec.speed * (missile && modifiers ? modifiers->missileSpeedScale : 1.0);
     double shotDistance = spec.distance;
     switch (technique) {
         case HyperTechnique::MissileSpeed: shotSpeed *= 1.20; break;
@@ -4060,8 +4079,8 @@ bool PetalSystem::fireProjectiles(World& world, const ContentRegistry& registry,
         projectile.seekRange = seekRange;
         projectile.wildOnly = hyperShot != nullptr;
         projectile.seekCone = spec.seekCone;
-        if (guided) {
-            projectile.seekRange = std::min(1200.0, spec.distance);
+        if (guided || eyeballHoming) {
+            projectile.seekRange = std::max(projectile.seekRange, std::min(1200.0, spec.distance));
             projectile.seekCone = kPi;
         }
         // A petal that fires ITSELF is its own ammunition, so the weave comes
@@ -5091,15 +5110,16 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     // and health budget.
     const double strength = configuredSummonStrength(config, rarity);
     const auto* modifiers = world.tryGet<PlayerModifiers>(player);
-    const int tier = petalTier(rarity);
-    // Eternal is the ceiling for a Bio hatchling mutation. The equipped egg
-    // keeps its tier and the hatchling occupies its ordinary squad seat.
-    if (modifiers && tier < rarityIndex(Rarity::Unique) &&
-        config.id.compare(0, 4, "bio_") == 0 && modifiers->eggMutationSources[tier] > 0) {
-        const double chance = std::min(.05, .005 * modifiers->eggMutationSources[tier] *
+    const int eggTier = petalTier(rarity);
+    const int hatchTier = rarityIndex(petRarity);
+    // DNA applies to eggs at its own tier or below. Mutate the actual
+    // hatchling, including eggs whose normal summon is one tier lower.
+    if (modifiers && petalIsEgg(config) && eggTier <= rarityIndex(Rarity::Unique) &&
+        hatchTier < rarityIndex(Rarity::Unique) && modifiers->eggMutationSources[eggTier] > 0) {
+        const double chance = std::min(.05, .005 * modifiers->eggMutationSources[eggTier] *
                                               std::max(1.0, modifiers->luck));
         for (int i = 0; i < missing; ++i) {
-            const Rarity hatch = rng_.chance(chance) ? clampRarity(tier + 1) : rarity;
+            const Rarity hatch = rng_.chance(chance) ? clampRarity(hatchTier + 1) : petRarity;
             summonPets(world, registry, player, slot, config.petMobIndex, hatch, 1,
                        ownerPosition, state, strength);
         }

@@ -926,6 +926,8 @@ void MobAiSystem::fireVolley(World& world, Entity shooter, const MobType& type, 
     // config names, so an apex hornet fires apex missiles.
     PetalStats ammo = registry.petalStats(spec.ammoPetalIndex,
         type.rarity == Rarity::Ascendant ? Rarity::Apex : type.rarity);
+    if (spec.mobBaseDamage)
+        ammo.damage = *spec.mobBaseDamage * petalStrengthScale(type.rarity);
     if (type.rarity == Rarity::Ascendant) ammo.damage *= 1.10;
 
     const double speed = spec.speed > 0.0 ? spec.speed : kDefaultProjectileSpeed;

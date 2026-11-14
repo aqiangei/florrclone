@@ -142,6 +142,7 @@ struct ServerConfig {
     int botCount = 0;
     bool loadShedding = false;
     bool adaptivePacing = true;
+    unsigned snapshotRate = net::kSnapshotsPerSecond;
     bool fullMobSimulation = false;
     bool backgroundSave = false;
     bool tickProbe = false;

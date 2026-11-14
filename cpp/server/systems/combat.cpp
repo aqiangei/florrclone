@@ -3619,6 +3619,15 @@ void CombatSystem::resolveMelee(World& world, const SpatialGrid& grid, const Con
             sample.mark(Phase::Formula);
             const double baseDamage = wild ? source.damage * source.wildDamageScale : source.damage;
             double swing = swingDamage(world, baseDamage, source.critDamage, victim);
+            if (wild && source.isPetal &&
+                registry.petal(world.get<PetalInstance>(source.attacker).configIndex).id == "void_gunpowder") {
+                const auto* status = world.tryGet<Afflictions>(poolOwner(world, victim));
+                const bool burning = status &&
+                    ((status->burnPerSecond > 0.0 && nowMillis < status->burnUntilMillis) ||
+                     std::any_of(status->burns.begin(), status->burns.end(),
+                        [nowMillis](const BurnStack& burn) { return nowMillis < burn.untilMillis; }));
+                if (burning) swing *= 5.0;
+            }
             if (wild && technique && technique->technique == HyperTechnique::TomatoRipening) {
                 const double age = nowMillis - instance->spawnedAtMillis;
                 if (age >= 5000.0) swing *= tomatoGrowth(age + technique->amount) / tomatoGrowth(age);

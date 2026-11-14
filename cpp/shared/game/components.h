@@ -670,6 +670,8 @@ struct PlayerModifiers {
     double summonDamageScale = 1.0;
     double fireResistance = 0.0;
     double spillRadiusScale = 1.0;
+    double missileSpeedScale = 1.0;
+    int homingMissileMaxTier = -1;
     std::array<std::uint8_t, kRarityCount> eggMutationSources{};
     std::array<bool, kRarityCount> opalTiers{};
     std::array<double, kRarityCount> stemCellHealChance{};

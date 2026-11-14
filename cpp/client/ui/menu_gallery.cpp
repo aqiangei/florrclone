@@ -468,8 +468,7 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         const auto inPool = [](const DropDef& drop) {
             return drop.itemType == "random" ||
                    (drop.petalIndex < content().petalCount() &&
-                    !content().petal(drop.petalIndex).isAdminPetal &&
-                    !petalHasOwnSource(content().petal(drop.petalIndex)) &&
+                    allowsAuthoredApexReward(content().petal(drop.petalIndex)) &&
                     petalComesAt(content().petal(drop.petalIndex), Rarity::Ascendant));
         };
         const auto poolSize = std::count_if(authored.begin(), authored.end(), inPool);

@@ -9230,7 +9230,7 @@
     "price": 0,
     "color": "#977bb8",
     "count": 1,
-    "description": "A petal found in the Void.",
+    "description": "While equipped, missiles of the same or lower rarity home in on enemies, even while Eyeball reloads.",
     "zh": "眼球"
   },
   "void_fan": {
@@ -9306,7 +9306,7 @@
     "price": 0,
     "color": "#977bb8",
     "count": 1,
-    "description": "A petal found in the Void.",
+    "description": "While equipped, speeds up missiles using the strongest bonus. Gunpowder deals five times its contact damage to burning wild mobs.",
     "zh": "火药"
   },
   "void_halo": {
@@ -9420,8 +9420,11 @@
     "price": 0,
     "color": "#977bb8",
     "count": 1,
-    "description": "A petal found in the Void.",
-    "zh": "口罩"
+    "description": "Absorbs incoming poison damage while equipped.",
+    "zh": "口罩",
+    "playerModifiers": {
+      "poisonArmor": 1.0
+    }
   },
   "void_mirror": {
     "name": "Mirror",
@@ -9521,8 +9524,11 @@
     "price": 0,
     "color": "#977bb8",
     "count": 1,
-    "description": "A petal found in the Void.",
-    "zh": "粉末"
+    "description": "Increases movement speed while equipped.",
+    "zh": "粉末",
+    "playerModifiers": {
+      "speed": 1.04
+    }
   },
   "void_quantum": {
     "name": "Quantum",
@@ -9612,9 +9618,42 @@
     "size": 0.9,
     "price": 0,
     "color": "#977bb8",
-    "count": 1,
-    "description": "A petal found in the Void.",
-    "zh": "黏液球"
+    "count": 2,
+    "description": "Two petals that knock enemies back on contact.",
+    "zh": "黏液球",
+    "knockback": 4,
+    "rarityStats": {
+      "0": {
+        "knockback": 4
+      },
+      "1": {
+        "knockback": 12
+      },
+      "2": {
+        "knockback": 20
+      },
+      "3": {
+        "knockback": 28
+      },
+      "4": {
+        "knockback": 36
+      },
+      "5": {
+        "knockback": 44
+      },
+      "6": {
+        "knockback": 52
+      },
+      "7": {
+        "knockback": 60
+      },
+      "8": {
+        "knockback": 104
+      },
+      "9": {
+        "knockback": 148
+      }
+    }
   },
   "void_soap": {
     "name": "Soap",
@@ -9626,7 +9665,7 @@
     "price": 0,
     "color": "#977bb8",
     "count": 1,
-    "description": "Increases liquid petal radius. Starts at 10%, grows with rarity, and stacks up to 50%.",
+    "description": "While equipped, expands the radius of your liquid spills, including blood pools.",
     "zh": "肥皂"
   },
   "void_stardust": {
@@ -11806,7 +11845,7 @@
     "price": 35,
     "biomeDropOnly": true,
     "image": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 128 128\"><image x=\"17.5\" y=\"10.0\" width=\"93\" height=\"108\" href=\"data:image/png;base64,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\"/></svg>",
-    "description": "Gives Bio hatchlings of the same or lower rarity a chance to hatch one tier higher, up to Eternal. Luck increases the chance."
+    "description": "Gives eggs at or below its tier a 0.5% base chance to hatch a pet one tier higher, up to Eternal. Luck increases the chance."
   },
   "electron_missile": {
     "name": "Electron Missile",

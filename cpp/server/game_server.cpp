@@ -1984,8 +1984,10 @@ void GameServer::tick(double wallMillis, double nowMillis) {
         // Stepped from the deadline, not from now, so the send rate does not
         // slew with tick jitter; resynced when it falls a whole interval behind
         // rather than firing a burst of catch-up frames.
-        nextSnapshotMillis_ += net::kSnapshotMillis;
-        if (nextSnapshotMillis_ < wallMillis) nextSnapshotMillis_ = wallMillis + net::kSnapshotMillis;
+        const double interval = 1000.0 / std::clamp(config_.snapshotRate, 1u,
+            static_cast<unsigned>(net::kSnapshotsPerSecond));
+        nextSnapshotMillis_ += interval;
+        if (nextSnapshotMillis_ < wallMillis) nextSnapshotMillis_ = wallMillis + interval;
         sendDueProfiles();
         markTickPhase("profiles");
         replicate(nowMillis, wallMillis);

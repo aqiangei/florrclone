@@ -380,14 +380,24 @@ TEST(zorr_soap_expands_liquid_fields_without_scaling_damage) {
     };
     sample(4050, 50.0);
     rig.equip(1, "void_soap");
-    sample(4100, 55.0);
+    sample(4100, 60.0);
     rig.equip(2, "void_soap", Rarity::Rare);
-    sample(4150, 62.4);
+    sample(4150, 76.0);
     rig.equip(3, "void_soap", Rarity::Super);
-    sample(4200, 75.0);
+    sample(4200, 100.0);
     auto& slots = rig.world.get<Loadout>(rig.player).slots;
     slots[1] = slots[2] = slots[3] = {};
     sample(4250, 50.0);
+    rig.equip(1, "void_soap", Rarity::Super);
+    sample(4300, 81.0);
+    rig.equip(1, "void_soap", Rarity::Unique);
+    sample(4350, 84.0);
+    rig.equip(1, "void_soap", Rarity::Apex);
+    sample(4400, 87.0);
+    rig.equip(1, "void_soap", Rarity::PermanentHyper);
+    sample(4450, 87.0);
+    rig.equip(1, "void_soap", Rarity::Ascendant);
+    sample(4500, 90.0);
 }
 
 TEST(arctic_nuke_egg_apex_hatches_hyper_and_detonates_once_when_defeated) {
@@ -530,6 +540,30 @@ TEST(zorr_mechanic_fire_bomb_keeps_blast_and_burn_budget) {
     CHECK(!rig.world.has<Afflictions>(far));
 }
 
+TEST(zorr_mechanic_soap_widens_pyrite_burn_while_idle) {
+    for (bool soap : {false, true}) {
+        ArcticBlast rig("pyrite");
+        if (soap) rig.equip(1, "void_soap", Rarity::Super);
+        for (int now = 4050; now <= 11000; now += 50) rig.tickPetals(now);
+        std::vector<Entity> spills;
+        Query<GroundEffect>{rig.world}.each([&](Entity e, GroundEffect& field) {
+            if (field.kind == GroundEffectKind::LavaSpill) spills.push_back(e);
+        });
+        CHECK(!spills.empty());
+        if (spills.empty()) continue;
+        const Vec2 center = rig.world.get<Transform>(spills.back()).position;
+        const Entity edge = rig.mob(center + Vec2{0, 190});
+        const Entity outside = rig.mob(center + Vec2{0, 270});
+        rig.combatTick(11000);
+        const auto burned = [&](Entity e) {
+            const auto* effects = rig.world.tryGet<Afflictions>(e);
+            return effects && !effects->burns.empty();
+        };
+        CHECK(burned(edge) == soap);
+        CHECK(!burned(outside));
+    }
+}
+
 TEST(zorr_mechanic_soap_expands_blood_without_changing_shred) {
     for (bool soap : {false, true}) {
         ArcticBlast rig("blood");
@@ -541,7 +575,7 @@ TEST(zorr_mechanic_soap_expands_blood_without_changing_shred) {
         Query<GroundEffect>{rig.world}.each([&](Entity, GroundEffect& field) {
             if (field.kind != GroundEffectKind::Blood) return;
             ++patches;
-            CHECK_NEAR(field.radius, soap ? 35.2 : 32.0, 1e-6);
+            CHECK_NEAR(field.radius, soap ? 38.4 : 32.0, 1e-6);
             CHECK_NEAR(field.armorReduction,
                        rig.registry.petalStats(rig.registry.petalIndex("blood"), Rarity::Common).armorReduction,
                        1e-6);
@@ -566,7 +600,7 @@ TEST(zorr_mechanic_soap_applies_to_all_configured_liquid_fields) {
             CHECK(fields.size() == 1);
             for (const auto field : fields) {
                 const auto& effect = rig.world.get<GroundEffect>(field);
-                CHECK_NEAR(effect.radius, spill.radius * (soap ? 1.1 : 1.0), 1e-6);
+                CHECK_NEAR(effect.radius, spill.radius * (soap ? 1.2 : 1.0), 1e-6);
                 CHECK_NEAR(effect.damagePerSecond, spill.strength, 1e-6);
                 rig.world.destroy(field);
             }
@@ -733,4 +767,61 @@ TEST(feedback_728_802_eggs_hatch_real_duplicates_and_replicate_ice_dragon_rarity
             }
         }
     }
+}
+
+TEST(zorr_reference_eyeball_homes_same_or_lower_tiers_and_gunpowder_speeds_missiles) {
+    for (auto rarity : {Rarity::Common, Rarity::Rare, Rarity::Epic}) {
+        for (bool supports : {false, true}) {
+            ArcticBlast rig("missile", rarity);
+            if (supports) {
+                rig.equip(1,"void_eyeball",Rarity::Rare);
+                rig.equip(2,"void_gunpowder",Rarity::Rare);
+            }
+            rig.world.get<PlayerInput>(rig.player).current.flags = net::InputAttack;
+            for (int now=4050;now<=12000;now+=50) rig.tickPetals(now);
+            const auto& spec=rig.registry.petal(rig.registry.petalIndex("missile")).projectile;
+            int shots=0;
+            Query<Projectile,Motion>{rig.world}.each([&](Entity,Projectile& p,Motion& motion){
+                if(p.petalConfigIndex!=rig.registry.petalIndex("missile")) return;
+                ++shots;
+                const bool guided=supports && rarity!=Rarity::Epic;
+                CHECK_NEAR(p.seekRange,guided ? std::max(spec.seekRange,std::min(1200.0,spec.distance)) : spec.seekRange,1e-6);
+                CHECK_NEAR(p.seekCone,guided ? kPi : spec.seekCone,1e-6);
+                CHECK_NEAR(motion.velocity.length(),spec.speed*(supports ? 1.15 : 1.0),1e-6);
+            });
+            CHECK(shots>0);
+        }
+    }
+}
+
+TEST(zorr_reference_gunpowder_fivefold_contact_damage_requires_live_burn) {
+    double plain=0;
+    for (int burn : {0,1,2}) {
+        ArcticBlast rig("void_gunpowder");
+        const auto petals = rig.liveIn(0);
+        CHECK(!petals.empty());
+        if (petals.empty()) continue;
+        const auto victim=rig.mob(rig.world.get<Transform>(petals.front()).position);
+        if (burn) rig.world.ensure<Afflictions>(victim).burns.push_back(
+            {rig.player,rig.player,0.001,burn==1 ? 9000.0 : 3999.0});
+        rig.combatTick(4050);
+        const double hit=1000.0-rig.world.get<Health>(victim).current;
+        if (!burn) plain=hit;
+        CHECK(plain>0);
+        CHECK_NEAR(hit,plain*(burn==1 ? 5 : 1),0.002);
+    }
+}
+
+TEST(zorr_reference_mask_powder_and_slime_use_the_standard_combat_stats) {
+    ArcticBlast rig("void_slime", Rarity::Rare);
+    rig.equip(1,"void_mask");
+    rig.equip(2,"void_powder");
+    rig.tickPetals(4500);
+    const auto& mods=rig.world.get<PlayerModifiers>(rig.player);
+    CHECK_NEAR(mods.poisonArmor,1.0,1e-6);
+    CHECK_NEAR(mods.speedScale,1.04,1e-6);
+    const auto slime=rig.registry.petalIndex("void_slime");
+    CHECK_EQ(rig.liveIn(0).size(),std::size_t(2));
+    CHECK_NEAR(rig.registry.petalStats(slime,Rarity::Rare).knockback,20.0,1e-6);
+    CHECK_NEAR(rig.registry.petalStats(slime,Rarity::Apex).knockback,148.0,1e-6);
 }

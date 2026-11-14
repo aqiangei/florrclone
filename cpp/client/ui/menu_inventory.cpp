@@ -335,7 +335,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                                            bool showHyperTechnique, std::optional<double> baseReloadMillis) {
     const PetalConfig& config = content().petal(petalIndex);
     const PetalStats stats = content().petalStats(petalIndex, rarity);
-    const auto* technique = showHyperTechnique ? hyperTechniqueInfo(config.id, rarity) : nullptr;
+    const bool fragment = config.id == "fragment";
+    const auto* technique = showHyperTechnique && !fragment ? hyperTechniqueInfo(config.id, rarity) : nullptr;
     const double chargeScale = hyperAmount(technique, HyperTechnique::QuickCharge);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
     const double damageScale = skills.effectScale(SkillId::Damage);
@@ -373,6 +374,28 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         // {0:rarity} is: a champion's crown hands out a Basic of whatever tier
         // the crown is.
         std::string description = petalDescTr(config.id, config.description.c_str());
+        if (fragment) {
+            const bool zh = language() == Language::Zh;
+            if (rarity == Rarity::PermanentHyper) {
+                description = zh
+                    ? "普通合成：每次投入 5 个永久超凡碎片，2.5% 概率获得 1 个 Apex 碎片。\n海洋神使：120 个永久超凡碎片必换 1 个 Apex 碎片。"
+                    : "Crafting: offer 5 Permanent Hyper Fragments per attempt, with a 2.5% chance for 1 Apex Fragment.\nOcean Oracle: trade 120 Permanent Hyper Fragments for 1 guaranteed Apex Fragment.";
+            } else if (rarity == Rarity::Ascendant) {
+                description = zh
+                    ? "泰坦的 Apex 雷神锤页签：5 个未装备的 Apex 碎片锻造 1 把 Apex 雷神之锤。"
+                    : "At the Titan's Apex Hammer tab, forge 1 Apex Mjolnir with 5 unequipped Apex Fragments.";
+            } else if (rarity == Rarity::Unique) {
+                description = zh
+                    ? "泰坦：10 个永恒碎片参与超凡雷神之锤争夺，或用 30 个永恒碎片兑换 1 个永久超凡碎片。"
+                    : "At the Titan, use 10 Eternal Fragments to contest Hyper Mjolnir or trade 30 for 1 Permanent Hyper Fragment.";
+            } else if (rarity == Rarity::Super) {
+                description = zh
+                    ? "泰坦：15 个超级碎片兑换 1 小时限时永恒雷神之锤，或兑换 1 个永恒碎片。"
+                    : "At the Titan, trade 15 Super Fragments for a 1-hour Eternal Mjolnir or 1 Eternal Fragment.";
+            } else {
+                description = zh ? "泰坦锻造材料。" : "Titan forging material.";
+            }
+        }
         if (config.id == "triangle" && rarity == Rarity::Unique) {
             description = language() == Language::Zh
                 ? "主栏中每多装备一枚永恒三角，所有永恒三角都会获得额外伤害。"
@@ -555,6 +578,11 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("潜地准备：", "Burrow charge: ",config.burrowChargeMillis/1000.0,"s");
         special("潜地持续：", "Burrow duration: ",config.burrowDurationMillis/1000.0,"s");
         lines.push_back({chinese?"准备后按防御潜地；仍会被Worm和沙漠蜈蚣命中，不可穿墙。":"Defend after charging to burrow. Worms and Desert Centipedes can still hit you; walls remain solid.",12.0});
+    }
+    if (config.id == "void_soap") {
+        special("流体半径：+", "Spill radius: +", soapSpillRadiusBonus(rarity) * 100.0, "%");
+        special("流体半径叠加上限：+", "Spill radius bonus cap: +",
+                (kSoapMaxSpillRadiusScale - 1.0) * 100.0, "%");
     }
     if (stats.flowerRadiusBonus > 0) special("增加花朵半径：+", "Flower radius: +", stats.flowerRadiusBonus);
     if (!petalSharesFlowerDamage(config) && stats.modifiers.maxHealth != 1.0)

@@ -54,11 +54,8 @@ std::uint32_t skinIdHash(const std::string& id) {
 
 /// The radius an entity is described at: its body's, or 10 for one without.
 ///
-/// A web is the exception. It has no body -- it is a patch of ground, not a
-/// thing -- and gardn draws it scaled to the reach of its field (RenderWeb.cc
-/// scales the art by `ent.radius / 10`), so that is what it is sent at. The
-/// other fields keep the 10: a pollen puff's disc is the grain lying on the
-/// ground, not the reach of its dust.
+/// Webs and liquid pools show their actual reach. Other bodyless effects
+/// can represent a small source, such as a pollen grain, with a wider reach.
 double replicatedRadius(World& world, Entity e) {
     if (const Body* body = world.tryGet<Body>(e)) return body->radius;
     // A sacrifice's star, which is twice the mob it summons.
@@ -66,7 +63,10 @@ double replicatedRadius(World& world, Entity e) {
     // An opened tomb, at the size the tomb was drawn.
     if (const MobRemains* remains = world.tryGet<MobRemains>(e)) return remains->radius;
     if (const GroundEffect* effect = world.tryGet<GroundEffect>(e)) {
-        if ((effect->kind == GroundEffectKind::Web || effect->kind == GroundEffectKind::ElectricWeb) &&
+        const auto kind = effect->kind;
+        const bool spill = kind == GroundEffectKind::Blood ||
+            (kind >= GroundEffectKind::AcidSpill && kind <= GroundEffectKind::ElixirSpill);
+        if ((spill || kind == GroundEffectKind::Web || kind == GroundEffectKind::ElectricWeb) &&
             effect->radius > 0.0) return effect->radius;
     }
     return 10.0;

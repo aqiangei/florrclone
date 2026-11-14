@@ -174,6 +174,8 @@ struct ProjectileSpec {
 
     /// A mob fires a named petal as ammunition; a petal fires itself and
     /// leaves this empty.
+    /// Optional damage per shot at common tier for a mob firing borrowed art.
+    std::optional<double> mobBaseDamage;
     std::string ammoPetalId;
     std::uint16_t ammoPetalIndex = kInvalidIndex;
 
@@ -1466,6 +1468,13 @@ inline bool petalIsEgg(const PetalConfig& config) {
     return id == "egg" || (id.size() >= 4 && id.compare(id.size() - 4, 4, "_egg") == 0);
 }
 
+// Soap boosts the radius of the wearer's liquid fields. The bonus is additive
+// across active slots and limited independently of per-target effect strength.
+inline constexpr double kSoapMaxSpillRadiusScale = 2.0;
+inline constexpr double soapSpillRadiusBonus(Rarity rarity) {
+    return rarity == Rarity::Ascendant ? 0.80 : (20 + 6 * ladderIndex(rarity)) / 100.0;
+}
+
 /// Summons eligible for the Duplicator talent's extra copies.
 inline bool summonUsesDuplicator(const PetalConfig& config) {
     return config.id == "egg" || config.id == "beetle_egg" || config.id == "void_momy_egg" ||
@@ -1581,6 +1590,14 @@ inline constexpr int kCrownMaxLoans = 25;
 /// `random` drop rows, and the gallery's mirror of them.
 inline bool petalHasOwnSource(const PetalConfig& config) {
     return config.biomeDropOnly || config.id.rfind("void_", 0) == 0 || petalIsSacrifice(config) || petalLendsBasic(config) || config.id == "timed_mjolnir" || config.id == "splitter" || config.id == "fission";
+}
+
+/// For a mob's explicitly authored Apex reward row. Map-specific items are excluded
+/// from the global random catalogue, but belong to their source mob's pool.
+inline bool allowsAuthoredApexReward(const PetalConfig& petal) {
+    return !petal.isAdminPetal && !petalIsSacrifice(petal) && !petalLendsBasic(petal) &&
+           petal.id != "mjolnir" && petal.id != "timed_mjolnir" &&
+           petal.id != "splitter" && petal.id != "fission";
 }
 
 /// Whether the world hands this petal out at this tier: at or above its

@@ -388,6 +388,8 @@ ProjectileSpec parseProjectile(Ctx& ctx, const Json& owner,
             : 0.0;
 
     if (petalIds != nullptr) {
+        if (node.contains("baseDamage"))
+            spec.mobBaseDamage = ctx.range(node, "baseDamage", 0.0, 0.0, kMaxBaseStat);
         spec.ammoPetalId = ctx.text(node, "petalType");
         spec.ammoPetalIndex = ctx.link(*petalIds, spec.ammoPetalId, "projectile petalType");
     }
@@ -1913,7 +1915,7 @@ std::uint16_t ContentRegistry::petalIndex(const std::string& id) const {
 MobStats ContentRegistry::mobStats(std::uint16_t index, Rarity r) const {
     if (r == Rarity::Ascendant) {
         auto stats = mobStats(index, Rarity::Apex);
-        stats.health *= 1.25;
+        stats.health *= 12.5;
         stats.damage *= 1.10;
         stats.poisonPerSecond *= 1.10;
         stats.radius *= 1.10;

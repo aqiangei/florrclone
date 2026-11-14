@@ -58,6 +58,23 @@ TEST(apex_uses_the_mobs_normal_petal_table) {
     CHECK_NEAR((roses + lights) / 1200.0, 0.02, 0.012);
 }
 
+TEST(apex_white_hole_rewards_come_from_its_void_table) {
+    constexpr int trials = 2400;
+    const auto result = kills("void_white_hole", Rarity::Ascendant, trials, false, 3);
+    const std::vector<std::string> expected = {
+        "void_dark_matter", "void_gamma_ray", "void_antimatter", "void_void_mark",
+        "void_stardust", "void_singularity", "void_relativity", "void_white_hole_egg"
+    };
+    int apex = 0;
+    for (const auto& [key, count] : result) {
+        if (key.second != rarityIndex(Rarity::Ascendant)) continue;
+        CHECK(std::find(expected.begin(), expected.end(), key.first) != expected.end());
+        apex += count;
+    }
+    CHECK_NEAR(static_cast<double>(apex) / trials, kApexPetalDropChance, .009);
+    CHECK(result.count({"void_white_hole_egg", rarityIndex(Rarity::Ascendant)}) > 0);
+}
+
 TEST(apex_rarity_preserves_legacy_names_and_sets_craft_terms) {
     CHECK_EQ(parseRarity("apex"), Rarity::Apex);
     CHECK_EQ(parseRarity("permanent_hyper"), Rarity::PermanentHyper);
@@ -77,7 +94,7 @@ TEST(apex_rarity_preserves_legacy_names_and_sets_craft_terms) {
     CHECK(hyperTechnique("missile", Rarity::Ascendant, false) == HyperTechnique::MissileSpeed);
     const auto hornet = c.mobIndex("hornet");
     CHECK_NEAR(c.mobStats(hornet, Rarity::Ascendant).health /
-               c.mobStats(hornet, Rarity::Apex).health, 1.25, 1e-12);
+               c.mobStats(hornet, Rarity::Apex).health, 12.5, 1e-12);
 }
 
 double expectedHyperEternals(const char* id) {

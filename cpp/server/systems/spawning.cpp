@@ -3182,14 +3182,23 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         // walking, and on a map with two dozen bands almost none of them are.
         if (!zoneInView(zone.bounds, zone.realm, seers, latentWakeMargin)) continue;
 
-        // Deep Jungle and Factory rooms can share a band across walls. If a flower has
+        // Bio, deep Jungle and Factory rooms can share a band across walls. If a flower has
         // no nearby mob in its room, keep one ready slot available to move
         // into reach rather than requiring the flower to draw mobs out.
         const Viewer* refillViewer = nullptr;
         const bool deepJungle = !zone.singular && zone.forceRarity < 0 &&
             zone.difficulty >= kDeepJungleDifficulty &&
             (zone.realm == ordinaryJungleRealm_ || zone.realm == prestigeJungleRealm_);
-        if (relocateBlocked && (deepJungle || isDeepPrestigeFactory(zone))) {
+        const auto* map = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
+        const bool bioRoom = map && !zone.singular && zone.forceRarity < 0 &&
+            (map->id() == "bio" || map->id() == "bio_micro" || map->id() == "bio_lab");
+        const auto inRefillRoom = [&](const Viewer& viewer, Vec2 at) {
+            if (!inRoom(viewer, at)) return false;
+            return !bioRoom ||
+                (std::abs(at.x - viewer.position.x) <= viewer.half.x - kViewportBuffer &&
+                 std::abs(at.y - viewer.position.y) <= viewer.half.y - kViewportBuffer);
+        };
+        if (relocateBlocked && (bioRoom || deepJungle || isDeepPrestigeFactory(zone))) {
             const auto offset = (static_cast<std::size_t>(nowMillis / kPopulationIntervalMillis) + index)
                 % seers.size();
             for (std::size_t i = 0; i < seers.size(); ++i) {
@@ -3197,7 +3206,7 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                 if (viewer.realm != zone.realm || !zoneContains(zone.bounds, zone.polygon, viewer.position))
                     continue;
                 if (std::none_of(censusMobs_.begin(), censusMobs_.end(), [&](const CensusMob& mob) {
-                        return mob.zone == index && inRoom(viewer, mob.position);
+                        return mob.zone == index && inRefillRoom(viewer, mob.position);
                     })) refillViewer = &viewer;
                 break;
             }
@@ -3208,7 +3217,7 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         for (std::size_t i = 0; i < zone.latent.size(); ++i) {
             const LatentMob& record = zone.latent[i];
             if (nowMillis < record.readyMillis) continue;
-            if (refillViewer) {
+            if (refillViewer && (!bioRoom || rarityIndex(record.rarity) < rarityIndex(Rarity::Super))) {
                 const double gap = distanceSq(refillViewer->position, record.position);
                 if (gap < refillDistance) {
                     refillDistance = gap;
@@ -3237,7 +3246,7 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                             !seenBy(seers, zone.realm, record.position, 0.0))) continue;
             double nearestSq = 0.0;
             nearestViewer(seers, zone.realm, record.position, &nearestSq);
-            if (refillViewer && inRoom(*refillViewer, record.position)) wakingInRoom = true;
+            if (refillViewer && inRefillRoom(*refillViewer, record.position)) wakingInRoom = true;
             wakeList_.push_back(WakeCandidate{static_cast<std::uint16_t>(index),
                                               static_cast<std::uint32_t>(i), nearestSq, facing, blocked});
         }
@@ -3291,6 +3300,10 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
         if (candidate.blockedByPlayer) {
             if (relocationSearches == kMaxRelocationSearches) break;
             ++relocationSearches;
+            const auto* map = worldMaps ? worldMaps->forRealm(zone.realm) : nullptr;
+            const double inset = candidate.refillViewer && map &&
+                (map->id() == "bio" || map->id() == "bio_micro" || map->id() == "bio_lab")
+                ? kViewportBuffer : 0.0;
             const Viewer* viewer = candidate.refillViewer ? candidate.refillViewer
                 : nearestViewer(seers, zone.realm, at);
             const Vec2 origin = candidate.refillViewer ? viewer->position : at;
@@ -3303,8 +3316,8 @@ void SpawnSystem::promoteLatent(World& world, const Terrain& terrain,
                 const Vec2 point = samplePointNear(origin, searchRadius, extent, rng);
                 if (!zoneContains(zone.bounds, zone.polygon, point) || inBorderBand(point, extent) ||
                     terrain.blocked(point, zone.realm) || !seenBy(seers, zone.realm, point, 0.0) ||
-                    (candidate.refillViewer && (std::abs(point.x - viewer->position.x) > viewer->half.x ||
-                                               std::abs(point.y - viewer->position.y) > viewer->half.y)) ||
+                    (candidate.refillViewer && (std::abs(point.x - viewer->position.x) > viewer->half.x - inset ||
+                                               std::abs(point.y - viewer->position.y) > viewer->half.y - inset)) ||
                     crowdedAt(zone.realm, point, kPreliminarySpawnRadius, kMinMobSpawnSpacing, candidate.zone) ||
                     terrain.segmentBlocked(viewer->position, point, zone.realm)) continue;
                 const auto bearing = wakingFacing(viewers, zone.realm, point, footprint, kMinSpawnDistance, rng);

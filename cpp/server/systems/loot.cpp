@@ -900,8 +900,7 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             for (const auto& entry : table) {
                 if (entry.kind == DropTables::Kind::RandomPetal ||
                     (entry.petalIndex < content.petalCount() &&
-                     !content.petal(entry.petalIndex).isAdminPetal &&
-                     !petalHasOwnSource(content.petal(entry.petalIndex)) &&
+                     allowsAuthoredApexReward(content.petal(entry.petalIndex)) &&
                      petalComesAt(content.petal(entry.petalIndex), Rarity::Ascendant))) {
                     apexPool.push_back(&entry);
                 }
