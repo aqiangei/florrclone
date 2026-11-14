@@ -28,11 +28,14 @@ public:
 
     /// Drops last frame's set. Called once, at the top of the frame.
     void beginFrame() { boxes_.clear(); }
-    void record(Rect box) { boxes_.push_back(box); }
-    const std::vector<Rect>& boxes() const { return boxes_; }
+    void record(Rect box, bool horizontalPan = false) {
+        boxes_.push_back({static_cast<float>(box.x), static_cast<float>(box.y),
+                          static_cast<float>(box.w), static_cast<float>(box.h), horizontalPan});
+    }
+    const std::vector<WindowRect>& boxes() const { return boxes_; }
 
 private:
-    std::vector<Rect> boxes_;
+    std::vector<WindowRect> boxes_;
 };
 
 /// How far a finger dragged the list in `view` this frame, in design units,

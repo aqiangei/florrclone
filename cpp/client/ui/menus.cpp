@@ -1208,7 +1208,10 @@ Rect DebugPanel::bounds(int w, int h) {
     return cornerPanel(preferredWidth(), 646.0, kMenuCornerY - 2.0, w, h);
 }
 Rect ChangelogPanel::bounds(int w, int h) {
-    return cornerPanel(preferredWidth(), 500.0, kMenuCornerY, w, h);
+    Rect panel = cornerPanel(preferredWidth(), 500.0, kMenuCornerY, w, h);
+    panel.w = clamp(w - panel.x * 2.0, 0.0, panel.w);
+    panel.h = clamp(h - panel.y - panel.x, 0.0, panel.h);
+    return panel;
 }
 Rect NotificationsPanel::bounds(int w, int h) {
     return cornerPanel(preferredWidth(), 500.0, kMenuCornerY, w, h);

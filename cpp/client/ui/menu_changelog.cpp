@@ -1,14 +1,13 @@
 // The changelog overlay: what changed, newest release first.
 //
 // An overlay rather than one of the tall list panels -- it hangs under the top
-// icon row at a fixed 600x500, which is why its bounds come from
+// icon row, which is why its bounds come from
 // `ChangelogPanel::bounds` and not from the shared list anchor.
 //
 // The table below began as the browser build's CHANGELOG array
 // (src/changelog.ts, in git history; it ends at August 26, 2026), taken
 // verbatim and in its own order -- oldest first -- and is walked backwards to
-// paint. The current release is appended from the deployment notes at build time.
-// Move the previous entry into this history when preparing a new release.
+// paint. The release archive and current deployment notes extend the table.
 //
 // Row pitch is written as literals rather than derived from the face's line
 // height: the reference advances 25px under a date and 24px under a bullet
@@ -26,6 +25,7 @@
 #include "release_notes.h"
 #include "shared/core/json.h"
 #include "client/ui/text.h"
+#include "client/ui/text_select.h"
 
 namespace flix {
 
@@ -926,22 +926,43 @@ constexpr ChangelogEntry kChangelog[] = {
 
 const std::vector<ChangelogEntry>& changelog() {
     struct Entries {
-        std::string title;
-        std::vector<std::string> changes;
+        struct Release {
+            std::string title;
+            std::vector<std::string> changes;
+        };
+        std::vector<Release> releases;
         std::vector<ChangelogEntry> rows{std::begin(kChangelog), std::end(kChangelog)};
 
+        void append(const Json& notes) {
+            Release release;
+            release.title = notes["title"].asString();
+            if (release.title.empty()) return;
+            for (const auto& line : notes["changes"].items()) {
+                if (line.isString() && release.changes.size() < kMaxChanges)
+                    release.changes.push_back(line.asString());
+            }
+            auto previous = std::find_if(releases.begin(), releases.end(), [&](const Release& item) {
+                return item.title == release.title;
+            });
+            if (previous == releases.end()) releases.push_back(std::move(release));
+            else *previous = std::move(release);
+        }
+
         Entries() {
+            Json history;
             Json notes;
             std::string error;
-            if (!Json::parse(kReleaseNotesJson, notes, error)) return;
-            title = notes["title"].asString();
-            if (title.empty()) return;
-            for (const auto& line : notes["changes"].items()) {
-                if (line.isString() && changes.size() < kMaxChanges) changes.push_back(line.asString());
+            if (Json::parse(kReleaseHistoryJson, history, error) && history.isArray()) {
+                for (const auto& entry : history.items()) append(entry);
             }
-            ChangelogEntry release{title.c_str(), {}};
-            for (std::size_t i = 0; i < changes.size(); ++i) release.changes[i] = changes[i].c_str();
-            rows.push_back(release);
+            if (Json::parse(kReleaseNotesJson, notes, error)) append(notes);
+            // Build pointers after all owned strings are in their final positions.
+            for (const auto& source : releases) {
+                ChangelogEntry entry{source.title.c_str(), {}};
+                for (std::size_t i = 0; i < source.changes.size(); ++i)
+                    entry.changes[i] = source.changes[i].c_str();
+                rows.push_back(entry);
+            }
         }
     };
     static const Entries entries;
@@ -976,23 +997,6 @@ struct Segment {
     std::string text;
     std::string url;
 };
-
-/// Thumb-drag state for the scrollbar.
-///
-/// At file scope because it lives entirely between one press and the release
-/// that ends it, and because the panel's own declaration sits in a header
-/// every panel shares -- widening it for one panel's transient would cost
-/// every other panel a recompile and tell a reader nothing.
-struct ThumbDrag {
-    bool active = false;
-    double startY = 0;
-    double startOffset = 0;
-};
-
-ThumbDrag& thumbDrag() {
-    static ThumbDrag drag;
-    return drag;
-}
 
 bool isSpaceByte(char c) {
     return std::isspace(static_cast<unsigned char>(c)) != 0;
@@ -1051,6 +1055,36 @@ std::vector<Segment> parseChange(const std::string& change) {
     return segments;
 }
 
+double widestLine(const std::vector<ChangelogEntry>& entries) {
+    double width = 0.0;
+    for (const auto& entry : entries) {
+        width = std::max(width, measure(entry.date, 20.0));
+        for (int i = 0; i < changeCount(entry); ++i) {
+            std::string_view change(entry.changes[i]);
+            for (;;) {
+                const auto end = change.find('\n');
+                double lineWidth = kBulletIndent;
+                for (const auto& segment : parseChange(std::string(change.substr(0, end))))
+                    lineWidth += measure(segment.text, kChangeSize);
+                width = std::max(width, lineWidth);
+                if (end == std::string_view::npos) break;
+                change.remove_prefix(end + 1);
+            }
+        }
+    }
+    return width + 6.0;
+}
+
+// Text selection is painted later, outside the canvas clip. Let only fully
+// visible runs enter that pass so selecting text cannot paint past the panel.
+void clippedText(Canvas& canvas, const Rect& view, const std::string& value,
+                 double x, double y, double width, const TextStyle& style) {
+    const bool contained = x >= view.x && x + width <= view.right() &&
+                           y >= view.y && y + kBulletPitch <= view.bottom();
+    TextCaptureScope capture(contained && capturingText());
+    text(canvas, value, x, y, style);
+}
+
 /// The one glyph in the build that is filled and THEN stroked.
 ///
 /// The reference paints the bullet with fillText followed by strokeText, so
@@ -1074,7 +1108,7 @@ void drawBullet(Canvas& canvas, double x, double y, double strokeWidth) {
 /// it, which the reference does by leaking ctx.lineWidth. The line's own text
 /// takes the shared outline.
 void drawChange(Canvas& canvas, const std::string& change, double x, double y,
-                double& strokeWidth, std::vector<LinkHit>& links) {
+                double& strokeWidth, std::vector<LinkHit>& links, const Rect& view) {
     double penX = x;
     for (const Segment& segment : parseChange(change)) {
         if (segment.text.empty()) continue;
@@ -1083,7 +1117,7 @@ void drawChange(Canvas& canvas, const std::string& change, double x, double y,
         TextStyle style;
         style.size = kChangeSize;
         style.fill = segment.url.empty() ? kPaper : kLinkFill;
-        text(canvas, segment.text, penX, y, style);
+        clippedText(canvas, view, segment.text, penX, y, width, style);
 
         if (!segment.url.empty()) {
             canvas.save();
@@ -1105,11 +1139,12 @@ void drawChange(Canvas& canvas, const std::string& change, double x, double y,
 
 int changelogReleaseCount() { return static_cast<int>(changelog().size()); }
 
-double ChangelogPanel::preferredWidth() { return 600.0; }
+double ChangelogPanel::preferredWidth() { return 1000.0; }
 
 void ChangelogPanel::reset() {
     scroll_ = {};
-    thumbDrag() = {};
+    horizontalOffset_ = 0.0;
+    horizontalThumbGrab_.reset();
 }
 
 bool ChangelogPanel::render(MenuContext& ctx) {
@@ -1117,37 +1152,66 @@ bool ChangelogPanel::render(MenuContext& ctx) {
     const Rect panel = ctx.bounds;
     const Vec2 mouse = ctx.mouse();
 
-    const double viewport = panel.h - kHeaderHeight;
-    double contentHeight = 0;
+    if (panel.w < 2.0 * kPadding + 20.0 || panel.h < kHeaderHeight + 45.0)
+        return false;
+
     const auto& entries = changelog();
-    for (const ChangelogEntry& entry : entries) contentHeight += entryHeight(entry);
+    if (contentWidth_ == 0.0 && Fonts::ready()) contentWidth_ = widestLine(entries);
+    double contentHeight = kPadding;
+    for (const auto& entry : entries) contentHeight += entryHeight(entry);
+    Rect view{panel.x + kPadding, panel.y + kHeaderHeight, panel.w - 2.0 * kPadding,
+              panel.h - kHeaderHeight - kPadding};
+    constexpr double gutter = kScrollbarWidth + 5.0;
+    const bool needsVertical = contentHeight > view.h ||
+        (contentWidth_ > view.w && contentHeight > view.h - gutter);
+    if (needsVertical) view.w -= gutter;
+    if (contentWidth_ > view.w) view.h -= gutter;
+
     scroll_.contentHeight = contentHeight;
-    scroll_.viewHeight = viewport;
-    const double maxScroll = scroll_.maxOffset();
-    const bool scrollable = contentHeight > viewport;
+    scroll_.viewHeight = view.h;
+    const double maxY = scroll_.maxOffset();
+    const double maxX = std::max(0.0, contentWidth_ - view.w);
+    const Rect vertical{view.right() + 5.0, view.y, kScrollbarWidth, view.h};
+    const Rect horizontal{view.x, view.bottom() + 5.0, view.w, kScrollbarWidth};
 
-    const Rect track{panel.right() - kScrollbarWidth - 5.0, panel.y + kHeaderHeight,
-                     kScrollbarWidth, panel.h - kHeaderHeight - 5.0};
-
-    if (panel.contains(mouse)) scroll_.offset -= ctx.wheel() * kWheelStep;
-    // Let the list follow the finger throughout the body, outside the thumb track.
-    const Rect body{panel.x, panel.y + kHeaderHeight, track.x - panel.x, panel.h - kHeaderHeight};
-    scroll_.offset -= touchScroll(ctx.window, body, scrollable);
-
-    ThumbDrag& drag = thumbDrag();
-    if (ctx.pressed() && scrollable && track.contains(mouse)) {
-        drag.active = true;
-        drag.startY = mouse.y;
-        drag.startOffset = scroll_.offset;
+    if (panel.contains(mouse)) {
+        if (ctx.window.keyDown(Key::LeftShift) || ctx.window.keyDown(Key::RightShift))
+            horizontalOffset_ -= ctx.wheel() * kWheelStep;
+        else
+            scroll_.offset -= ctx.wheel() * kWheelStep;
     }
-    if (!ctx.window.mouseDown(MouseButton::Left)) drag.active = false;
-    if (drag.active) {
-        // The reference maps the drag over panelHeight - 45, not over the
-        // track: the thumb runs slightly ahead of the cursor by design.
-        const double ratio = (mouse.y - drag.startY) / (panel.h - 45.0);
-        scroll_.offset = drag.startOffset + ratio * maxScroll;
+    TouchScrollRegions::instance().record(view, maxX > 0.0);
+    const auto& pan = ctx.window.touchPan();
+    if (pan.active && view.contains({pan.originX, pan.originY})) {
+        horizontalOffset_ -= pan.dx;
+        scroll_.offset -= pan.dy;
     }
-    scroll_.offset = clamp(scroll_.offset, 0.0, maxScroll);
+
+    const auto thumbLength = [](double trackLength, double visible, double total) {
+        return std::min(trackLength, std::max(24.0, trackLength * visible / total));
+    };
+    const double thumbW = maxX > 0 ? thumbLength(horizontal.w, view.w, contentWidth_) : horizontal.w;
+    const double thumbH = thumbLength(vertical.h, view.h, contentHeight);
+    bool scrollbarUsed = false;
+    const auto dragThumb = [&](const Rect& track, double cursor, double start, double travel,
+                               double limit, double length, double& offset,
+                               std::optional<double>& grab) {
+        if (ctx.pressed() && limit > 0.0 && track.contains(mouse)) {
+            const double position = clamp(offset, 0.0, limit) / limit * travel;
+            const double local = cursor - start - position;
+            grab = local >= 0.0 && local <= length ? local : length * 0.5;
+        }
+        if (!grab) return;
+        scrollbarUsed = true;
+        if (travel > 0.0) offset = (cursor - start - *grab) / travel * limit;
+        if (!ctx.window.mouseDown(MouseButton::Left)) grab.reset();
+    };
+    dragThumb(horizontal, mouse.x, horizontal.x, horizontal.w - thumbW,
+              maxX, thumbW, horizontalOffset_, horizontalThumbGrab_);
+    dragThumb(vertical, mouse.y, vertical.y, vertical.h - thumbH,
+              maxY, thumbH, scroll_.offset, scroll_.thumbGrab);
+    horizontalOffset_ = clamp(horizontalOffset_, 0.0, maxX);
+    scroll_.offset = clamp(scroll_.offset, 0.0, maxY);
 
     panelCard(canvas, panel, kChangelogSkin);
 
@@ -1161,15 +1225,13 @@ bool ChangelogPanel::render(MenuContext& ctx) {
     const Rect closeRect = closeButtonRect(panel);
     panelClose(canvas, closeRect, closeRect.contains(mouse));
 
-    const Rect view{panel.x + kPadding, panel.y + kHeaderHeight, panel.w - kPadding * 2,
-                    panel.h - kHeaderHeight - kPadding};
-
     canvas.save();
-    roundPath(canvas, view, 8.0);
+    canvas.beginPath();
+    canvas.rect(static_cast<float>(view.x), static_cast<float>(view.y),
+                static_cast<float>(view.w), static_cast<float>(view.h));
     canvas.clip();
 
-    // The date strip yields its right edge to the scrollbar when there is one.
-    const double stripWidth = view.w - (scrollable ? kScrollbarWidth + 5.0 : 0.0);
+    const double contentX = view.x - horizontalOffset_;
     double contentY = view.y + kPadding - scroll_.offset;
     std::vector<LinkHit> links;
 
@@ -1185,13 +1247,13 @@ bool ChangelogPanel::render(MenuContext& ctx) {
         }
 
         setFill(canvas, kPaper, 0.05);
-        roundPath(canvas, Rect{view.x, contentY - 5.0, stripWidth, 10.0}, 8.0);
+        roundPath(canvas, Rect{view.x, contentY - 5.0, view.w, 10.0}, 8.0);
         canvas.fill();
 
         TextStyle date;
         date.size = 20.0;
         date.fill = kPaper;
-        text(canvas, entry.date, view.x, contentY, date);
+        clippedText(canvas, view, entry.date, contentX, contentY, measure(entry.date, date.size), date);
         contentY += kDatePitch;
 
         // The first bullet of an entry is outlined at 1px and the rest at
@@ -1199,14 +1261,14 @@ bool ChangelogPanel::render(MenuContext& ctx) {
         double strokeWidth = 1.0;
         const int changes = changeCount(entry);
         for (int c = 0; c < changes; ++c) {
-            drawBullet(canvas, view.x, contentY, strokeWidth);
+            drawBullet(canvas, contentX, contentY, strokeWidth);
             strokeWidth = 0.5;
             const std::string change(entry.changes[c]);
             std::size_t start = 0;
             for (;;) {
                 const auto end = change.find('\n', start);
-                drawChange(canvas, change.substr(start, end - start), view.x + kBulletIndent,
-                           contentY, strokeWidth, links);
+                drawChange(canvas, change.substr(start, end - start), contentX + kBulletIndent,
+                           contentY, strokeWidth, links, view);
                 contentY += kBulletPitch;
                 if (end == std::string::npos) break;
                 start = end + 1;
@@ -1216,23 +1278,26 @@ bool ChangelogPanel::render(MenuContext& ctx) {
     }
     canvas.restore();
 
-    if (scrollable) {
+    const auto drawScrollbar = [&](const Rect& track, const Rect& thumb) {
         setFill(canvas, kPaper, 0.1);
         roundPath(canvas, track, 5.0);
         canvas.fill();
-        // No minimum thumb height: on a 7896px list the reference's thumb is
-        // 26px, and clamping it to a comfortable size would move it off the
-        // scroll position it is meant to report.
-        const double thumbHeight = (viewport - 5.0) * viewport / contentHeight;
-        const double travelled = maxScroll > 0 ? scroll_.offset / maxScroll : 0.0;
         setFill(canvas, kBodyBorder);
-        roundPath(canvas,
-                      Rect{track.x, track.y + travelled * (track.h - thumbHeight),
-                           track.w, thumbHeight},
-                      5.0);
+        roundPath(canvas, thumb, 5.0);
         canvas.fill();
+    };
+    if (maxY > 0.0) {
+        drawScrollbar(vertical, {vertical.x, vertical.y + scroll_.offset / maxY * (vertical.h - thumbH),
+                                 vertical.w, thumbH});
     }
-
+    if (maxX > 0.0) {
+        drawScrollbar(horizontal, {horizontal.x + horizontalOffset_ / maxX * (horizontal.w - thumbW),
+                                   horizontal.y, thumbW, horizontal.h});
+    }
+    if (scrollbarUsed) {
+        ctx.scrollbarOwnsPointer = true;
+        return true;
+    }
     if (!ctx.released()) return true;
     if (closeRect.contains(mouse)) return false;
     // Link rects are recorded unclipped, so the hit is gated on the body the

@@ -109,7 +109,8 @@ private:
         float y;
     };
 
-    bool onList(float x, float y) const;
+    const WindowRect* listAt(float x, float y) const;
+    bool horizontalPan_ = false;
     /// The pointer lands at (x, y), unless a press already landed this frame
     /// -- a press lands where the finger landed, and the finger's later moves
     /// on the same frame wait for the next one.

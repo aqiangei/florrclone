@@ -1474,7 +1474,12 @@ inline bool summonUsesDuplicator(const PetalConfig& config) {
 
 /// Ice dragons follow the egg's gameplay rarity, including the Apex tier
 /// beyond the ordinary mob ladder. Their authored incubation still applies.
+inline bool apexNukeHatchesHyper(const PetalConfig& config, Rarity rarity) {
+    return rarity == Rarity::Ascendant && config.id == "arctic_nuke_egg";
+}
+
 inline Rarity configuredSummonRarity(const PetalConfig& config, Rarity rarity) {
+    if (apexNukeHatchesHyper(config, rarity)) return Rarity::Apex;
     if (config.id == "arctic_ice_dragon_egg" || !config.petSummonTiers)
         return petalGameplayRarity(rarity);
     return (*config.petSummonTiers)[ladderIndex(rarity)];
@@ -1491,11 +1496,12 @@ inline double eggSummonCombatScale(const PetalConfig& config) {
     return petalIsEgg(config) ? 2.0 : 1.0;
 }
 
-inline double summonDamageScale(const PetalConfig& config) {
+inline double summonDamageScale(const PetalConfig& config, Rarity rarity) {
     if (config.id == "void_alien_digger_egg") return 0.55;
     if (config.id == "void_troll_egg") return 0.70;
     if (config.id == "void_momy_egg") return 0.80;
-    if (config.id == "mysterious_stick") return 0.55;
+    if (config.id == "mysterious_stick")
+        return ladderIndex(rarity) >= rarityIndex(Rarity::Unique) ? 0.40 : 0.55;
     if (config.id == "arctic_snow_stick") return 0.80;
     return config.id == "magic_stick" ? 1.25 : 1.0;
 }
@@ -1504,6 +1510,12 @@ inline double summonDamageScale(const PetalConfig& config) {
 inline double hyperSummonScale(const PetalConfig& config, Rarity rarity) {
     if (ladderRarity(rarity) != Rarity::Apex) return 1.0;
     return config.id == "magic_stick" || config.id == "mysterious_stick" ? 1.5 : 1.25;
+}
+
+// Keep the Apex nuke's existing total combat budget when it hatches Hyper bodies.
+inline double configuredSummonStrength(const PetalConfig& config, Rarity rarity) {
+    const double promotionOffset = apexNukeHatchesHyper(config, rarity) ? 1.0 / 1.1 : 1.0;
+    return strengthBoost(rarity) * hyperSummonScale(config, rarity) * promotionOffset;
 }
 
 // Promoting previously Eternal-capped escorts to actual Hyper bodies should

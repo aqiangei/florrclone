@@ -563,8 +563,14 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("移速变化：", "Movement speed: ", (stats.modifiers.speed - 1.0) * 100.0, "%");
     if (stats.modifiers.playerRadius != 1.0)
         special("花朵半径变化：", "Flower radius: ", (stats.modifiers.playerRadius - 1.0) * 100.0, "%");
-    if (stats.modifiers.rotationSpeed != 1.0)
-        special("旋转速度变化：", "Rotation speed: ", (stats.modifiers.rotationSpeed - 1.0) * 100.0, "%");
+    if (stats.modifiers.rotationSpeed != 1.0) {
+        const double spinBonusPercent = (stats.modifiers.rotationSpeed - 1.0) * 100.0;
+        special("旋转速度变化：", "Rotation speed: ", spinBonusPercent, "%");
+        if (technique && technique->technique == HyperTechnique::FastOrbit) {
+            special("攻击时旋转速度变化：", "Rotation speed while attacking: ",
+                    spinBonusPercent * hyperAmount(technique, HyperTechnique::FastOrbit), "%");
+        }
+    }
     if (stats.modifiers.attackRange > 0) special("攻击范围：+", "Attack range: +", stats.modifiers.attackRange);
     if (stats.modifiers.magnetism > 0) special("拾取范围：+", "Pickup range: +", stats.modifiers.magnetism);
     if (config.id == "pharaoh_s_crown") {
@@ -582,7 +588,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const auto& summon=content().mob(config.petMobIndex);
         const bool apex=ladderRarity(rarity)==Rarity::Apex;
         const auto summonRarity = configuredSummonRarity(config, rarity);
-        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config)*hyperSummonScale(config,rarity)*hyperSummonPromotionScale(config,summonRarity);
+        const double summonScale = petalStatScale(summonRarity) * configuredSummonStrength(config, rarity) *
+            eggSummonCombatScale(config) * hyperSummonPromotionScale(config, summonRarity);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
             " x" + std::to_string((summonUsesDuplicator(config)
@@ -591,7 +598,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*kSummonedMobHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
         special("召唤物伤害：", "Summon damage: ",
-                summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config) *
+                summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config, rarity) *
                 skills.effectScale(SkillId::PetDamage));
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});

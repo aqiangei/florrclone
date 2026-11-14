@@ -1038,8 +1038,8 @@ void App::frame(double dt) {
             // The same menus, on the title screen. The panels read the account
             // rather than the world, so there is nothing for them to miss here.
             menus_.render(canvas, window_, net_, sprites_, renderer_, timeSeconds_, dt);
-            // Over the panels, as the reference's own always-on-top widget is.
-            drawDailyStreak(canvas, timeSeconds_);
+            // The wide changelog needs its close button and scrollbar unobstructed.
+            if (menus_.open() != MenuId::Changelog) drawDailyStreak(canvas, timeSeconds_);
         }
         else if (screen_ == Screen::Replaced) drawSessionReplaced(canvas, timeSeconds_);
         else drawConnectionState(canvas, timeSeconds_);
@@ -1235,12 +1235,7 @@ void App::publishKeyboardRegions() {
 
     // The lists a finger can drag, for the same reason the fields are handed
     // over here: the window decides what a touch is as it lands.
-    std::vector<WindowRect> lists;
-    for (const Rect& box : ui::TouchScrollRegions::instance().boxes()) {
-        lists.push_back(WindowRect{static_cast<float>(box.x), static_cast<float>(box.y),
-                                   static_cast<float>(box.w), static_cast<float>(box.h)});
-    }
-    window_.setTouchScrollRegions(std::move(lists));
+    window_.setTouchScrollRegions(ui::TouchScrollRegions::instance().boxes());
 }
 
 bool App::keyboardCaptured() const {

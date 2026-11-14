@@ -1443,6 +1443,9 @@ public:
 
 private:
     ui::Scroller scroll_;
+    double horizontalOffset_ = 0.0;
+    double contentWidth_ = 0.0;
+    std::optional<double> horizontalThumbGrab_;
 };
 
 /// How many releases the changelog holds: the length of its table, counted

@@ -5064,9 +5064,8 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     const int squad = egg ? petalCopies(config.petCount, tree ? &tree->skills : nullptr,
         slot, petalTier(rarity), config.stackable) : config.petCount;
     const int wanted = config.petSummonTiers ? squad : summonSquadSize(squad, rarity);
-    const bool promoteNuke = config.id == "arctic_nuke_egg" && rarity == Rarity::Ascendant;
-    const Rarity petRarity = promoteNuke ? Rarity::Apex
-        : (config.petSummonTiers ? configuredSummonRarity(config, rarity) : rarity);
+    const Rarity petRarity = config.petSummonTiers || apexNukeHatchesHyper(config, rarity)
+        ? configuredSummonRarity(config, rarity) : rarity;
     if (wanted <= 0) return;
 
     // Counted per SLOT: eggs of one type stack, so a second stick hatches a
@@ -5090,8 +5089,7 @@ void PetalSystem::maintainPets(World& world, const ContentRegistry& registry, En
     const int missing = std::min(wanted - current, room - current);
     // Offset the Hyper promotion factor to preserve the existing contact damage
     // and health budget.
-    const double promotionScale = promoteNuke ? 1.0 / 1.1 : 1.0;
-    const double strength = strengthBoost(rarity) * hyperSummonScale(config, rarity) * promotionScale;
+    const double strength = configuredSummonStrength(config, rarity);
     const auto* modifiers = world.tryGet<PlayerModifiers>(player);
     const int tier = petalTier(rarity);
     // Eternal is the ceiling for a Bio hatchling mutation. The equipped egg
@@ -5295,7 +5293,7 @@ Entity PetalSystem::hatchPetBody(World& world, const ContentRegistry& registry, 
     mob.damage = config.damage * ladder * config.petDamageScale * strength;
     if (source) {
         mob.health *= eggSummonHealthScale(*source);
-        mob.damage *= summonDamageScale(*source);
+        mob.damage *= summonDamageScale(*source, rarity);
     }
     // The Pet Health talent is the Petal Health talent for the squad: the same
     // curve, and on this pool alone. Read at the hatch, as the petal talent is

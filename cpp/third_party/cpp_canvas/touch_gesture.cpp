@@ -7,14 +7,14 @@ void TouchScrollGesture::setUnitsPerPoint(double unitsPerPoint) {
     unitsPerPoint_ = unitsPerPoint > 0 ? unitsPerPoint : 1.0;
 }
 
-bool TouchScrollGesture::onList(float x, float y) const {
+const WindowRect* TouchScrollGesture::listAt(float x, float y) const {
     for (const WindowRect& region : regions_) {
         if (x >= region.x && x <= region.x + region.w && y >= region.y &&
             y <= region.y + region.h) {
-            return true;
+            return &region;
         }
     }
-    return false;
+    return nullptr;
 }
 
 void TouchScrollGesture::movePointer(Mouse& out, float x, float y) {
@@ -99,7 +99,9 @@ TouchScrollGesture::Mouse TouchScrollGesture::began(const TouchPoint& point, dou
     originY_ = lastY_ = point.y;
     pan_.originX = point.x;
     pan_.originY = point.y;
-    if (!pressNow && onList(point.x, point.y)) {
+    const WindowRect* list = pressNow ? nullptr : listAt(point.x, point.y);
+    horizontalPan_ = list && list->horizontalPan;
+    if (list) {
         // The pointer goes where the finger is, with nothing pressed, so a
         // press committed on a later frame finds hover state that is already
         // about this spot rather than the last one.
@@ -128,7 +130,7 @@ TouchScrollGesture::Mouse TouchScrollGesture::moved(const TouchPoint& point, dou
                 movePointer(out, point.x, point.y);
                 break;
             }
-            if (std::fabs(fromY) >= std::fabs(fromX)) {
+            if (horizontalPan_ || std::fabs(fromY) >= std::fabs(fromX)) {
                 // Measured from the landing point rather than from where the
                 // slop was crossed: the list stays glued to the spot the
                 // finger grabbed instead of lagging it by the slop.
