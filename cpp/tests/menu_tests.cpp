@@ -476,7 +476,7 @@ TEST(shop_prices_climb_by_tier_and_top_tiers_are_not_for_sale) {
     CHECK_NEAR(shopPrice("a-petal-that-does-not-exist", Rarity::Common), 0.0, 1e-12);
 
     CHECK(shopSellsRarity(Rarity::Super));
-    CHECK(!shopSellsRarity(Rarity::Unique));
+    CHECK(shopSellsRarity(Rarity::Unique));
     CHECK(!shopSellsRarity(Rarity::Apex));
     CHECK(!shopSellsRarity(Rarity::Universal));
     CHECK(!shopSellsRarity(Rarity::Admin));
@@ -488,7 +488,7 @@ TEST(shop_prices_climb_by_tier_and_top_tiers_are_not_for_sale) {
     }
 }
 
-TEST(the_store_rotates_hourly_and_both_sides_derive_the_same_ten_cards) {
+TEST(the_store_rotates_hourly_and_both_sides_derive_the_same_five_cards) {
     CHECK(ensureShippedContent());
     const std::int64_t rotation = shopRotation(1'700'000'000);
     // The same hour is the same store, twice over: the generator is what the

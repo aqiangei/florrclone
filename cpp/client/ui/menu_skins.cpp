@@ -25,6 +25,10 @@
 #include <string>
 #include <vector>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 #include "client/net_client.h"
 #include "client/render/skin_render.h"
 #include "client/ui/draw.h"
@@ -42,6 +46,71 @@ namespace flix {
 using namespace flix::ui;
 
 namespace {
+
+constexpr char kSkinAiPrompt[] = R"PROMPT(请把我上传的参考图转成可以直接粘贴进「皮肤工坊」的画布命令。根据图中角色的轮廓、发型、眼睛、服装和配色来画。先铺底色和大轮廓，再叠加五官、配件和高光。缩小预览时，优先保证角色容易辨认。
+
+画布以 x=0 y=0 为中心，y 向下为正。参考示例中的 r=25，把主要图案控制在 x、y 各约 ±28 的范围内。一行一个图形，颜色用 #rrggbb。可用以下命令：
+circle x=0 y=0 r=5 fill=#ffffff
+ellipse x=0 y=0 rx=5 ry=3 fill=#ffffff
+rect x=0 y=0 rx=5 ry=3 fill=#ffffff
+polygon x=0 y=0 points=-3,2,0,-3,3,2 fill=#ffffff
+可选参数为 rot、stroke、sw。多边形的坐标全部用逗号分隔。
+
+请给出一个皮肤名称，再用一个独立代码块输出完整命令。代码块内只放可粘贴的画布命令。每条 polygon 最多 16 个顶点，每对 x,y 算一个顶点。复杂轮廓请拆成多个多边形，输出前逐行检查顶点数。)PROMPT";
+
+#ifdef __EMSCRIPTEN__
+EM_JS(void, copySkinPrompt, (const char* text, bool chinese), {
+    const value = UTF8ToString(text);
+    Module.flixSkinPromptCopied = false;
+    const copied = () => { Module.flixSkinPromptCopied = true; };
+    const manualCopy = () => {
+        const previous = document.getElementById('flix-skin-prompt');
+        if (previous) previous.remove();
+        const dialog = document.createElement('dialog');
+        dialog.id = 'flix-skin-prompt';
+        dialog.style.cssText = 'position:fixed;inset:0;margin:auto;z-index:20;width:min(32rem,88vw);max-height:80vh;' +
+            'background:#563a83;color:white;border:3px solid #9d7ace;border-radius:10px;padding:12px;';
+        const help = document.createElement('p');
+        help.textContent = chinese ? '复制下方提示词，再把参考图和提示词一起发给 AI。' :
+            'Copy the prompt below and send it to AI with your reference image.';
+        const field = document.createElement('textarea');
+        field.readOnly = true;
+        field.value = value;
+        field.style.cssText = 'display:block;box-sizing:border-box;width:100%;height:36vh;font-size:16px;';
+        field.setAttribute('aria-label', chinese ? 'AI 提示词' : 'AI prompt');
+        const select = () => {
+            field.focus();
+            field.select();
+            field.setSelectionRange(0, value.length);
+        };
+        const copy = document.createElement('button');
+        copy.textContent = chinese ? '复制提示词' : 'Copy prompt';
+        copy.onclick = () => {
+            select();
+            try {
+                if (document.execCommand('copy')) {
+                    copied();
+                    dialog.remove();
+                }
+            } catch (_) {}
+        };
+        const close = document.createElement('button');
+        close.textContent = chinese ? '关闭' : 'Close';
+        close.onclick = () => dialog.remove();
+        dialog.addEventListener('close', () => dialog.remove());
+        dialog.append(help, field, copy, close);
+        document.body.appendChild(dialog);
+        if (typeof dialog.showModal === 'function') dialog.showModal();
+        else dialog.setAttribute('open', '');
+        // Try the clipboard on HTTP as well. If the browser refuses, leave
+        // the selected text visible so the player can copy it directly.
+        copy.onclick();
+    };
+    if (navigator.clipboard) navigator.clipboard.writeText(value).then(copied, manualCopy);
+    else manualCopy();
+});
+EM_JS(bool, skinPromptWasCopied, (), { return Module.flixSkinPromptCopied === true; });
+#endif
 
 // --- palette ---------------------------------------------------------------
 //
@@ -298,7 +367,7 @@ std::string serializeShape(const Shape& s) {
 enum class Act : std::uint8_t {
     None, Close, Tab, AddShape, SelectShape, MoveShape, DelShape, Step, Fill, Stroke,
     AddVertex, DelVertex, TextMode, Publish, PublishSaved, Reset, Equip, Unequip, Delete,
-    ConfirmDelete, CancelDelete, EquipBuiltIn,
+    ConfirmDelete, CancelDelete, EquipBuiltIn, CopyAiPrompt, ReviewRefresh, ReviewApprove, ReviewReject,
 };
 
 enum class Field : std::uint8_t { X, Y, R, Rx, Ry, Rot, Sw };
@@ -349,7 +418,7 @@ struct Layout {
     Rect right;     ///< the selected shape's properties, or the text editor
 };
 
-Layout layoutOf(Rect panel) {
+Layout layoutOf(Rect panel, bool showPromptHint) {
     Layout out;
     out.panel = panel;
     const double x = panel.x + kPad;
@@ -357,7 +426,7 @@ Layout layoutOf(Rect panel) {
     out.tabs = {x, panel.y + kPad + kHeadingBand + 5.0, w, kTabHeight};
     out.footer = {x, panel.bottom() - kPad - kFooterHeight, w, kFooterHeight};
 
-    const double top = out.tabs.bottom() + 12.0;
+    const double top = out.tabs.bottom() + (showPromptHint ? 34.0 : 12.0);
     out.body = {x, top, w, std::max(0.0, out.footer.y - 10.0 - top)};
     out.left = {x, top, kLeftWidth, out.body.h};
     out.preview = {x + (kLeftWidth - kPreviewSize) * 0.5, top, kPreviewSize, kPreviewSize};
@@ -371,9 +440,13 @@ Rect browseBody(const Layout& l) {
     return {l.body.x, top, l.body.w, std::max(0.0, l.panel.bottom() - kPad - top)};
 }
 
+Rect skinSearchRect(const Layout& layout) {
+    return {layout.body.x, layout.tabs.bottom() + 5.0, layout.body.w, 29.0};
+}
+
 /// Everything the studio keeps between frames.
 struct Studio {
-    enum class Tab : std::uint8_t { Create, Browse, BuiltIn };
+    enum class Tab : std::uint8_t { Create, Browse, BuiltIn, Review };
 
     Tab tab = Tab::Create;
     std::vector<Shape> shapes = starterSkinShapes();
@@ -401,6 +474,7 @@ struct Studio {
         return net ? net->skinCatalog() : noSkins();
     }
     bool isAdmin() const { return net && net->isSkinAdmin(); }
+    bool canReview() const { return net && net->canModeratePublicSkins(); }
     const std::string& equippedId() const {
         static const std::string none;
         return net ? net->equippedSkinId() : none;
@@ -430,12 +504,15 @@ struct Studio {
     int dragVertex = 0;
 
     bool textMode = false;
+    double promptCopyFeedbackUntil = 0.0;
     std::string textError;
     std::string textBuffer;
     /// Caret, selection and focus for the two editors. The name box is an
     /// ordinary field on the footer, so "naming" is just where the caret is.
     TextFieldState textField;
     TextFieldState nameField;
+    TextFieldState skinSearchField;
+    std::string skinSearch;
 
     bool confirming = false;
     std::string confirmId;
@@ -474,7 +551,7 @@ struct Studio {
 
     // draw
     void draw(MenuContext&);
-    void drawTabs(Canvas&, Vec2 mouse);
+    void drawTabs(Canvas&, Vec2 mouse, double now);
     void drawPreview(Canvas&);
     void drawShapeList(Canvas&, Rect);
     void drawProps(Canvas&, Rect);
@@ -484,7 +561,7 @@ struct Studio {
     void drawTextEditor(Canvas&, Rect, double timeSeconds);
     void drawCommandHelp(Canvas&, Rect);
     void drawFooter(Canvas&, double timeSeconds);
-    void drawBrowse(Canvas&, const std::string& me);
+    void drawBrowse(Canvas&, const std::string& me, double timeSeconds);
     void drawBuiltIn(MenuContext&);
     void drawConfirm(Canvas&, Vec2 mouse);
     /// A button that registers its own hit region, so the input pass that runs
@@ -661,10 +738,12 @@ double Studio::drawPalette(Canvas& canvas, Rect r, const char* caption,
 
 // --- the panel -------------------------------------------------------------
 
-void Studio::drawTabs(Canvas& canvas, Vec2 mouse) {
+void Studio::drawTabs(Canvas& canvas, Vec2 mouse, double now) {
     const Rect row = layout.tabs;
-    const char* labels[] = {tr(Msg::CreateTab), tr(Msg::BrowseTab), tr(Msg::SkinBuiltInTab)};
-    for (int i = 0; i < 3; ++i) {
+    const char* labels[] = {tr(Msg::CreateTab), tr(Msg::BrowseTab), tr(Msg::SkinBuiltInTab),
+                            trEnZh("Review", "审核")};
+    const int tabCount = canReview() ? 4 : 3;
+    for (int i = 0; i < tabCount; ++i) {
         const Rect r{row.x + i * (kTabWidth + kTabGap), row.y, kTabWidth, row.h};
         const bool active = static_cast<int>(tab) == i;
         Action pick;
@@ -683,11 +762,31 @@ void Studio::drawTabs(Canvas& canvas, Vec2 mouse) {
         const Rect r{row.right() - 110.0, row.y, 110.0, row.h};
         actionButton(canvas, r, textMode ? tr(Msg::SkinVisualEditor) : tr(Msg::SkinTextEditor), mode,
                      textMode ? kAccentPurple : kNeutralFill);
+        const double left = row.x + tabCount * (kTabWidth + kTabGap);
+        const Rect prompt{left, row.y, std::max(0.0, r.x - left - kTabGap), row.h};
+        bool copied = now < promptCopyFeedbackUntil;
+#ifdef __EMSCRIPTEN__
+        copied = copied && skinPromptWasCopied();
+#endif
+        Action copy;
+        copy.k = Act::CopyAiPrompt;
+        actionButton(canvas, prompt,
+                     copied ? trEnZh("Copied", "已复制") : trEnZh("Copy AI prompt", "复制 AI 提示词"),
+                     copy, kAccentPurple);
+        ui::text(canvas, trEnZh(
+            "Send the image and prompt to AI. Paste the result into the text editor.",
+            "把参考图和提示词发给 AI，再把生成的画布命令粘贴到文本编辑。"),
+            row.x, row.bottom() + 15.0, label(kCaptionSize));
     } else if (tab == Tab::Browse) {
         Action unequip;
         unequip.k = Act::Unequip;
         const Rect r{row.right() - 110.0, row.y, 110.0, row.h};
         actionButton(canvas, r, tr(Msg::SkinUnequip), unequip, kNeutralFill);
+    } else if (tab == Tab::Review) {
+        Action refresh;
+        refresh.k = Act::ReviewRefresh;
+        actionButton(canvas, {row.right() - 110.0, row.y, 110.0, row.h},
+                     trEnZh("Refresh", "刷新队列"), refresh, kNeutralFill);
     }
 }
 
@@ -991,20 +1090,24 @@ void Studio::drawFooter(Canvas& canvas, double timeSeconds) {
                  tr(Msg::SkinReset), reset, kNeutralFill);
     Action publish;
     publish.k = Act::Publish;
-    actionButton(canvas, {r.right() - kPublishW, r.y, kPublishW, r.h}, "私密保存",
+    actionButton(canvas, {r.right() - kPublishW, r.y, kPublishW, r.h}, trEnZh("Save draft", "保存草稿"),
                  publish, kAccent);
 }
 
-void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
-    ui::text(canvas, "公共皮肤与我的私密皮肤；私密保存后可主动发布。", layout.body.x, layout.tabs.bottom() + 16.0,
-             label(kBodySize));
-
-    const Rect view = browseBody(layout);
-    const std::vector<CustomSkin>& skins = catalog();
-    if (skins.empty()) {
-        ui::text(canvas, tr(Msg::SkinBrowseEmpty), view.x, view.y + 24.0, label(kBodySize));
-        return;
+void Studio::drawBrowse(Canvas& canvas, const std::string& me, double timeSeconds) {
+    const bool reviewing = tab == Tab::Review;
+    Rect view = browseBody(layout);
+    if (reviewing) {
+        ui::text(canvas, trEnZh("Oldest submissions first", "按提交队列处理，请先检查预览。"),
+                 layout.body.x, layout.tabs.bottom() + 16.0, label(kBodySize));
+    } else {
+        const Rect field = skinSearchRect(layout);
+        inputField(canvas, field, skinSearch, trEnZh("Search by skin name or author", "搜索皮肤名或作者"),
+                   skinSearchField.focused, timeSeconds, &skinSearchField);
+        view.y += 12.0;
+        view.h = std::max(0.0, view.h - 12.0);
     }
+    const auto& skins = reviewing ? net->skinReviewQueue() : catalog();
 
     // Four to a row rather than three: a 135px card fits its own preview,
     // its name and a full-width Equip button, which the old three-up card did
@@ -1016,13 +1119,26 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
 
     std::vector<const CustomSkin*> sorted;
     sorted.reserve(skins.size());
+    const auto query = reviewing ? std::string{} : lowerCase(skinSearch);
     for (const CustomSkin& skin : skins) {
-        if (skin.published || lowerCase(skin.author) == me) sorted.push_back(&skin);
+        const auto author = lowerCase(skin.author);
+        if (!reviewing && !skin.published && author != me) continue;
+        if (!query.empty() && lowerCase(skin.name).find(query) == std::string::npos &&
+            author.find(query) == std::string::npos) continue;
+        sorted.push_back(&skin);
     }
-    std::stable_sort(sorted.begin(), sorted.end(),
-                     [](const CustomSkin* a, const CustomSkin* b) {
-                         return a->createdAt > b->createdAt;
-                     });
+    if (sorted.empty()) {
+        ui::text(canvas, !query.empty() ? trEnZh("No matching skins", "没有匹配的皮肤") :
+                 reviewing ? trEnZh("No pending skins", "暂无待审皮肤") : tr(Msg::SkinBrowseEmpty),
+                 view.x, view.y + 24.0, label(kBodySize));
+        return;
+    }
+    if (!reviewing) {
+        std::stable_sort(sorted.begin(), sorted.end(),
+                         [](const CustomSkin* a, const CustomSkin* b) {
+                             return a->createdAt > b->createdAt;
+                         });
+    }
 
     const double rows = std::ceil(static_cast<double>(sorted.size()) / cols);
     browseScroll.contentHeight = rows * (kCardH + kGap) - kGap;
@@ -1059,15 +1175,40 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
 
         ui::text(canvas, clipChars(skin.name, 14), card.x + cardW * 0.5, board.bottom() + 14.0,
                  label(kBodySize, Align::Centre));
-        ui::text(canvas, std::string(tr(Msg::SkinBy)) + clipChars(skin.author, 14),
+        const int origin = sharedSkinRealm(skin.id);
+        const std::string credit = origin
+            ? std::to_string(origin) + trEnZh(" · ", "服 · ") + clipChars(skin.author, 10)
+            : std::string(tr(Msg::SkinBy)) + clipChars(skin.author, 14);
+        ui::text(canvas, credit,
                  card.x + cardW * 0.5, board.bottom() + 30.0,
                  label(kCaptionSize, Align::Centre));
 
-        const bool canDelete = isAdmin() || lowerCase(skin.author) == me;
-        if (lowerCase(skin.author) == me) {
-            Action publish; publish.k = Act::PublishSaved; publish.id = skin.id; publish.i = skin.published ? 0 : 1;
+        if (reviewing) {
+            const double actionWidth = (cardW - 20.0) * 0.5;
+            Action approve;
+            approve.k = Act::ReviewApprove;
+            approve.id = skin.id;
+            Action reject = approve;
+            reject.k = Act::ReviewReject;
+            const double y = card.bottom() - 32.0;
+            actionButton(canvas, {card.x + 8.0, y, actionWidth, 24.0},
+                         trEnZh("Approve", "通过"), approve, kAccent);
+            actionButton(canvas, {card.right() - 8.0 - actionWidth, y, actionWidth, 24.0},
+                         trEnZh("Reject", "驳回"), reject, kDangerFill);
+            continue;
+        }
+        const bool owned = !origin && lowerCase(skin.author) == me;
+        const bool approved = skin.review == SkinReviewState::Approved;
+        const bool canDelete = !origin && (isAdmin() || owned || (skin.published && canReview()));
+        if (owned && (approved || skin.review == SkinReviewState::Draft)) {
+            Action publish;
+            publish.k = Act::PublishSaved;
+            publish.id = skin.id;
+            publish.i = skin.published ? 0 : 1;
+            const char* title = skin.review == SkinReviewState::Draft ? trEnZh("Submit for review", "提交审核")
+                : skin.published ? trEnZh("Make private", "撤回为私密") : trEnZh("Publish", "公开皮肤");
             actionButton(canvas, {card.x + 8, card.bottom() - 60, cardW - 16, 24},
-                         skin.published ? "公开 · 撤回为私密" : "私密 · 发布到公共", publish, kAccent, kCaptionSize);
+                         title, publish, kAccent, kCaptionSize);
         }
 
         // A takedown is a glyph beside the Equip button, not a second labelled
@@ -1079,9 +1220,16 @@ void Studio::drawBrowse(Canvas& canvas, const std::string& me) {
         Action equip;
         equip.k = Act::Equip;
         equip.id = skin.id;
-        actionButton(canvas, {card.x + 8.0, actionsY, equipW, 24.0},
-                     equipped ? tr(Msg::SkinEquipped) : tr(Msg::SkinEquip), equip,
-                     equipped ? kAccent : kAccentPurple, kBodySize);
+        if (approved) {
+            actionButton(canvas, {card.x + 8.0, actionsY, equipW, 24.0},
+                         equipped ? tr(Msg::SkinEquipped) : tr(Msg::SkinEquip), equip,
+                         equipped ? kAccent : kAccentPurple, kBodySize);
+        } else {
+            const char* status = skin.review == SkinReviewState::Pending ? trEnZh("Pending", "待审核")
+                : skin.review == SkinReviewState::Rejected ? trEnZh("Rejected", "未通过") : trEnZh("Draft", "草稿");
+            ui::text(canvas, status, card.x + 8.0 + equipW * 0.5, actionsY + 12.0,
+                     label(kCaptionSize, Align::Centre));
+        }
         if (canDelete) {
             Action del;
             del.k = Act::Delete;
@@ -1192,7 +1340,8 @@ void Studio::draw(MenuContext& ctx) {
     close.k = Act::Close;
     addRegion(closeRect, close);
 
-    drawTabs(canvas, mouse);
+    if (tab == Tab::Review && !canReview()) tab = Tab::Browse;
+    drawTabs(canvas, mouse, ctx.timeSeconds);
 
     if (tab == Tab::Create) {
         drawPreview(canvas);
@@ -1229,8 +1378,8 @@ void Studio::draw(MenuContext& ctx) {
             drawProps(canvas, layout.right);
         }
         drawFooter(canvas, ctx.timeSeconds);
-    } else if (tab == Tab::Browse) {
-        drawBrowse(canvas, lowerCase(ctx.net.profile().username));
+    } else if (tab == Tab::Browse || tab == Tab::Review) {
+        drawBrowse(canvas, lowerCase(ctx.net.profile().username), ctx.timeSeconds);
     } else {
         drawBuiltIn(ctx);
     }
@@ -1449,12 +1598,24 @@ bool Studio::dispatch(MenuContext& ctx, const Action& a) {
     // clicking off a DOM input does. The box itself never reaches here: it
     // answers for its own press in trackTextMouse.
     nameField.blur();
+    skinSearchField.blur();
 
     switch (a.k) {
         case Act::Close:
             return false;
         case Act::Tab:
             tab = static_cast<Tab>(a.i);
+            browseScroll.offset = 0.0;
+            if (tab == Tab::Review) ctx.net.requestSkinReview(net::SkinReviewAction::List);
+            break;
+        case Act::ReviewRefresh:
+            ctx.net.requestSkinReview(net::SkinReviewAction::List);
+            break;
+        case Act::ReviewApprove:
+            ctx.net.requestSkinReview(net::SkinReviewAction::Approve, a.id);
+            break;
+        case Act::ReviewReject:
+            ctx.net.requestSkinReview(net::SkinReviewAction::Reject, a.id);
             break;
         case Act::AddShape:
             // Silently capped: the button stays fully lit, exactly as it does
@@ -1514,6 +1675,14 @@ bool Studio::dispatch(MenuContext& ctx, const Action& a) {
             }
             break;
         }
+        case Act::CopyAiPrompt:
+#ifdef __EMSCRIPTEN__
+            copySkinPrompt(kSkinAiPrompt, language() == Language::Zh);
+#else
+            ctx.window.setClipboardText(kSkinAiPrompt);
+#endif
+            promptCopyFeedbackUntil = ctx.timeSeconds + 3.0;
+            break;
         case Act::TextMode:
             textMode = !textMode;
             textError.clear();
@@ -1618,6 +1787,22 @@ bool Studio::handleInput(MenuContext& ctx) {
         if (insideInclusive(field, mouse)) ctx.window.setCursorShape(CursorShape::Text);
     }
 
+    if (tab == Tab::Browse) {
+        const Rect field = skinSearchRect(layout);
+        trackTextMouse(ctx.window, skinSearchField, field,
+                       inputFieldRun(field, skinSearch, skinSearchField), skinSearch, ctx.timeSeconds);
+        if (insideInclusive(field, mouse)) ctx.window.setCursorShape(CursorShape::Text);
+        if (skinSearchField.focused) {
+            ctx.wantsText = true;
+            TextEditOptions typing;
+            typing.maxBytes = 128;
+            if (editText(ctx.window, skinSearch, skinSearchField, ctx.timeSeconds, typing))
+                browseScroll.offset = 0;
+            if (ctx.window.keyPressed(Key::Escape) || ctx.window.keyPressed(Key::Enter))
+                skinSearchField.blur();
+        }
+    }
+
     // Only inside the panel, and raw: one notch is the browser's 100px of
     // deltaY, which is what the other list panels consume too.
     const float wheel = ctx.wheel();
@@ -1687,6 +1872,7 @@ void SkinsPanel::reset() {
     // throw away the skin being drawn.
     Studio& state = studio();
     state.nameField.blur();
+    state.skinSearchField.blur();
     state.textField.dragging = false;
     state.dragging = false;
     state.shapeScroll.thumbGrab.reset();
@@ -1706,7 +1892,7 @@ bool SkinsPanel::render(MenuContext& ctx) {
     state.window = &ctx.window;
     // From the shared anchor, so the card, its hit regions and the box
     // MenuSystem captures the mouse in are one rect.
-    state.layout = layoutOf(ctx.bounds);
+    state.layout = layoutOf(ctx.bounds, state.tab == Studio::Tab::Create);
     // Input runs first and against the previous frame's regions: the panel's
     // handlers fire between renders, and every button, tab, swatch and stepper
     // acts on PRESS rather than release.

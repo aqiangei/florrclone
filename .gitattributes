@@ -1,6 +1,6 @@
 # Release artifacts must retain their exact build bytes on every platform.
 # In particular, bundle.js and its .bin must decode to identical contents.
-dist/** -text
+dist/** -text whitespace=cr-at-eol
 
 # Preserve gameplay data bytes across checkouts for the handshake hash.
 data/*.json -text whitespace=cr-at-eol

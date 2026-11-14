@@ -654,6 +654,11 @@ RadiationSpec parseRadiation(Ctx& ctx, const Json& owner) {
                                     kMinSpawnIntervalMillis, kMaxDurationMillis);
     spec.poisonDurationMillis = ctx.range(node, "poisonDurationMs", 0.0, 0.0, kMaxDurationMillis);
     spec.selfPoisonScale = ctx.range(node, "selfPoisonScale", 0.0, 0.0, 100.0);
+    spec.poisonPerSecond = ctx.range(node, "poisonPerSecond", 0.0, 0.0, kMaxBaseStat);
+    spec.pulseDamage = ctx.range(node, "pulseDamage", 0.0, 0.0, kMaxBaseStat);
+    spec.lightningBounces = ctx.integer(node, "lightningBounces", 0, 0, 16);
+    spec.poisonDamage = ctx.range(node, "poisonDamage", 0.0, 0.0, 1.0e9);
+    spec.burnDamage = ctx.range(node, "burnDamage", 0.0, 0.0, 1.0e9);
     spec.present = spec.radius > 0.0;
     return spec;
 }
@@ -916,6 +921,8 @@ NpcSpec parseNpcSpec(Ctx& ctx, const Json& owner,
     // one stack or a list of them. A recipe naming a petal that does not
     // exist is dropped whole, with a line -- half a recipe would make
     // something out of less than it says.
+    if (spec.service == NpcService::Assembler)
+        spec.hourlyRecipeSlots = ctx.integer(node, "hourlyRecipeSlots", 0, 0, 254);
     if (node.contains("recipes")) {
         const Json& recipes = node["recipes"];
         if (!recipes.isArray()) {
@@ -929,10 +936,23 @@ NpcSpec parseNpcSpec(Ctx& ctx, const Json& owner,
                     ctx.warn(where + " is not { \"from\": [...], \"to\": ... }; dropped");
                     continue;
                 }
-                if (spec.recipes.size() >= kAssemblerMaxRecipes) {
-                    ctx.warn("npc recipes lists more than " + std::to_string(kAssemblerMaxRecipes) +
+                const auto limit = spec.hourlyRecipeSlots > 0
+                    ? static_cast<std::size_t>(spec.hourlyRecipeSlots) : kAssemblerMaxRecipes;
+                if (spec.recipes.size() >= limit) {
+                    ctx.warn("npc recipes lists more than " + std::to_string(limit) +
                              "; the rest are dropped");
                     break;
+                }
+                AssemblyRecipe recipe;
+                recipe.rotationSlot = entry["rotationSlot"].asInt(-1);
+                recipe.previewOnly = spec.hourlyRecipeSlots > 0 && entry["previewOnly"].asBool();
+                if (spec.hourlyRecipeSlots > 0 &&
+                    (recipe.rotationSlot < 0 || recipe.rotationSlot >= spec.hourlyRecipeSlots ||
+                     std::any_of(spec.recipes.begin(), spec.recipes.end(), [&](const AssemblyRecipe& other) {
+                         return other.rotationSlot == recipe.rotationSlot;
+                     }))) {
+                    ctx.warn(where + " has an invalid or duplicate rotation slot; dropped");
+                    continue;
                 }
                 bool whole = true;
                 const auto stack = [&](const Json& value, const std::string& what) {
@@ -954,11 +974,16 @@ NpcSpec parseNpcSpec(Ctx& ctx, const Json& owner,
                             out.count = static_cast<std::int64_t>(count.asDouble());
                         }
                     }
-                    out.petal = ctx.link(petalIds, id, (where + " " + what).c_str());
-                    if (out.petal == kInvalidIndex) whole = false;
+                    if (recipe.previewOnly && !petalIds.count(id)) {
+                        out.previewName = value["name"].asString();
+                        out.previewNameZh = value["zh"].asString();
+                        if (out.previewName.empty() || out.previewNameZh.empty()) whole = false;
+                    } else {
+                        out.petal = ctx.link(petalIds, id, (where + " " + what).c_str());
+                        if (out.petal == kInvalidIndex) whole = false;
+                    }
                     return out;
                 };
-                AssemblyRecipe recipe;
                 if (entry.contains("outputRarity")) {
                     Rarity output{};
                     if (!tryParseRarity(entry["outputRarity"].asString(), output) ||
@@ -1027,6 +1052,7 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
     // there is no reason content cannot author a mob that starts there.
     m.armor = ctx.range(src, "armor", 1.0, -kMaxBaseStat, kMaxBaseStat);
     m.evasion = ctx.range(src, "evasion", 0.0, 0.0, 1.0);
+    m.massMultiplier = ctx.range(src, "massMultiplier", 1.0, 0.1, 100.0);
     m.size = ctx.range(src, "size", 1.0, 0.0, kMaxSize);
     m.speed = ctx.speed(src, "speed");
     m.cooldownMillis = ctx.range(src, "cooldown", 0.0, 0.0, kMaxDurationMillis);
@@ -1081,6 +1107,11 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
     m.crabStrafe = ctx.boolean(src, "crab_ai");
     m.centipedeCrawl = ctx.boolean(src, "centipede_ai");
     m.diggerAi = ctx.boolean(src, "digger_ai");
+    m.blinkMillis = ctx.range(src, "blinkMillis", 0.0, 0.0, 60000.0);
+    m.gravityForce = ctx.range(src, "gravityForce", 0.0, -5000.0, 5000.0);
+    m.gravityRadius = ctx.range(src, "gravityRadius", 0.0, 0.0, 1500.0);
+    m.deathBlastRadius = ctx.range(src, "deathBlastRadius", 0.0, 0.0, 1500.0);
+    m.deathBlastDamage = ctx.range(src, "deathBlastDamage", 0.0, 0.0, kMaxBaseStat);
     m.hornetStrafe = ctx.boolean(src, "hornet_ai");
     m.gardnMotion = ctx.boolean(src, "gardn_ai");
 
@@ -1095,6 +1126,7 @@ MobConfig parseMob(Ctx& ctx, const std::string& id, const Json& src,
         m.petDamageScale = 0.5;
     }
     if (id == "centipede" || id == "hel_centipede" || id == "jungle_centipede" || id == "desert_centipede" || id == "evil_centipede" ||
+        (id == "arctic_centipede" && mobIds.count("arctic_centipede_body") != 0) ||
         id == "leech") {
         m.segmentBodyIndex = ctx.link(mobIds, id + "_body", "body segment");
         m.segmentCount = m.segmentBodyIndex != kInvalidIndex ? kCentipedeSegmentCount : 0;
@@ -1258,7 +1290,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
         if (row["undeadMillis"].isNumber()) target.undeadMillis = ctx.range(row,"undeadMillis",0.0,0.0,1e30);
         if (row["undeadBodyDamageCut"].isNumber()) target.undeadBodyDamageCut = ctx.range(row,"undeadBodyDamageCut",0.0,0.0,1e30);
         if (row["collisionResist"].isNumber()) target.collisionResist = ctx.range(row,"collisionResist",0.0,0.0,1e30);
-        if (row["knockback"].isNumber()) target.knockback = ctx.range(row,"knockback",0.0,0.0,1e30);
+        if (row["knockback"].isNumber()) target.knockback = ctx.range(row,"knockback",0.0,-1e30,1e30);
         if (row["overhealShield"].isNumber()) target.overhealShield = ctx.range(row,"overhealShield",0.0,0.0,1e30);
         if (row["healBonus"].isNumber()) target.healBonus = ctx.range(row,"healBonus",0.0,0.0,1e30);
         if (row["count"].isNumber()) target.count = ctx.range(row,"count",1.0,0.0,64.0);
@@ -1352,6 +1384,30 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.passiveHeal = ctx.range(src, "passiveHeal", 0.0, 0.0, kMaxBaseStat);
     p.passiveHealDefendOnly = ctx.boolean(src, "passiveHealDefendOnly");
     p.burstShield = ctx.range(src, "burstShield", 0.0, 0.0, kMaxBaseStat);
+    p.burnPerSecond = ctx.range(src, "burnPerSecond", 0.0, 0.0, kMaxBaseStat);
+    p.burnMillis = ctx.range(src, "burnMillis", 0.0, 0.0, kMaxDurationMillis);
+    p.armorDamageFraction = ctx.range(src, "armorDamageFraction", 0.0, 0.0, 1.0);
+    p.passivePetHeal = ctx.range(src, "passivePetHeal", 0.0, 0.0, kMaxBaseStat);
+    p.passivePetalHeal = ctx.range(src, "passivePetalHeal", 0.0, 0.0, kMaxBaseStat);
+    if (src.contains("spill")) {
+        const auto& spill = src["spill"];
+        const auto kind = ctx.text(spill, "kind");
+        if (kind == "acid") p.spill.kind = SpillKind::Acid;
+        else if (kind == "lava") p.spill.kind = SpillKind::Lava;
+        else if (kind == "oil") p.spill.kind = SpillKind::Oil;
+        else if (kind == "blood") p.spill.kind = SpillKind::Blood;
+        else if (kind == "elixir") p.spill.kind = SpillKind::Elixir;
+        else ctx.warn("unknown spill kind '" + kind + "'");
+        p.spill.onHit = ctx.boolean(spill, "onHit");
+        p.spill.radius = ctx.range(spill, "radius", 0.0, 0.0, 600.0);
+        p.spill.durationMillis = ctx.range(spill, "durationMs", 0.0, 0.0, 10000.0);
+        p.spill.chargeMillis = ctx.range(spill, "chargeMs", 1000.0, 50.0, 10000.0);
+        p.spill.strength = ctx.range(spill, "strength", 0.0, 0.0, kMaxBaseStat);
+        p.spill.lingerMillis = ctx.range(spill, "lingerMs", 0.0, 0.0, 10000.0);
+        p.spill.frostFactor = ctx.range(spill, "frostFactor", 1.0, 0.0, 1.0);
+        if (p.spill.radius <= 0.0 || p.spill.durationMillis <= 0.0 || p.spill.strength <= 0.0)
+            p.spill.kind = SpillKind::None;
+    }
 
     p.baseMaxMana = ctx.range(src, "baseMaxMana", 0.0, 0.0, kMaxBaseStat);
     p.burstMana = ctx.range(src, "burstMana", 0.0, 0.0, kMaxBaseStat);
@@ -1360,6 +1416,7 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.requiredMana = ctx.range(src, "requiredMana", 0.0, 0.0, kMaxBaseStat);
     p.lightningDamage = ctx.boolean(src, "lightningDamage");
     p.stackable = ctx.boolean(src, "stackable", true);
+    p.biomeDropOnly = ctx.boolean(src, "biomeDropOnly");
 
     if (src.contains("fixedDirection")) {
         p.hasFixedDirection = true;
@@ -1394,6 +1451,20 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.petMobIndex = ctx.link(mobIds, p.petMobId, "petMobType");
     p.petMobRarity = ctx.rarity(src, "petMobRarity");
     p.petCount = ctx.integer(src, "petCount", 1, 1, 64);
+    const auto& summonTiers = src["petSummonTiers"];
+    if (src.contains("petSummonTiers")) {
+        std::array<Rarity, kLadderRarityCount> tiers{};
+        bool valid = summonTiers.isArray() && summonTiers.size() == tiers.size();
+        for (std::size_t i = 0; valid && i < tiers.size(); ++i) {
+            const auto& tier = summonTiers[i];
+            const double value = tier.asDouble(-1);
+            valid = tier.isNumber() && value >= 0 && value < kLadderRarityCount &&
+                    std::floor(value) == value;
+            if (valid) tiers[i] = static_cast<Rarity>(static_cast<int>(value));
+        }
+        if (valid) p.petSummonTiers = tiers;
+        else ctx.warn("petSummonTiers must contain one ladder tier per egg tier");
+    }
     p.petLifetimeMillis = ctx.range(src, "petLifetimeMs", 0.0, 0.0, kMaxDurationMillis);
     p.petManaCost = ctx.range(src, "petManaCost", 0.0, 0.0, kMaxBaseStat);
 
@@ -1414,6 +1485,10 @@ PetalConfig parsePetal(Ctx& ctx, const std::string& id, const Json& src,
     p.attractionForce = ctx.range(src, "attractionForce", 0.0, -kMaxBaseStat, kMaxBaseStat);
     p.webRadius = ctx.range(src, "webRadius", 0.0, 0.0, kWorldSize);
     p.radiation = parseRadiation(ctx, src);
+    p.contactSelfDamage = ctx.range(src, "contactSelfDamage", 0.0, 0.0, kMaxBaseStat);
+    p.blastDamage = ctx.range(src, "blastDamage", 0.0, 0.0, kMaxBaseStat);
+    p.blastRadiusPerTier = ctx.range(src, "blastRadiusPerTier", 0.0, 0.0, kWorldSize);
+    p.blastChance = ctx.range(src, "blastChance", 1.0, 0.0, 1.0);
     return p;
 }
 
@@ -1836,6 +1911,15 @@ std::uint16_t ContentRegistry::petalIndex(const std::string& id) const {
 }
 
 MobStats ContentRegistry::mobStats(std::uint16_t index, Rarity r) const {
+    if (r == Rarity::Ascendant) {
+        auto stats = mobStats(index, Rarity::Apex);
+        stats.health *= 1.25;
+        stats.damage *= 1.10;
+        stats.poisonPerSecond *= 1.10;
+        stats.radius *= 1.10;
+        stats.mass *= 1.21;
+        return stats;
+    }
     const MobConfig& c = mob(index);
     // No mob is universal; one asked for anyway is an apex.
     const int tier = ladderIndex(clampRarity(rarityIndex(r)));
@@ -1853,7 +1937,7 @@ MobStats ContentRegistry::mobStats(std::uint16_t index, Rarity r) const {
     s.armor = c.armor * kMobArmorScale[t] * (tier == rarityIndex(Rarity::Apex) ? 2.0 : 1.0);
     s.evasion = c.evasion;
     s.radius = scaledSize * kMobBaseRadius;
-    s.mass = bodyMassForRadius(s.radius) *
+    s.mass = bodyMassForRadius(s.radius) * c.massMultiplier *
         (c.speed == 0.0 || c.ai == AiKind::Stationary ? kAnchoredMassScale : 1.0);
     s.speed = c.speed * kMobSpeedUnitsPerSecond;
     // gardn chases at its own factor of PLAYER_ACCELERATION, apart from the
@@ -1904,6 +1988,21 @@ namespace {
 PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     // Universal reads everything below at apex, `tier`, except health and
     // damage, which take `strength` -- apex's times sqrt(2).
+    if (r == Rarity::Ascendant) {
+        auto stats = buildPetalStats(c, Rarity::PermanentHyper);
+        stats.damage *= 1.25;
+        stats.bodyDamage *= 1.25;
+        stats.critDamage *= 1.25;
+        stats.poisonPerSecond *= 1.25;
+        stats.lightningDamagePerHit *= 1.25;
+        stats.health *= 1.30;
+        stats.heal *= 1.15;
+        stats.passiveHealPerSecond *= 1.15;
+        stats.conditionalHealPerSecond *= 1.15;
+        stats.totemHealPerSecond *= 1.15;
+        stats.shield *= 1.15;
+        return stats;
+    }
     const Rarity graded = petalGameplayRarity(clampRarity(rarityIndex(r)));
     const Rarity tier = ladderRarity(graded);
     const double strength = petalStrengthScale(graded == Rarity::Admin ? Rarity::Universal : graded);
@@ -1916,7 +2015,7 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     s.damage = c.damage * strength;
     if (c.id == "magic_peas") {
         // Eternal and above can stack several volleys against the same boss.
-        const double baseDamage = tier >= Rarity::Unique ? 90.0 : 120.0;
+        const double baseDamage = tier >= Rarity::Unique ? 81.0 : 120.0;
         s.lightningDamagePerHit = baseDamage * strength;
         s.lightningBounces = 0;
     }
@@ -2233,7 +2332,8 @@ PetalStats buildPetalStats(const PetalConfig& c, Rarity r) {
     }
     // The hammers trade the blueberries' range for sustained contact with wild mobs.
     if (graded == Rarity::Unique && (c.id == "mjolnir" || c.id == "timed_mjolnir")) {
-        s.wildLightningScale = 5.0; // 12 -> 60 base lightning per hit.
+        // The one-hour hammer hits wild mobs harder to offset its expiration.
+        s.wildLightningScale = (c.id == "timed_mjolnir" ? 70.0 : 60.0) / 12.0;
         s.wildRecoilScale = 0.5;
         s.reloadMillis = 5000.0;
     }

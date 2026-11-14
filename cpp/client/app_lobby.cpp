@@ -15,6 +15,7 @@
 // fits the frame.
 
 #include "client/app.h"
+#include "client/ui/touch_scroll.h"
 
 #include <algorithm>
 #include <cctype>
@@ -47,6 +48,10 @@ namespace {
 /// row wore that grey too.
 std::uint32_t biomePickerColor(const std::string& biome) {
     if (biome == "cyberspace") return 0x246B48u;
+    if (biome == "zorr_void") return 0x342744u;
+    if (biome == "zorr_arctic") return 0x4C8A9Fu;
+    if (biome == "zorr_glacier") return 0x4F769Du;
+    if (biome == "zorr_polar") return 0x5D6996u;
     if (biome == "garden") return 0x1EA660u;
     if (biome == "desert") return 0xD4B86Bu;
     if (biome == "ocean") return 0x459DB4u;
@@ -55,6 +60,7 @@ std::uint32_t biomePickerColor(const std::string& biome) {
     if (biome == "sewers") return 0x66765Au;
     if (biome == "computer" || biome == "factory") return 0x687D83u;   // florrclone Factory
     if (biome == "hel") return 0x945648u;
+    if (biome == "bio") return 0x456653u;
     if (biome == "pyramid") return 0xAC925Eu;
     if (biome == "termite_mound") return 0x785744u;
     if (biome == "swarm") return 0x3B7057u;
@@ -70,7 +76,8 @@ bool biomeOnPicker(const std::string& biome) {
     return biome == "garden" || biome == "desert" || biome == "computer" ||
            biome == "factory" || biome == "ocean" || biome == "jungle" ||
            biome == "hel" || biome == "ant_hell" || biome == "sewers" || biome == "super" ||
-           biome == "pyramid" || biome == "cyberspace";
+           biome == "pyramid" || biome == "cyberspace" || biome == "bio" ||
+           biome == "zorr_void" || biome == "zorr_arctic" || biome == "zorr_glacier" || biome == "zorr_polar";
 }
 
 /// The spawn picker's two rows. A row is sized so all of its buttons fit the
@@ -81,6 +88,8 @@ constexpr double kPickerRowHeight = 32.0;
 /// the original single biome row had.
 constexpr double kPickerSingleRowHeight = 35.0;
 constexpr double kPickerGap = 10.0;
+constexpr double kPickerRowGap = 14.0;
+constexpr double kPickerTwoRowTabsTop = -38.0;
 /// A picker button's NATURAL width, and its widest: the browser build's biome
 /// button, which is 90 by 35 however many biomes the row holds. The row only
 /// ever shrinks from this. Letting a short row divide the frame between its
@@ -114,7 +123,7 @@ constexpr double kTitleXpHeight = 25.0 * kFlooooioScale;
 /// it. Where the two leave it too little room -- the classic bar hangs its key
 /// caps above its first row -- it shrinks whole, down to this share of its
 /// size, rather than sitting on either.
-constexpr double kTitleXpClearance = 6.0;
+constexpr double kTitleXpClearance = 14.0;
 constexpr double kTitleXpMinScale = 0.5;
 /// The label does not shrink with it past the size the in-game XP bar's level
 /// is written at, which already stands taller than the strip it labels.
@@ -249,13 +258,20 @@ void App::updateLobby() {
 
     // Once only: leaveToTitle lands back here, and joining again every frame
     // would trap the player in the world with no way to stay on the lobby.
-    if (config_.autoJoin && !config_.autoUsername.empty()) {
+    if (config_.autoJoin && (config_.autoJoinGuest || !config_.autoUsername.empty())) {
         config_.autoJoin = false;
         startGame();
     }
 
     const Vec2 mouse{window_.mouseX(), window_.mouseY()};
-    const LobbyLayout layout = lobbyLayout(window_.width(), window_.height());
+    LobbyLayout layout = lobbyLayout(window_.width(), window_.height());
+    if (layout.pickerView.w > 0 && !menus_.capturesMouse(mouse)) {
+        const double wheel = layout.pickerView.contains(mouse) ? window_.wheelDelta() : 0.0;
+        pickerScroll_ = clamp(pickerScroll_ - wheel * 32.0 -
+            ui::touchScroll(window_, layout.pickerView, layout.pickerMaxScroll > 0.0),
+            0.0, layout.pickerMaxScroll);
+        layout = lobbyLayout(window_.width(), window_.height());
+    }
 
     // Exactly one thing owns the keyboard at a time. A panel's own search box
     // outranks the chat line, which outranks the name field, which outranks
@@ -282,9 +298,11 @@ void App::updateLobby() {
     } else if (!menus_.handleKeys(window_)) {
         if (window_.keyPressed(Key::Enter) || pressedChatBox()) chatOpen_ = true;
     }
-    // The transcript is on this screen too, and there is no zoom here for the
-    // wheel to go to instead.
-    scrollChat();
+    if (!layout.pickerView.contains(mouse)) scrollChat();
+    const auto pickerHit = [&](const Rect& r) {
+        return (layout.pickerView.w == 0.0 || layout.pickerView.contains(mouse)) &&
+               insideInclusive(r, mouse);
+    };
 
     // A release anywhere ends the press, including one a panel swallowed --
     // otherwise a button stays lit after a click that went somewhere else.
@@ -320,12 +338,12 @@ void App::updateLobby() {
             // world's collision code needs it that way -- leaves them dead.
             if (insideInclusive(layout.ready, mouse)) pressedControl_ = "start";
             for (std::size_t i = 0; i < layout.tabs.size(); ++i) {
-                if (insideInclusive(layout.tabs[i], mouse)) {
+                if (pickerHit(layout.tabs[i])) {
                     pressedControl_ = "tab_" + std::to_string(i);
                 }
             }
             for (std::size_t i = 0; i < layout.doors.size(); ++i) {
-                if (insideInclusive(layout.doors[i], mouse)) {
+                if (pickerHit(layout.doors[i])) {
                     pressedControl_ = "door_" + std::to_string(i);
                 }
             }
@@ -342,20 +360,27 @@ void App::updateLobby() {
             bool onPicker = false;
             const std::vector<PickerTab> tabs = pickerTabs();
             for (std::size_t i = 0; i < layout.tabs.size() && i < tabs.size(); ++i) {
-                if (!insideInclusive(layout.tabs[i], mouse)) continue;
+                if (!pickerHit(layout.tabs[i])) continue;
                 onPicker = true;
                 pickerTab_ = tabs[i].id;
-                // A tab with one door IS that door -- Default, the arena, the
-                // maze, a biome with a single entrance -- so one click picks
-                // it rather than opening a row of one to click again.
-                if (tabs[i].choices.size() == 1) choose(tabs[i].choices.front());
+                // Opening a biome must select a door in that biome. Keep an
+                // already selected submap when its tab is opened again.
+                const auto& doors = tabs[i].choices;
+                const auto& selected = menus_.settings().spawnChoice;
+                const bool alreadySelected = std::any_of(doors.begin(), doors.end(),
+                    [&](std::size_t choice) { return spawnChoices_[choice].id == selected; });
+                if (!doors.empty() && !alreadySelected) choose(doors.front());
+                if (doors.size() > 1 && layout.pickerView.w > 0.0) {
+                    pickerScroll_ = lobbyLayout(window_.width(), window_.height()).pickerMaxScroll;
+                }
+                break;
             }
             const PickerTab* open = nullptr;
             for (const PickerTab& tab : tabs) {
                 if (tab.id == pickerTab_) open = &tab;
             }
             for (std::size_t i = 0; i < layout.doors.size(); ++i) {
-                if (!insideInclusive(layout.doors[i], mouse)) continue;
+                if (onPicker || !pickerHit(layout.doors[i])) continue;
                 onPicker = true;
                 if (open != nullptr && i < open->choices.size()) choose(open->choices[i]);
             }
@@ -412,7 +437,6 @@ void App::enterGame() {
     // killed for real is not something `--frames` can arrange.
     screen_ = config_.autoDead ? Screen::Dead : Screen::Playing;
     deathCardVisible_ = true;
-    runLoot_.clear();
     // The browser starts the tutorial a second after the game's socket
     // authenticates, which is this moment: Game builds the Tutorial, and
     // reaching the world is what a Game exists for.
@@ -524,8 +548,12 @@ const SvgDocument* App::titleBackground(const std::string& backdrop) {
         // The pyramid has no ground artwork of its own: its backdrop is its
         // floor tile, which is staged beside these. (A `pyramid.svg` here
         // would collide with the tile of that name -- everything stages flat.)
-        {"pyramid", "pyramid_floor_c_0.svg"},
+        {"pyramid", "pyramid_floor_c_0.svg"}, {"bio", "bio_ground_0_0.svg"},
         {"super", "super_ground_c_0.svg"},
+        {"zorr_void", "zorr_void_ground_0_0.svg"},
+        {"zorr_arctic", "zorr_arctic_ground_0.svg"},
+        {"zorr_glacier", "zorr_arctic_ground_0.svg"},
+        {"zorr_polar", "zorr_arctic_ground_0.svg"},
     };
     const auto entry = kFiles.find(backdrop);
     if (entry == kFiles.end()) return nullptr;
@@ -549,15 +577,21 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
     // player is about to be dropped onto. A door that names no backdrop
     // shows its biome's, which is what the tab it sits under is called.
     std::string backdrop = "default";
+    std::string petalBiome;
     for (const SpawnChoice& choice : spawnChoices_) {
         if (choice.id != menus_.settings().spawnChoice) continue;
         if (choice.id == kArenaSpawnChoice) backdrop = "pvp";
         else if (!choice.backdrop.empty()) backdrop = choice.backdrop;
         else if (!choice.biome.empty()) backdrop = choice.biome;
+        petalBiome = choice.biome;
         break;
     }
-    if (backdrop != titlePetalBiome_) {
-        titlePetalBiome_ = backdrop;
+    if (petalBiome != "bio" && petalBiome != "zorr_arctic" &&
+        petalBiome != "zorr_glacier" && petalBiome != "zorr_polar") {
+        petalBiome = backdrop == "factory" ? "computer" : backdrop;
+    }
+    if (petalBiome != titlePetalBiome_) {
+        titlePetalBiome_ = petalBiome;
         titlePetals_.clear();
         titlePetalTypes_.clear();
         static const std::unordered_map<std::string, std::vector<const char*>> choices = {
@@ -573,11 +607,20 @@ void App::drawTitleBackground(Canvas& canvas, double time) {
             {"cyberspace", {"computer_chip", "ram", "battery", "magnet", "lightning", "electric_web", "mecha_missile", "cogwheel"}},
             {"super", {"rock", "stinger", "rose", "egg", "cactus", "shell", "grapes", "uranium"}},
             {"pvp", {"claw", "stinger", "fang", "rock", "bone", "pincer", "sawblade", "lightning"}},
+            {"zorr_void", {"void_singularity", "void_attractor", "void_stardust", "void_soap", "void_angel_egg"}},
+            {"bio", {"dna", "rna", "chloroplast", "hemoglobin", "antibody", "stem_cell"}},
             {"pyramid", {"ankh", "pharaoh_s_crown", "sand", "nazar_amulet", "bone", "third_eye", "mysterious_powder", "poker_chip"}},
         };
-        auto selected = choices.find(backdrop == "factory" ? "computer" : backdrop);
+        // These maps share the same Arctic mob roster and authored drops.
+        static const std::vector<const char*> arcticPetals = {
+            "arctic_snowball", "arctic_snowflake", "arctic_blueberries", "arctic_frozen_mark",
+            "arctic_icicle", "arctic_ice", "arctic_ice_rose", "arctic_snow_stick",
+        };
+        auto selected = choices.find(petalBiome);
         if (selected == choices.end()) selected = choices.find("default");
-        for (const auto* id : selected->second) {
+        const bool arctic = petalBiome == "zorr_arctic" || petalBiome == "zorr_glacier" ||
+                            petalBiome == "zorr_polar";
+        for (const auto* id : arctic ? arcticPetals : selected->second) {
             const auto index = content().petalIndex(id);
             if (index != kNoPetal) titlePetalTypes_.push_back(index);
         }
@@ -710,6 +753,7 @@ std::vector<App::PickerTab> App::pickerTabs() const {
     // lobby), no "Default" tab, and no dungeon/test maps -- those open
     // through pads in-world.
     std::vector<PickerTab> tabs;
+    const std::string arcticGroup = "zorr_arctic";
     PickerTab arena{kArenaSpawnChoice, tipPvpArena(), 0xDC3C3Cu, {}};
     for (std::size_t i = 0; i < spawnChoices_.size(); ++i) {
         const SpawnChoice& choice = spawnChoices_[i];
@@ -722,17 +766,22 @@ std::vector<App::PickerTab> App::pickerTabs() const {
         if (choice.id == kMazeSpawnChoice) continue;
         const std::string& biome = choice.biome.empty() ? choice.id : choice.biome;
         if (!biomeOnPicker(biome)) continue;
+        const std::string& group = (biome == "zorr_glacier" || biome == "zorr_polar")
+            ? arcticGroup : biome;
         PickerTab* tab = nullptr;
         for (PickerTab& candidate : tabs) {
-            if (candidate.id == biome) tab = &candidate;
+            if (candidate.id == group) tab = &candidate;
         }
         if (tab == nullptr) {
             // florrclone names this biome Factory; our map id is still computer.
-            const std::string en = (biome == "computer" || biome == "factory")
+            const std::string en = (group == "computer" || group == "factory")
                                        ? "Factory"
-                                       : biome == "cyberspace" ? "Computer" : titleCaseId(biome);
-            tabs.push_back(PickerTab{biome, biomeTr(biome, en.c_str()),
-                                     biomePickerColor(biome), {}});
+                                       : group == "cyberspace" ? "Computer"
+                                       : group == "zorr_void" ? "Void"
+                                       : group == "zorr_arctic" ? "Arctic"
+                                       : titleCaseId(group);
+            tabs.push_back(PickerTab{group, biomeTr(group, en.c_str()),
+                                     biomePickerColor(group), {}});
             tab = &tabs.back();
         }
         tab->choices.push_back(i);
@@ -757,17 +806,14 @@ std::string App::pickerTabOf(const std::string& choiceId) const {
 }
 
 App::LobbyLayout App::lobbyLayout(int viewWidth, int viewHeight) const {
-    // The browser title screen's rhythm, measured from the centre: the name
-    // field and the Ready button side by side a hundred above it, the
-    // "Spawn At:" label at fifty, then the picker's two rows -- the biome
-    // tabs at twenty-two above and the selected biome's doors at fourteen
-    // below -- both of which have to clear the loadout bar at fifty below.
+    // Measure the picker from the centre so its rows keep the same gaps on
+    // every viewport. Reserve room below the second row for the XP gauge.
     const double centreX = viewWidth * 0.5;
     const double centreY = viewHeight * 0.5;
 
     LobbyLayout layout;
-    layout.name = {centreX - 200.0, centreY - 100.0, 280.0, 42.0};
-    layout.ready = {centreX + 120.0, centreY - 100.0, 120.0, 42.0};
+    layout.name = {centreX - 200.0, centreY - 119.0, 280.0, 42.0};
+    layout.ready = {centreX + 120.0, centreY - 119.0, 120.0, 42.0};
 
     // Each row is sized to fit the frame on its own, so neither wraps:
     // wrapping would put the picker on top of the loadout bar. The frame is
@@ -784,17 +830,48 @@ App::LobbyLayout App::lobbyLayout(int viewWidth, int viewHeight) const {
     // really has several doors to choose between.
     bool singleRow = true;
     for (const PickerTab& tab : tabs) singleRow &= tab.choices.size() <= 1;
-    if (singleRow) {
+    const bool compact = tabs.size() * (kPickerMinWidth + kPickerGap) +
+                         kPickerMargin * 2.0 > rowSpace ||
+                         std::any_of(tabs.begin(), tabs.end(), [&](const PickerTab& tab) {
+                             return tab.choices.size() * (kPickerMinWidth + kPickerGap) +
+                                    kPickerMargin * 2.0 > rowSpace;
+                         });
+    if (compact) {
+        layout.pickerView = {centreX - rowSpace * 0.5 + 12.0, centreY - 20.0,
+                             rowSpace - 24.0, 86.0};
+        constexpr double pitch = 38.0;
+        const double contentWidth = layout.pickerView.w - 18.0;
+        const auto columns = static_cast<std::size_t>(
+            std::max(1.0, std::floor(contentWidth / (kPickerMinWidth + kPickerGap))));
+        const auto* open = [&]() -> const PickerTab* {
+            for (const auto& tab : tabs) if (tab.id == pickerTab_) return &tab;
+            return nullptr;
+        }();
+        const std::size_t doorCount = open && open->choices.size() > 1 ? open->choices.size() : 0;
+        const auto rowCount = [&](std::size_t count) { return (count + columns - 1) / columns; };
+        layout.pickerMaxScroll = std::max(0.0, 8.0 + pitch * (rowCount(tabs.size()) + rowCount(doorCount)) -
+                                              layout.pickerView.h);
+        double y = layout.pickerView.y + 4.0 - clamp(pickerScroll_, 0.0, layout.pickerMaxScroll);
+        const double width = (contentWidth - (columns - 1) * kPickerGap) / columns;
+        const auto append = [&](std::vector<Rect>& boxes, std::size_t count) {
+            for (std::size_t i = 0; i < count; i += columns) {
+                layPickerRow(boxes, std::min(columns, count - i), width, centreX - 4.0, y, 32.0);
+                y += pitch;
+            }
+        };
+        append(layout.tabs, tabs.size());
+        append(layout.doors, doorCount);
+    } else if (singleRow) {
         layPickerRow(layout.tabs, tabs.size(), pickerButtonWidth(tabs.size(), rowSpace), centreX,
                      centreY - 20.0, kPickerSingleRowHeight);
     } else {
         layPickerRow(layout.tabs, tabs.size(), pickerButtonWidth(tabs.size(), rowSpace), centreX,
-                     centreY - 22.0);
+                     centreY + kPickerTwoRowTabsTop);
         for (const PickerTab& tab : tabs) {
-            if (tab.id != pickerTab_) continue;
+            if (tab.id != pickerTab_ || tab.choices.size() < 2) continue;
             layPickerRow(layout.doors, tab.choices.size(),
                          pickerButtonWidth(tab.choices.size(), rowSpace), centreX,
-                         centreY + 14.0);
+                         centreY + kPickerTwoRowTabsTop + kPickerRowHeight + kPickerRowGap);
         }
     }
 
@@ -804,15 +881,20 @@ App::LobbyLayout App::lobbyLayout(int viewWidth, int viewHeight) const {
     // neither drawn nor hit.
     if (!layout.tabs.empty() && net_.profile().skills.prestigeUnlocked()) {
         const Rect& first = layout.tabs.front();
-        layout.prestige = {first.x - kPickerGap - first.h, first.y, first.h, first.h};
+        layout.prestige = compact
+            ? Rect{layout.pickerView.x, layout.pickerView.y - 32.0, 28.0, 28.0}
+            : Rect{first.x - kPickerGap - first.h, first.y, first.h, first.h};
     }
 
     // The XP gauge takes the middle of whatever the picker leaves above the
     // loadout bar -- flooooio's own slot for it, over its inventory -- at its
     // full size wherever that fits, which is every shape but the classic bar.
     double pickerBottom = centreY;
-    for (const Rect& r : layout.tabs) pickerBottom = std::max(pickerBottom, r.bottom());
-    for (const Rect& r : layout.doors) pickerBottom = std::max(pickerBottom, r.bottom());
+    if (compact) pickerBottom = layout.pickerView.bottom();
+    else {
+        for (const Rect& r : layout.tabs) pickerBottom = std::max(pickerBottom, r.bottom());
+        for (const Rect& r : layout.doors) pickerBottom = std::max(pickerBottom, r.bottom());
+    }
     const double loadoutTop = centreY + titleLoadoutTopY(menus_.settings().classicLoadoutBar);
     const double room = loadoutTop - pickerBottom - kTitleXpClearance * 2.0;
     const double scale = clamp(room / kTitleXpHeight, kTitleXpMinScale, 1.0);
@@ -864,10 +946,9 @@ void App::drawLobby(Canvas& canvas, double time) {
     label.align = Align::Centre;
     if (prestigeOn()) {
         label.fill = kPrestigeYellow;
-        text(canvas, tr(Msg::SpawnAtPrestige), centreX, centreY - 50.0,
-             label);
+        text(canvas, tr(Msg::SpawnAtPrestige), centreX, centreY - 64.0, label);
     } else {
-        text(canvas, tr(Msg::SpawnAt), centreX, centreY - 50.0, label);
+        text(canvas, tr(Msg::SpawnAt), centreX, centreY - 64.0, label);
     }
 
     // The picker: a row of biome tabs, and under it the doors of the open
@@ -883,11 +964,20 @@ void App::drawLobby(Canvas& canvas, double time) {
         // still fits inside one. A row at its natural width keeps the
         // reference's 14.
         style.textSize = box.w < kPickerNaturalWidth ? 12.0 : 14.0;
-        button(canvas, box, text_, freeMouse && !chosen && insideInclusive(box, mouse),
+        const bool visibleMouse = layout.pickerView.w == 0.0 || layout.pickerView.contains(mouse);
+        button(canvas, box, text_, freeMouse && visibleMouse && !chosen && insideInclusive(box, mouse),
                freeMouse && pressedControl_ == id, style);
     };
     const std::vector<PickerTab> tabs = pickerTabs();
     const PickerTab* open = nullptr;
+    const Rect& picker = layout.pickerView;
+    if (picker.w > 0.0) {
+        fillRound(canvas, picker, 6.0, 0x166036u);
+        canvas.save();
+        canvas.beginPath();
+        canvas.rect(picker.x, picker.y, picker.w, picker.h);
+        canvas.clip();
+    }
     for (std::size_t i = 0; i < layout.tabs.size() && i < tabs.size(); ++i) {
         const bool chosen = tabs[i].id == pickerTab_;
         if (chosen) open = &tabs[i];
@@ -907,6 +997,15 @@ void App::drawLobby(Canvas& canvas, double time) {
                      "door_" + std::to_string(i));
     }
 
+    if (picker.w > 0.0) {
+        canvas.restore();
+        if (layout.pickerMaxScroll > 0.0) {
+            const double h = picker.h * picker.h / (picker.h + layout.pickerMaxScroll);
+            const double fraction = clamp(pickerScroll_ / layout.pickerMaxScroll, 0.0, 1.0);
+            fillRound(canvas, {picker.right() - 6.0, picker.y + fraction * (picker.h - h), 4.0, h},
+                      2.0, kPaper);
+        }
+    }
     drawPrestigeButton(canvas, layout.prestige,
                        freeMouse && insideInclusive(layout.prestige, mouse),
                        freeMouse && pressedControl_ == "prestige");

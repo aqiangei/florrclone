@@ -66,6 +66,12 @@ namespace {
 constexpr double kWindowWidth = 610.0;
 constexpr double kWindowHeight = 432.0;
 
+std::string rotationWait(double millis) {
+    const int seconds = static_cast<int>(std::ceil(std::max(0.0, millis) / 1000.0));
+    return std::to_string(seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") +
+           std::to_string(seconds % 60);
+}
+
 /// The seats: 60 across about the slot's centre -- one on it, two 45 either
 /// side of it, three or more on a ring 90 out with the first straight up.
 constexpr double kSeatSide = 60.0;
@@ -129,21 +135,29 @@ int parsedCount(const std::string& text) {
     return n;
 }
 
-/// How many times the bag can run `recipe` at `tier`: the scarcest input,
-/// over how many of it one run takes.
+/// How many times the bag can run the recipe within input and output limits.
 int affordable(const Profile& profile, const AssemblyRecipe& recipe, Rarity tier) {
-    for (const AssemblyRecipe::Stack& output : recipe.outputs) {
+    const Rarity outputTier = recipe.outputRarity.value_or(tier);
+    int most = kAssemblerMaxBatch;
+    for (const auto& output : recipe.outputs) {
         if (!knownPetal(output.petal)) return 0;
+        std::int64_t produced = 0;
+        for (const auto& stack : recipe.outputs)
+            if (stack.petal == output.petal) produced += stack.count;
+        const auto consumed = outputTier == tier
+            ? assemblerInputCount(recipe, content(), tier, output.petal, recipe.takes(output.petal))
+            : 0;
+        const auto held = profile.stackCount(output.petal, outputTier);
+        most = std::min(most, assemblerOutputCapacity(held, produced, consumed));
     }
-    std::int64_t most = kAssemblerMaxBatch;
     for (const AssemblyRecipe::Stack& input : recipe.inputs) {
         if (!knownPetal(input.petal)) return 0;
         const std::int64_t takes = assemblerInputCount(recipe, content(), tier, input.petal,
                                                        recipe.takes(input.petal));
         const std::int64_t held = static_cast<std::int64_t>(profile.stackCount(input.petal, tier));
-        most = std::min(most, held / takes);
+        most = static_cast<int>(std::min<std::int64_t>(most, held / takes));
     }
-    return static_cast<int>(most);
+    return most;
 }
 
 /// florr's triangle: its back edge `reach` either side of `at`, its point
@@ -178,6 +192,11 @@ Rect arrowHit(Vec2 at, double facing) {
 Vec2 AssemblerPanel::size() { return {kWindowWidth, kWindowHeight}; }
 
 void AssemblerPanel::reset() {
+    showSchedule_ = false;
+    scheduleOffset_ = 0;
+    previewCount_ = "1";
+    previewCountField_.blur();
+    bioTier_ = Rarity::Common;
     motion_.clear();
     count_ = "1";
     countRepeat_.reset();
@@ -194,6 +213,96 @@ void AssemblerPanel::reset() {
     for (SlotMotion& pop : pops_) pop.clear();
 }
 
+bool AssemblerPanel::renderSchedule(MenuContext& ctx, const SlotCardLayout& card,
+                                    const NpcSpec& spec, int currentSlot,
+                                    double refreshRemainingMillis) {
+    Canvas& canvas = ctx.canvas;
+    const Vec2 mouse = ctx.mouse();
+    const int slots = spec.hourlyRecipeSlots;
+    const Rect previous{card.centreX - 245, card.panel.y + 73, 58, 32};
+    const Rect current{card.centreX - 46, card.panel.y + 73, 92, 32};
+    const Rect next{card.centreX + 187, card.panel.y + 73, 58, 32};
+    const auto control = [&](Rect rect, const char* label) {
+        drawSlotButton(canvas, rect, label, kAssemblerSkin.fill, rect.contains(mouse), false);
+        return ctx.pressed() && rect.contains(mouse);
+    };
+    if (control(previous, "<")) scheduleOffset_ = scheduleOffset_ == -1 ? slots - 2 : scheduleOffset_ - 1;
+    if (control(current, trEnZh("Current", "当前"))) scheduleOffset_ = 0;
+    if (control(next, ">")) scheduleOffset_ = scheduleOffset_ == slots - 2 ? -1 : scheduleOffset_ + 1;
+    const int slot = (currentSlot + scheduleOffset_ + slots) % slots;
+    const auto index = assemblyRecipeAtSlot(spec, slot);
+
+    auto line = card;
+    line.lineY = card.panel.y + 131;
+    const std::string timing = scheduleOffset_ < 0 ? trEnZh("Previous", "上一时段") :
+        scheduleOffset_ == 0 ? trEnZh("Changes in ", "距离轮换 ") + rotationWait(refreshRemainingMillis) :
+        trEnZh("Starts in ", "距离开始 ") +
+            rotationWait(refreshRemainingMillis + (scheduleOffset_ - 1) * kBioAssemblerRotationMillis);
+    drawSlotLine(canvas, line, std::to_string(slot + 1) + "/" + std::to_string(slots) + " · " + timing);
+
+    const Rect countRect{card.centreX - 45, card.panel.y + 156, 90, 31};
+    inputField(canvas, countRect, previewCount_, "1", previewCountField_.focused,
+               ctx.timeSeconds, &previewCountField_);
+    trackTextMouse(ctx.window, previewCountField_, countRect,
+                   inputFieldRun(countRect, previewCount_, previewCountField_),
+                   previewCount_, ctx.timeSeconds);
+    if (previewCountField_.focused) {
+        ctx.wantsText = true;
+        TextEditOptions typing;
+        typing.maxBytes = kCountDigits;
+        typing.asciiOnly = true;
+        if (editText(ctx.window, previewCount_, previewCountField_, ctx.timeSeconds, typing)) {
+            const auto end = std::remove_if(previewCount_.begin(), previewCount_.end(),
+                                           [](char c) { return c < '0' || c > '9'; });
+            if (end != previewCount_.end()) {
+                previewCount_.erase(end, previewCount_.end());
+                previewCountField_.focusAtEnd(previewCount_, ctx.timeSeconds);
+            }
+        }
+        if (ctx.window.keyPressed(Key::Enter) || ctx.window.keyPressed(Key::Escape))
+            previewCountField_.blur();
+    }
+    const int count = std::max(1, parsedCount(previewCount_));
+    if (!previewCountField_.focused) previewCount_ = std::to_string(count);
+
+    if (index >= spec.recipes.size()) {
+        line.lineY = card.panel.y + 240;
+        drawSlotLine(canvas, line, trEnZh("Recipe unavailable", "配方不可用"));
+        return true;
+    }
+
+    const auto& recipe = spec.recipes[index];
+    const auto drawStacks = [&](const std::vector<AssemblyRecipe::Stack>& stacks, double y) {
+        for (std::size_t i = 0; i < stacks.size(); ++i) {
+            const auto& stack = stacks[i];
+            const double x = card.centreX + (static_cast<double>(i) - (stacks.size() - 1) * 0.5) * 112;
+            const std::string quantity = "×" + stackCountText(static_cast<std::uint64_t>(stack.count * count));
+            if (knownPetal(stack.petal)) {
+                ItemTile tile;
+                tile.petalIndex = stack.petal;
+                tile.rarity = Rarity::Super;
+                tile.timeSeconds = ctx.timeSeconds;
+                tile.badge = quantity;
+                drawSlotTile(canvas, ctx.sprites, {x, y}, 62, 0.0, tile);
+            } else {
+                const auto style = panelLabel(12, Align::Centre, Baseline::Middle);
+                const auto& name = language() == Language::Zh ? stack.previewNameZh : stack.previewName;
+                outlinedText(canvas, name, x, y - 8, style, 1.0);
+                outlinedText(canvas, quantity, x, y + 9, style, 1.0);
+            }
+        }
+    };
+    drawStacks(recipe.inputs, card.panel.y + 237);
+    line.lineY = card.panel.y + 282;
+    drawSlotLine(canvas, line, "↓");
+    drawStacks(recipe.outputs, card.panel.y + 328);
+    line.lineY = card.panel.y + 392;
+    drawSlotLine(canvas, line, recipe.previewOnly
+        ? trEnZh("Preview only · Material mapping pending", "仅预览 · 材料待接入")
+        : trEnZh("Available during its scheduled hour", "在对应整点时段可合成"));
+    return true;
+}
+
 bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tier,
                             std::uint8_t recipeIndex, std::uint8_t nextRecipe,
                             double refreshRemainingMillis) {
@@ -202,6 +311,11 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
     const Vec2 mouse = ctx.mouse();
     const double now = ctx.timeSeconds;
     const double dtMs = std::max(0.0, ctx.dt) * 1000.0;
+    static const NpcSpec emptySpec;
+    const auto& spec = mobIndex < content().mobCount() ? content().mob(mobIndex).npc : emptySpec;
+    const auto& recipes = spec.recipes;
+    const bool hourly = spec.hourlyRecipeSlots > 0;
+    if (hourly) tier = bioTier_;
 
     // Another assembler -- another mob, tier or recipe -- drops whatever this
     // one was showing: the profile says how an assembly still out came back.
@@ -228,7 +342,12 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
             // Nothing left the bag: the seats grow back and the reason takes
             // the line's place.
             if (phase_ == Phase::Assembling) phase_ = Phase::Idle;
-            refusal_ = outcome.reason.empty() ? "The assembler refused." : outcome.reason;
+            if (outcome.reason == "The Bio assembler is cooling down.") {
+                refusal_ = trEnZh("The Bio assembler is cooling down.", "生化合成机冷却中。");
+            } else {
+                refusal_ = outcome.reason.empty() ?
+                    trEnZh("The assembler refused.", "合成失败。") : outcome.reason;
+            }
             refusalUntil_ = now + kRefusalSeconds;
         }
     }
@@ -248,18 +367,51 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
     const Rect panel = card.panel;
     const Vec2 body = card.body;
 
-    // An assembler offers one recipe, as florr's does: the one it rolled.
-    static const std::vector<AssemblyRecipe> kNoRecipes;
-    const std::vector<AssemblyRecipe>& recipes =
-        mobIndex < content().mobCount() ? content().mob(mobIndex).npc.recipes : kNoRecipes;
-    if (recipeIndex >= recipes.size()) {
-        drawSlotLine(canvas, card, kAssemblerInstructions);
+    if (hourly) {
+        const Rect schedule{panel.x + 16, panel.y + 12, 138, 30};
+        drawSlotButton(canvas, schedule, showSchedule_ ? trEnZh("Assemble", "返回合成")
+                                                      : trEnZh("Recipe schedule", "配方轮换"),
+                       kAssemblerSkin.fill, schedule.contains(mouse), false);
+        if (ctx.pressed() && card.close.contains(mouse)) return false;
+        if (ctx.pressed() && schedule.contains(mouse) && phase_ == Phase::Idle) {
+            showSchedule_ = !showSchedule_;
+            scheduleOffset_ = 0;
+            countField_.blur();
+            previewCountField_.blur();
+            return true;
+        }
+        if (showSchedule_) {
+            const int slot = recipeIndex < recipes.size() ? recipes[recipeIndex].rotationSlot
+                : assemblyRotationSlot(spec, assemblerEpochMillis());
+            return renderSchedule(ctx, card, spec, slot, refreshRemainingMillis);
+        }
+        const Rect chooseTier{panel.right() - 163, panel.y + 12, 103, 30};
+        drawSlotButton(canvas, chooseTier, rarityTr(tier), rarityColor(tier),
+                       chooseTier.contains(mouse), false);
+        if (phase_ == Phase::Idle && ctx.pressed() && chooseTier.contains(mouse)) {
+            const int nextTier = (rarityIndex(tier) + 1) % (rarityIndex(Rarity::Unique) + 1);
+            bioTier_ = static_cast<Rarity>(nextTier);
+            return true;
+        }
+    }
+    if (recipeIndex >= recipes.size() || recipes[recipeIndex].previewOnly) {
+        const auto seconds = static_cast<int>(std::ceil(std::max(0.0, refreshRemainingMillis) / 1000.0));
+        const auto wait = std::to_string(seconds / 60) + ":" + (seconds % 60 < 10 ? "0" : "") +
+                          std::to_string(seconds % 60);
+        drawSlotLine(canvas, card, hourly ?
+            trEnZh("Preview only. Changes in ", "本时段仅供预览。距离轮换 ") + wait :
+            trEnZh(kAssemblerInstructions, "用指定花瓣合成新花瓣。"));
         if (ctx.pressed() && card.close.contains(mouse)) return false;
         return true;
     }
     const AssemblyRecipe& recipe = recipes[recipeIndex];
     const Rarity outputTier = recipe.outputRarity.value_or(tier);
-    const int most = rarityIndex(tier) >= rarityIndex(Rarity::Apex) ? 0 : affordable(profile, recipe, tier);
+    const bool tierAvailable = std::all_of(recipe.inputs.begin(), recipe.inputs.end(),
+        [&](const auto& stack) { return petalComesAt(content().petal(stack.petal), tier); }) &&
+        std::all_of(recipe.outputs.begin(), recipe.outputs.end(),
+        [&](const auto& stack) { return petalComesAt(content().petal(stack.petal), outputTier); });
+    const int most = rarityIndex(tier) >= rarityIndex(Rarity::Apex) || (hourly && !tierAvailable)
+        ? 0 : affordable(profile, recipe, tier);
 
     // --- the count -----------------------------------------------------------
     // Typed while the field has the caret; held to what the bag can make, and
@@ -378,10 +530,19 @@ bool AssemblerPanel::render(MenuContext& ctx, std::uint16_t mobIndex, Rarity tie
         drawSlotLine(canvas, card, refusal_, kSlotCardRefusalInk);
     } else {
         refusal_.clear();
-        drawSlotLine(canvas, card, trEnZh(kAssemblerInstructions,
-                     "每20分钟轮换；长按箭头加速调整数量。"));
+        drawSlotLine(canvas, card, hourly ?
+            (tierAvailable
+                ? trEnZh("Crafting has a 10-minute cooldown.", "合成冷却 10 分钟。")
+                : trEnZh("This tier is unavailable for this recipe.", "此配方不可用于当前稀有度。")) :
+            trEnZh(kAssemblerInstructions, "长按箭头加速调整数量。"));
     }
-    if (nextRecipe < recipes.size()) {
+    if (hourly) {
+        auto timer = card;
+        timer.lineY += 29;
+        drawSlotLine(canvas, timer, trEnZh("Changes in: ", "下次轮换：") +
+                     rotationWait(refreshRemainingMillis));
+    }
+    if (!hourly && nextRecipe < recipes.size()) {
         const auto& upcoming = recipes[nextRecipe];
         const auto describe = [&](const std::vector<AssemblyRecipe::Stack>& stacks, bool inputs) {
             std::string text;

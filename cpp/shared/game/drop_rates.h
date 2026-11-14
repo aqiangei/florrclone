@@ -6,6 +6,8 @@
 #include "shared/game/rarity.h"
 
 namespace flix {
+
+inline constexpr double kApexPetalDropChance = 0.02;
 struct DropRate { Rarity rarity=Rarity::Common; double probability=0; };
 inline Rarity payoutDropRarity(Rarity rolled,Rarity mob) {
     // A Hyper kill must not promote every Super roll into an Eternal.

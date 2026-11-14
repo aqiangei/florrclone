@@ -40,9 +40,10 @@
  * the bytes are now.
  *
  * Usage:
- *   node scripts/build-web.js [client|server|offline|offline-asmjs|all] [--copy-only]
+ *   node scripts/build-web.js [client|server|offline|offline-asmjs|workshop-preview|all] [--copy-only]
  *
- *   `all` is the deployment: client and server. Either offline page is asked
+ *   `all` includes the online client, server, and the workshop test page.
+ *   Either standalone offline page is asked
  *   for by name -- neither is something `npm start` serves, and both are
  *   gitignored in dist/ so a rebuilt multi-megabyte page does not land in
  *   every commit of the (otherwise committed) dist/.
@@ -107,6 +108,9 @@ const TARGETS = {
         sidecars: [
             [path.join(CPP_DIR, 'client', 'web', 'favicon.ico'), 'favicon.ico'],
             [path.join(CPP_DIR, 'client', 'web', 'council.html'), 'council.html'],
+            [path.join(CPP_DIR, 'client', 'web', 'workshop.html'), 'workshop.html'],
+            [path.join(CPP_DIR, 'client', 'web', 'workshop.js'), 'workshop.js'],
+            [path.join(CPP_DIR, 'client', 'web', 'workshop-model.js'), 'workshop-model.js'],
         ],
         // Staged deflated beside themselves, as <name>.bin. These are the
         // two files the page pulls over the network; index.html is served
@@ -158,7 +162,10 @@ const TARGETS = {
         sidecars: [],
     },
 };
-const DEPLOYMENT = ['client', 'server'];
+TARGETS['workshop-preview'] = {
+    ...TARGETS.offline, artifacts: [['offline.html', 'workshop-preview.html']],
+};
+const DEPLOYMENT = ['client', 'server', 'workshop-preview'];
 
 function fail(message) {
     console.error(`\nbuild-web: ${message}\n`);
@@ -171,7 +178,7 @@ const which = args.find((a) => !a.startsWith('-')) || 'all';
 if (which !== 'all' && !TARGETS[which]) {
     fail(
         `unknown target '${which}' — expected client, server, offline, ` +
-        `offline-asmjs or all`
+        `offline-asmjs, workshop-preview or all`
     );
 }
 const selected = which === 'all' ? DEPLOYMENT : [which];
@@ -316,6 +323,36 @@ for (const name of selected) {
         copied.push([to, fs.statSync(dest).size]);
     }
     for (const to of TARGETS[name].compressed || []) copied.push(compress(to));
+}
+
+if (selected.includes('client')) {
+    const mobs = JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'mobs.json'), 'utf8'));
+    const mapDir = path.join(ROOT, 'maps');
+    const manifest = JSON.parse(fs.readFileSync(path.join(mapDir, 'maps.json'), 'utf8'));
+    const authoredMobs = new Set();
+    for (const entry of manifest.maps) {
+        const map = JSON.parse(fs.readFileSync(path.join(mapDir, entry.file || entry), 'utf8'));
+        const layers = [...map.layers];
+        while (layers.length) {
+            const layer = layers.pop();
+            if (layer.type === 'group') layers.push(...layer.layers);
+            if (layer.name !== 'spawns' || layer.type !== 'objectgroup') continue;
+            for (const object of layer.objects) {
+                const distribution = object.properties?.find(property => property.name === 'mobs')?.value;
+                if (typeof distribution !== 'string') continue;
+                for (const token of distribution.split(/[\s,:=%]+/)) {
+                    if (Object.hasOwn(mobs, token)) authoredMobs.add(token);
+                }
+            }
+        }
+    }
+    const catalog = Object.fromEntries(Object.entries(mobs).map(([id, mob]) => [id, {
+        name: mob.name || id,
+        spawnable: !mob.npc && Boolean(mob.groups || authoredMobs.has(id)),
+    }]));
+    const output = JSON.stringify(catalog);
+    fs.writeFileSync(path.join(DIST, 'workshop-mobs.json'), output);
+    copied.push(['workshop-mobs.json', Buffer.byteLength(output)]);
 }
 
 // --copy-only builds nothing, so FLIX_BUILD says nothing about what was just

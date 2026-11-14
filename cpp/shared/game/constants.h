@@ -751,7 +751,8 @@ inline constexpr double kPetTeleportDistance = 80.0;
 /// does not wander straight back off it.
 inline constexpr double kPetHomeDistance = 300.0;
 inline constexpr double kPetFollowDistance = 700.0;
-inline constexpr double kPetOwnerTargetRadius = 1050.0;
+inline constexpr double kPetOwnerTargetRadius = 1250.0;
+inline constexpr double kPetCombatFollowDistance = 1300.0;
 inline constexpr double kPetOwnerPriorityRadius = 600.0;
 inline constexpr double kPetFollowSpeedFactor = 1.15;
 
@@ -772,9 +773,7 @@ inline constexpr double kPetRetargetMargin = 50.0;
 inline constexpr double kSandstormPetSpeedFactor = 1.2;
 
 /// How far a sandstorm pet may get from its owner before it turns for home.
-/// Inside the viewport's half height, so a storm out in front never leaves
-/// its owner's screen.
-inline constexpr double kSandstormPetLeash = 400.0;
+inline constexpr double kSandstormPetLeash = 600.0;
 
 /// How close a returning sandstorm pet comes before it goes back to shadowing
 /// its owner -- the reference's kReturning stops at the same 100.

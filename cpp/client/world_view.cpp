@@ -87,6 +87,7 @@ void HealthBarEase::step(double targetHealth, double targetShield, double nowMil
 void WorldView::clear() {
     entities_.clear();
     events_.clear();
+    practiceMeters_.clear();
     removedPetals_.clear();
     self_ = SelfState{};
     realm_ = Realm::Overworld;
@@ -208,7 +209,14 @@ void pushSample(RemoteEntity& e, double timeMillis) {
 
 } // namespace
 
-bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
+net::PracticeMeter WorldView::practiceMeter(std::uint32_t netId) const {
+    for (const auto& meter : practiceMeters_) {
+        if (meter.netId == netId) return meter;
+    }
+    return {};
+}
+
+bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis, bool keepTransientEffects) {
     const std::uint32_t tick = reader.u32();
     const double serverTime = reader.f64();
     const Vec2 selfPosition = reader.position();
@@ -422,17 +430,34 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
 
     const std::uint16_t eventCount = reader.u16();
     std::vector<ViewEvent> events;
+    std::vector<net::PracticeMeter> practiceMeters;
     events.reserve(eventCount);
     for (std::uint16_t i = 0; i < eventCount; ++i) {
         ViewEvent e;
         e.kind = static_cast<net::EventKind>(reader.u8());
         e.netId = reader.u32();
+        if (e.kind == net::EventKind::PracticeMeter) {
+            const double dps = reader.f64();
+            const double total = reader.f64();
+            if (std::isfinite(dps) && dps >= 0 && std::isfinite(total) && total >= 0) {
+                practiceMeters.push_back({e.netId, dps, total});
+            }
+            continue;
+        }
         e.otherNetId = reader.u32();
         e.amount = reader.f32();
         e.position = reader.position();
         e.radius = reader.f32();
         e.flag = reader.u8();
-        if (e.kind == net::EventKind::PickedUp) { e.pickupQuantity = reader.u32(); e.pickupByAccount = reader.boolean(); }
+        if (e.kind == net::EventKind::PickedUp) {
+            e.pickupQuantity = reader.u32();
+            e.pickupByAccount = reader.boolean();
+            // The server banks a pickup as a positive inventory count. Ignore
+            // impossible cues without losing the other events in the frame.
+            if (e.pickupQuantity == 0 || e.pickupQuantity > kMaxStackCount ||
+                !(e.amount >= 0 && e.amount < kNoPetal) || e.amount != std::trunc(e.amount) ||
+                e.flag >= kRarityCount) continue;
+        }
         // Lightning carries a variable point tail; see EventKind. A frame
         // that ends inside it hands back zeroes and trips the reader's ok()
         // flag, which the check below turns into a rejected snapshot -- the
@@ -440,9 +465,14 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
         // next event's header.
         if (e.kind == net::EventKind::Lightning) {
             const std::uint8_t targets = reader.u8();
-            e.points.reserve(targets);
-            for (std::uint8_t t = 0; t < targets; ++t) e.points.push_back(reader.position());
+            if (keepTransientEffects) e.points.reserve(targets);
+            for (std::uint8_t t = 0; t < targets; ++t) {
+                const auto point = reader.position();
+                if (keepTransientEffects) e.points.push_back(point);
+            }
         }
+        if (!keepTransientEffects &&
+            (e.kind == net::EventKind::Lightning || e.kind == net::EventKind::Explosion)) continue;
         events.push_back(std::move(e));
     }
     if (!reader.ok()) return false;
@@ -623,6 +653,7 @@ bool WorldView::applySnapshot(ByteReader& reader, double receivedMillis) {
     }
 
     events_.insert(events_.end(), events.begin(), events.end());
+    practiceMeters_ = std::move(practiceMeters);
     return true;
 }
 

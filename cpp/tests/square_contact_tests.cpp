@@ -98,7 +98,7 @@ TEST(hostile_contact_culling_preserves_the_first_hit_on_a_player) {
     Query<Transform, Body>{world}.each([&](Entity entity, Transform& at, Body& body) {
         grid.insert(entity, at.realm, at.position, body.radius);
     });
-    combat.beginTick(world, 1000, .05, events);
+    combat.beginTick(world, c, 1000, .05, events);
     combat.runContactPhase(world, grid, c, 1000);
     CHECK_EQ(world.get<Health>(first).current, 1000.0);
     CHECK_EQ(world.get<Health>(second).current, 1000.0);

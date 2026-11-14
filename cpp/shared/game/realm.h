@@ -39,7 +39,7 @@ enum class Realm : std::uint8_t {
 /// Realm identifiers travel as a byte. This includes the instanced maps,
 /// prestige twins and all four Pyramid layouts. An unstaged realm only uses
 /// an empty tile grid and a one-cell broadphase layer.
-inline constexpr int kMaxRealms = 136;
+inline constexpr int kMaxRealms = 192;
 
 /// How many world MAPS can be staged: every realm that is not the arena or the
 /// maze.

@@ -184,6 +184,19 @@ void GameServer::handleAdminDashboard(Session& session, net::Connection& connect
             sendDashboardResult(connection, ok, answer);
             return;
         }
+        case AdminDashboardOp::SetMuted: {
+            const auto connectionId = reader.u32();
+            const auto accountId = reader.str();
+            const auto muted = reader.u8();
+            if (!reader.ok() || muted > 1 || accountId.empty()) return;
+            const Session* target = sessionFor(connectionId);
+            Account* account = target && target->authenticated() && target->userId == accountId
+                ? database_.findUserById(accountId) : nullptr;
+            std::string answer = "That player has left.";
+            const bool ok = account && setAccountMuted(session, *account, muted != 0, answer);
+            sendDashboardResult(connection, ok, answer);
+            return;
+        }
         case AdminDashboardOp::Release: {
             std::string answer;
             const bool ok = releaseFlower(session, answer);
@@ -240,6 +253,9 @@ void GameServer::sendDashboardPlayers(net::Connection& connection, const std::st
         const Session& other = *rows[i].session;
         net::AdminDashboardPlayer row;
         row.connection = other.connection;
+        row.accountId = other.userId;
+        const Account* account = std::as_const(database_).findUserById(other.userId);
+        if (account && account->muted) row.flags |= net::AdminDashboardMuted;
         row.username = other.username;
         row.name = nameplateOf(other);
         row.realm = realmOfBody(world_, other.entity);

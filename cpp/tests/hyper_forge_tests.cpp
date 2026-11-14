@@ -4,6 +4,10 @@
 #include "server/timed_hammers.h"
 #include "shared/game/constants.h"
 #include <cstdio>
+#include <chrono>
+#include <thread>
+#include <sys/stat.h>
+#include <unistd.h>
 using namespace flix;
 namespace {
 struct Fixture {
@@ -156,6 +160,39 @@ TEST(hyper_forge_persists_owner_counter_and_protection_across_restart){
     CHECK(forgeHyper(restored,f.b,"rose",1000+15LL*3600000).ok);
     CHECK_EQ(hyperForgeState(restored,"rose").claims,2);
 }
+TEST(apex_hammer_uses_five_apex_fragments_and_transfers_separately) {
+    Fixture f;
+    const auto tier = Rarity::Ascendant;
+    const auto material = "petal_fragment";
+    const auto hammer = "petal_mjolnir";
+    auto& first = f.db.progress(f.a);
+    first.addItem(Rarity::Unique, material, 10);
+    first.addItem(Rarity::PermanentHyper, material, 5);
+    first.addItem(tier, material, 4);
+    CHECK(!forgeHyper(f.db, f.a, "fragment", 1, {}, "", true).ok);
+    CHECK_EQ(first.itemCount(tier, material), 4);
+    first.addItem(tier, material, 1);
+    CHECK(forgeHyper(f.db, f.a, "fragment", 1).ok);
+    CHECK(forgeHyper(f.db, f.a, "fragment", 1, {}, "", true).ok);
+    CHECK_EQ(first.itemCount(Rarity::PermanentHyper, material), 5);
+    CHECK_EQ(first.itemCount(tier, material), 0);
+    CHECK_EQ(first.itemCount(tier, hammer), 1);
+    CHECK_EQ(hyperHoldingCount(f.db, f.a), 2);
+    auto& second = f.db.progress(f.b);
+    second.addItem(tier, material, 5);
+    const auto end = hyperForgeState(f.db, "mjolnir", "", true).protectedUntil;
+    CHECK(!forgeHyper(f.db, f.b, "fragment", end - 1, {}, "", true).ok);
+    CHECK_EQ(second.itemCount(tier, material), 5);
+    CHECK(forgeHyper(f.db, f.b, "fragment", end, {}, "", true).ok);
+    CHECK_EQ(f.db.progress(f.a).itemCount(Rarity::Apex, hammer), 1);
+    CHECK_EQ(f.db.progress(f.a).itemCount(tier, hammer), 0);
+    CHECK_EQ(f.db.progress(f.a).itemCount(tier, material), 4);
+    CHECK_EQ(f.db.progress(f.b).itemCount(tier, hammer), 1);
+    CHECK_EQ(hyperForgeState(f.db, "mjolnir").owner, f.a);
+    CHECK_EQ(hyperForgeState(f.db, "mjolnir", "", true).owner, f.b);
+    CHECK(abandonHyper(f.db, f.b, hyperForgeKey("mjolnir", "", true)).ok);
+    CHECK_EQ(f.db.progress(f.b).itemCount(tier, hammer), 0);
+}
 TEST(hyper_hammer_uses_ten_eternal_fragments_and_ignores_combat_hammer_expiry){
     Fixture f;f.give(f.a,"fragment",10);f.give(f.b,"fragment",10);
     for(int n=0;n<7;++n)addHammerLease(f.db.progress(f.a),0);
@@ -276,6 +313,136 @@ TEST(hyper_forge_failed_save_rolls_back_inputs_output_and_protection){
     CHECK_EQ(db.progress(id).itemCount(Rarity::Unique,"petal_rose"),5);
     CHECK_EQ(db.progress(id).itemCount(Rarity::Apex,"petal_rose"),0);
     CHECK_EQ(hyperForgeState(db,"rose").claims,0);
+}
+
+TEST(hyper_forge_failed_background_transfer_restores_both_players_and_can_retry) {
+    Fixture f;
+    f.give(f.a,"rose");
+    f.give(f.b,"rose");
+    CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);
+    const auto original=hyperForgeState(f.db,"rose");
+    std::string error;
+    const bool enabled=f.db.enableBackgroundSave(error);
+    CHECK(enabled);
+    if(!enabled) return;
+    CHECK(f.db.save());
+
+    const std::string saved=f.path+".before";
+    const int moved=std::rename(f.path.c_str(),saved.c_str());
+    CHECK_EQ(moved,0);
+    if(moved!=0) return;
+    const int blocked=::mkdir(f.path.c_str(),0700);
+    CHECK_EQ(blocked,0);
+    if(blocked==0) {
+        CHECK(!forgeHyper(f.db,f.b,"rose",original.protectedUntil).ok);
+        CHECK(!f.db.commitUncertain());
+        CHECK_EQ(hyperForgeState(f.db,"rose").owner,f.a);
+        CHECK_EQ(hyperForgeState(f.db,"rose").protectedUntil,original.protectedUntil);
+        CHECK_EQ(f.db.findProgress(f.a)->itemCount(Rarity::Apex,"petal_rose"),1);
+        CHECK_EQ(f.db.findProgress(f.a)->itemCount(Rarity::Unique,"petal_rose"),0);
+        CHECK_EQ(f.db.findProgress(f.b)->itemCount(Rarity::Unique,"petal_rose"),5);
+        CHECK_EQ(f.db.findProgress(f.b)->itemCount(Rarity::Apex,"petal_rose"),0);
+        CHECK_EQ(::rmdir(f.path.c_str()),0);
+    }
+    const int restored=std::rename(saved.c_str(),f.path.c_str());
+    CHECK_EQ(restored,0);
+    if(restored!=0) return;
+    CHECK(forgeHyper(f.db,f.b,"rose",original.protectedUntil).ok);
+    Database reloaded;
+    CHECK(reloaded.load(f.path,error));
+    CHECK_EQ(hyperForgeState(reloaded,"rose").owner,f.b);
+}
+
+TEST(hyper_forge_plan_does_not_publish_the_ownership_transfer) {
+    Fixture f;
+    f.give(f.a,"rose");
+    f.give(f.b,"rose");
+    CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);
+    const auto state=hyperForgeState(f.db,"rose");
+    const auto generation=f.db.mutationGeneration();
+    const auto before=f.db.serialise();
+    const auto plan=planHyperForge(f.db,f.b,"rose",state.protectedUntil);
+    CHECK(plan.result.ok);
+    CHECK_EQ(plan.entry["owner"].asString(),f.b);
+    CHECK_EQ(plan.players.at(f.a).itemCount(Rarity::Unique,"petal_rose"),4);
+    CHECK_EQ(plan.players.at(f.b).itemCount(Rarity::Apex,"petal_rose"),1);
+    CHECK_EQ(f.db.mutationGeneration(),generation);
+    CHECK_EQ(f.db.serialise(),before);
+}
+
+TEST(hyper_forge_staged_snapshot_can_cancel_fail_and_then_publish_atomically) {
+    Fixture f;
+    f.give(f.a,"rose");
+    f.give(f.b,"rose");
+    CHECK(forgeHyper(f.db,f.a,"rose",1000).ok);
+    const auto state=hyperForgeState(f.db,"rose");
+    const auto plan=planHyperForge(f.db,f.b,"rose",state.protectedUntil);
+    CHECK(plan.result.ok);
+    if(!plan.result.ok) return;
+    auto forges=f.db.storedTable("hyperForges");
+    forges[plan.forgeKey]=plan.entry;
+    std::string error;
+    const bool enabled=f.db.enableBackgroundSave(error);
+    CHECK(enabled);
+    if(!enabled) return;
+    CHECK(f.db.save());
+
+    using Save=Database::StagedSave;
+    const auto prepare=[&] {
+        if(!f.db.beginStagedForgeSave(plan.players,forges)) return false;
+        for(int i=0;i<5000;++i) {
+            const auto status=f.db.pollStagedForgeSave();
+            if(status==Save::Ready) return true;
+            if(status!=Save::Preparing) return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return false;
+    };
+    const auto diskOwner=[&] {
+        Database disk;
+        CHECK(disk.load(f.path,error));
+        return hyperForgeState(disk,"rose").owner;
+    };
+    const bool ready=prepare();
+    CHECK(ready);
+    if(!ready) return;
+    CHECK_EQ(diskOwner(),f.a);
+    CHECK_EQ(hyperForgeState(f.db,"rose").owner,f.a);
+    f.db.decideStagedForgeSave(false);
+    CHECK(f.db.pollStagedForgeSave(true)==Save::Failed);
+    CHECK(f.db.save());
+    CHECK_EQ(diskOwner(),f.a);
+
+    const bool again=prepare();
+    CHECK(again);
+    if(!again) return;
+    const auto saved=f.path+".before";
+    const int moved=std::rename(f.path.c_str(),saved.c_str());
+    CHECK_EQ(moved,0);
+    if(moved!=0) return;
+    const int blocked=::mkdir(f.path.c_str(),0700);
+    CHECK_EQ(blocked,0);
+    f.db.decideStagedForgeSave(blocked==0);
+    CHECK(f.db.pollStagedForgeSave(true)==Save::Failed);
+    if(blocked==0) CHECK_EQ(::rmdir(f.path.c_str()),0);
+    const int restored=std::rename(saved.c_str(),f.path.c_str());
+    CHECK_EQ(restored,0);
+    if(restored!=0) return;
+    CHECK(f.db.save());
+    CHECK_EQ(diskOwner(),f.a);
+
+    const bool retry=prepare();
+    CHECK(retry);
+    if(!retry) return;
+    f.db.decideStagedForgeSave(true);
+    CHECK(f.db.pollStagedForgeSave(true)==Save::Saved);
+    CHECK_EQ(diskOwner(),f.b);
+    CHECK_EQ(hyperForgeState(f.db,"rose").owner,f.a);
+    for(const auto& [id,row]:plan.players) f.db.progress(id)=row;
+    f.db.rawTable("hyperForges")=forges;
+    f.db.markDirty();
+    CHECK(f.db.save());
+    CHECK_EQ(diskOwner(),f.b);
 }
 
 TEST(hyper_abandon_failed_save_restores_inventory_and_claim){

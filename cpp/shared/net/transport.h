@@ -27,6 +27,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -91,6 +92,8 @@ public:
     /// which can be most of a frame before a client's poll reads them; a
     /// socket only knows when they were read, so there it is about zero.
     double frameAgeMillis() const;
+    /// Inspect the next complete message without advancing the reliable stream.
+    std::optional<ByteReader> nextBufferedMessage() const;
 
 private:
     friend class Listener;
@@ -268,6 +271,9 @@ public:
 
     /// Queues a frame. Safe before the connect completes; it drains after.
     void send(const ByteWriter& message);
+    std::size_t outboundBacklog() const {
+        return connection_ ? connection_->outboundBacklog() : 0;
+    }
 
     /// Services the socket for up to `timeoutMillis` and dispatches frames.
     /// Returns the number delivered.

@@ -63,8 +63,8 @@ int forgeCost(const Profile& profile, std::uint16_t index, bool hyper, const Net
     return titanForgeCost(profile.titanForgeCount(index),
         index < content().petalCount() ? content().petal(index).id : std::string());
 }
-std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex, bool hyper=false) {
-    return std::min<std::uint32_t>(profile.stackCount(petalIndex, hyper?Rarity::Unique:kTitanInputRarity),
+std::uint32_t forgeInputOwned(const Profile& profile, std::uint16_t petalIndex, Rarity tier=kTitanInputRarity) {
+    return std::min<std::uint32_t>(profile.stackCount(petalIndex, tier),
                                    static_cast<std::uint32_t>(kMaxStackCount));
 }
 
@@ -74,7 +74,8 @@ Vec2 TitanPanel::size(const Profile& profile) {
     const std::size_t rows = std::max({std::size_t{1},
         SlotTierGrid::rows(profile, kTitanInputRarity, kColumns),
         SlotTierGrid::rows(profile, Rarity::Unique, kColumns),
-        SlotTierGrid::rows(profile, Rarity::Apex, kColumns)});
+        SlotTierGrid::rows(profile, Rarity::Apex, kColumns),
+        SlotTierGrid::rows(profile, Rarity::Ascendant, kColumns)});
     return {slotCardColumnsWidth(kColumns),
             std::min(kMaxHeight,
                      kGridTop + kGridPadding * 2.0 + static_cast<double>(rows) * kGridPitch)};
@@ -101,15 +102,19 @@ bool TitanPanel::render(MenuContext& ctx) {
     const Profile& profile = ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
     const double now = ctx.timeSeconds;
-    const bool eternalInput = hyper_ || permanentHyper_;
-    const Rarity inputTier = eternalInput ? Rarity::Unique : kTitanInputRarity;
-    const Rarity outputTier = permanentHyper_ ? Rarity::PermanentHyper
+    const bool eternalInput = hyper_ || permanentHyper_ || apexHammer_;
+    const bool contested = hyper_ || apexHammer_;
+    const auto quoteIndex = [&](std::uint16_t index) { return apexHammer_ ? kNoPetal : index; };
+    const Rarity inputTier = apexHammer_ ? Rarity::Ascendant : eternalInput ? Rarity::Unique : kTitanInputRarity;
+    const Rarity outputTier = apexHammer_ ? Rarity::Ascendant : permanentHyper_ ? Rarity::PermanentHyper
                              : hyper_ ? Rarity::Apex : kTitanOutputRarity;
     const auto costOf = [&](std::uint16_t index) {
+        if (apexHammer_) return kApexHammerForgeCost;
         return permanentHyper_ ? kPermanentHyperCost : forgeCost(profile, index, hyper_, ctx.net);
     };
     const auto canUse = [&](std::uint16_t index) {
         const auto& petal = content().petal(index);
+        if (apexHammer_) return petal.id == "fragment";
         if (permanentHyper_)
             return permanentHyperForgeEligible(petal.id) && !petal.isAdminPetal &&
                    petalComesAt(petal, Rarity::Unique);
@@ -174,7 +179,7 @@ bool TitanPanel::render(MenuContext& ctx) {
     // server's, and a profile landing a frame ahead of the result would empty
     // the ring under its own animation.
     if (!abandon_ && phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
-        (forgeInputOwned(profile, stagedPetal_, eternalInput) < static_cast<std::uint32_t>(costOf(stagedPetal_)) ||
+        (forgeInputOwned(profile, stagedPetal_, inputTier) < static_cast<std::uint32_t>(costOf(stagedPetal_)) ||
          !canUse(stagedPetal_))) {
         stagedPetal_ = kNoPetal;
         confirmForge_ = false;
@@ -182,19 +187,19 @@ bool TitanPanel::render(MenuContext& ctx) {
     }
 
     const SlotCardLayout card = drawSlotCard(canvas, ctx.bounds, kTitanSkin,
-                                            abandon_ ? "解除超凡花瓣" : permanentHyper_ ? "永久超凡兑换" :
+                                            apexHammer_ ? "Apex 雷神之锤争夺" : abandon_ ? "解除超凡花瓣" : permanentHyper_ ? "永久超凡兑换" :
                                             hyper_ ? "超凡争夺锻造" : eternalFragment_ ? "永久永恒锻造" : "限时永恒锤（1小时）",
                                             "Forge", mouse);
     const Rect panel = card.panel;
-    const char* modes[]={"永久永恒","限时锤（1h）","超凡争夺","解除超凡","永久超凡"};
-    const double tabW = (panel.w - 36.0) / 5.0;
-    const int activeTab = permanentHyper_ ? 4 : abandon_ ? 3 : hyper_ ? 2 : eternalFragment_ ? 0 : 1;
-    for(int i=0;i<5;++i){
+    const char* modes[]={"永久永恒","限时锤（1h）","超凡争夺","解除超凡","永久超凡","Apex 雷神锤"};
+    const double tabW = (panel.w - 36.0) / 6.0;
+    const int activeTab = apexHammer_ ? 5 : permanentHyper_ ? 4 : abandon_ ? 3 : hyper_ ? 2 : eternalFragment_ ? 0 : 1;
+    for(int i=0;i<6;++i){
         const Rect tab{panel.x+18+i*tabW,panel.y+62,tabW-6,32};
         const bool selected = i == activeTab;
         drawSlotButton(canvas,tab,modes[i],selected?std::optional<std::uint32_t>(rarityColor(outputTier)):std::nullopt,tab.contains(mouse),tab.contains(mouse)&&ctx.window.mouseDown(MouseButton::Left));
         if(ctx.pressed()&&tab.contains(mouse)&&phase_!=Phase::Forging){
-            abandon_=i==3;hyper_=i==2;eternalFragment_=i!=1;permanentHyper_=i==4;
+            abandon_=i==3;hyper_=i==2;eternalFragment_=i!=1;permanentHyper_=i==4;apexHammer_=i==5;
             reset();return true;
         }
     }
@@ -290,9 +295,9 @@ bool TitanPanel::render(MenuContext& ctx) {
         button.w = width;
         batchButton = {centre + gap * 0.5, button.y, width, button.h};
     }
-    const auto* holder=knownPetal(stagedPetal_)?ctx.net.titanHolder(stagedPetal_):nullptr;
+    const auto* holder=knownPetal(stagedPetal_)?ctx.net.titanHolder(quoteIndex(stagedPetal_)):nullptr;
     const bool canForge = phase_ == Phase::Idle && knownPetal(stagedPetal_) &&
-        (!hyper_ || (holder&&ctx.net.hyperHoldings()<kMaxHyperHoldings&&ctx.net.hyperProtectionLeft(stagedPetal_)<=0 &&
+        (!contested || (holder&&ctx.net.hyperHoldings()<kMaxHyperHoldings&&ctx.net.hyperProtectionLeft(quoteIndex(stagedPetal_))<=0 &&
                      *holder!=profile.username));
     const bool fragment=knownPetal(stagedPetal_)&&content().petal(stagedPetal_).id=="fragment";
     const char* action=fragment&&!eternalInput?(eternalFragment_?(confirmForge_ && !confirmBatch_?"确认：E碎片":"兑换E碎片"):(confirmForge_ && !confirmBatch_?"确认：限时锤":"制作限时锤")):(confirmForge_ && !confirmBatch_?"确认锻造":"锻造");
@@ -310,14 +315,15 @@ bool TitanPanel::render(MenuContext& ctx) {
                                 profile.titanForgeCount(stagedPetal_), content().petal(stagedPetal_).id);
     }
     const bool canBatch = batch.quantity > 1;
-    const Rect allButton{button.x, button.bottom() + 8.0,
-                         batchButton.right() - button.x, button.h};
-    const bool canForgeAll = permanent && phase_ == Phase::Idle &&
+    constexpr double allWidth = 230.0;
+    const Rect allButton{card.button.x + (card.button.w - allWidth) * 0.5,
+                         button.bottom() + 8.0, allWidth, button.h};
+    const bool canForgeAll = (permanent || permanentHyper_) && phase_ == Phase::Idle &&
         std::any_of(profile.inventory.begin(), profile.inventory.end(), [&](const auto& stack) {
-            if (stack.rarity != kTitanInputRarity || !knownPetal(stack.petalIndex) ||
+            if (stack.rarity != inputTier || !knownPetal(stack.petalIndex) ||
                 !canUse(stack.petalIndex)) return false;
             return stack.count >= static_cast<std::uint32_t>(costOf(stack.petalIndex)) &&
-                profile.stackCount(stack.petalIndex, kTitanOutputRarity) <
+                profile.stackCount(stack.petalIndex, outputTier) <
                     static_cast<std::uint32_t>(kMaxStackCount);
         });
     if (permanent) {
@@ -325,10 +331,13 @@ bool TitanPanel::render(MenuContext& ctx) {
                        canBatch ? std::optional<std::uint32_t>(rarityColor(outputTier)) : std::nullopt,
                        batchButton.contains(mouse),
                        batchButton.contains(mouse) && ctx.window.mouseDown(MouseButton::Left));
+    }
+    if (permanent || permanentHyper_) {
         const bool working = phase_ == Phase::Forging && offeredPetal_ == kNoPetal;
-        drawSlotButton(canvas, allButton,
-                       working ? "正在锻造全部永恒…" : confirmAll_ && canForgeAll ? "确认锻造全部永恒"
-                                                                                : "一键锻造全部永恒",
+        const char* label = permanentHyper_
+            ? (confirmAll_ && canForgeAll ? "确认兑换全部永久超凡" : "一键兑换全部永久超凡")
+            : (confirmAll_ && canForgeAll ? "确认锻造全部永恒" : "一键锻造全部永恒");
+        drawSlotButton(canvas, allButton, working ? "正在兑换…" : label,
                        canForgeAll ? std::optional<std::uint32_t>(rarityColor(outputTier)) : std::nullopt,
                        allButton.contains(mouse), allButton.contains(mouse) && ctx.window.mouseDown(MouseButton::Left));
     }
@@ -339,19 +348,29 @@ bool TitanPanel::render(MenuContext& ctx) {
         for (std::size_t i = 0; i < kLines.size(); ++i) {
             SlotCardLayout line = card;
             line.lineY = panel.y + kFirstLineY + kLinePitch * static_cast<double>(i);
-            if (permanent && i == 0 && confirmAll_ && canForgeAll) {
-                drawSlotLine(canvas, line, "确认后将消耗背包内所有可锻造的超级材料。");
+            if (i == 0 && confirmAll_ && canForgeAll) {
+                drawSlotLine(canvas, line, permanentHyper_ ? "确认后将消耗背包内可兑换的永恒材料。"
+                                                           : "确认后将消耗背包内所有可锻造的超级材料。");
                 continue;
             }
-            if (permanent && i == 0 && !allForgeSummary_.empty()) {
+            if ((permanent || permanentHyper_) && i == 0 && !allForgeSummary_.empty()) {
                 line.line2Y = line.lineY;
                 drawSlotLine(canvas, line, allForgeSummary_, std::nullopt, true);
+                continue;
+            }
+            if (apexHammer_) {
+                constexpr std::array<const char*, 3> rules = {
+                    "5 个未装备的 Apex 碎片 → 1 把 Apex 雷神之锤",
+                    "用永久超凡碎片在普通合成或海洋神使处获得 Apex 碎片",
+                    "首保15小时，每次争夺减1小时，最低1小时。被夺返还4个碎片。"
+                };
+                drawSlotLine(canvas, line, rules[i]);
                 continue;
             }
             if (permanentHyper_) {
                 constexpr std::array<const char*, 3> rules = {
                     "30 个未装备的同种永恒 → 1 个永久超凡",
-                    "雷神之锤、碎片和血祭不参与兑换",
+                    "碎片也可兑换，雷神之锤和限时锤不参与",
                     "数值与技能等同超凡，永久归属"
                 };
                 drawSlotLine(canvas, line, rules[i]);
@@ -368,7 +387,7 @@ bool TitanPanel::render(MenuContext& ctx) {
                     continue;
                 }
             }
-            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需10个永恒碎片；限时锤不能参与争夺。","锤耗10返9，其他耗5返4；两处独立，总计最多5份。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:!eternalFragment_?std::array<const char*,3>{"15个超级碎片 → 1把永恒限时锤（1小时）","限时锤不能用于超凡争夺，不返还碎片。","可持有多把，每把独立计时1小时，离线计时。"}[i]:kLines[i]);
+            drawSlotLine(canvas, line, hyper_?std::array<const char*,3>{"超凡锤需10个永恒碎片；限时锤不能参与争夺。","争夺超凡上限为5份，背包、装备与两处泰坦登记均计入。","首保15小时，每次争夺减1小时，最低1小时。"}[i]:!eternalFragment_?std::array<const char*,3>{"15个超级碎片 → 1把永恒限时锤（1小时）","限时锤不能用于超凡争夺，不返还碎片。","可持有多把，每把独立计时1小时，离线计时。"}[i]:kLines[i]);
         }
     } else {
         SlotCardLayout line = card;
@@ -382,15 +401,30 @@ bool TitanPanel::render(MenuContext& ctx) {
         if (confirmBatch_ && canBatch)
             drawSlotLine(canvas, line, std::to_string(batch.cost) + " 个超级 → " +
                          std::to_string(batch.quantity) + " 个永久永恒");
-        else drawSlotLine(canvas, line, "本次消耗：" + std::to_string(costOf(stagedPetal_)) + (eternalInput?" 个同种永恒，成功率100%":" 个同种超级，成功率100%"));
+        else drawSlotLine(canvas, line, "本次消耗：" + std::to_string(costOf(stagedPetal_)) + (apexHammer_ ? " 个 Apex 碎片，成功率100%" : eternalInput ? " 个同种永恒，成功率100%" : " 个同种超级，成功率100%"));
     }
 
-    if(hyper_&&knownPetal(stagedPetal_)){
-        if(now-askedAt_>1){ctx.net.requestTitanHolder(stagedPetal_);askedAt_=now;}
-        const auto* holder=ctx.net.titanHolder(stagedPetal_);
-        SlotCardLayout line=card;line.lineY=panel.y+113;
-        const auto wait=ctx.net.hyperProtectionLeft(stagedPetal_);
-        drawSlotLine(canvas,line,std::string("持有者：")+(holder&&!holder->empty()?*holder:"暂无")+"  保护剩余："+std::to_string(static_cast<int>(std::ceil(wait/60000)))+"分钟  已持有 "+std::to_string(ctx.net.hyperHoldings())+"/5");
+    if (contested && knownPetal(stagedPetal_)) {
+        if (now - askedAt_ > 1) {
+            ctx.net.requestTitanHolder(quoteIndex(stagedPetal_));
+            askedAt_ = now;
+        }
+        SlotCardLayout line = card;
+        line.lineY = panel.y + 113;
+        const auto held = ctx.net.hyperHoldings();
+        const auto wait = ctx.net.hyperProtectionLeft(quoteIndex(stagedPetal_));
+        if (!holder) {
+            drawSlotLine(canvas, line, "正在查询泰坦…请站在泰坦附近。");
+        } else if (held >= kMaxHyperHoldings) {
+            drawSlotLine(canvas, line, "争夺超凡已持有 " + std::to_string(held) + "/" +
+                         std::to_string(kMaxHyperHoldings) + "，已达上限。", kSlotCardRefusalInk);
+        } else if (*holder == profile.username) {
+            drawSlotLine(canvas, line, apexHammer_ ? "你已经持有这位泰坦的 Apex 雷神之锤。" : "你已经持有这位泰坦的该超凡。", kSlotCardRefusalInk);
+        } else {
+            drawSlotLine(canvas, line, std::string("持有者：") + (holder->empty() ? "暂无" : *holder) +
+                         "  保护剩余：" + std::to_string(static_cast<int>(std::ceil(wait / 60000))) +
+                         "分钟  已持有 " + std::to_string(held) + "/" + std::to_string(kMaxHyperHoldings));
+        }
     }
 
     // --- the grid ----------------------------------------------------------
@@ -433,7 +467,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         return true;
     }
 
-    if (permanent && allButton.contains(mouse) && ctx.pressed()) {
+    if ((permanent || permanentHyper_) && allButton.contains(mouse) && ctx.pressed()) {
         if (canForgeAll) {
             if (confirmAll_) {
                 phase_ = Phase::Forging;
@@ -442,7 +476,8 @@ bool TitanPanel::render(MenuContext& ctx) {
                 resultPending_ = false;
                 allForgeSummary_.clear();
                 refusal_.clear();
-                ctx.net.requestTitanForgeAll();
+                if (permanentHyper_) ctx.net.requestPermanentHyperForge(kNoPetal);
+                else ctx.net.requestTitanForgeAll();
             }
             confirmAll_ = !confirmAll_;
             confirmForge_ = false;
@@ -464,7 +499,8 @@ bool TitanPanel::render(MenuContext& ctx) {
             offeredCost_ = batchPressed ? batch.cost : costOf(stagedPetal_);
             resultPending_ = false;
             refusal_.clear();
-            if (permanentHyper_) ctx.net.requestPermanentHyperForge(stagedPetal_);
+            if (apexHammer_) ctx.net.requestApexHammerForge(stagedPetal_);
+            else if (permanentHyper_) ctx.net.requestPermanentHyperForge(stagedPetal_);
             else ctx.net.requestTitanForge(stagedPetal_, hyper_, eternalFragment_, batchPressed);
             // Handed over: the ring draws the offer from here, and a refusal
             // is what puts it back.
@@ -484,7 +520,7 @@ bool TitanPanel::render(MenuContext& ctx) {
         // somebody may have forged it since it was last asked.
         askedPetal_ = hovered->petalIndex;
         askedAt_ = -1.0;
-        ctx.net.forgetTitanHolder(askedPetal_);
+        ctx.net.forgetTitanHolder(quoteIndex(askedPetal_));
         // Explain a disabled stack; colour alone cannot explain a recipe.
         // Any other one REPLACES the ring -- one forge takes five of one petal.
         if (!hovered->greyed) {
@@ -494,7 +530,7 @@ bool TitanPanel::render(MenuContext& ctx) {
             refusal_.clear();
         } else {
             const auto& id=content().petal(hovered->petalIndex).id;
-            refusal_=permanentHyper_?"需要 30 个同种永恒，雷神之锤、碎片和血祭不参与兑换。":
+            refusal_=apexHammer_?"需要5个未装备的Apex碎片。":permanentHyper_?"需要 30 个未装备的同种永恒花瓣。雷神之锤和限时锤不参与兑换。":
                 hyper_&&(id=="timed_mjolnir"||id=="mjolnir")?"超凡锤子需10个永恒碎片，限时锤不能参与争夺。":
                 "材料不足或不可锻造；超凡需5个未装备的同种永恒。";
             refusalUntil_=now+kRefusalSeconds;

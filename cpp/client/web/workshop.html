@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map Editor · AshFlor</title>
+<style>
+:root{color-scheme:dark;font:700 14px system-ui,sans-serif}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:#176039;color:#fff;overflow:hidden}
+#map{position:fixed;inset:0;width:100%;height:100%;touch-action:none}
+button,input,select,textarea{font:inherit}
+button{background:#e95a56;color:white;border:2px solid #ad4541;border-radius:6px;padding:5px 9px;cursor:pointer;text-shadow:0 1px 2px black}
+button:focus-visible,canvas:focus-visible{outline:2px solid #fff}
+button[aria-pressed=true]{outline:2px solid white}
+.top{position:fixed;top:8px;left:8px;display:flex;gap:5px}
+.close{position:fixed;right:8px;top:8px;font-size:19px;line-height:20px;text-decoration:none;color:white;background:#ce5553;border-radius:5px;padding:2px 7px}
+.title{position:fixed;top:7px;left:50%;width:min(46%,270px);transform:translateX(-50%);text-align:center;pointer-events:none;text-shadow:-1px -1px 0 #182b21,1px 1px 0 #182b21}
+.title strong{display:block;font-size:22px}
+.title span{display:block;overflow-wrap:anywhere}
+.tools{position:fixed;bottom:10px;left:9px;display:grid;gap:8px}
+.tools button{font-size:27px;width:49px;height:49px;padding:0;border:3px solid #0003}
+.tools button:nth-child(1){background:#e7ab44}.tools button:nth-child(2){background:#da48a2}
+.tools button:nth-child(3){background:#45cc87}.tools button:nth-child(4){background:#ed556a}
+.panel{position:fixed;left:68px;bottom:10px;width:min(408px,calc(100vw - 78px));max-height:75vh;overflow:auto;background:#276247;border:3px solid #1a4934;border-radius:8px;padding:10px}
+.panel h2{font-size:17px;margin:0 0 8px;text-shadow:0 2px #1a4934}
+.panel h3{margin:9px 0 5px}
+.panel input,.panel select,.panel textarea{width:100%;background:#163f2d;border:1px solid #538a6d;color:white;border-radius:4px;padding:4px;min-width:0}
+.panel input[type=checkbox]{width:auto}
+.panel input[type=color]{height:30px}
+.panel textarea{resize:vertical}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+label{display:grid;gap:3px}
+.row{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+.row button{flex:auto}
+#regionsList,#weights{list-style:none;padding:0;margin:6px 0}
+#regionsList li,#weights li{display:flex;align-items:center;gap:5px;margin:3px 0}
+#regionsList li button:first-child,#weights li span{flex:1}
+#brush{left:auto;right:10px;width:min(230px,calc(100vw - 78px));max-height:45vh}
+#status{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);max-width:70vw;margin:0;background:#0009;padding:5px 9px;border-radius:4px;pointer-events:none}
+#status:empty{display:none}
+dialog{width:100%;height:100%;max-width:none;max-height:none;padding:0;background:#14261d;border:0;color:white}
+dialog iframe{border:0;width:100%;height:100%}
+dialog form{position:absolute;right:8px;top:8px}
+@media(max-width:650px){.panel{max-height:47vh}#brush{bottom:auto;top:49px;max-height:32vh}.title strong{font-size:16px}}
+</style>
+<canvas id="map" tabindex="0" aria-label="Map canvas"></canvas>
+<div class="title"><strong id="mapTitle">Unnamed</strong><span id="mapCreator">by Unnamed</span><span id="mapDesc"></span></div>
+<div class="top"><button id="resetView">Reset View</button><button id="testMap" hidden>Test Map</button></div>
+<a class="close" href="/" aria-label="Close map editor">×</a>
+<nav class="tools" aria-label="Map editor">
+  <button id="editMap" title="Edit Map" aria-label="Edit Map">▨</button>
+  <button data-panel="settings" title="Map Settings" aria-label="Map Settings">▥</button>
+  <button data-panel="regions" title="Regions" aria-label="Regions">▱</button>
+  <button data-panel="io" title="Import/Export" aria-label="Import/Export">▣</button>
+</nav>
+<section id="settings" class="panel" hidden>
+ <h2>Map Settings</h2>
+ <div class="row"><button id="newMap">New Map</button><button id="fillWall">Fill Wall</button><button id="fillAir">Fill Air</button></div>
+ <div class="fields">
+  <label>Name<input data-setting="name" maxlength="100"></label><label>Creator<input data-setting="creator" maxlength="100"></label>
+  <label>Description<input data-setting="desc" maxlength="1000"></label><label>Background<select data-setting="texture" id="texture"></select></label>
+  <label>Map Size<input type="number" data-setting="mapSize" min="1000" max="500000" step="1000"></label>
+  <label>Tile Count<input type="number" id="tileCount" min="1" max="100" step="1"></label>
+  <label>Wall Color<input type="color" data-setting="wallColor"></label><label>Wall Outline<input type="color" data-setting="wallOutlineColor"></label>
+  <label>Wall Opacity<input type="number" data-setting="wallOpacity" min="0" max="1" step=".01"></label>
+  <label>Overlay Opacity<input type="number" data-setting="overlayOpacity" min="0" max="1" step=".01"></label>
+  <label>Overlay Color<input type="color" data-setting="overlayColor"></label>
+ </div>
+ <label><span><input type="checkbox" id="simulate"> Simulate Density</span></label>
+</section>
+<section id="regions" class="panel" hidden>
+ <h2>Regions</h2>
+ <div class="row"><button id="editSpawn">Spawn Points</button><button id="editRespawn">Respawn Points</button><button id="newRegion">New Region</button></div>
+ <label>Search<input id="search"></label><ul id="regionsList"></ul>
+ <div id="regionEdit" hidden>
+  <div class="fields">
+   <label>Name<input id="regionName" maxlength="100"></label><label>Description<input id="regionDesc" maxlength="1000"></label>
+   <label>Density<input id="density" type="number" min="0" max="5" step=".001"></label>
+   <label>Difficulty<input id="difficulty" type="number" min="-100" max="200" step=".1"></label>
+   <label>Monster<select id="mob"></select></label><label>Share<input id="share" type="number" value="10" min="0" max="100" step=".01"></label>
+  </div>
+  <div class="row"><button id="addMob">Add Mob</button><button id="paintRegion">Edit Region</button><button id="removeRegion">Delete</button></div>
+  <label>Mob List<input id="mobList" spellcheck="false"></label>
+  <ul id="weights"></ul>
+  <output id="rarityRates"></output>
+ </div>
+</section>
+<section id="io" class="panel" hidden>
+ <h2>Import/Export</h2>
+ <label>Map code<textarea id="code" rows="7" spellcheck="false"></textarea></label>
+ <label>Filename<input id="filename" maxlength="100"></label>
+ <div class="row"><button id="save">Save</button><button id="copy">Copy</button><button id="browse">Browse</button><button id="import">Import</button></div>
+ <input type="file" id="file" accept=".txt,text/plain" hidden>
+</section>
+<section id="brush" class="panel" hidden>
+ <h2>Brush Settings</h2>
+ <p id="painting"></p>
+ <div class="row"><button id="wall" aria-pressed="true">Wall</button><button id="air" aria-pressed="false">Air</button></div>
+ <div class="fields">
+  <label>Brush Size<input id="brushSize" type="number" min="1" max="100" value="1"></label>
+  <label>Grid Color<input id="gridColor" type="color" value="#ffffff"></label>
+  <label>Grid Opacity<input id="gridOpacity" type="number" min="0" max="1" step=".01" value=".1"></label>
+  <label>Grid Size<input id="gridSize" type="number" min=".01" max="5" step=".01" value=".35"></label>
+ </div>
+ <label><span><input type="checkbox" id="hideOthers"> Hide Other Regions</span></label>
+</section>
+<p id="status" role="status"></p>
+<dialog id="preview"><form method="dialog"><button aria-label="Close test map">×</button></form></dialog>
+<script src="workshop-model.js" defer></script>
+<script src="workshop.js" defer></script>
+</html>

@@ -41,7 +41,6 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <unordered_map>
 
 #include "server/replication.h"
 #include "shared/core/types.h"
@@ -60,7 +59,7 @@ namespace flix {
 /// than an about-face.
 inline constexpr double kNpcLeashRadius = 260.0;
 inline constexpr double kNpcLeashTurn = 0.08;
-inline constexpr double kAssemblerRecipeRefreshMillis = 20.0 * 60.0 * 1000.0;
+inline constexpr double kAssemblerRecipeRefreshMillis = 10.0 * 60.0 * 1000.0;
 
 class NpcSystem {
 public:
@@ -68,6 +67,7 @@ public:
     /// still answer findService() -- they are simply never sent, which is what
     /// a headless test wants and what production must not be.
     NetIdAllocator* netIds = nullptr;
+    double (*assemblerClock)() = nullptr;
 
     /// One NPC the maps asked for.
     struct Site {
@@ -106,12 +106,12 @@ public:
     /// first snapshot a player is sent already carries them -- and run() calls
     /// it every tick after, which is what puts back one that was removed.
     void placeMissing(World& world, const Terrain& terrain, const ContentRegistry& content,
-                      double nowMillis);
+                      double nowMillis, double wallMillis = -1.0);
 
     /// placeMissing(), then turns every NPC toward the nearest flower in
     /// `players` (or lets it glance about).
     void run(World& world, const Terrain& terrain, const ContentRegistry& content,
-             const std::vector<RealmPoint>& players, double nowMillis);
+             const std::vector<RealmPoint>& players, double nowMillis, double wallMillis = -1.0);
 
     /// Puts one NPC into the world: the mob `mobIndex` at `rarity`, standing
     /// at `at` (moved only if its centre is inside a wall -- an NPC meets
@@ -124,7 +124,8 @@ public:
     /// have.
     Entity spawnNpc(World& world, const Terrain& terrain, const ContentRegistry& content,
                     std::uint16_t mobIndex, Rarity rarity, Vec2 at, Realm realm,
-                    double nowMillis, std::optional<Team> side = std::nullopt);
+                    double nowMillis, std::optional<Team> side = std::nullopt,
+                    double wallMillis = -1.0);
 
     /// The nearest NPC offering `service` whose SKIN is within `reach` of
     /// `at`, in `realm` -- and of `tier`, when one is given; NULL_ENTITY when
@@ -152,7 +153,6 @@ private:
     Rng rng_{0x0DAC1E5EED5ull};
     World* boundWorld_ = nullptr;
     std::optional<Query<NpcTag, Npc, Transform>> npcs_;
-    std::unordered_map<Entity,double> assemblerRefreshAt_;
 };
 
 } // namespace flix

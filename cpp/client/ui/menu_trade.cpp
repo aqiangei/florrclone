@@ -71,7 +71,7 @@ std::uint32_t tileKey(std::uint16_t petalIndex, Rarity rarity) {
 } // namespace
 
 Vec2 TradePanel::size(const Profile& profile) {
-    return {slotCardWidth(true), slotCardHeight(SlotGrid::rows(profile, true))};
+    return {slotCardWidth(SlotGridTiers::Hyper), slotCardHeight(SlotGrid::rows(profile, SlotGridTiers::Hyper))};
 }
 
 void TradePanel::reset() {
@@ -191,7 +191,7 @@ bool TradePanel::render(MenuContext& ctx) {
     // On grey, and not clickable, while the trader is not taking trades and
     // for a petal it never takes. The petal and its count still show.
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
-        ctx, card, kTraderSkin, true,
+        ctx, card, kTraderSkin, SlotGridTiers::Hyper,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;

@@ -134,6 +134,8 @@ public:
     /// art is rasterised once, over the same clock moments, the first time it
     /// is asked for. 1 for art that cannot be measured.
     double petalCoverage(std::uint16_t index) const;
+    /// Painted width and height in units of the fitted box, before rotation.
+    Vec2 petalExtent(std::uint16_t index) const;
 
     /// The artwork of one map tile, by the BARE file name its tileset names
     /// (`grass_c_0.svg`). Read out of the data directory the first time it is
@@ -219,7 +221,7 @@ private:
     mutable std::vector<PictureBounds> mobPictureBounds_;
     std::vector<Sprite> petals_;
     /// Per petal, filled on first use by petalCoverage(); 0 is "not yet".
-    mutable std::vector<double> petalCoverage_;
+    mutable std::vector<Vec2> petalExtents_;
     /// Per petal, ascending by `from`. Empty for almost every petal.
     std::vector<std::vector<PetalRepaint>> petalRepaints_;
     /// Where tile artwork is staged, from build().

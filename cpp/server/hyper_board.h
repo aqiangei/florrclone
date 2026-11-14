@@ -6,9 +6,22 @@
 #include <map>
 
 namespace flix {
+inline std::uint32_t hyperHoldingOwnerRank(const std::vector<HyperHoldingRow>& rows,
+                                           const std::string& name) {
+    const std::string* previous = nullptr;
+    std::uint32_t rank = 0;
+    for (const auto& row : rows) {
+        if (!previous || *previous != row.name) ++rank;
+        if (row.name == name) return rank;
+        previous = &row.name;
+    }
+    return 0;
+}
+
 inline std::vector<HyperHoldingRow> hyperHoldingBoard(const Database& db, double now) {
     std::map<std::string, std::map<std::string, std::uint32_t>> claims;
     for (const auto& [key, row] : db.storedTable("hyperForges").members()) {
+        if (key.rfind("apex-hammer:", 0) == 0) continue;
         const auto owner = row["owner"].asString();
         if (owner.empty()) continue;
         const auto colon = key.find(':');
@@ -34,8 +47,10 @@ inline std::vector<HyperHoldingRow> hyperHoldingBoard(const Database& db, double
         }
         // Two titans can hold the same type. Claims represent the same items,
         // not extra copies; released historical rows have no owner above.
-        for (const auto& [petal, count] : claims[account->id])
-            counts[petal] = std::max(counts[petal], count);
+        if (const auto held = claims.find(account->id); held != claims.end()) {
+            for (const auto& [petal, count] : held->second)
+                counts[petal] = std::max(counts[petal], count);
+        }
         std::uint64_t total = 0;
         for (const auto& [petal, count] : counts) total += count;
         for (const auto& [petal, count] : counts) if (count)

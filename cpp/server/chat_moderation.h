@@ -60,5 +60,6 @@ bool chatLineFloods(const std::string& line);
 /// characters, or only markup a client drops, like "<x>hidden</x>" -- which
 /// would reach everyone as an empty line under the speaker's name.
 bool chatLineDrawsNothing(const std::string& line);
+bool chatLineContainsWebsite(const std::string& line);
 
 } // namespace flix

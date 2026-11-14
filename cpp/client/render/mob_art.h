@@ -77,13 +77,13 @@ namespace flix {
 /// one gardn also draws is gardn's drawing now (the scorpion excepted: that
 /// stays florr's); see the notes above paintMobArt.
 enum class MobArt : std::uint8_t {
-    None, Rock, Cactus, Sandstorm, Scorpion, Crab, LeechHead, LeechBody, Spider, Oracle, Trader,
+    None, Rock, Cactus, Sandstorm, Snowstorm, Scorpion, Crab, LeechHead, LeechBody, Spider, Oracle, Trader,
     Ladybug, LadybugDark, LadybugShiny, Bee,
     AntBaby, AntWorker, AntSoldier, AntQueen,
     FireAntBaby, FireAntWorker, FireAntSoldier,
     AntHole, FireAntBurrow, Beetle, BeetleHel, Hornet, Wasp,
     Centipede, CentipedeBody, CentipedeEvil, CentipedeEvilBody, CentipedeDesert,
-    CentipedeDesertBody, Bubble, BumbleBee, Shell, Starfish, Jellyfish, Dandelion, Fly,
+    CentipedeDesertBody, CentipedeArctic, CentipedeArcticBody, Bubble, BumbleBee, Shell, Starfish, Jellyfish, Dandelion, Fly,
     Leafbug, LeafbugShiny, Mantis, Bush, Roach, Moth, Firefly, FireflyMagic, Dummy, Titan,
     TermiteBaby, TermiteWorker, TermiteSoldier, TermiteOvermind, TermiteMound, TermiteEgg,
     AntEgg, FireAntEgg,

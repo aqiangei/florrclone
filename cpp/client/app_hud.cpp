@@ -579,7 +579,7 @@ double App::drawWaveBar(Canvas& canvas) {
     if (self.wave.durationMillis == 0) return 0.0;
 
     const bool chinese = ui::language() == ui::Language::Zh;
-    std::string caption = self.wave.round == 0 ? (chinese ? "Wave 准备" : "Wave Ready") :
+    std::string caption = self.wave.round == 0 ? (chinese ? "试炼准备" : "Wave Ready") :
         (chinese ? "第 " + std::to_string(self.wave.round) + " 波" :
                    "Wave " + std::to_string(self.wave.round));
     std::uint32_t colour = 0x5D97D6;
@@ -604,12 +604,20 @@ double App::drawWaveBar(Canvas& canvas) {
         case net::WaveTheme::Normal:
             break;
     }
-    caption += " · " + std::to_string(static_cast<int>(std::ceil(self.waveRemainingMillis / 1000.0))) + "s";
+    // The server keeps the current round at zero while its survivors rush.
+    const bool cleanup = self.wave.round != 0 && self.wave.remainingMillis == 0;
+    if (cleanup) {
+        caption += chinese ? " · 清剿残敌" : " · Clear remaining mobs";
+        colour = 0xC44949;
+    } else {
+        caption += " · " + std::to_string(static_cast<int>(std::ceil(self.waveRemainingMillis / 1000.0))) + (chinese ? " 秒" : "s");
+    }
 
     const double centre = window_.width() * 0.5;
     const double width = std::max(1.0, std::min(340.0, window_.width() - 24.0));
     constexpr double y = 18.0, height = 28.0;
-    const double ratio = std::clamp(self.waveRemainingMillis / self.wave.durationMillis, 0.0, 1.0);
+    const double ratio = cleanup ? 1.0 :
+        std::clamp(self.waveRemainingMillis / self.wave.durationMillis, 0.0, 1.0);
     hudBar(canvas, centre - width * 0.5, y, width, height, width * ratio, colour, 3.0);
     TextStyle style;
     style.size = 17.0;
@@ -632,7 +640,7 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
         const RemoteEntity& entity = entry.second;
         if (entity.kind != net::EntityKind::Mob) continue;
         if (entity.rarity != Rarity::Unique &&
-            entity.rarity != Rarity::Apex) {
+            entity.rarity != Rarity::Apex && entity.rarity != Rarity::Ascendant) {
             continue;
         }
         if ((entity.spawnFlags & net::SpawnIsPet) != 0) continue;
@@ -711,7 +719,8 @@ double App::drawBossBars(Canvas& canvas, bool altHeld) {
         name.size = kNameSize;
         name.align = Align::Centre;
         name.baseline = Baseline::Alphabetic;
-        text(canvas, content().mob(boss.typeIndex).name, centreX, barY + kNameDrop, name);
+        const auto& mob = content().mob(boss.typeIndex);
+        text(canvas, mobNameTr(mob.id, mob.name.c_str()), centreX, barY + kNameDrop, name);
 
         // The tier under it, in the tier's own colour -- the same label and
         // the same colour the plate under the body carries. ALT swaps it for

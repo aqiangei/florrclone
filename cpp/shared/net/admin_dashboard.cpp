@@ -4,6 +4,7 @@ namespace flix::net {
 
 void writeAdminDashboardPlayer(ByteWriter& w, const AdminDashboardPlayer& row) {
     w.u32(row.connection);
+    w.str(row.accountId);
     w.str(row.username);
     w.str(row.name);
     w.u8(static_cast<std::uint8_t>(row.realm));
@@ -12,6 +13,7 @@ void writeAdminDashboardPlayer(ByteWriter& w, const AdminDashboardPlayer& row) {
 
 bool readAdminDashboardPlayer(ByteReader& r, AdminDashboardPlayer& out) {
     out.connection = r.u32();
+    out.accountId = r.str();
     out.username = r.str();
     out.name = r.str();
     // Through the realm's own guard: a byte past the realms this build can

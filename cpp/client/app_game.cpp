@@ -31,6 +31,25 @@ using namespace flix::ui;
 
 namespace {
 
+std::string localizeKillerLabel(const std::string& label) {
+    if (label.empty()) return trEnZh("A mysterious entity", "未知生物");
+    if (language() != Language::Zh) return label;
+    const auto separator = label.find(' ');
+    if (separator == std::string::npos) return label;
+    const auto end = std::find_if(kRarityLabels.begin(), kRarityLabels.end(),
+        [&](const char* rarity) { return label.compare(0, separator, rarity) == 0; });
+    if (end == kRarityLabels.end()) return label;
+    const Rarity rarity = clampRarity(static_cast<int>(end - kRarityLabels.begin()));
+    const auto name = label.substr(separator + 1);
+    if (name == "Player") return std::string(rarityTr(rarity)) + " 玩家";
+    for (std::size_t i = 0; i < content().mobCount(); ++i) {
+        const auto& mob = content().mob(i);
+        if (name == mob.name)
+            return std::string(rarityTr(rarity)) + " " + mobNameTr(mob.id, mob.name.c_str());
+    }
+    return label;
+}
+
 /// The death card's geometry, so the paint and the hit test cannot drift.
 ///
 /// Laid out to death_ui_screenshot.png, which is 1:1 with design units (its
@@ -200,6 +219,8 @@ void App::sendInputFrame(double dt, bool periodic) {
     // the reference reads them beside whatever the four keys are bound to.
     const ClientSettings& settings = menus_.settings();
     input.rotationStep = static_cast<std::uint8_t>(std::clamp(settings.rotationStep, 1, 4));
+    if (settings.render.hideOtherPetals) input.flags |= net::InputHideForeignPetals;
+    if (settings.render.hideOtherPets) input.flags |= net::InputHideForeignPets;
     Vec2 keyboard{0, 0};
     // A typed key is a character, not a direction. The reference's key handler
     // returns before it records anything once an <input> has focus, so while
@@ -343,7 +364,7 @@ void App::sendInputFrame(double dt, bool periodic) {
     if ((!periodic && !(moved || turned || speedChanged || action)) ||
         now - lastInputSentMillis_ < 20.0) return;
     input.sequence = ++inputSequence_;
-    net_.sendInput(input);
+    if (!net_.sendInput(input)) return;
     lastSentInput_ = input;
     lastInputSentMillis_ = now;
 }
@@ -413,6 +434,9 @@ void App::updateDead(double dt) {
         // Enter is chat's, card or no card: Continue has no key, and the slot
         // under the dimmed world still says "Press Enter to chat...".
         chatOpen_ = true;
+    } else if (!chatOpen_ && !menus_.wantsText() && !window_.ctrlHeld() &&
+               boundKeyPressed(window_, menus_.settings().controlKey(ControlAction::Inventory))) {
+        menus_.toggle(MenuId::Inventory);
     }
     if (!deathCardVisible_) return;
 
@@ -457,9 +481,7 @@ void App::drawDeathCard(Canvas& canvas, double time) {
     text(canvas, tr(Msg::YouWereDestroyedBy), card.destroyedBy.x, card.destroyedBy.y, line);
 
     line.size = kDeathKillerSize;
-    const std::string killer = net_.killerName().empty()
-        ? "A mysterious entity"
-        : net_.killerName();
+    const std::string killer = localizeKillerLabel(net_.killerName());
     text(canvas, killer, card.killer.x, card.killer.y, line);
 
     drawDeathFlower(canvas, renderer_, sprites_, net_.profile().loadout, card.flower, time);
@@ -481,30 +503,6 @@ void App::drawDeathCard(Canvas& canvas, double time) {
     closeStyle.radius = kDeathCloseRadius;
     closeStyle.textSize = kDeathCloseTextSize;
     button(canvas, card.closeBox, tr(Msg::Close), overClose, overClose && pressing, closeStyle);
-}
-
-void App::tallyRunLoot() {
-    // While this client steers somebody else's flower, the self id is THAT
-    // flower's, and what it picks up goes into its own player's bag.
-    if (net_.controllingFlower()) return;
-    const std::uint32_t self = net_.view().self().netId;
-    if (self == 0) return;
-    for (const ViewEvent& event : net_.view().events()) {
-        // Somebody else's pickup is not the viewer's loot, and a drop pays out
-        // the account once: either split body counts, including off-screen stacks.
-        if (event.kind != net::EventKind::PickedUp || !event.pickupByAccount) continue;
-        const auto petal = static_cast<std::uint16_t>(event.amount);
-        if (petal >= content().petalCount()) continue;
-        const Rarity rarity = clampRarity(static_cast<int>(event.flag));
-        const auto found = std::find_if(runLoot_.begin(), runLoot_.end(), [&](const RunLoot& l) {
-            return l.petalIndex == petal && l.rarity == rarity;
-        });
-        if (found == runLoot_.end()) {
-            runLoot_.push_back({petal, rarity, event.pickupQuantity});
-        } else if (found->count < UINT32_MAX) {
-            found->count += std::min(event.pickupQuantity, UINT32_MAX - found->count);
-        }
-    }
 }
 
 namespace {
@@ -531,11 +529,11 @@ constexpr double kRunLootFloor = 260.0;
 } // namespace
 
 void App::drawRunLoot(Canvas& canvas, double time) {
-    if (runLoot_.empty()) return;
+    if (net_.runLoot().empty()) return;
 
     // Rarest first, then by name -- the screenshot's order.
-    std::vector<RunLoot> shown = runLoot_;
-    std::sort(shown.begin(), shown.end(), [](const RunLoot& a, const RunLoot& b) {
+    auto shown = net_.runLoot();
+    std::sort(shown.begin(), shown.end(), [](const Profile::Stack& a, const Profile::Stack& b) {
         if (a.rarity != b.rarity) return rarityIndex(a.rarity) > rarityIndex(b.rarity);
         const std::string& an = content().petal(a.petalIndex).name;
         const std::string& bn = content().petal(b.petalIndex).name;
@@ -577,7 +575,7 @@ void App::drawRunLoot(Canvas& canvas, double time) {
         const double rowLeft = left + (width - rowWidth) * 0.5;
         const double rowTop = top + kRunLootGridY + row * kRunLootPitch;
         for (int i = 0; i < inRow; ++i) {
-            const RunLoot& loot = shown[static_cast<std::size_t>(first + i)];
+            const auto& loot = shown[static_cast<std::size_t>(first + i)];
             ItemTile tile;
             tile.petalIndex = loot.petalIndex;
             tile.rarity = loot.rarity;
@@ -619,7 +617,8 @@ bool App::connectionLost() const {
 void App::drawMovementHelper(Canvas& canvas) {
     // AshFlor Rendering.cc antenna: thin ray from the flower toward the
     // cursor. Default on; skipped for touch HUD (no meaningful second pointer).
-    if (!menus_.settings().movementHelper) return;
+    const auto& settings = menus_.settings();
+    if (!settings.movementHelper || !settings.useMouseControls) return;
     if (touchControlsVisible()) return;
     if (!net_.selfPlaced()) return;
     if (screen_ != Screen::Playing && screen_ != Screen::Dead) return;

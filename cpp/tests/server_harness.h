@@ -637,6 +637,26 @@ inline void seedUser(const std::string& path, const std::string& username,
     db.save();
 }
 
+inline void seedSkinReviewer(const std::string& path) {
+    seedUser(path, "reviewer", "password7");
+    Database db;
+    std::string error;
+    if (!db.load(path, error)) return;
+    const Account* reviewer = std::as_const(db).findUser("reviewer");
+    if (!reviewer) return;
+    db.rawTable("skinModerators")[reviewer->id] = true;
+    db.markDirty();
+    db.save();
+}
+
+inline bool approveSkin(Harness& h, NetClient& reviewer, NetClient& author, const std::string& id) {
+    reviewer.requestSkinReview(net::SkinReviewAction::Approve, id);
+    return h.stepUntil({&reviewer, &author}, [&] {
+        const auto* skin = author.findSkin(id);
+        return skin && skin->review == SkinReviewState::Approved;
+    });
+}
+
 /// Gives a seeded account a stack -- `itemKey` is the bag's own key,
 /// "petal_rose" -- which no amount of playing would hand out reliably.
 inline void seedStack(const std::string& path, const std::string& username, const char* itemKey,
@@ -765,7 +785,27 @@ inline Entity onlyPlayer(World& world) {
 /// Defined here and nowhere else, so every test file that includes this one
 /// shares the one definition.
 struct GameServerPeer {
+    static void announceGhost(GameServer& server, Rarity rarity) {
+        const auto ghost = content().mobIndex("ghost");
+        server.announceMob(ghost, rarity, Realm::Overworld, false);
+        server.announceMob(ghost, rarity, Realm::Overworld, true);
+        MobType type;
+        type.configIndex = ghost;
+        type.rarity = rarity;
+        server.announceBossDefeat(NULL_ENTITY, type, {});
+    }
+
     static Database& authorityDb(GameServer& s) { return s.database_; }
+    static Json relaySkinReview(GameServer& server, const std::string& key, const Json& request) {
+        return server.relaySkinReview(key, request);
+    }
+    static bool localForgePending(const GameServer& server) {
+        return static_cast<bool>(server.pendingLocalHyper_);
+    }
+    static void makeCouncilSampleDue(GameServer& server, double now) {
+        server.nextCouncilSampleMillis_ = now;
+    }
+
     static void releaseAuthority(GameServer& s) { s.releaseUnusedAuthority(); }
 
     // Drive the production death reporter without a transport poll.
@@ -787,6 +827,10 @@ struct GameServerPeer {
     static void markClock(GameServer& server, double now) { server.clockMillis_ = now; }
     static CombatSystem& practiceCombat(GameServer& server) { return *server.combat_; }
     static double practiceClock(const GameServer& server) { return server.clockMillis_; }
+    static void advanceJurassicCycle(GameServer& server) {
+        server.serviceJurassicRotation(server.jurassicCycle_ + 1);
+        server.commands_.flush();
+    }
     static void advancePyramidCycle(GameServer& server) {
         server.servicePyramidRotation(server.pyramidCycle_ + 1);
         server.commands_.flush();
@@ -795,7 +839,7 @@ struct GameServerPeer {
         return server.canMarkPlayer(target, owner, rarity);
     }
     static bool applyMark(GameServer& server, Entity target, Entity owner, Rarity rarity) {
-        return server.sendMarkedPlayerToHel(target, owner, rarity);
+        return server.transportMarkedPlayer(target, owner, rarity);
     }
     static void markTeleport(GameServer& server, Entity target, Realm realm, Vec2 position) {
         server.moveEntityToRealm(target, realm, position);

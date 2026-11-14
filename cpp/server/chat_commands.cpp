@@ -336,6 +336,32 @@ bool GameServer::adminMay(const Session& session, AdminPower power) const {
     return adminTierAllows(adminTier(session), power);
 }
 
+bool GameServer::setAccountMuted(const Session& actor, Account& account, bool muted, std::string& answer) {
+    if (muted && account.adminActive()) {
+        answer = account.username + " is a full admin and cannot be muted.";
+        return false;
+    }
+    if (account.muted == muted) {
+        answer = account.username + " is already " + (muted ? "muted." : "not muted.");
+        return true;
+    }
+    account.muted = muted;
+    account.mutedAtMillis = muted ? database_.nowMillis() : 0;
+    account.mutedBy = muted ? actor.username : std::string();
+    database_.markDirty();
+
+    Session* holder = sessionForUser(account.username);
+    if (holder != nullptr) {
+        if (net::Connection* peer = listener_.find(holder->connection)) {
+            sendSystem(*peer, muted ? "You have been muted by an admin and can no longer send chat messages."
+                                    : "You have been unmuted and can send chat messages again.");
+        }
+    }
+    answer = std::string(muted ? "Muted " : "Unmuted ") + account.username +
+             (holder != nullptr ? "." : " (offline).");
+    return true;
+}
+
 bool GameServer::speakerMuted(const Session& session, net::Connection& connection) {
     // Through the const lookup: this only reads the flag, and the mutable one
     // would drop the speaker's cached row on every line they say.
@@ -504,10 +530,35 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     const std::string argument = argumentOf(message);
     const auto out = [&](const std::string& text) { sendSystem(connection, text); };
 
+    if (verb == "/rift") {
+        handleRiftCommand(session, connection, argument);
+        return true;
+    }
+    if (session.inRift && !effectiveAdmin(session)) return true;
+
+    if (verb == "/server-status") {
+        if (!effectiveAdmin(session) && !canModeratePublicSkins(session)) {
+            out("Command does not exist.");
+            return true;
+        }
+        const auto online = std::count_if(sessions_.begin(), sessions_.end(),
+            [](const auto& entry) { return entry.second.authenticated(); });
+        std::ostringstream report;
+        report << "服务器状态 · 协议 " << net::kProtocolVersion << " · 在线 " << online
+               << " · 游戏中 " << playerCount() << " · 目标 "
+               << simulationPacing_.ticksPerSecond() << " TPS";
+        if (lastMeasuredTps_ > 0.0)
+            report << " · 上个采样窗实际 " << std::fixed << std::setprecision(1) << lastMeasuredTps_ << " TPS";
+        else
+            report << " · 实际 TPS 正在采样";
+        out(report.str());
+        return true;
+    }
+
     if (verb == "/wave") {
-        if (!session.playing() || session.split() || session.controlling != 0 ||
+        if (!session.playing() || session.controlling != 0 ||
             session.controlledBy != 0 || !dungeons_) {
-            out("请使用未分裂的角色进入 Wave。");
+            out("当前状态无法操作试炼房。");
         } else {
             out(dungeons_->waveCommand(world_, *terrain_, session.entity, argument, rng_, clockMillis_));
         }
@@ -748,6 +799,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
     if (verb == "/guild-kick")   { guildKick(session, connection, argument); return true; }
     if (verb == "/guild-transfer") { guildTransfer(session, connection, argument); return true; }
     if (verb == "/guild-deputy") { guildDeputy(session, connection, argument); return true; }
+    if (verb == "/guild-undeputy") { guildDeputy(session, connection, argument, true); return true; }
     if (verb == "/guild-accept") { handleGuildAccept(session, connection); return true; }
     if (verb == "/guild-decline"){ handleGuildDecline(session, connection); return true; }
     if (verb == "/guild-leave")  { handleGuildLeave(session, connection); return true; }
@@ -762,6 +814,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         const Json& guild = database_.storedTable("guilds")[guildName];
         const Json& members = guild["memberUsernames"];
         const std::string leader = lowerCase(guild["leaderUsername"].asString());
+        const auto deputies = guildDeputies(guild);
         std::string lines;
         for (std::size_t i = 0; i < members.size(); ++i) {
             const std::string member = members[i].asString();
@@ -775,6 +828,8 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
             lines += " @" + member;
             if (lowerCase(member) == leader) {
                 lines += " <span style=\"color: #ffd54f;\">(Leader)</span>";
+            } else if (std::find(deputies.begin(), deputies.end(), member) != deputies.end()) {
+                lines += " (Deputy)";
             }
         }
         const std::string description = guild["description"].asString();
@@ -811,6 +866,7 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         out("Guild commands: /guild-create &lt;tag&gt; [name], /guild-invite &lt;username&gt;, "
             "/guild-accept, /guild-decline, /guild-leave, /guild-kick &lt;username&gt;, "
             "/guild-rename &lt;name&gt;, /guild-description [text], "
+            "/guild-deputy &lt;username&gt;, /guild-undeputy &lt;username&gt;, "
             "/guild-info, /guild-squad, /guild-list");
         return true;
     }
@@ -1000,10 +1056,11 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/s &lt;message&gt; - Send a message to your squad<br/>";
         help += "<br/><b>Guild commands (up to " + std::to_string(kMaxGuildSize) +
                 " members, persistent):</b><br/>";
-        help += "/guild-create &lt;tag&gt; [name] - Create a new guild (5-char alphanumeric "
+        help += "/guild-create &lt;tag&gt; [name] - Create a new guild (alphanumeric "
                 "tag, optional display name)<br/>";
         help += "/guild-invite &lt;username&gt; - Invite a player (leader or deputy)<br/>";
-        help += "/guild-deputy [username] - Set or remove the invite-only deputy (leader only)<br/>";
+        help += "/guild-deputy &lt;username&gt; - Appoint an invite-only deputy (leader only)<br/>";
+        help += "/guild-undeputy &lt;username&gt; - Remove a deputy (leader only)<br/>";
         help += "/guild-transfer &lt;username&gt; - Transfer leadership (leader only)<br/>";
         help += "/guild-accept / /guild-decline - Respond to a guild invite<br/>";
         help += "/guild-leave - Leave your guild<br/>";
@@ -1017,6 +1074,8 @@ bool GameServer::handleChatCommand(Session& session, net::Connection& connection
         help += "/g &lt;message&gt; - Send a message to your guild<br/>";
         help += "<br/>Chat supports HTML tags: <b>bold</b>, <i>italic</i>, <u>underline</u>, "
                 "<span style=\"color: red\">colored text</span>, <blink>blinking text</blink>";
+        if (effectiveAdmin(session) || canModeratePublicSkins(session))
+            help += "<br/>/server-status - 查看服务器在线人数与 TPS<br/>";
         if (effectiveAdmin(session)) {
             // The reference leaves its own angle brackets unescaped here, which
             // its sanitiser then eats along with the rest of the line. Escaped,
@@ -2039,7 +2098,7 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
         const Vec2 at = mine->position;
         const Realm realm = mine->realm;
         const Entity npc = npcs_->spawnNpc(world_, *terrain_, content(), mobIndex, rarity, at,
-                                           realm, clockMillis_, side);
+                                           realm, clockMillis_, side, wallClockMillis_);
         // Read back rather than echoed: the mob's own floor may have raised
         // the tier, and the side may have come from its `npc` block.
         const Rarity placed = world_.isAlive(npc) ? world_.get<Npc>(npc).rarity : rarity;
@@ -2779,34 +2838,9 @@ void GameServer::runAdminCommand(Session& session, net::Connection& connection,
                 "\" exists. Use list-players to see online players.");
             return;
         }
-        // Muting a full admin is refused, so a temporary grantee cannot
-        // silence the admin who lent them the console. A banned admin holds
-        // no admin standing, this immunity included.
-        if (muting && account->adminActive()) {
-            out(account->username + " is a full admin and cannot be muted.");
-            return;
-        }
-        if (account->muted == muting) {
-            out(account->username + " is already " + (muting ? "muted." : "not muted."));
-            return;
-        }
-        account->muted = muting;
-        account->mutedAtMillis = muting ? database_.nowMillis() : 0;
-        account->mutedBy = muting ? session.username : std::string();
-        database_.markDirty();
-
-        Session* holder = sessionForUser(account->username);
-        if (holder != nullptr) {
-            if (net::Connection* peer = listener_.find(holder->connection)) {
-                sendSystem(*peer,
-                           muting ? "<span style=\"color: #ff8866;\">You have been muted by an "
-                                    "admin and can no longer send chat messages.</span>"
-                                  : "<span style=\"color: #6eff6e;\">You have been unmuted and "
-                                    "can send chat messages again.</span>");
-            }
-        }
-        out(std::string(muting ? "Muted " : "Unmuted ") + account->username +
-            (holder != nullptr ? "." : " (offline)."));
+        std::string answer;
+        setAccountMuted(session, *account, muting, answer);
+        out(answer);
         return;
     }
 

@@ -48,7 +48,7 @@ inline Json planHyperBarrier(const Json& state,const Node& node,const Json& req,
         tx["shard"]=node.shard;tx["boot"]=node.boot;tx["input"]=command;tx["operator"]=operatorJob;tx["deadline"]=double(now+10000);
         tx["participants"]=Json::array();tx["participants"].push(id);
         if(mode=="forge") {
-            const auto owner=state["globals"]["hyperForges"][hyperForgeKey(hyperForgeOutput(command["input"].asString()),command["titan"].asString())]["owner"].asString();
+            const auto owner=state["globals"]["hyperForges"][hyperForgeKey(hyperForgeOutput(command["input"].asString()),command["titan"].asString(),command["apexHammer"].asBool())]["owner"].asString();
             if(!owner.empty()&&owner!=id)tx["participants"].push(owner);
         }
         for(const auto& who:tx["participants"].items()) {

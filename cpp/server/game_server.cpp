@@ -9,6 +9,7 @@
 #include "server/game_server.h"
 #include "shared/game/assembler.h"
 #include "server/hyper_forge.h"
+#include "server/crypto.h"
 #include "shared/game/hyper_petal_techniques.h"
 #include "shared/game/dark_mark.h"
 
@@ -22,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <unordered_set>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -154,6 +156,7 @@ constexpr double kDeltaSmoothing = 0.1;
 constexpr double kSlowTickLogMillis = net::kTickMillis * 3.0;
 constexpr double kTickCadenceLogMillis = 10000.0;
 constexpr std::size_t kSnapshotBacklogLimit = 32 * 1024;
+constexpr std::size_t kWorldSnapshotBacklogLimit = 16 * 1024;
 
 /// The batch a craft consumes.
 constexpr int kCraftBatch = 5;
@@ -163,6 +166,11 @@ constexpr int kCraftBatch = 5;
 /// dropped rather than paid for.
 constexpr double kProfileCheckFloorMillis = net::kProfileCheckMillis * 0.5;
 constexpr double kStaleProfileRepairMillis = 4 * net::kProfileCheckMillis;
+
+constexpr bool isAnnouncedGhost(Rarity rarity) {
+    // Hyper is the player-facing tier below Apex.
+    return rarityIndex(rarity) >= rarityIndex(Rarity::Apex);
+}
 
 // The database stores petals by NAME, because that is the shape real accounts
 // are already saved in; the wire uses a dense index, because a name in every
@@ -320,10 +328,9 @@ void savePresetSkills(PlayerRecord& record, const std::string& name) {
     record.extra["loadoutPresetSkills"][name] = std::move(skills);
 }
 
-void loadPresetSkills(PlayerRecord& record, const std::string& name) {
+bool loadPresetSkills(PlayerRecord& record, const std::string& name) {
     const Json& extra = record.extra;
     const Json& saved = extra["loadoutPresetSkills"][name];
-    if (!saved.isObject()) return; // Older presets start with the current build.
     SkillSet skills;
     // Prestige grants access to maps. It belongs to the account and changing
     // equipment cannot revoke the session's permission to remain there.
@@ -335,10 +342,13 @@ void loadPresetSkills(PlayerRecord& record, const std::string& name) {
     }
     for (const auto& gate : kSkillGates)
         if (!skills.prerequisiteMet(gate.child)) skills.set(gate.child, -1);
-    if (skills.spent() <= record.skills.spent() + record.talentPoints()) record.skills = skills;
+    if (skills.spent() > record.skills.spent() + record.talentPoints()) return false;
+    record.skills = skills;
+    return true;
 }
 
 void autoSaveActivePreset(PlayerRecord& record) {
+    if (record.extra["presetAutosaveOff"].asBool()) return;
     const int active=record.extra["activeLoadoutPreset"].asInt(-1);
     if(active<0||active>=kLoadoutPresetCount)return;
     std::vector<std::optional<StoredItem>> slots(kLoadoutSlots);
@@ -548,21 +558,60 @@ net::NotificationKind notificationKind(const std::string& type) {
     if (type == "super_craft") return net::NotificationKind::SuperCraft;
     if (type == "unique_craft") return net::NotificationKind::UniqueCraft;
     if (type == "apex_craft") return net::NotificationKind::ApexCraft;
+    if (type == "ascendant_craft") return net::NotificationKind::AscendantCraft;
     if (type == "star_code") return net::NotificationKind::StarCode;
     if (type == "universal_craft") return net::NotificationKind::UniversalCraft;
     if (type == "permanent_hyper_forge") return net::NotificationKind::PermanentHyperForge;
     return net::NotificationKind::Generic;
 }
 
+struct GameServer::PendingLocalHyper {
+    HyperForgePlan plan;
+    std::map<std::string, std::string> expectedPlayers;
+    std::map<std::string, double> councilActivityCredits;
+    std::string expectedForges, user, token, titan;
+    Json forges;
+    net::ConnectionId connection = 0;
+    std::uint16_t input = 0, output = 0;
+    double startedAt = 0, publishAt = 0;
+    bool submitted = false, publishing = false;
+    bool cancelledForConflict = false;
+    bool apexHammer = false;
+    int retriesRemaining = 1;
+
+    void capturePlan(Database& database, HyperForgePlan next) {
+        const auto& current = database.storedTable("hyperForges");
+        expectedForges = current.dump(0);
+        forges = current;
+        forges[next.forgeKey] = next.entry;
+        expectedPlayers.clear();
+        const auto observedAt = static_cast<double>(database.nowMillis());
+        for (auto& [id, row] : next.players) {
+            rememberHyperHoldings(row, observedAt);
+            expectedPlayers.emplace(id, database.playerSnapshotText(id));
+        }
+        plan = std::move(next);
+    }
+};
+
 GameServer::GameServer() {
     net::web::setCouncilHandler([this](const std::string& token,const std::string& body) {
-        if (persistenceFrozen_) return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
-        const auto result = council::request(database_,token,Json::parseOrNull(body)).dump();
+        if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing))
+            return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
+        const auto request = Json::parseOrNull(body);
+        const auto action = request["action"].asString();
+        if (action.rfind("skin-review-", 0) == 0)
+            return relaySkinReview(token, request).dump();
+        const auto result = council::request(database_, token, request).dump();
+        if (action == "identity" || action == "ranking-data" || action == "workshop-access") return result;
         if (!commitBeforeReply()) return std::string("{\"ok\":false,\"error\":\"authority_unavailable\"}");
         return result;
     });
 }
-GameServer::~GameServer() { net::web::setCouncilHandler({}); }
+GameServer::~GameServer() {
+    pollLocalHyper(true);
+    net::web::setCouncilHandler({});
+}
 
 std::string GameServer::adminDbKey() const {
     if (!config_.fixedAdminDbKey.empty()) return config_.fixedAdminDbKey;
@@ -573,6 +622,8 @@ std::string GameServer::adminDbKey() const {
 
 bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     config_ = config;
+    sharedSkinSources_ = {};
+    nextSharedSkinExpiryCheck_ = 0;
     // The configured bot population, if the caller named one. Same field
     // `/admin set_bot_count` writes, so the two cannot disagree.
     botCountOverride_ = config.botCount;
@@ -588,7 +639,6 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     if (config.authorityCommit) {
         if (!database_.loadAuthoritative(config.authoritySnapshot, config.authorityCommit, errorOut)) return false;
     } else if (!database_.load(config.databasePath, errorOut)) return false;
-    if (!council::initializeLegacyActivity(database_)) {errorOut="Could not persist council legacy activity credit";return false;}
     if(!config_.authorityHyper)foldLookAlikeSkins();
 
     // Kept in a file beside the database, never anywhere a client can reach:
@@ -638,8 +688,11 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // annotation layer that will not load is only reported.
     if (!worldMaps_.load(config.dataDir, terrain_.get(), errorOut)) return false;
     pyramidLayouts_.clear();
+    jurassicLayouts_.clear();
+    jurassicCycle_ = -1;
     for (const MapData& map : worldMaps_.maps()) {
         if (map.biome() == "pyramid" && !map.prestige()) pyramidLayouts_.push_back(map.realm());
+        if (map.biome() == "jurassic" && !map.prestige()) jurassicLayouts_.push_back(map.realm());
     }
     for (const std::string& warning : worldMaps_.warnings()) {
         contentWarning("[map] %s\n", warning.c_str());
@@ -656,17 +709,37 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // The AI caches queries against one world and wanders from its own
     // stream, so it takes both at construction rather than per call.
     mobAi_ = std::make_unique<MobAiSystem>(world_, config.worldSeed ^ 0x9E3779B9ull);
+    mobAi_->setFullSimulation(config.fullMobSimulation);
     petals_ = std::make_unique<PetalSystem>();
     combat_ = std::make_unique<CombatSystem>();
-    combat_->onPracticeHit = [this](Entity player, Entity dummy, double amount, double nowMillis) {
+    combat_->onPracticeHit = [this](Entity player, Entity dummy,
+                                     const CombatSystem::PracticeDamage& hit, double nowMillis) {
+        const double amount = hit.amount;
+        if (!std::isfinite(amount) || amount <= 0.0) return;
         const auto* account = world_.tryGet<PlayerAccount>(player);
         auto* session = account ? sessionFor(account->connection) : nullptr;
-        if (!session || session->practiceTrial.player != player) return;
+        if (!session || !session->owns(player)) return;
+        session->dummyDamage[dummy].record(wallClockMillis_, amount);
         auto& trial = session->practiceTrial;
-        if (trial.dummy == dummy && nowMillis < trial.endsAt) trial.damage += amount;
+        const double elapsed = nowMillis - (trial.endsAt - 1000.0 * net::kPracticeWindowSeconds);
+        if (trial.player != player || trial.dummy != dummy || elapsed < 0 || nowMillis >= trial.endsAt) return;
+        trial.damage += amount;
+        const auto rarity = hit.petal == kNoPetal ? Rarity::Common : hit.rarity;
+        auto row = std::find_if(trial.sources.begin(), trial.sources.end(), [&](const auto& source) {
+            return source.petal == hit.petal && source.rarity == rarity;
+        });
+        if (row == trial.sources.end()) {
+            trial.sources.push_back({hit.petal, rarity});
+            row = std::prev(trial.sources.end());
+        }
+        row->seconds[static_cast<std::size_t>(elapsed / 1000.0)] += amount;
     };
     combat_->sizeContactGrid(*terrain_);
     spawning_ = std::make_unique<SpawnSystem>();
+    if (config.fullMobSimulation) {
+        spawning_->mobCap = 4500;
+        spawning_->latentWakeMargin = 1100.0;
+    }
     spawning_->sizePlacementGrids(*terrain_);
     if (config.loadShedding) {
         petals_->volleyEntityLimit = 96;
@@ -695,10 +768,16 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // simulates -- its entities are simply not replicated, which is what a
     // headless test wants and what this must not be in production.
     petals_->allocateNetId = [this] { return netIds_.next(); };
+    petals_->jurassicMaps = &worldMaps_;
+    combat_->allocateNetId = [this] { return netIds_.next(); };
     mobAi_->allocateNetId = [this] { return netIds_.next(); };
     spawning_->netIds = &netIds_;
     loot_->netIds = &netIds_;
+    loot_->collectRiftPrize = [this](const LootSystem::Pickup& pickup) {
+        return collectRiftPrize(pickup.player, pickup.petalIndex, pickup.rarity);
+    };
     npcs_->netIds = &netIds_;
+    npcs_->assemblerClock = config_.assemblerClock;
     // One table, two readers: what a corpse pays XP for and what it reserves
     // its drops for must be the same answer. rebuildSquadIndex() refreshes it
     // once a tick; the pointer never moves.
@@ -711,7 +790,9 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     // In production that would silently cost the spawn rectangles, the biome
     // tiers and every teleporter on the map, so it is wired here, once.
     spawning_->worldMaps = &worldMaps_;
+    mobAi_->worldMaps = &worldMaps_;
     updatePyramidSpawnRealms();
+    serviceJurassicRotation(pyramidCycle_);
     movement_->worldMaps = &worldMaps_;
     // A pad leads to another map, which is a realm change: a new tile grid on
     // the wire and a cleared view on the client. Only the connection layer can
@@ -725,11 +806,21 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
             dungeons_->exitFor(at->realm, rng_, body != nullptr ? body->radius : 25.0, realm,
                                position);
         }
-        moveEntityToRealm(entity, realm, position);
+        riftTeleport(entity, realm, position);
     };
     dungeons_->worldMaps = &worldMaps_;
     dungeons_->moveToRealm = [this](Entity entity, Realm realm, Vec2 position) {
+        const auto* before = world_.tryGet<Transform>(entity);
+        const Realm from = before ? before->realm : realm;
+        const bool movingWaveMember = world_.has<WavePlayer>(entity);
         moveEntityToRealm(entity, realm, position);
+        const auto* after = world_.tryGet<Transform>(entity);
+        if (movingWaveMember && after && after->realm != from) {
+            if (auto* session = sessionForEntity(entity); session && session->entity == entity) {
+                syncSplitProgress(*session);
+                endSplit(*session, clockMillis_, false);
+            }
+        }
     };
     dungeons_->admits = [this](Entity entity) { return botForEntity(entity) == nullptr; };
     dungeons_->waveSummary = [this](Entity entity, const std::string& text) {
@@ -743,7 +834,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         if (!session || !session->authenticated() || session->entity != entity) return {};
         auto* live = world_.tryGet<PlayerProgress>(entity);
         bool reachedDailyCap = false;
-        const int stars = database_.awardWaveStars(session->userId, &reachedDailyCap);
+        const int stars = database_.awardWaveStars(session->userId, &reachedDailyCap, cleared);
         const bool hammer = bonus && database_.awardWaveBonusHammer(session->userId);
         if (stars <= 0 && !hammer) return {0, reachedDailyCap};
         if (live && stars > 0) {
@@ -752,7 +843,7 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
         }
         session->profileDue = true;
         if (auto* connection = listener_.find(session->connection)) {
-            std::string message = "Wave 第 " + std::to_string(cleared) + " 波通关";
+            std::string message = "试炼第 " + std::to_string(cleared) + " 波通关";
             if (stars > 0) message += " · +" + std::to_string(stars) + " 星星";
             if (hammer) message += " · +1 永恒限时锤（1 小时）";
             sendNotice(*connection, net::NoticeSeverity::Good, message);
@@ -789,8 +880,8 @@ bool GameServer::start(const ServerConfig& config, std::string& errorOut) {
     petals_->canMarkPlayer = [this](Entity target, Entity marker, Rarity rarity) {
         return canMarkPlayer(target, marker, rarity);
     };
-    petals_->onPlayerMarked = [this](Entity target, Entity marker, Rarity rarity) {
-        return sendMarkedPlayerToHel(target, marker, rarity);
+    petals_->onPlayerMarked = [this](Entity target, Entity marker, Rarity rarity, bool toVoid, bool frozen) {
+        return transportMarkedPlayer(target, marker, rarity, toVoid, frozen);
     };
 
     // The maze is a daily-seeded region of the world with its own walls. Its
@@ -831,6 +922,7 @@ void GameServer::run() {
 void GameServer::shutdown() {
     if(shutdownDone_)return;
     shutdownDone_=true;
+    pollLocalHyper(true);
     // Flush account progress before exiting; an orderly shutdown must not cost
     // anyone their session.
     if (database_.backgroundSaveEnabled()) {
@@ -958,7 +1050,7 @@ std::size_t GameServer::persistAll() {
     return saved;
 }
 
-bool GameServer::saveDatabase(bool periodic, bool stopping) {
+void GameServer::captureBossClocksForSave() {
     // Which bosses stand NOW, not as of the last population pass: the file is
     // what a restart -- a crash included -- comes back to, so a boss placed or
     // killed in the last half second has to be on the right side of it.
@@ -966,6 +1058,10 @@ bool GameServer::saveDatabase(bool periodic, bool stopping) {
         spawning_->noteStandingBosses(world_, commands_);
         persistBossClocks(true);
     }
+}
+
+bool GameServer::saveDatabase(bool periodic, bool stopping) {
+    captureBossClocksForSave();
     if (periodic && database_.backgroundSaveEnabled()) {
         database_.requestBackgroundSave();
         return true;
@@ -1071,6 +1167,9 @@ void GameServer::serviceSharedViews() {
                 for(const auto& row:view["holdings"].items()){w.str(row["name"].asString());w.str(row["petal"].asString());w.u32(row["count"].asInt());w.u32(row["ownerTotal"].asInt());}
                 w.u8(view["playtime"].size());
                 for (const auto& row : view["playtime"].items()) { w.str(row["name"].asString()); w.f64(row["seconds"].asDouble()); }
+                w.u32(view["levelRank"].asInt());
+                w.u32(view["playtimeRank"].asInt());
+                w.u32(view["hyperRank"].asInt());
             }
             peer->send(w);
         }
@@ -1095,7 +1194,7 @@ void GameServer::finishSharedHyper(const Json& result) {
             ByteWriter w;w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanForgeResult));w.boolean(ok);
             const auto output=content().petalIndex(hyperForgeOutput(content().petal(pendingHyper_.petal).id));
             w.u16(ok?output:pendingHyper_.petal);w.str(ok?"":reason);w.u32(ok ? 1 : 0);peer->send(w);
-            if(ok)announceRareCraft(*session,output,Rarity::Apex,1,result["consumed"].asInt(),true);
+            if(ok)announceRareCraft(*session,output,pendingHyper_.request["apexHammer"].asBool() ? Rarity::Ascendant : Rarity::Apex,1,result["consumed"].asInt(),true);
         } else sendNotice(*peer,ok?net::NoticeSeverity::Info:net::NoticeSeverity::Warning,reason);
     }
     pendingHyper_=PendingHyper{};
@@ -1194,6 +1293,7 @@ bool GameServer::step(double timerLagMillis) {
     const int waitMillis = static_cast<int>(std::max(0.0, nextTickMillis_ - now));
     serviceNetwork(std::min(waitMillis, 5));
     if (persistenceFrozen_) return false;
+    if (pendingLocalHyper_ && pendingLocalHyper_->publishing) return true;
     if(hyperBarrierFrozen_){nextTickMillis_=monotonicMillis();lastTickWorldMillis_=0;lastDropBonusTickWallMillis_=0;return true;}
     // What the handlers just answered -- a Pong, an AuthResult, a CraftResult
     // -- leaves now, not at the next drain. Under Node that drain is the next
@@ -1282,6 +1382,10 @@ bool GameServer::step(double timerLagMillis) {
 }
 
 void GameServer::serviceNetwork(int timeoutMillis) {
+    if (persistenceFrozen_) return;
+    pollLocalHyper();
+    if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing)) return;
+    if (!pendingLocalHyper_) pollPasswordChange();
     if (persistenceFrozen_) return;
     if(database_.commitPending())database_.save();
     std::vector<net::ConnectionId> authWork;
@@ -1387,12 +1491,13 @@ void GameServer::recordTickCadence(double nowMillis, double lagMillis, double wo
     tickCadenceMaxLagMillis_ = std::max(tickCadenceMaxLagMillis_, lagMillis);
     const double elapsedMillis = nowMillis - tickCadenceStartMillis_;
     if (elapsedMillis < kTickCadenceLogMillis) return;
+    lastMeasuredTps_ = tickCadenceSamples_ * 1000.0 / elapsedMillis;
 
     const auto players = playerCount();
     if (players > 0 || tickCadenceOverBudget_ > 0) {
         std::printf("[tick] cadence %.2f/%d TPS over %.1f s, players=%zu, over budget=%u/%u, "
                     "max work=%.1f ms, max start lag=%.1f ms\n",
-                    tickCadenceSamples_ * 1000.0 / elapsedMillis, simulationPacing_.ticksPerSecond(),
+                    lastMeasuredTps_, simulationPacing_.ticksPerSecond(),
                     elapsedMillis / 1000.0, players, tickCadenceOverBudget_, tickCadenceSamples_,
                     tickCadenceMaxWorkMillis_, tickCadenceMaxLagMillis_);
         std::printf("[tick] load players=%zu, sessions=%zu, entities=%zu, mobs=%zu, pets=%zu, "
@@ -1428,7 +1533,8 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
     const bool sessionsPeak = hasWindow && sessions > window.maxSessions;
     const bool transition = previousRate != rate;
     const bool save = saveProbe_.periodic || saveProbe_.poll.wall >= 25.0;
-    if (lagPeak || workPeak || sessionsPeak || transition || save) {
+    const bool contactVisitFrame = contactVisitFrame_ != ContactVisitFrame::None;
+    if (lagPeak || workPeak || sessionsPeak || transition || save || contactVisitFrame) {
         Json frame = Json::object();
         frame["tick"] = static_cast<double>(tick_);
         frame["wallStartMs"] = wallStart;
@@ -1447,6 +1553,80 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
             const auto& phase = tickPhases_[i];
             stages[phase.name] = phase.endedMillis - previous;
             previous = phase.endedMillis;
+        }
+        if (stages.contains("contact")) {
+            const auto& timing = combat_->contactTiming();
+            Json contact = Json::object();
+            contact["beginTickMs"] = contactBeginMs_;
+            contact["setupMs"] = timing.setupMs;
+            Json setup = Json::object();
+            setup["aurasMs"] = timing.aurasMs;
+            setup["gatherBodiesMs"] = timing.gatherBodiesMs;
+            setup["hostileGridMs"] = timing.hostileGridMs;
+            setup["gatherPetalsMs"] = timing.gatherPetalsMs;
+            setup["fileShotsMs"] = timing.fileShotsMs;
+            contact["prepareMs"] = std::move(setup);
+            contact["densityMs"] = timing.densityMs;
+            contact["residualMs"] = stages["contact"].asDouble() - contactBeginMs_ - timing.setupMs
+                - timing.parallelSearchMs - timing.fallbackSearchMs - timing.orderedMs - timing.densityMs;
+            contact["visitSampleStride"] = static_cast<double>(CombatSystem::kContactVisitSampleStride);
+            contact["sampleClockNs"] = timing.sampleClockNs;
+            contact["parallelSearchMs"] = timing.parallelSearchMs;
+            contact["fallbackSearchMs"] = timing.fallbackSearchMs;
+            contact["orderedMs"] = timing.orderedMs;
+            contact["planned"] = static_cast<double>(timing.planned);
+            contact["fallback"] = static_cast<double>(timing.fallback);
+            contact["hotspotRadius"] = CombatSystem::kProbeHotspotRadius;
+            Json maps = Json::array();
+            constexpr std::array<const char*, 5> kinds{"players", "mobs", "petals", "shots", "pets"};
+            constexpr std::array<const char*, static_cast<std::size_t>(CombatSystem::ContactVisitPhase::Count)>
+                visitPhases{"lookup", "geometry", "eligibility", "formula", "writeback", "pvp"};
+            for (std::size_t i = 0; i < timing.realms.size(); ++i) {
+                const auto& map = timing.realms[i];
+                if (!map.sources && !map.total[3]) continue;
+                Json row = Json::object(), local = Json::object();
+                row["realm"] = static_cast<double>(i);
+                if (const auto* data = worldMaps_.forRealm(static_cast<Realm>(i))) {
+                    row["map"] = data->templateId();
+                    row["prestige"] = data->prestige();
+                }
+                row["sources"] = static_cast<double>(map.sources);
+                row["raw"] = static_cast<double>(map.raw);
+                row["visits"] = static_cast<double>(map.visits);
+                row["nonPvpOverlaps"] = static_cast<double>(map.overlaps);
+                row["peak"] = static_cast<double>(map.peak);
+                if (map.sampled.visits) {
+                    row["sampledVisits"] = static_cast<double>(map.sampled.visits);
+                    Json ns = Json::object(), intervals = Json::object();
+                    for (std::size_t phase = 0; phase < visitPhases.size(); ++phase) {
+                        ns[visitPhases[phase]] = map.sampled.ms[phase] * 1e6 / map.sampled.visits;
+                        intervals[visitPhases[phase]] = static_cast<double>(map.sampled.intervals[phase]);
+                    }
+                    row["sampledNsPerVisit"] = std::move(ns);
+                    row["sampledIntervals"] = std::move(intervals);
+                }
+                for (std::size_t kind = 0; kind < kinds.size(); ++kind) {
+                    row[kinds[kind]] = static_cast<double>(map.total[kind]);
+                    local[kinds[kind]] = static_cast<double>(map.local[kind]);
+                }
+                if (map.peak) {
+                    row["cellX"] = grid_.cellX(static_cast<Realm>(i), map.hotspot.x);
+                    row["cellY"] = grid_.cellY(static_cast<Realm>(i), map.hotspot.y);
+                    row["near"] = std::move(local);
+                }
+                maps.push(std::move(row));
+            }
+            contact["maps"] = std::move(maps);
+            frame["contact"] = std::move(contact);
+        }
+        if (stages.contains("mob movement")) {
+            const auto& timing = movement_->lastWorldPhaseTiming();
+            Json movement = Json::object();
+            movement["mobStepsMs"] = timing.mobStepsMs;
+            movement["mobStepJoinMs"] = timing.mobStepJoinMs;
+            movement["separationSolveMs"] = timing.separationSolveMs;
+            movement["separationJoinMs"] = timing.separationJoinMs;
+            frame["mobMovementMs"] = std::move(movement);
         }
         frame["stagesMs"] = std::move(stages);
         frame["stageOtherMs"] = std::max(0.0, work - (previous - tickStartedMillis_));
@@ -1478,8 +1658,12 @@ void GameServer::recordTickProbe(double tickNow, double timerLag, double network
         persistence["sessionsSnapshotEdits"] = std::move(rowEdits);
         frame["save"] = std::move(persistence);
         const auto line = frame.dump();
-        if (transition || save)
+        if (contactVisitFrame) {
+            const char* label = contactVisitFrame_ == ContactVisitFrame::Trigger ? "contact-trigger" : "contact-sample";
+            std::printf("[tick-probe-frame] %s %s\n", label, line.c_str());
+        } else if (transition || save) {
             std::printf("[tick-probe-frame] %s %s\n", transition ? "transition" : "save", line.c_str());
+        }
         if (lagPeak) {
             window.maxLag = startLag;
             window.lagTick = tick_;
@@ -1546,11 +1730,12 @@ void GameServer::tick(double nowMillis) {
 }
 
 void GameServer::tick(double wallMillis, double nowMillis) {
-    if (persistenceFrozen_) return;
+    if (persistenceFrozen_ || (pendingLocalHyper_ && pendingLocalHyper_->publishing)) return;
     ++tick_;
     wallClockMillis_ = wallMillis;
     clockMillis_ = nowMillis;
     tickPhaseCount_ = 0;
+    contactVisitFrame_ = ContactVisitFrame::None;
     sessionPhaseCount_ = 0;
     if (!bossClocksRestored_) restoreBossClocks(nowMillis);
     tickStartedMillis_ = monotonicMillis();
@@ -1560,7 +1745,10 @@ void GameServer::tick(double wallMillis, double nowMillis) {
         if (config_.tickProbe && sessionPhaseCount_ < sessionPhases_.size())
             sessionPhases_[sessionPhaseCount_++] = {name, monotonicMillis()};
     };
-    servicePyramidRotation(pyramidRotationCycle());
+    serviceRift(false);
+    const auto layoutCycle = pyramidRotationCycle();
+    servicePyramidRotation(layoutCycle);
+    serviceJurassicRotation(layoutCycle);
     markSessionPhase("pyramidRotation");
 
     // First, so a session whose socket is gone is not counted as a player,
@@ -1572,6 +1760,11 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     }
     markSessionPhase("socketAudit");
 
+    if (config_.sharedSkinRealm && wallMillis >= nextSharedSkinExpiryCheck_) {
+        nextSharedSkinExpiryCheck_ = wallMillis + 10'000.0;
+        expireSharedSkinSources();
+    }
+
     for (auto& entry : sessions_) refillAllowances(entry.second, wallMillis);
     markSessionPhase("allowances");
     // At most one credited second per account and server second; idle input heartbeats do not count.
@@ -1582,14 +1775,22 @@ void GameServer::tick(double wallMillis, double nowMillis) {
             auto& s=entry.second;
             const double elapsed=s.councilSampleAt>0?std::min(1.0,std::max(0.0,(wallMillis-s.councilSampleAt)/1000)):0;
             s.councilSampleAt=wallMillis;
-            const auto* a=database_.findUserById(s.userId);
-            if(!s.playing()||s.councilActiveUntil<wallMillis||!a||a->guest||a->admin||credited[s.userId]) continue;
+            if (!s.playing() || s.councilActiveUntil < wallMillis) continue;
+            const auto* a = std::as_const(database_).findUserById(s.userId);
+            if (!a || a->guest || a->admin || credited[s.userId]) continue;
             credited[s.userId]=true;
             // This counter belongs to the exclusively leased account. The old
             // global table is a read-only historical baseline: a shard's stale
             // copy must never overwrite another shard's activity or block saves.
-            auto& activity=database_.progress(s.userId).extra["councilActiveSeconds"];
-            activity=std::max(0.0,activity.asDouble())+elapsed;database_.markDirty();
+            // Apply these seconds after the forge finishes so an activity
+            // sample cannot invalidate the two inventory snapshots in flight.
+            if (pendingLocalHyper_ && pendingLocalHyper_->expectedPlayers.count(s.userId)) {
+                pendingLocalHyper_->councilActivityCredits[s.userId] += elapsed;
+            } else {
+                auto& activity = database_.progress(s.userId).extra["councilActiveSeconds"];
+                activity = std::max(0.0, activity.asDouble()) + elapsed;
+                database_.markDirty();
+            }
         }
     }
     markSessionPhase("council");
@@ -1768,6 +1969,7 @@ void GameServer::tick(double wallMillis, double nowMillis) {
 
     reapDead();
     commands_.flush();
+    serviceRift(true);
     serviceNearbyRevives(nowMillis);
     markTickPhase("reap");
     loot_->pruneGroundDrops(world_);
@@ -1796,6 +1998,44 @@ void GameServer::tick(double wallMillis, double nowMillis) {
     }
     listener_.flush();
     markTickPhase("send");
+}
+
+void GameServer::applyVoidGravity(double dt) {
+    struct Field {
+        Entity source;
+        Realm realm;
+        Vec2 position;
+        double force;
+        double radius;
+    };
+    std::vector<Field> fields;
+    Query<MobType, Transform>{world_}.each([&](Entity e, MobType& type, Transform& at) {
+        const auto& mob = content().mob(type.configIndex);
+        if (mob.gravityRadius > 0.0 && mob.gravityForce != 0.0 && isStanding(world_, e))
+            fields.push_back({e, at.realm, at.position, mob.gravityForce, mob.gravityRadius});
+    });
+    if (fields.empty()) return;
+    const auto resist = content().petalIndex("void_singularity");
+    Query<PlayerTag, Transform, Motion, Loadout>{world_}.each(
+        [&](Entity e, PlayerTag&, Transform& at, Motion& motion, Loadout& loadout) {
+            if (!isStanding(world_, e)) return;
+            const auto* tree = world_.tryGet<PlayerSkillTree>(e);
+            const int activeSlots = tree ? tree->skills.loadoutSlots() : kLoadoutActiveSlots;
+            const bool hasResistance = resist != kNoPetal && std::any_of(loadout.slots.begin(),
+                loadout.slots.begin() + activeSlots,
+                [resist](const LoadoutSlot& slot) { return slot.configIndex == resist && !slot.broken; });
+            Vec2 acceleration;
+            for (const auto& field : fields) {
+                if (at.realm != field.realm) continue;
+                const Vec2 toward = field.position - at.position;
+                const double gap = toward.length();
+                if (gap <= 1.0 || gap >= field.radius ||
+                    !CombatSystem::canDamage(world_, field.source, e) ||
+                    terrain_->segmentBlocked(at.position, field.position, at.realm)) continue;
+                acceleration += toward / gap * (field.force * (1.0 - gap / field.radius));
+            }
+            motion.velocity += acceleration * (dt * (hasResistance ? 0.33 : 1.0));
+        });
 }
 
 void GameServer::runSystems(double nowMillis, double dt) {
@@ -1843,7 +2083,14 @@ void GameServer::runSystems(double nowMillis, double dt) {
 
     const double controlSeconds = simulationPacing_.ticksPerSecond() < net::kTicksPerSecond
                                       ? simulationPacing_.intervalMillis() / 1000.0 : 0.0;
+    applyVoidGravity(dt);
+    movement_->riftOpen = riftAdmissionOpen();
     movement_->runPlayerPhase(world_, *terrain_, nowMillis, dt, controlSeconds);
+    for (const auto& [body, position] : riftArrivals_) {
+        if (Session* session = sessionForEntity(body)) enterRift(*session, position);
+    }
+    if (!riftArrivals_.empty()) commands_.flush();
+    riftArrivals_.clear();
     markTickPhase("players");
     petals_->run(world_, content(), nowMillis, dt, commands_, terrain_.get(), &events_);
     markTickPhase("petals");
@@ -1910,14 +2157,28 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // The reference server resolves flower bodies and the petal ring inside
     // the player pipeline, before moveEnemies(). Keep that temporal boundary:
     // a mob cannot escape a petal it was already touching by moving first.
-    combat_->beginTick(world_, nowMillis, dt, events_);
-    combat_->runContactPhase(world_, grid_, content(), nowMillis, &contactBodies_);
+    const double contactStart = config_.tickProbe ? monotonicMillis() : 0.0;
+    const bool sampleContact = contactVisitTicksLeft_ > 0;
+    const double contactPhaseStart = config_.contactVisitProbe ? tickPhases_[tickPhaseCount_ - 1].endedMillis : 0.0;
+    combat_->beginTick(world_, content(), nowMillis, dt, events_);
+    if (config_.tickProbe) contactBeginMs_ = monotonicMillis() - contactStart;
+    combat_->runContactPhase(world_, grid_, content(), nowMillis, &contactBodies_, config_.tickProbe, sampleContact);
     markTickPhase("contact");
+    if (sampleContact) {
+        --contactVisitTicksLeft_;
+        contactVisitFrame_ = ContactVisitFrame::Sample;
+    } else if (config_.contactVisitProbe && contactPhaseStart >= nextContactVisitBurstMs_ &&
+               tickPhases_[tickPhaseCount_ - 1].endedMillis - contactPhaseStart >= 30.0) {
+        // The trigger has already run. Sample its successors without replaying a hit.
+        contactVisitFrame_ = ContactVisitFrame::Trigger;
+        contactVisitTicksLeft_ = 4;
+        nextContactVisitBurstMs_ = contactPhaseStart + 10000.0;
+    }
 
     mobAi_->run(world_, *terrain_, mobTargetGrid_, activePlayers_, nowMillis,
                 net::kTickSeconds, commands_, &playerTargetGrid_);
     markTickPhase("mob ai");
-    movement_->runWorldPhase(world_, *terrain_, nowMillis, net::kTickSeconds);
+    movement_->runWorldPhase(world_, *terrain_, nowMillis, net::kTickSeconds, config_.tickProbe);
     markTickPhase("mob movement");
     // After the bodies have moved, as gardn places its segments: whatever
     // pushed a bead this tick swings the chain rather than being undone.
@@ -1953,7 +2214,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
             if (!death.wasPlayer) deadMobs.push_back(death.entity);
         }
         spawning_->answerDeaths(world_, *terrain_, content(), deadMobs, rng_, nowMillis,
-                                net::kTickSeconds, commands_);
+                                net::kTickSeconds, commands_, &squadIndex_);
     }
     markTickPhase("spawning");
     // After combat, so a dungeon cleared this tick drops its nest this tick,
@@ -1964,7 +2225,7 @@ void GameServer::runSystems(double nowMillis, double dt) {
     // while someone is in them.
     modes_->run(world_, *terrain_, content(), *spawning_, grid_, humanPlayers_, rng_, nowMillis);
     // Every flower, bots included, is somebody an NPC can turn to look at.
-    npcs_->run(world_, *terrain_, content(), activePlayers_, nowMillis);
+    npcs_->run(world_, *terrain_, content(), activePlayers_, nowMillis, wallClockMillis_);
     markTickPhase("modes+npcs");
     // Pickups can only collect drops. Keeping them out of the body grid
     // also keeps stationary loot out of projectile and aura queries.
@@ -2015,19 +2276,24 @@ void GameServer::announceMob(std::uint16_t mobIndex, Rarity rarity,
     if (mobIndex >= content().mobCount()) return;
     char color[16];
     std::snprintf(color, sizeof color, "#%06x", rarityColor(rarity));
-    const auto prefix = std::string("<b style=\"color: ") + color + ";\">A " +
-        rarityLabel(rarity) + " " + content().mob(mobIndex).name +
+    const auto& mob = content().mob(mobIndex);
+    if (rarity == Rarity::Unique || (mob.id == "ghost" && !isAnnouncedGhost(rarity))) return;
+    const auto prefix = "<b data-mob='" + escapedMarkup(mob.id) + "' style=\"color: " +
+        color + ";\">A " + rarityLabel(rarity) + " " + mob.name +
         (summoned ? " has been summoned" : " has spawned");
+    const std::string remoteText = prefix + " somewhere!</b>";
     for (auto& entry : sessions_) {
         Session& session = entry.second;
-        if (!session.playing()) continue;
+        if (!session.authenticated()) continue;
         net::Connection* connection = listener_.find(session.connection);
         if (connection == nullptr) continue;
         const Transform* transform = world_.tryGet<Transform>(session.entity);
         const bool here = localRealm && transform && transform->realm == *localRealm;
         sendChatTo(*connection, net::ChatChannel::System, "",
-                   prefix + (here ? "" : " somewhere") + "!</b>");
+                   here ? prefix + "!</b>" : remoteText);
     }
+    chatHistory_.push_back({net::ChatChannel::System, "", remoteText, database_.nowMillis()});
+    while (chatHistory_.size() > kChatHistoryLines) chatHistory_.pop_front();
     // Only the originating world publishes. Receiving worlds never learn the realm.
     if (localRealm && config_.authorityAuth) {
         Json event = Json::object();
@@ -2044,16 +2310,26 @@ void GameServer::bankPickups() {
         Session* session = sessionForEntity(pickup.player);
         if (!session || session->userId.empty()) continue;
         if (pickup.petalIndex >= content().petalCount()) continue;
+        if (session->inRift && (session->riftEliminated || petalTier(pickup.rarity) > rarityIndex(Rarity::Mythic))) continue;
 
         // Into the bag the body is playing with: an arena pickup is the run's,
         // not the account's, until the run ends.
-        giveToInventory(liveRecord(*session), pickup.petalIndex, pickup.rarity, pickup.quantity);
+        auto& record = liveRecord(*session);
+        const auto key = inventoryKey(pickup.petalIndex);
+        const int previous = record.itemCount(pickup.rarity, key);
+        const auto credited = std::min(pickup.quantity, static_cast<std::uint32_t>(
+            kMaxStackCount - previous));
+        if (credited > 0) {
+            record.setItemCount(pickup.rarity, key, previous + static_cast<int>(credited));
+            auto& total = session->runLoot[{pickup.petalIndex, pickup.rarity}];
+            total += std::min(credited, UINT32_MAX - total);
+        }
         database_.markDirty();
 
         // Owed, not sent: see sendDueProfiles.
         noteDue(session->stacksDue, pickup.petalIndex, pickup.rarity);
         session->profileDue = true;
-        announceRarePickup(*session, pickup.petalIndex, pickup.rarity);
+        if (!session->inRift) announceRarePickup(*session, pickup.petalIndex, pickup.rarity);
     }
 }
 
@@ -2132,8 +2408,9 @@ void GameServer::reapDead() {
                 }
                 // In the ring a death hands the run over to the killer before
                 // anything is written down.
-                if (session->arena) settleArenaDeath(*session, world_.get<Dead>(e).killer);
-                offerSacrifice(*session, e);
+                if (session->inRift) recordRiftDeath(*session, world_.get<Dead>(e).killer);
+                else if (session->arena) settleArenaDeath(*session, world_.get<Dead>(e).killer);
+                if (!session->inRift) offerSacrifice(*session, e);
                 persistPlayer(*session);
                 if (net::Connection* connection = listener_.find(session->connection)) {
                     ByteWriter w;
@@ -2141,6 +2418,12 @@ void GameServer::reapDead() {
                     w.str(killerLabel(world_, world_.get<Dead>(e).killer));
                     w.u32(0);
                     w.u32(tick_);
+                    w.u32(static_cast<std::uint32_t>(session->runLoot.size()));
+                    for (const auto& [item, count] : session->runLoot) {
+                        w.u16(item.first);
+                        w.u8(static_cast<std::uint8_t>(item.second));
+                        w.u32(count);
+                    }
                     connection->send(w);
                 }
             } else {
@@ -2173,6 +2456,7 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
     frame.wallMillis = wallMillis;
     frame.events = &events_;
     frame.loadShedding = config_.loadShedding;
+    frame.showAllVisibleLoot = config_.fullMobSimulation;
 
     deferredPickupViews_.clear();
     std::size_t count = 0;
@@ -2184,7 +2468,7 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
         // Let reliable messages and earlier snapshots drain before building
         // another delta. ClientView still describes the last queued snapshot
         // so the next one can carry all state changes since then.
-        if (connection->snapshotBacklog() >= kSnapshotBacklogLimit) {
+        if (connection->snapshotBacklog() >= kWorldSnapshotBacklogLimit) {
             if (viewpointOf(session) == session.entity)
                 deferredPickupViews_.emplace(session.connection, &views_.at(session.connection));
             continue;
@@ -2214,7 +2498,22 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
         }
 
         job.viewer = viewpoint;
+        frame.visibility = session.snapshotVisibility;
         job.frame = frame;
+        if (viewpoint == session.entity) {
+            for (auto meter = session.dummyDamage.begin(); meter != session.dummyDamage.end();) {
+                const auto* id = world_.tryGet<NetId>(meter->first);
+                if (!id || world_.has<Dead>(meter->first)) {
+                    meter = session.dummyDamage.erase(meter);
+                    continue;
+                }
+                auto& damage = meter->second;
+                damage.expire(wallMillis);
+                job.frame.practiceMeters.push_back(
+                    {id->value, std::max(0.0, damage.recentDamage) / net::kPracticeWindowSeconds, damage.total});
+                ++meter;
+            }
+        }
     }
     snapshotJobs_.resize(count);
     if (!deferredPickupViews_.empty()) {
@@ -2229,16 +2528,27 @@ void GameServer::replicate(double nowMillis, double wallMillis) {
     if (count > 1) {
         snapshotGrid_.clear();
         bool complete = true;
+        std::array<double, kMaxRealms> mobPadding{};
         Query<NetId, Replicated, Transform>{world_}.each(
-            [&](Entity e, NetId&, Replicated&, Transform& at) {
+            [&](Entity e, NetId&, Replicated& rep, Transform& at) {
                 if (!std::isfinite(at.position.x) || !std::isfinite(at.position.y)) {
                     complete = false;
                     return;
                 }
                 snapshotGrid_.insert(e, at.realm, at.position);
+                if (rep.kind == net::EntityKind::Mob) {
+                    if (const auto* body = world_.tryGet<Body>(e); body && std::isfinite(body->radius)) {
+                        auto& padding = mobPadding[realmIndex(at.realm)];
+                        padding = std::max(padding, body->radius * Replicator::kMobVisualReachPerRadius);
+                    }
+                }
             });
-        if (complete)
-            for (auto& job : snapshotJobs_) job.frame.entityGrid = &snapshotGrid_;
+        if (complete) {
+            for (auto& job : snapshotJobs_) {
+                job.frame.entityGrid = &snapshotGrid_;
+                job.frame.mobRadiusPadding = mobPadding[realmIndex(world_.get<Transform>(job.viewer).realm)];
+            }
+        }
     }
     // No ECS, session, event or socket mutation until all readers finish.
     parallelSnapshots_->build(world_, snapshotJobs_);
@@ -2482,11 +2792,13 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::SwapLoadoutRows:
         case net::ClientMessage::SaveLoadoutPreset:
         case net::ClientMessage::LoadLoadoutPreset:
+        case net::ClientMessage::SetPresetAutosave:
         case net::ClientMessage::BulkCraft:
         case net::ClientMessage::DailyDropBonus:
         case net::ClientMessage::RequestWaveRoomStatus:
         case net::ClientMessage::DailyLoginClaim:
         case net::ClientMessage::AccountQQ:
+        case net::ClientMessage::SkinReview:
         case net::ClientMessage::Craft:
         case net::ClientMessage::OracleCraft:
         case net::ClientMessage::Trade:
@@ -2515,7 +2827,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
             break;
         case net::ClientMessage::JoinGame:      handleJoin(*session, connection, reader); break;
         case net::ClientMessage::LeaveGame:     handleLeave(*session, connection); break;
-        case net::ClientMessage::Input:         handleInput(*session, reader); break;
+        case net::ClientMessage::Input:         handleInput(*session, connection, reader); break;
         case net::ClientMessage::Chat:          handleChat(*session, connection, reader); break;
         case net::ClientMessage::SetLoadout:    handleSetLoadout(*session, reader); break;
         case net::ClientMessage::BulkCraft: handleBulkCraft(*session, connection, reader); break;
@@ -2553,6 +2865,18 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::ProfileCheck:  handleProfileCheck(*session, connection, reader); break;
         case net::ClientMessage::SwapLoadout:   handleSwapLoadout(*session, reader); break;
         case net::ClientMessage::SwapLoadoutRows: handleSwapLoadoutRows(*session, connection); break;
+        case net::ClientMessage::SetPresetAutosave: {
+            const bool enabled = reader.boolean();
+            if (!reader.ok() || reader.remaining() != 0) break;
+            auto& record = database_.progress(session->userId);
+            const bool autosaveOff = !enabled;
+            if (record.extra["presetAutosaveOff"].asBool() != autosaveOff) {
+                record.extra["presetAutosaveOff"] = autosaveOff;
+                database_.markDirty();
+            }
+            sendProfile(*session, connection);
+            break;
+        }
         case net::ClientMessage::SaveLoadoutPreset:
             handleSaveLoadoutPreset(*session, connection, reader);
             break;
@@ -2602,6 +2926,7 @@ void GameServer::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ClientMessage::PublishSkin:   handlePublishSkin(*session, connection, reader); break;
         case net::ClientMessage::EquipSkin:     handleEquipSkin(*session, connection, reader); break;
         case net::ClientMessage::DeleteSkin:    handleDeleteSkin(*session, connection, reader); break;
+        case net::ClientMessage::SkinReview:     handleSkinReview(*session, connection, reader); break;
         case net::ClientMessage::Logout:        handleLogout(*session); break;
         case net::ClientMessage::AdminDb:       handleAdminDb(*session, connection, reader); break;
         case net::ClientMessage::AdminDashboard:
@@ -2940,6 +3265,15 @@ void GameServer::handleChangePassword(Session& session, net::Connection& connect
         sendChangePasswordResult(connection, false, "", "You are not signed in.");
         return;
     }
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    const bool offload = database_.backgroundSaveEnabled();
+    if (offload && passwordChange_.future.valid()) {
+        // Keep the pending request as the only reply for this connection.
+        if (passwordChange_.connection != connection.id())
+            sendChangePasswordResult(connection, false, "", "A password change is in progress. Try again shortly.");
+        return;
+    }
+#endif
 
     // AshFlor BJ: admins may change their password here (same budgets as anyone).
 
@@ -2966,6 +3300,36 @@ void GameServer::handleChangePassword(Session& session, net::Connection& connect
     // on a shared machine is exactly who must not be able to lock its owner out.
     const Account* account = std::as_const(database_).findUserById(session.userId);
     const bool proven = account != nullptr && !account->passwordChosen;
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    if (offload && account) {
+        const int cost = database_.passwordCost();
+        passwordChange_.connection = connection.id();
+        passwordChange_.token = session.token;
+        passwordChange_.address = address;
+        passwordChange_.expected = *account;
+        try {
+            passwordChange_.future = std::async(std::launch::async,
+                [expected = *account, current, next, cost] {
+                    PasswordChangeResult result;
+                    const bool first = !expected.passwordChosen;
+                    result.verified = first || Database::passwordMatches(expected, current);
+                    if (!result.verified) result.reason = "Your current password is not correct.";
+                    else if (!first && current == next) result.reason = "That is already your password.";
+                    else if (Database::validPassword(next, result.reason)) {
+                        if (crypto::secureRandom().seededFromKernel())
+                            result.hash = crypto::bcryptHash(next, cost);
+                        else
+                            result.reason = "Password worker unavailable. Try again shortly.";
+                    }
+                    return result;
+                });
+        } catch (const std::system_error&) {
+            accountLimits_.refundLoginAttempt(address);
+            sendChangePasswordResult(connection, false, "", "Password worker unavailable. Try again shortly.");
+        }
+        return;
+    }
+#endif
     if (!proven && !database_.verifyPassword(session.username, current)) {
         sendChangePasswordResult(connection, false, "", "Your current password is not correct.");
         return;
@@ -3009,6 +3373,53 @@ void GameServer::handleChangePassword(Session& session, net::Connection& connect
     // The Account panel draws its form from the Profile's flags, and an account
     // that just chose its first password has a different form now.
     if (proven) sendProfile(session, connection);
+}
+
+void GameServer::pollPasswordChange() {
+    if (!passwordChange_.future.valid() ||
+        passwordChange_.future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    auto work = std::move(passwordChange_);
+    passwordChange_ = {};
+    PasswordChangeResult result;
+    try {
+        result = work.future.get();
+    } catch (const std::exception&) {
+        result.reason = "Password worker unavailable. Try again shortly.";
+    }
+    if (result.verified) accountLimits_.refundLoginAttempt(work.address);
+
+    auto* peer = listener_.find(work.connection);
+    auto* session = sessionFor(work.connection);
+    if (!peer || !session || !session->authenticated() || session->token != work.token ||
+        session->userId != work.expected.id) return;
+    const auto* current = std::as_const(database_).findUserById(work.expected.id);
+    if (!current || current->username != work.expected.username ||
+        current->passwordHash != work.expected.passwordHash ||
+        current->passwordSalt != work.expected.passwordSalt ||
+        current->passwordChosen != work.expected.passwordChosen ||
+        !database_.resolveSession(work.token, false)) {
+        sendChangePasswordResult(*peer, false, "", "Account credentials changed. Sign in again.");
+        return;
+    }
+    if (result.hash.empty()) {
+        sendChangePasswordResult(*peer, false, "", result.reason);
+        return;
+    }
+    const bool first = !current->passwordChosen;
+    auto& account = *database_.findUserById(work.expected.id);
+    std::string token;
+    if (!database_.savePasswordChange(account, std::move(result.hash), token)) {
+        if (database_.commitUncertain()) {
+            persistenceFrozen_ = true;
+            running_.store(false);
+        } else {
+            sendChangePasswordResult(*peer, false, "", "Could not save the new password. Try again shortly.");
+        }
+        return;
+    }
+    session->token = std::move(token);
+    sendChangePasswordResult(*peer, true, session->token, "");
+    if (first) sendProfile(*session, *peer);
 }
 
 void GameServer::sendSetUsernameResult(net::Connection& connection, bool ok,
@@ -3061,12 +3472,13 @@ void GameServer::handleSetUsername(Session& session, net::Connection& connection
     const std::string guildName = guildNameForUser(oldName);
     if (!guildName.empty()) {
         Json& guild = database_.rawTable("guilds")[guildName];
+        auto deputies = guildDeputies(guild);
         if (lowerCase(guild["leaderUsername"].asString()) == oldKey) {
             guild["leaderUsername"] = newName;
         }
-        if (lowerCase(guild["deputyUsername"].asString()) == oldKey) {
-            guild["deputyUsername"] = newName;
-        }
+        for (auto& deputy : deputies)
+            if (lowerCase(deputy) == oldKey) deputy = newName;
+        setGuildDeputies(guild, deputies);
         Json members = guild["memberUsernames"];
         Json renamed = Json::array();
         for (const Json& member : members.items()) {
@@ -3224,6 +3636,10 @@ void GameServer::sendProfile(Session& session, net::Connection& connection) {
     if (const Account* account = std::as_const(database_).findUserById(session.userId)) {
         if (account->guest) accountFlags |= net::kAccountGuest;
         if (!account->passwordChosen) accountFlags |= net::kAccountNoPassword;
+    }
+    if (const auto* settings = database_.findProgress(session.userId);
+        settings && settings->extra["presetAutosaveOff"].asBool()) {
+        accountFlags |= net::kAccountPresetAutosaveOff;
     }
     w.u8(accountFlags);
     w.f64(trackXp);
@@ -3450,8 +3866,7 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
                                                        net::kTicksPerSecond));
     w.u32(claimed?static_cast<std::uint32_t>((dropBonusDay(now)+1)*86400000-8LL*3600000-now):0);
     w.i64(static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1)));
-    const auto writeOffers = [&](std::vector<ShopOffer> offers, std::int64_t rotation) {
-        applyShopStock(record, rotation, offers);
+    const auto writeOffers = [&](const std::vector<ShopOffer>& offers) {
         w.u8(static_cast<std::uint8_t>(offers.size()));
         for (const auto& offer : offers) {
             w.u16(offer.petalIndex); w.u8(static_cast<std::uint8_t>(offer.rarity));
@@ -3460,10 +3875,8 @@ void GameServer::sendDropBonus(Session& session, net::Connection& connection) {
         }
     };
     const auto current = shopRotation(shopClockNow());
-    // A lock preserves the selection, not the stock epoch. Both tabs share
-    // this account's per-item allowance for the current global rotation.
-    writeOffers(lockedShopOffers(record), current);
-    w.i64(current); writeOffers(shopOffers(current), current);
+    writeOffers(lockedShopOffers(record, current));
+    w.i64(current); writeOffers(shopOffers(current));
     connection.send(w);
 }
 void GameServer::handleDropBonus(Session& session, net::Connection& connection, ByteReader& reader) {
@@ -3578,7 +3991,9 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     // ground. A choice no staged map defines is dropped here, once, with a
     // notice -- rather than silently every time they die.
     session.spawnChoice.clear();
-    if (where == kArenaSpawnChoice || where == kMazeSpawnChoice) {
+    const bool riftRequested = where == kArenaSpawnChoice;
+    sendRiftStatus(connection);
+    if (where == kMazeSpawnChoice) {
         // The two destinations that are not on any map at all: each is a realm
         // of its own (realm.h), generated rather than authored, so there is no
         // spawn rectangle to look up.
@@ -3592,7 +4007,7 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
             // from the picker. An admin may still name it -- that is how a
             // screenshot rig reaches one -- but anyone else starts where the
             // picker would have let them.
-            if (session.admin) {
+            if (session.admin && !isRiftRealm(worldMaps_.door(where)->realm)) {
                 session.spawnChoice = where;
             } else {
                 sendNotice(connection, net::NoticeSeverity::Warning,
@@ -3611,14 +4026,14 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     if (wantsPrestige && session.spawnChoice != kArenaSpawnChoice &&
         session.spawnChoice != kMazeSpawnChoice) {
         if (database_.progress(session.userId).skills.prestigeUnlocked()) {
-            session.prestige = true;
+            session.prestige = database_.progress(session.userId).skills.level(SkillId::Prestige) + 1;
         } else {
             sendNotice(connection, net::NoticeSeverity::Warning,
                        "Prestige is a talent; starting in the ordinary biome.");
         }
     }
 
-    const Entity entity = spawnPlayer(session);
+    Entity entity = spawnPlayer(session);
     if (entity == NULL_ENTITY) {
         sendNotice(connection, net::NoticeSeverity::Bad, "Could not find a spawn point.");
         return;
@@ -3626,8 +4041,14 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
 
     const Vec2 viewport = claimableViewport(world_, entity, content(), width, height);
     world_.get<PlayerLocation>(entity).viewport = viewport;
+    if (const Entity prizeBody = enterRiftPrizeRoom(session); prizeBody != NULL_ENTITY)
+        entity = prizeBody;
 
+    session.runLoot.clear();
     views_[session.connection].reset();
+    if (riftRequested) {
+        sendSystem(connection, "Rift is entered through the portals in Garden, Desert or Jungle. /rift shows the schedule.");
+    }
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::JoinAccepted));
@@ -3649,6 +4070,8 @@ void GameServer::handleJoin(Session& session, net::Connection& connection, ByteR
     // the arena kit instead; the maze body is on its own track. Restated here
     // so the panels show what the flower actually has from the first frame.
     sendProfile(session, connection);
+    if (session.riftPrizeRoom)
+        sendSystem(connection, "走到地上的花瓣旁拾取冠军奖励，捡齐后自动返回。");
 }
 
 void GameServer::handleLeave(Session& session, net::Connection& connection) {
@@ -3673,15 +4096,24 @@ void GameServer::leaveWorld(Session& session) {
     revokeTempAdmin(session.connection);
 }
 
-void GameServer::handleInput(Session& session, ByteReader& reader) {
-    const net::InputFrame input = net::InputFrame::read(reader);
+void GameServer::handleInput(Session& session, const net::Connection& connection, ByteReader& reader) {
+    auto input = net::InputFrame::read(reader);
     if (!reader.ok() || !session.playing()) return;
-    if (!spend(session.inputAllowance)) return;
 
     // A replayed or reordered input must not move the player twice. TCP gives
     // ordering, but a client is free to send its own duplicates.
     if (input.sequence <= session.lastInputSequence) return;
+    // Inputs replace the whole intent. A later adjacent input supersedes this
+    // one, but a reliable action between them is an ordering boundary.
+    if (auto next = connection.nextBufferedMessage();
+        next && next->u8() == static_cast<std::uint8_t>(net::ClientMessage::Input)) {
+        const auto newer = net::InputFrame::read(*next);
+        if (next->ok() && next->remaining() == 0 && newer.sequence >= input.sequence) return;
+    }
+    if (!spend(session.inputAllowance)) return;
     session.lastInputSequence = input.sequence;
+    session.snapshotVisibility = input.flags & net::kInputVisibilityMask;
+    input.flags &= static_cast<std::uint8_t>(~net::kInputVisibilityMask);
 
     // Which flower the movement, the aim and the two buttons steer. A flower
     // an admin has taken over ignores its own player entirely, whichever half
@@ -3795,6 +4227,8 @@ void GameServer::handleChat(Session& session, net::Connection& connection, ByteR
         if (handleChatCommand(session, connection, text)) return;
     }
 
+    if (session.inRift) return;
+
     // A line with no slash is said to everyone. Local is "/l", which the
     // command dispatch hands back to sayInPublic.
     sayInPublic(session, connection, net::ChatChannel::Global, text);
@@ -3858,6 +4292,11 @@ bool GameServer::screenChatLine(Session& session, net::Connection& speaker,
                                 chatImageHostSummary() + ").</span>");
         text = std::move(filtered.text);
     }
+    if (channel != net::ChatChannel::Whisper && chatLineContainsWebsite(text)) {
+        sendSystem(speaker, "公共聊天不允许发送网站链接。");
+        return false;
+    }
+
     // A line that was only the pictures is not sent as an empty one, and
     // neither is one of markup that draws nothing -- not even a notice, any
     // more than an empty line gets one.
@@ -4139,7 +4578,14 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
     const std::vector<std::optional<StoredItem>> slots =
         saved != record.loadoutPresets.end() ? saved->second
                                              : std::vector<std::optional<StoredItem>>(kLoadoutSlots);
-    loadPresetSkills(record, name);
+    // An untouched preset has no saved talent allocation. Keep the current
+    // tree when selecting it; an explicitly saved empty tree still loads.
+    const Json& presetSkills = std::as_const(record.extra)["loadoutPresetSkills"][name];
+    if (presetSkills.isObject() && !loadPresetSkills(record, name)) {
+        sendNotice(connection, net::NoticeSeverity::Warning,
+                   "This loadout's saved talents cost more points than you have.");
+        return;
+    }
     const PresetLoad result = equipPreset(record, slots, record.skills.loadoutSlots());
     record.extra["activeLoadoutPreset"]=static_cast<int>(preset);
     autoSaveActivePreset(record);
@@ -4164,7 +4610,8 @@ void GameServer::handleLoadLoadoutPreset(Session& session, net::Connection& conn
 
 void GameServer::handleCraft(Session& session, net::Connection& connection, ByteReader& reader, bool quiet) {
     const std::uint16_t petalIndex = reader.u16();
-    const Rarity rarity = clampRarity(reader.u8());
+    const auto rawRarity = reader.u8();
+    const Rarity rarity = clampRarity(rawRarity);
     const std::uint32_t count = reader.u32();
     if (!reader.ok() || !session.authenticated()) return;
 
@@ -4174,9 +4621,16 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     PlayerRecord& record = liveRecord(session);
     // Past kMaxStackCount is more than any stack holds, so it is refused as
     // short rather than narrowed into a number that might not be.
-    const bool valid = count >= kCraftBatch &&
+    const bool valid = !session.inRift && count >= kCraftBatch &&
                        count <= static_cast<std::uint32_t>(kMaxStackCount) &&
-                       craftsOutOf(rarity) && petalIndex < content().petalCount() && content().petal(petalIndex).id != "timed_mjolnir";
+                       craftsOutOf(rarity) && rawRarity == rarityIndex(rarity) &&
+                       petalIndex < content().petalCount() &&
+                       content().petal(petalIndex).id != "timed_mjolnir" &&
+                       (rarity != Rarity::PermanentHyper ||
+                        (content().petal(petalIndex).id != "mjolnir" &&
+                         !petalHasOwnSource(content().petal(petalIndex)) &&
+                         record.itemCount(Rarity::Ascendant, inventoryKey(petalIndex)) <=
+                             kMaxStackCount - static_cast<int>(count / kCraftBatch)));
     if (!valid || !takeFromInventory(record, petalIndex, rarity, static_cast<int>(count))) {
         w.boolean(false);
         w.u16(petalIndex);
@@ -4205,7 +4659,7 @@ void GameServer::handleCraft(Session& session, net::Connection& connection, Byte
     constexpr double kCloverCraftBonus = 0.0005;
     const std::uint16_t clover = content().petalIndex("clover");
     int clovers = 0;
-    if (clover != kInvalidIndex) {
+    if (clover != kInvalidIndex && rarity != Rarity::PermanentHyper) {
         const std::size_t equipped =
             std::min<std::size_t>(record.loadout.size(), kLoadoutActiveSlots);
         for (std::size_t i = 0; i < equipped; ++i) {
@@ -4333,11 +4787,17 @@ void GameServer::handleOracleCraft(Session& session, net::Connection& connection
     }
 
     const int unitCost = oracleCraftCost(rarity);
-    if (rawRarity > static_cast<unsigned>(Rarity::Ultra) || quantity == 0 ||
+    if (rawRarity != rarityIndex(rarity) || quantity == 0 ||
+        (rarity == Rarity::PermanentHyper &&
+         (worldMaps_.forRealm(body->realm) == nullptr ||
+          worldMaps_.forRealm(body->realm)->templateId() != "ocean" ||
+          petalIndex >= content().petalCount() ||
+          content().petal(petalIndex).id == "mjolnir" ||
+          petalHasOwnSource(content().petal(petalIndex)))) ||
         unitCost <= 0 || petalIndex >= content().petalCount() ||
         !petalComesAt(content().petal(petalIndex), rarity) ||
         !petalComesAt(content().petal(petalIndex), upgradeRarity(rarity))) {
-        refuse("The oracle upgrades Common through Ultra only.");
+        refuse("This Oracle recipe is unavailable here or for this petal.");
         return;
     }
     const std::int64_t totalCost = static_cast<std::int64_t>(unitCost) * quantity;
@@ -4486,9 +4946,16 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
         reply(0, "You need to be standing at an assembler.");
         return;
     }
-    const Entity assembler =
-        npcs_->findService(world_, NpcService::Assembler, body->position, body->realm,
-                           kNpcServiceReach + kNpcServiceSlack, rarity);
+    const double reach = kNpcServiceReach + kNpcServiceSlack;
+    Entity assembler = npcs_->findService(world_, NpcService::Assembler, body->position, body->realm,
+                                           reach, rarity);
+    if (assembler == NULL_ENTITY && rarity != Rarity::Common) {
+        const Entity nearby = npcs_->findService(world_, NpcService::Assembler, body->position,
+                                                 body->realm, reach, Rarity::Common);
+        if (nearby != NULL_ENTITY &&
+            content().mob(world_.get<Npc>(nearby).configIndex).npc.hourlyRecipeSlots > 0)
+            assembler = nearby;
+    }
     if (assembler == NULL_ENTITY) {
         reply(0, "You are too far from the assembler.");
         return;
@@ -4497,8 +4964,17 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
     // It offers ONE recipe, its own (Npc::recipe): asking for another is a
     // window that has not caught up with which assembler it is at.
     const Npc& npc = world_.get<Npc>(assembler);
-    const std::vector<AssemblyRecipe>& recipes = content().mob(npc.configIndex).npc.recipes;
-    if (recipeIndex >= recipes.size() || recipeIndex != npc.recipe) {
+    if (npc.recipeRefreshAtMillis > 0.0 && wallClockMillis_ >= npc.recipeRefreshAtMillis) {
+        reply(0, "The assembler is changing recipes. Try again in a moment.");
+        return;
+    }
+    const auto& spec = content().mob(npc.configIndex).npc;
+    const auto& recipes = spec.recipes;
+    const bool hourly = spec.hourlyRecipeSlots > 0;
+    const double epoch = hourly ?
+        (config_.assemblerClock ? config_.assemblerClock() : assemblerEpochMillis()) : 0.0;
+    if (recipeIndex >= recipes.size() || recipeIndex != npc.recipe ||
+        (hourly && hourlyAssemblyRecipe(spec, epoch) != recipeIndex)) {
         reply(0, "The assembler does not make that.");
         return;
     }
@@ -4531,13 +5007,16 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
         return;
     }
     PlayerRecord& record = liveRecord(session);
+    if (hourly && epoch < record.extra["bioAssemblerReadyAt"].asDouble()) {
+        reply(0, "The Bio assembler is cooling down.");
+        return;
+    }
     std::map<std::uint16_t,std::int64_t> produced;
-    for (const auto& output : recipe.outputs) produced[output.petal] += output.count * count;
+    for (const auto& output : recipe.outputs) produced[output.petal] += output.count;
     for (const auto& [petal, amount] : produced) {
-        const auto held = record.itemCount(outputRarity,inventoryKey(petal));
-        const auto consumed = takes(petal) * count;
-        if (!petalComesAt(content().petal(petal),outputRarity) || amount>kMaxStackCount ||
-            held-consumed+amount>kMaxStackCount) {
+        const auto held = record.itemCount(outputRarity, inventoryKey(petal));
+        if (!petalComesAt(content().petal(petal), outputRarity) ||
+            count > assemblerOutputCapacity(held, amount, takes(petal))) {
             reply(0, "The output is unavailable at this rarity or its stack is full.");
             return;
         }
@@ -4565,6 +5044,7 @@ void GameServer::handleAssemble(Session& session, net::Connection& connection,
                         static_cast<int>(std::min<std::int64_t>(output.count * count,
                                                                 kMaxStackCount)));
     }
+    if (hourly) record.extra["bioAssemblerReadyAt"] = epoch + kBioAssemblerCooldownMillis;
     database_.markDirty();
 
     reply(count, "");
@@ -4586,11 +5066,10 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
         std::int64_t count = 0;
     };
     const auto mode = reader.u8();
-    const bool recycle = mode == 1;
     const int stackCount = reader.u16();
     std::vector<Stack> stacks;
     stacks.reserve(static_cast<std::size_t>(std::min(stackCount, kMaxAbsorbStacks)));
-    bool malformed = mode > 1 || stackCount <= 0 || stackCount > kMaxAbsorbStacks;
+    bool malformed = mode != 0 || stackCount <= 0 || stackCount > kMaxAbsorbStacks;
     for (int i = 0; i < stackCount && !malformed; ++i) {
         Stack stack;
         stack.petalIndex = reader.u16();
@@ -4624,7 +5103,7 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
         connection.send(w);
     };
     if (malformed) {
-        reply(false, 0, 0, "Nothing to absorb.");
+        reply(false, 0, 0, mode != 0 ? "花瓣回收换星已关闭。" : "Nothing to absorb.");
         return;
     }
 
@@ -4632,7 +5111,6 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
     // request one petal short destroys none of the others.
     PlayerRecord& record = liveRecord(session);
     double units = 0.0;
-    double totalListPrice = 0.0;
     std::int64_t absorbed = 0;
     for (const Stack& stack : stacks) {
         if (stack.petalIndex >= content().petalCount() || content().petal(stack.petalIndex).id == "timed_mjolnir" || stack.count <= 0 ||
@@ -4641,9 +5119,8 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
             return;
         }
         const PetalConfig& petal = content().petal(stack.petalIndex);
-        const double listPrice = recycle ? petalRecycleListPrice(stack.petalIndex, stack.rarity) : 0.0;
-        if (recycle ? listPrice <= 0.0 : !absorbable(petal, stack.rarity)) {
-            reply(false, 0, 0, petal.name + (recycle ? " 不可回收。" : " cannot be absorbed."));
+        if (!absorbable(petal, stack.rarity)) {
+            reply(false, 0, 0, petal.name + " cannot be absorbed.");
             return;
         }
         if (record.itemCount(stack.rarity, inventoryKey(stack.petalIndex)) < stack.count) {
@@ -4652,28 +5129,10 @@ void GameServer::handleAbsorb(Session& session, net::Connection& connection,
             return;
         }
         units += static_cast<double>(stack.count) * absorbUnits(stack.rarity);
-        totalListPrice += static_cast<double>(stack.count) * listPrice;
         absorbed += stack.count;
-    }
-    const double stars = petalRecycleStars(totalListPrice);
-    if (recycle && stars < 1.0) {
-        reply(false, 0, 0, "预计收益不足 1 星。");
-        return;
     }
     for (const Stack& stack : stacks) {
         takeFromInventory(record, stack.petalIndex, stack.rarity, static_cast<int>(stack.count));
-    }
-
-    if (recycle) {
-        const auto* live = session.playing() ? world_.tryGet<PlayerProgress>(session.entity) : nullptr;
-        record.stars = (live ? live->stars : record.stars) + stars;
-        for (const auto body : bodiesOf(session)) {
-            if (auto* progress = world_.tryGet<PlayerProgress>(body)) progress->stars = record.stars;
-        }
-        database_.markDirty();
-        reply(true, stars, absorbed, "");
-        sendProfile(session, connection);
-        return;
     }
 
     // Priced by the tree the flower is playing on -- the maze's in the maze,
@@ -4717,13 +5176,16 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
                                   ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
     const auto forgeMode=reader.u8();
-    const bool hyper=forgeMode==1;
+    const bool apexHammer=forgeMode==kApexHammerForgeMode;
+    const bool hyper=forgeMode==1 || apexHammer;
     const bool eternalFragment=forgeMode==2;
     const bool timedHammer=forgeMode==3;
     const bool batch = forgeMode == 4;
     const bool permanentHyper = forgeMode == kPermanentHyperForgeMode;
-    const bool all = forgeMode == kTitanForgeAllMode;
-    if (forgeMode > kTitanForgeAllMode || (all && petalIndex != kNoPetal)) return;
+    const bool all = forgeMode == kTitanForgeAllMode ||
+                     (permanentHyper && petalIndex == kNoPetal);
+    if (forgeMode > kApexHammerForgeMode ||
+        (forgeMode == kTitanForgeAllMode && petalIndex != kNoPetal)) return;
     if (!reader.ok() || !session.authenticated()) return;
 
     std::uint16_t outputIndex = petalIndex;
@@ -4758,35 +5220,50 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         }
         session.nextTitanForgeAllMillis = wallClockMillis_ + 1500.0;
         auto& record = liveRecord(session);
+        const auto inputTier = permanentHyper ? Rarity::Unique : kTitanInputRarity;
+        const auto outputTier = permanentHyper ? Rarity::PermanentHyper : kTitanOutputRarity;
         int kinds = 0;
         std::uint64_t made = 0;
         std::uint64_t consumed = 0;
         for (std::uint16_t index = 0; index < content().petalCount(); ++index) {
-            const auto& id = content().petal(index).id;
-            if (!titanForgeEligible(id)) continue;
+            const auto& petal = content().petal(index);
+            const auto& id = petal.id;
+            const bool eligible = permanentHyper
+                ? permanentHyperForgeEligible(id) && !petal.isAdminPetal && petalComesAt(petal, inputTier)
+                : titanForgeEligible(id);
+            if (!eligible) continue;
             const auto key = inventoryKey(index);
-            const int owned = record.itemCount(kTitanInputRarity, key);
+            const int owned = record.itemCount(inputTier, key);
             if (owned == 0) continue;
-            const int completed = clamp(record.extra["titanForgeCounts"][id].asInt(0), 0, 2);
-            const int space = kMaxStackCount - record.itemCount(kTitanOutputRarity, key);
-            const auto exchange = titanForgeBatch(owned, space, completed, id);
-            if (!exchange.quantity ||
-                !takeFromInventory(record, index, kTitanInputRarity, exchange.cost)) continue;
-            giveToInventory(record, index, kTitanOutputRarity, exchange.quantity);
-            record.extra["titanForgeCounts"][id] = std::min(2, completed + exchange.quantity);
-            announceRareCraft(session, index, kTitanOutputRarity, exchange.quantity, exchange.cost, true, false);
+            const int space = kMaxStackCount - record.itemCount(outputTier, key);
+            TitanForgeBatch exchange;
+            int completed = 0;
+            if (permanentHyper) {
+                exchange.quantity = std::min(owned / kPermanentHyperCost, space);
+                exchange.cost = exchange.quantity * kPermanentHyperCost;
+            } else {
+                completed = clamp(record.extra["titanForgeCounts"][id].asInt(0), 0, 2);
+                exchange = titanForgeBatch(owned, space, completed, id);
+            }
+            if (exchange.quantity <= 0 ||
+                !takeFromInventory(record, index, inputTier, exchange.cost)) continue;
+            giveToInventory(record, index, outputTier, exchange.quantity);
+            if (!permanentHyper)
+                record.extra["titanForgeCounts"][id] = std::min(2, completed + exchange.quantity);
+            announceRareCraft(session, index, outputTier, exchange.quantity, exchange.cost, true, false);
             ++kinds;
             made += exchange.quantity;
             consumed += exchange.cost;
         }
         if (kinds == 0) {
-            reply(false, "背包里没有可锻造的超级材料。");
+            reply(false, permanentHyper ? "背包里没有可兑换永久超凡的永恒材料。" : "背包里没有可锻造的超级材料。");
             resyncProfile(session, connection);
             return;
         }
         database_.markDirty();
         const auto result = "一键锻造完成：共 " + std::to_string(kinds) + " 种，获得 " +
-            std::to_string(made) + " 个永恒，消耗 " + std::to_string(consumed) + " 个超级。";
+            std::to_string(made) + (permanentHyper ? " 个永久超凡，消耗 " : " 个永恒，消耗 ") +
+            std::to_string(consumed) + (permanentHyper ? " 个永恒。" : " 个超级。");
         reply(true, result, kinds);
         sendProfile(session, connection);
         return;
@@ -4800,7 +5277,7 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     if (permanentHyper) {
         if (!permanentHyperForgeEligible(petal.id) || petal.isAdminPetal ||
             !petalComesAt(petal, Rarity::Unique)) {
-            reply(false, "雷神之锤、碎片和血祭不能兑换永久超凡。");
+            reply(false, "此花瓣不能兑换永久超凡。雷神之锤和限时锤不参与兑换。");
             return;
         }
         PlayerRecord& record = liveRecord(session);
@@ -4826,16 +5303,21 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         reply(false, hyper ? "超凡锤子需10个永恒碎片，不能用限时永恒锤或血祭。" : "该花瓣不能用于泰坦锻造。");
         return;
     }
+    if (apexHammer && petal.id != "fragment") { reply(false,"Apex雷神之锤需要5个Apex碎片。"); return; }
     if(hyper) {
         const auto titan=titanForgeScope(worldMaps_,body->realm);
         outputIndex=content().petalIndex(hyperForgeOutput(petal.id));
         if(outputIndex>=content().petalCount()){reply(false,"超凡产物不存在。");return;}
         if(config_.authorityAuth) {
-            Json request=Json::object();request["action"]="forge";request["input"]=petal.id;request["titan"]=titan;
+            Json request=Json::object();request["action"]="forge";request["input"]=petal.id;request["titan"]=titan;request["apexHammer"]=apexHammer;
             if(!beginSharedHyper(session,connection,request,petalIndex,true))reply(false,"超凡事务正在处理，请稍后重试。");
             return;
         }
-        const auto state=hyperForgeState(database_,hyperForgeOutput(petal.id),titan);
+        if (pendingLocalHyper_) {
+            reply(false, "超凡事务正在处理，请稍后重试。");
+            return;
+        }
+        const auto state=hyperForgeState(database_,hyperForgeOutput(petal.id),titan,apexHammer);
         if(state.owner==session.userId){reply(false,"你已经持有该超凡花瓣。");return;}
         if(state.abandonedBy==session.userId){
             reply(false,kHyperAbandonedRefusal);
@@ -4844,23 +5326,47 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
         if(state.protectedUntil>database_.nowMillis()){
             reply(false,"保护期尚未结束，剩余"+std::to_string((state.protectedUntil-database_.nowMillis()+59999)/60000)+"分钟。");return;
         }
-        const int cost=hyperForgeCost(state.claims,petal.id);
-        if(liveRecord(session).itemCount(Rarity::Unique,inventoryKey(petalIndex))<cost){
-            reply(false,"需要"+std::to_string(cost)+"个未装备的同种永恒材料。");return;
+        const int cost=apexHammer ? kApexHammerForgeCost : hyperForgeCost(state.claims,petal.id);
+        const auto materialTier=apexHammer ? Rarity::Ascendant : Rarity::Unique;
+        if(liveRecord(session).itemCount(materialTier,inventoryKey(petalIndex))<cost){
+            reply(false,apexHammer ? "需要5个未装备的Apex碎片。" :
+                "需要"+std::to_string(cost)+"个未装备的同种永恒材料。");return;
         }
-        persistAll();
-        const auto result=forgeHyper(database_,session.userId,petal.id,database_.nowMillis(),{},titan);
+        if (database_.authoritative()) {
+            persistAll();
+        } else {
+            // Capture live progress and boss clocks in memory. The forge's
+            // durable save publishes those together with the ownership transfer.
+            captureLiveProgress();
+            captureBossClocksForSave();
+        }
+        if (database_.backgroundSaveEnabled()) {
+            auto plan = planHyperForge(database_, session.userId, petal.id, database_.nowMillis(), {}, titan, apexHammer);
+            if (!plan.result.ok) { reply(false, plan.result.reason); return; }
+            auto pending = std::make_unique<PendingLocalHyper>();
+            pending->capturePlan(database_, std::move(plan));
+            pending->titan = titan;
+            pending->apexHammer = apexHammer;
+            pending->connection = connection.id();
+            pending->input = petalIndex;
+            pending->output = outputIndex;
+            pending->user = session.userId;
+            pending->token = session.token;
+            pending->startedAt = monotonicMillis();
+            pendingLocalHyper_ = std::move(pending);
+            return;
+        }
+        const auto result=forgeHyper(database_,session.userId,petal.id,database_.nowMillis(),{},titan,apexHammer);
+        if (database_.backgroundSaveEnabled() && database_.commitUncertain()) {
+            // A rename may already have published the transaction. Stop before
+            // answering or accepting another mutation against uncertain state.
+            persistenceFrozen_ = true;
+            running_.store(false);
+            return;
+        }
         if(!result.ok){reply(false,result.reason);return;}
-        for(auto& [id,other]:sessions_) {
-            if(!other.authenticated()||std::find(result.affected.begin(),result.affected.end(),other.userId)==result.affected.end())continue;
-            if(other.playing())applyAccountToSession(other);
-            if(auto* peer=listener_.find(id)){
-                sendProfile(other,*peer);
-                if(other.userId!=session.userId)sendNotice(*peer,net::NoticeSeverity::Warning,
-                    "你的超凡"+petal.name+"已被其他玩家夺取，已返还原投入材料，净损失1个永恒材料。");
-            }
-        }
-        announceRareCraft(session,outputIndex,Rarity::Apex,1,result.consumed,true);
+        notifyLocalHyper(session.userId, outputIndex, result.affected, apexHammer);
+        announceRareCraft(session,outputIndex,apexHammer ? Rarity::Ascendant : Rarity::Apex,1,result.consumed,true);
         reply(true,"");return;
     }
     outputIndex = timedHammer ? content().petalIndex("timed_mjolnir") : petalIndex;
@@ -4895,11 +5401,146 @@ void GameServer::handleTitanForge(Session& session, net::Connection& connection,
     sendProfile(session, connection);
 }
 
+void GameServer::notifyLocalHyper(const std::string& winner, std::uint16_t input,
+                                  const std::vector<std::string>& affected, bool apexHammer) {
+    for (auto& [id, other] : sessions_) {
+        if (!other.authenticated() ||
+            std::find(affected.begin(), affected.end(), other.userId) == affected.end()) continue;
+        if (other.playing()) applyAccountToSession(other);
+        if (auto* peer = listener_.find(id)) {
+            sendProfile(other, *peer);
+            if (other.userId != winner)
+                sendNotice(*peer, net::NoticeSeverity::Warning, std::string(apexHammer ? "你的Apex" : "你的超凡") + content().petal(input).name +
+                           (apexHammer ? "已被夺取，已返还4个Apex碎片。" : "已被其他玩家夺取，已返还原投入材料，净损失1个永恒材料。"));
+        }
+    }
+}
+
+void GameServer::pollLocalHyper(bool shuttingDown) {
+    if (!pendingLocalHyper_) return;
+    auto& pending = *pendingLocalHyper_;
+    using Save = Database::StagedSave;
+    auto* session = sessionFor(pending.connection);
+    auto* peer = listener_.find(pending.connection);
+    const bool sameSession = session && peer && session->authenticated() &&
+        session->userId == pending.user && session->token == pending.token;
+    const auto stillValid = [&] {
+        captureLiveProgress();
+        return sameSession &&
+            database_.storedTable("hyperForges").dump(0) == pending.expectedForges &&
+            std::all_of(pending.expectedPlayers.begin(), pending.expectedPlayers.end(),
+                [&](const auto& row) { return database_.playerSnapshotText(row.first) == row.second; });
+    };
+    std::string refusal = "锻造未提交，材料未扣除，请稍后重试。";
+    if (!pending.submitted && !shuttingDown && sameSession && !database_.commitUncertain()) {
+        if (!database_.canStageForgeSave()) return;
+        bool valid = stillValid();
+        if (!valid) {
+            const auto& input = content().petal(pending.input).id;
+            auto next = planHyperForge(database_, pending.user, input, database_.nowMillis(),
+                                       {}, pending.titan, pending.apexHammer);
+            valid = next.result.ok;
+            if (valid) pending.capturePlan(database_, std::move(next));
+            else refusal = next.result.reason;
+        }
+        if (valid && database_.beginStagedForgeSave(pending.plan.players, pending.forges)) {
+            pending.submitted = true;
+            // The checkpoint can refresh hold-history timestamps in live rows.
+            for (auto& [id, text] : pending.expectedPlayers) text = database_.playerSnapshotText(id);
+            return;
+        }
+    }
+    if (shuttingDown && !pending.publishing) database_.decideStagedForgeSave(false);
+    const auto outcome = database_.pollStagedForgeSave(shuttingDown);
+    if (outcome == Save::Preparing) return;
+    if (outcome == Save::Ready) {
+        const bool valid = stillValid();
+        pending.publishing = valid;
+        pending.cancelledForConflict = !valid && sameSession;
+        if (valid) pending.publishAt = monotonicMillis();
+        database_.decideStagedForgeSave(valid);
+        return;
+    }
+    if (outcome == Save::Uncertain || database_.commitUncertain()) {
+        persistenceFrozen_ = true;
+        running_.store(false);
+        pendingLocalHyper_.reset();
+        return;
+    }
+    // Retry only a stage we deliberately rejected before publishing. A write
+    // error or an uncertain commit must never be retried as a conflict.
+    bool saved = outcome == Save::Saved;
+    bool savedDirectly = false;
+    if (outcome == Save::Failed && pending.cancelledForConflict && !shuttingDown && sameSession) {
+        if (pending.retriesRemaining > 0) {
+            --pending.retriesRemaining;
+            pending.submitted = false;
+            pending.cancelledForConflict = false;
+            return;
+        }
+
+        // A participant can keep earning progress through every async stage.
+        // Replan against the latest rows and finish once on the simulation
+        // thread, using the same durable commit and rollback as a direct forge.
+        captureLiveProgress();
+        captureBossClocksForSave();
+        const double started = monotonicMillis();
+        pending.plan.result = forgeHyper(database_, pending.user, content().petal(pending.input).id,
+                                         database_.nowMillis(), {}, pending.titan, pending.apexHammer);
+        if (database_.commitUncertain()) {
+            persistenceFrozen_ = true;
+            running_.store(false);
+            pendingLocalHyper_.reset();
+            return;
+        }
+        saved = savedDirectly = pending.plan.result.ok;
+        if (!saved) refusal = pending.plan.result.reason;
+        if (config_.tickProbe)
+            std::printf("[titan-commit] fallback saved=%d workMs=%.2f\n", saved, monotonicMillis() - started);
+    }
+    if (config_.tickProbe && pending.publishAt > 0) {
+        std::printf("[titan-commit] saved=%d stageMs=%.2f publishMs=%.2f\n",
+                    saved, pending.publishAt - pending.startedAt, monotonicMillis() - pending.publishAt);
+    }
+    if (saved) {
+        // Publication is fenced: nothing can edit these records between the
+        // validation and this point. Other progress remains in the live DB.
+        if (!savedDirectly) {
+            for (auto& [id, row] : pending.plan.players) database_.progress(id) = std::move(row);
+            database_.rawTable("hyperForges") = std::move(pending.forges);
+            database_.markDirty();
+        }
+        if (!shuttingDown) {
+            notifyLocalHyper(pending.user, pending.output, pending.plan.result.affected, pending.apexHammer);
+            if (sameSession)
+                announceRareCraft(*session, pending.output, pending.apexHammer ? Rarity::Ascendant : Rarity::Apex, 1, pending.plan.result.consumed, true);
+        }
+    }
+    for (const auto& [id, elapsed] : pending.councilActivityCredits) {
+        if (elapsed <= 0 || !database_.findProgress(id)) continue;
+        auto& activity = database_.progress(id).extra["councilActiveSeconds"];
+        activity = std::max(0.0, activity.asDouble()) + elapsed;
+        database_.markDirty();
+    }
+    if (sameSession && !shuttingDown) {
+        ByteWriter w;
+        w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanForgeResult));
+        w.boolean(saved);
+        w.u16(saved ? pending.output : pending.input);
+        w.str(saved ? "" : refusal);
+        w.u32(saved ? 1 : 0);
+        peer->send(w);
+    }
+    pendingLocalHyper_.reset();
+}
+
 void GameServer::handleTitanHolder(Session& session, net::Connection& connection,
                                    ByteReader& reader) {
     const std::uint16_t petalIndex = reader.u16();
     if (!reader.ok() || !session.authenticated()) return;
-    if (petalIndex >= content().petalCount()) return;
+    const bool apexHammer = petalIndex == kNoPetal;
+    if (!apexHammer && petalIndex >= content().petalCount()) return;
+    const auto material = apexHammer ? std::string("fragment") : content().petal(petalIndex).id;
     // Each answer can be a sweep of every account, so one session gets one
     // every kTitanHolderQueryMillis; the client asks again for one dropped.
     if (wallClockMillis_ < session.nextTitanQueryMillis) return;
@@ -4915,7 +5556,7 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
     session.nextTitanQueryMillis = wallClockMillis_ + kTitanHolderQueryMillis;
     if(config_.authorityHyper) {
         Json query=Json::object();query["kind"]="titan";query["petal"]=petalIndex;
-        query["input"]=content().petal(petalIndex).id;query["titan"]=titanForgeScope(worldMaps_,body->realm);query["account"]=session.userId;
+        query["input"]=material;query["apexHammer"]=apexHammer;query["titan"]=titanForgeScope(worldMaps_,body->realm);query["account"]=session.userId;
         queueSharedView(session,connection,query);return;
     }
 
@@ -4923,11 +5564,11 @@ void GameServer::handleTitanHolder(Session& session, net::Connection& connection
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::TitanHolder));
     w.u16(petalIndex);
-    const auto state=hyperForgeState(database_,hyperForgeOutput(content().petal(petalIndex).id),titanForgeScope(worldMaps_,body->realm));
+    const auto state=hyperForgeState(database_,hyperForgeOutput(material),titanForgeScope(worldMaps_,body->realm),apexHammer);
     const auto* owner=database_.findUserById(state.owner);
     w.str(owner?owner->username:"");
     w.u32(static_cast<std::uint32_t>(std::max<std::int64_t>(0,state.protectedUntil-database_.nowMillis())));
-    w.u8(static_cast<std::uint8_t>(hyperForgeCost(state.claims,content().petal(petalIndex).id)));
+    w.u8(static_cast<std::uint8_t>(apexHammer ? kApexHammerForgeCost : hyperForgeCost(state.claims,material)));
     w.u8(static_cast<std::uint8_t>(std::min(255,hyperHoldingCount(database_,session.userId))));
     connection.send(w);
 }
@@ -5033,7 +5674,7 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
     // universal is never crafted -- it is forged at a titan, one at a time --
     // and says so.
     const bool forged = titanForge || made == Rarity::Universal;
-    if (made != Rarity::Super && made != Rarity::Unique && made != Rarity::Apex && !forged) return;
+    if (made != Rarity::Super && made != Rarity::Unique && made != Rarity::Apex && made != Rarity::Ascendant && !forged) return;
     if (petalIndex >= content().petalCount()) return;
 
     // In the tier's own colour, the one every other surface draws it in.
@@ -5071,10 +5712,12 @@ void GameServer::announceRareCraft(const Session& session, std::uint16_t petalIn
             sendChatTo(*recipient, net::ChatChannel::System, "", marked);
         return;
     }
-    if (broadcast) broadcastChat(net::ChatChannel::System, "", marked);
+    if (broadcast && made != Rarity::Unique)
+        broadcastChat(net::ChatChannel::System, "", marked);
 
     addNotification(made == Rarity::PermanentHyper ? "permanent_hyper_forge"
                     : made == Rarity::Universal ? "universal_craft"
+                    : made == Rarity::Ascendant ? "ascendant_craft"
                     : made == Rarity::Apex   ? "apex_craft"
                                              : "unique_craft",
                     plain);
@@ -5086,7 +5729,10 @@ void GameServer::bankKills() {
     // Connections already credited for the corpse in hand; see the loop.
     std::vector<net::ConnectionId> paidAccounts;
     for (const CombatSystem::DeathRecord& death : combat_->deaths()) {
-        if (death.wasPlayer || world_.has<WaveEnemy>(death.entity)) continue;
+        if (death.wasPlayer) continue;
+        if (const auto* subdivision = world_.tryGet<CancerSubdivision>(death.entity);
+            subdivision && subdivision->spawnedCopy) continue;
+        const bool waveEnemy = world_.has<WaveEnemy>(death.entity);
         const MobType* type = world_.tryGet<MobType>(death.entity);
         if (type == nullptr) continue;
 
@@ -5118,7 +5764,7 @@ void GameServer::bankKills() {
         selectLootRecipients(ranked, lootSlotsForRarity(type->rarity), &squadIndex_, recipients,
                              lootDamageFloor(type->rarity, health != nullptr ? health->max : 0.0));
 
-        const std::string mobId = content().mob(type->configIndex).id;
+        const std::string& mobId = content().mob(type->configIndex).id;
         const int stars = starsForKill(type->rarity);
 
         paidAccounts.clear();
@@ -5144,7 +5790,13 @@ void GameServer::bankKills() {
                 continue;
             }
             paidAccounts.push_back(session->connection);
+            if (waveEnemy) {
+                if (dungeons_->inWave(world_, session->entity))
+                    petals_->onKill(world_, content(), share.player, clockMillis_);
+                continue;
+            }
             petals_->onKill(world_, content(), share.player, clockMillis_);
+            if (session->inRift) continue;
 
             PlayerRecord& record = database_.progress(session->userId);
             record.recordKill(mobId, type->rarity);
@@ -5171,30 +5823,31 @@ void GameServer::bankKills() {
             session->profileDue = true;
         }
 
-        announceBossDefeat(death.entity, *type, ranked);
+        const auto* at = world_.tryGet<Transform>(death.entity);
+        if (!waveEnemy && (!at || !isRiftRealm(at->realm))) announceBossDefeat(death.entity, *type, ranked);
     }
 }
 
 void GameServer::announceBossDefeat(Entity mob, const MobType& type,
                                     const std::vector<Bounty::Share>& ranked) {
-    // The tiers announced on the way out are exactly the tiers announced on the
-    // way in -- ONE constant, so raising kAnnouncedRarity cannot leave chat
-    // mourning a boss nobody was told about. An ultra dies as quietly as it
-    // spawned.
-    if (rarityIndex(type.rarity) < rarityIndex(kAnnouncedRarity)) return;
+    const auto& config = content().mob(type.configIndex);
+    const bool ghost = config.id == "ghost";
+    if (type.rarity == Rarity::Unique ||
+        (ghost ? !isAnnouncedGhost(type.rarity) :
+         rarityIndex(type.rarity) < rarityIndex(kAnnouncedRarity))) return;
     // Nor does a prestige biome's super, whose spawn was never announced
     // either: there it is the bands' everyday stock (shared/game/prestige.h).
     if (const Transform* at = world_.tryGet<Transform>(mob)) {
-        if (worldMaps_.isPrestige(at->realm)) return;
+        if (!ghost && worldMaps_.isPrestige(at->realm)) return;
     }
     // The head's death is the animal's. A centipede's beads each carry their
     // own ledger and die one by one, and a line per bead would be ten more
     // deaths than the one spawn line chat was given.
-    if (content().mob(type.configIndex).chainBody) return;
+    if (config.chainBody) return;
     // A flower's summon was never announced on the way in, and losing one is
     // not a boss falling -- it simply hatches again.
     if (world_.has<Pet>(mob)) return;
-    const std::string& name = content().mob(type.configIndex).name;
+    const std::string& name = config.name;
     char colorAttribute[32];
     std::snprintf(colorAttribute, sizeof colorAttribute, "#%06x", rarityColor(type.rarity));
     const std::string opening = std::string("<b style=\"color: ") + colorAttribute + ";\">A " +
@@ -5248,7 +5901,7 @@ void GameServer::handleUpgradeSkill(Session& session, net::Connection& connectio
 
     const SkillId id = static_cast<SkillId>(rawSkill);
     PlayerRecord& record = database_.progress(session.userId);
-    if (session.playing() && session.realm == Realm::Arena) {
+    if (session.arena) {
         sendNotice(connection, net::NoticeSeverity::Warning, "Talents are disabled in the arena.");
         return;
     }
@@ -5297,7 +5950,7 @@ void GameServer::handleDowngradeSkill(Session& session, net::Connection& connect
 
     const SkillId id = static_cast<SkillId>(rawSkill);
     PlayerRecord& record = database_.progress(session.userId);
-    if (session.playing() && session.realm == Realm::Arena) {
+    if (session.arena) {
         sendNotice(connection, net::NoticeSeverity::Warning, "Talents are disabled in the arena.");
         return;
     }
@@ -5314,8 +5967,8 @@ void GameServer::handleDowngradeSkill(Session& session, net::Connection& connect
     // parent no longer meets their requirement go with it.
     skillRefundTo(skills, id, tier - 1);
 
-    if (!maze && id == SkillId::Prestige && !skills.prestigeUnlocked()) {
-        session.prestige = false;
+    if (!maze && id == SkillId::Prestige && session.prestige > skills.level(SkillId::Prestige) + 1) {
+        session.prestige = skills.level(SkillId::Prestige) + 1;
         bool inPrestige = false;
         for (const Entity body : bodiesOf(session)) {
             if (body == NULL_ENTITY || !world_.isAlive(body)) continue;
@@ -5338,7 +5991,7 @@ void GameServer::handleDowngradeSkill(Session& session, net::Connection& connect
 void GameServer::handleResetSkills(Session& session, net::Connection& connection) {
     if (!session.authenticated()) return;
     PlayerRecord& record = database_.progress(session.userId);
-    if (session.playing() && session.realm == Realm::Arena) {
+    if (session.arena) {
         sendNotice(connection, net::NoticeSeverity::Warning, "Talents are disabled in the arena.");
         return;
     }
@@ -5400,7 +6053,7 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     // buy, but a flower in the arena is playing out of the run's own bag --
     // so the petal would be bought, charged for, and invisible until the run
     // ended. Refused for the same reason talents are.
-    if (session.playing() && session.realm == Realm::Arena) {
+    if (session.arena) {
         sendShopResult(connection, net::ShopResultKind::Purchase, false,
                        database_.progress(session.userId).stars,
                        "The shop is closed in the arena.");
@@ -5415,14 +6068,14 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
     // click on a store that has since changed.
     double price = shopPrice(petalIndex, rarity);
     std::int64_t purchaseRotation = shopRotation(shopClockNow());
-    if (offerSlot == net::kNoShopOffer && (rarity == Rarity::Ultra || rarity == Rarity::Super)) {
+    if (offerSlot == net::kNoShopOffer && (rarity == Rarity::Super || rarity == Rarity::Unique)) {
         sendShopResult(connection, net::ShopResultKind::Purchase, false, 0,
-                       "U/S花瓣只能购买当前或锁定商店中的商品。");
+                       "超级和永恒花瓣只能购买当前上架的商品。");
         return;
     }
     if (offerSlot != net::kNoShopOffer) {
         const auto locked=static_cast<std::int64_t>(record.extra["lockedShopRotation"].asDouble(-1));
-        const std::vector<ShopOffer> offers = (locked>=0?lockedShopOffers(record):shopOffers(purchaseRotation));
+        const std::vector<ShopOffer> offers = (locked>=0?lockedShopOffers(record, purchaseRotation):shopOffers(purchaseRotation));
         const auto slot = static_cast<std::size_t>(offerSlot);
         if (slot >= offers.size() || offers[slot].petalIndex != petalIndex ||
             offers[slot].rarity != rarity) {
@@ -5431,13 +6084,6 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
             return;
         }
         price = offers[slot].price;
-    }
-    const int remaining = shopStockRemaining(record, purchaseRotation, petalIndex, rarity);
-    if (remaining >= 0 && quantity > static_cast<std::uint32_t>(remaining)) {
-        sendShopResult(connection, net::ShopResultKind::Purchase, false, 0,
-                       "该商品本轮库存不足；下次商店换轮补货，重新锁定或登录不会补货。");
-        sendDropBonus(session, connection);
-        return;
     }
     // A split flower carries the balance on both halves, and the tick levels
     // them to the HIGHER of the two -- so a charge to the steered half alone
@@ -5472,7 +6118,6 @@ void GameServer::handleBuyPetal(Session& session, net::Connection& connection, B
         }
     }
     giveToInventory(record, petalIndex, rarity, quantity);
-    consumeShopStock(record, purchaseRotation, petalIndex, rarity, static_cast<int>(quantity));
     database_.markDirty();
     sendProfile(session, connection);
     sendDropBonus(session, connection);
@@ -5595,6 +6240,8 @@ void GameServer::handleSetSkin(Session& session, net::Connection& connection, By
 
 namespace {
 
+constexpr double kSharedSkinFreshMillis = 20.0 * 60'000.0;
+
 /// The studio's own reply channel. Every outcome the reference reports --
 /// success included -- is a chat line from "Skins", not a notice or a toast.
 void sendSkinChat(net::Connection& connection, const std::string& text) {
@@ -5695,6 +6342,94 @@ void GameServer::broadcastDebugStats() {
     broadcastToAuthenticated(w);
 }
 
+bool GameServer::canModeratePublicSkins(const Session& session) const {
+    const auto* account = database_.findUserById(session.userId);
+    return account && !account->guest && !account->adminBanned &&
+        database_.storedTable("skinModerators")[account->id].asBool();
+}
+
+void GameServer::broadcastSharedSkinRemoval(const std::string& id) {
+    ByteWriter message;
+    message.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinDeleted));
+    message.str(id);
+    broadcastToAuthenticated(message);
+}
+
+void GameServer::expireSharedSkinSources() {
+    const auto now = database_.nowMillis();
+    for (auto& source : sharedSkinSources_) {
+        if (!source.available || now - source.capturedAt <= kSharedSkinFreshMillis) continue;
+        for (const auto& [id, skin] : source.skins) broadcastSharedSkinRemoval(id);
+        source.skins.clear();
+        source.available = false;
+    }
+}
+
+bool GameServer::applySharedSkinSnapshot(const Json& snapshot) {
+    const int localRealm = config_.sharedSkinRealm;
+    if (localRealm < 1 || localRealm > 3 || snapshot["version"].asInt() != 1 || persistenceFrozen_) return false;
+    const auto now = database_.nowMillis();
+    for (int realm = 1; realm <= 3; ++realm) {
+        if (realm == localRealm) continue;
+        auto& current = sharedSkinSources_[realm - 1];
+        const auto& entry = snapshot["sources"][std::to_string(realm)];
+        const double capturedAt = entry["capturedAt"].asDouble();
+        const auto& rows = entry["skins"];
+        if (!rows.isArray() || capturedAt <= current.capturedAt || capturedAt > now + 60'000.0 ||
+            now - capturedAt > kSharedSkinFreshMillis) continue;
+
+        std::unordered_map<std::string, CustomSkin> next;
+        bool valid = true;
+        const std::string prefix = "xs" + std::to_string(realm) + "_";
+        for (const Json& row : rows.items()) {
+            auto skin = skinFromJson(row);
+            if (skin.id.empty() || skin.id.size() > 120 || !skin.published || !row["published"].asBool(false) ||
+                skin.review != SkinReviewState::Approved || skin.shapes.empty() || next.count(prefix + skin.id)) {
+                valid = false;
+                break;
+            }
+            skin.id = prefix + skin.id;
+            const std::string id = skin.id;
+            next.emplace(id, std::move(skin));
+        }
+        if (!valid) continue;
+
+        std::unordered_set<std::string> removed;
+        for (const auto& [id, skin] : current.skins) if (!next.count(id)) removed.insert(id);
+        // The old in-memory catalog is empty just after a restart. Check saved
+        // outfits then as well, but only after an authoritative fresh source.
+        if (!current.available) for (const auto& userId : database_.playerIds()) {
+            const auto* record = database_.findProgress(userId);
+            if (record && sharedSkinRealm(record->equippedSkinId) == realm && !next.count(record->equippedSkinId))
+                removed.insert(record->equippedSkinId);
+        }
+        for (const auto& id : removed) {
+            unequipCustomSkin(id);
+            broadcastSharedSkinRemoval(id);
+        }
+        if (!removed.empty()) database_.markDirty();
+        for (const auto& [id, skin] : next) {
+            const auto old = current.skins.find(id);
+            if (old != current.skins.end() && old->second.name == skin.name && old->second.author == skin.author &&
+                old->second.createdAt == skin.createdAt &&
+                skinShapesHash(old->second.shapes) == skinShapesHash(skin.shapes)) continue;
+            ByteWriter message;
+            message.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+            writeCustomSkin(message, skin);
+            broadcastToAuthenticated(message);
+        }
+        const bool restored = !current.available;
+        current = {capturedAt, true, std::move(next)};
+        if (restored) listener_.each([&](net::Connection& connection) {
+            auto* session = sessionFor(connection.id());
+            if (!session || !session->authenticated()) return;
+            const auto* record = database_.findProgress(session->userId);
+            if (record && sharedSkinRealm(record->equippedSkinId) == realm) sendSkinCatalog(*session, connection);
+        });
+    }
+    return true;
+}
+
 void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) {
     // storedTable, not rawTable: this only reads, and rawTable drops the
     // table's cached text (Database::Table). Sent on every sign-in, that made
@@ -5704,20 +6439,32 @@ void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) 
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinCatalog));
-    // Advisory only: it decides whether the takedown button is drawn and
-    // whether the chat autocomplete offers the /admin rows. Every delete, and
-    // every admin command, is re-checked server-side regardless of what the
-    // client believes -- so a temporary grant may safely raise it, which is
-    // how a grantee's console appears without them logging out and back in.
-    w.boolean(effectiveAdmin(session));
+    // Skin moderation and the admin console are independent capabilities.
+    // Both are rechecked on the server when a request arrives.
+    std::uint8_t flags = 0;
+    if (effectiveAdmin(session)) flags |= net::SkinCatalogAdmin;
+    if (canModeratePublicSkins(session)) flags |= net::SkinCatalogModerator;
+    w.u8(flags);
     w.str(record.equippedSkinId);
     const std::size_t at = w.reserveU16();
     std::uint16_t count = 0;
+    std::vector<ByteWriter> overflow;
+    const auto addSkin = [&](const CustomSkin& skin) {
+        ByteWriter entry;
+        entry.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+        writeCustomSkin(entry, skin);
+        if (w.size() + entry.size() >= net::kMaxFrameBytes) {
+            overflow.push_back(std::move(entry));
+        } else {
+            w.raw(entry.data() + 1, entry.size() - 1);
+            ++count;
+        }
+    };
     for (const std::string& id : skins.keys()) {
         const CustomSkin skin = skinFromJson(skins[id]);
         if (skin.id.empty() || skin.shapes.empty()) continue;
         bool visible = skin.published || lowerCase(skin.author) == lowerCase(session.username);
-        if (!visible) for (const auto& entry : sessions_) {
+        if (!visible && skin.review == SkinReviewState::Approved) for (const auto& entry : sessions_) {
             const auto& other = entry.second;
             const auto* wearing = other.authenticated() ? database_.findProgress(other.userId) : nullptr;
             if (wearing && wearing->equippedSkinId == skin.id) {
@@ -5725,13 +6472,14 @@ void GameServer::sendSkinCatalog(Session& session, net::Connection& connection) 
             }
         }
         if (!visible) continue;
-        writeCustomSkin(w, skin);
-        ++count;
+        addSkin(skin);
     }
+    for (const auto& source : sharedSkinSources_) for (const auto& [id, skin] : source.skins) addSkin(skin);
     w.patchU16(at, count);
     connection.send(w);
+    for (const auto& entry : overflow) connection.send(entry);
     const CustomSkin worn = skinFromJson(skins[record.equippedSkinId]);
-    if (!worn.id.empty() && !worn.published) {
+    if (!worn.id.empty() && !worn.published && worn.review == SkinReviewState::Approved) {
         ByteWriter appearance;
         appearance.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
         writeCustomSkin(appearance, worn); broadcastToAuthenticated(appearance);
@@ -5763,6 +6511,19 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
             sendSkinChat(connection, "只能发布自己保存的皮肤。"); return;
         }
         CustomSkin skin = skinFromJson(saved);
+        if (skin.review != SkinReviewState::Approved) {
+            if (!published || skin.review != SkinReviewState::Draft) return;
+            skin.review = SkinReviewState::Pending;
+            catalog[existingId]["review"] = static_cast<int>(skin.review);
+            catalog[existingId]["reviewSubmittedAt"] = static_cast<double>(database_.nowMillis());
+            database_.markDirty();
+            ByteWriter w;
+            w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+            writeCustomSkin(w, skin);
+            connection.send(w);
+            sendSkinChat(connection, "已提交审核，通过后才能穿戴或公开。");
+            return;
+        }
         if (skin.published == published) return;
         const SkinLook look = sampleSkinLook(skin.shapes);
         if (published && (skinsLookAlike(look, starterLook()) || findLookAlikeSkin(look))) {
@@ -5770,26 +6531,7 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
         }
         catalog[existingId]["published"] = published;
         skin.published = published;
-        if (!published) {
-            for (const std::string& userId : database_.playerIds()) {
-                const auto* record = database_.findProgress(userId);
-                if (userId != session.userId && record && record->equippedSkinId == existingId) {
-                    auto& changed = database_.progress(userId);
-                    changed.equippedSkinId.clear();
-                    changed.renderFlags = PlayerRenderNone;
-                }
-            }
-            for (auto& entry : sessions_) {
-                auto& other = entry.second;
-                if (other.userId == session.userId) continue;
-                for (Entity body : bodiesOf(other)) {
-                    auto* visuals = world_.tryGet<PlayerVisuals>(body);
-                    if (visuals && visuals->equippedSkinId == existingId) {
-                        visuals->equippedSkinId.clear(); visuals->renderFlags = PlayerRenderNone;
-                    }
-                }
-            }
-        }
+        if (!published) unequipCustomSkin(existingId, session.userId);
         database_.markDirty();
         ByteWriter w; w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
         writeCustomSkin(w, skin); broadcastToAuthenticated(w);
@@ -5853,19 +6595,19 @@ void GameServer::handlePublishSkin(Session& session, net::Connection& connection
     skin.author = session.username;
     skin.shapes = check.shapes;
     skin.createdAt = static_cast<double>(database_.nowMillis());
-    skin.published = published;
+    skin.review = published ? SkinReviewState::Pending : SkinReviewState::Draft;
     catalog[skin.id] = skinToJson(skin);
     catalog[skin.id]["ownerId"] = session.userId;
+    if (published) catalog[skin.id]["reviewSubmittedAt"] = skin.createdAt;
     database_.markDirty();
     skinLooks_[skin.id] = CachedSkinLook{skinShapesHash(skin.shapes), std::move(look)};
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
     writeCustomSkin(w, skin);
-    // Everyone, not just the author: a skin nobody else has cannot be drawn on
-    // the player wearing it.
-    if (published) broadcastToAuthenticated(w); else connection.send(w);
-    sendSkinChat(connection, published ? "Published \"" + skin.name + "\". It's now in the Browse tab." : "已私密保存：" + skin.name + "。仅自己可选用，可在皮肤列表主动发布。");
+    connection.send(w);
+    sendSkinChat(connection, published ? "已提交审核，通过后才能穿戴或公开。"
+                                      : "草稿已保存，可在皮肤列表提交审核。");
 }
 
 void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
@@ -5875,18 +6617,22 @@ void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
 
     // Read-only, so storedTable: see sendSkinCatalog.
     const Json& catalog = database_.storedTable("customSkins");
-    if (!id.empty() && !catalog[id].isObject()) {
+    const int origin = sharedSkinRealm(id);
+    const bool shared = origin && sharedSkinSources_[origin - 1].skins.count(id);
+    if (!id.empty() && (origin ? !shared : !catalog[id].isObject())) {
         sendSkinChat(connection, "That skin no longer exists.");
+        if (origin) sendSkinCatalog(session, connection);
         return;
     }
 
-    if (!id.empty()) {
+    if (!id.empty() && !shared) {
         const CustomSkin skin = skinFromJson(catalog[id]);
         const bool owner = catalog[id]["ownerId"].isString()
             ? catalog[id]["ownerId"].asString() == session.userId
             : lowerCase(skin.author) == lowerCase(session.username);
-        if (!skin.published && !owner) {
-            sendSkinChat(connection, "这是私人皮肤，不能使用。");
+        if (skin.review != SkinReviewState::Approved || (!skin.published && !owner)) {
+            sendSkinChat(connection, skin.review == SkinReviewState::Approved
+                ? "这是私人皮肤，不能使用。" : "审核通过后才能穿戴这张皮肤。");
             sendSkinCatalog(session, connection); return;
         }
         if (!skin.published) {
@@ -5910,33 +6656,198 @@ void GameServer::handleEquipSkin(Session& session, net::Connection& connection,
     }
 }
 
+Json GameServer::localSkinReviewQueue() const {
+    const auto& catalog = database_.storedTable("customSkins");
+    std::vector<std::pair<double, std::string>> pending;
+    for (const auto& id : catalog.keys()) {
+        const auto& row = catalog[id];
+        if (row["review"].asInt(-1) == static_cast<int>(SkinReviewState::Pending))
+            pending.emplace_back(row["reviewSubmittedAt"].asDouble(row["createdAt"].asDouble()), id);
+    }
+    const auto count = std::min<std::size_t>(24, pending.size());
+    std::partial_sort(pending.begin(), pending.begin() + count, pending.end());
+    Json rows = Json::array();
+    for (std::size_t i = 0; i < count; ++i) {
+        auto row = skinToJson(skinFromJson(catalog[pending[i].second]));
+        row["reviewSubmittedAt"] = pending[i].first;
+        rows.push(std::move(row));
+    }
+    return rows;
+}
+
+void GameServer::sendSkinReviewQueue(net::Connection& connection, const Json& sources) {
+    std::vector<std::pair<double, CustomSkin>> pending;
+    const auto add = [&](const Json& rows, int origin) {
+        for (const auto& row : rows.items()) {
+            auto skin = skinFromJson(row);
+            if (skin.id.empty() || skin.shapes.empty() || skin.review != SkinReviewState::Pending)
+                continue;
+            if (origin) skin.id = "xs" + std::to_string(origin) + "_" + skin.id;
+            pending.emplace_back(row["reviewSubmittedAt"].asDouble(skin.createdAt), std::move(skin));
+        }
+    };
+    add(localSkinReviewQueue(), 0);
+    for (int realm = 1; realm <= 3; ++realm)
+        if (realm != config_.sharedSkinRealm) add(sources[std::to_string(realm)], realm);
+    const auto count = std::min<std::size_t>(24, pending.size());
+    std::partial_sort(pending.begin(), pending.begin() + count, pending.end(),
+        [](const auto& a, const auto& b) {
+            if (a.first != b.first) return a.first < b.first;
+            return a.second.id < b.second.id;
+        });
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinReviewQueue));
+    w.u8(static_cast<std::uint8_t>(count));
+    for (std::size_t i = 0; i < count; ++i) writeCustomSkin(w, pending[i].second);
+    connection.send(w);
+}
+
+Json GameServer::relaySkinReview(const std::string& token, const Json& request) {
+    Json response = Json::object();
+    if (config_.skinReviewKey.size() < 32 || !crypto::constantTimeEquals(token, config_.skinReviewKey)) {
+        response["error"] = "forbidden";
+        return response;
+    }
+    const auto action = request["action"].asString();
+    if (action == "skin-review-list") {
+        response["rows"] = localSkinReviewQueue();
+    } else if (action == "skin-review-approve" || action == "skin-review-reject") {
+        if (pendingLocalHyper_) {
+            response["error"] = "来源服正在提交锻造，请稍后重试审核。";
+            return response;
+        }
+        const auto id = request["id"].asString();
+        const auto error = decideSkinReview(id, action == "skin-review-approve");
+        if (!error.empty()) response["error"] = error;
+        else if (database_.authoritative() ? commitBeforeReply() : database_.save())
+            response["ok"] = true;
+        else response["error"] = "来源服暂未确认存档，请刷新队列。";
+    }
+    return response;
+}
+
+void GameServer::handleSkinReview(Session& session, net::Connection& connection, ByteReader& reader) {
+    if (!session.authenticated() || !canModeratePublicSkins(session)) return;
+    const auto action = static_cast<net::SkinReviewAction>(reader.u8());
+    if (!reader.ok()) return;
+    const bool list = action == net::SkinReviewAction::List;
+    const bool approve = action == net::SkinReviewAction::Approve;
+    if (!list && !approve && action != net::SkinReviewAction::Reject) return;
+    const std::string id = list ? "" : reader.str();
+    if (!reader.ok()) return;
+    const int origin = sharedSkinRealm(id);
+    if (origin && (!config_.sharedSkinReview || origin == config_.sharedSkinRealm)) return;
+    if (!list && !origin) {
+        const auto error = decideSkinReview(id, approve);
+        if (!error.empty()) sendSkinChat(connection, error);
+    }
+    if (!config_.sharedSkinReview) {
+        sendSkinReviewQueue(connection);
+        return;
+    }
+    Json request = Json::object();
+    request["action"] = origin ? (approve ? "skin-review-approve" : "skin-review-reject")
+                               : "skin-review-list";
+    if (origin) request["id"] = id.substr(4);
+    const auto connectionId = connection.id();
+    const auto token = session.token;
+    config_.sharedSkinReview(origin, request, [this, connectionId, token, origin](Json response) {
+        auto* peer = listener_.find(connectionId);
+        auto* current = sessionFor(connectionId);
+        if (!peer || !current || !current->authenticated() || current->token != token ||
+            !canModeratePublicSkins(*current)) return;
+        const auto error = response["error"].asString();
+        if (!error.empty()) sendSkinChat(*peer, error);
+        else if (origin && response["ok"].asBool()) sendSkinChat(*peer, "已更新来源服的审核结果。");
+        if (origin) {
+            const auto listAction = static_cast<std::byte>(net::SkinReviewAction::List);
+            ByteReader reader(&listAction, 1);
+            handleSkinReview(*current, *peer, reader);
+        } else {
+            sendSkinReviewQueue(*peer, std::as_const(response)["sources"]);
+        }
+    });
+}
+
+std::string GameServer::decideSkinReview(const std::string& id, bool approve) {
+    const auto& saved = database_.storedTable("customSkins")[id];
+    auto skin = skinFromJson(saved);
+    if (skin.id.empty() || skin.review != SkinReviewState::Pending) {
+        return "该皮肤已不在待审队列。";
+    }
+    if (approve) {
+        const auto& look = catalogSkinLook(skin);
+        if (skinsLookAlike(look, starterLook()) || findLookAlikeSkin(look)) {
+            return "这张皮肤和已有公开皮肤或初始外观过于相似，请驳回。";
+        }
+        skin.review = SkinReviewState::Approved;
+    } else {
+        skin.review = SkinReviewState::Rejected;
+    }
+    const std::string ownerId = saved["ownerId"].asString();
+    database_.rawTable("customSkins")[id]["review"] = static_cast<int>(skin.review);
+    database_.markDirty();
+    ByteWriter update;
+    update.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinPublished));
+    writeCustomSkin(update, skin);
+    listener_.each([&](net::Connection& peer) {
+        const auto* owner = sessionFor(peer.id());
+        if (!owner || !owner->authenticated() || owner->userId != ownerId) return;
+        peer.send(update);
+        sendSkinChat(peer, approve
+            ? "皮肤审核通过，可以穿戴或公开。" : "皮肤审核未通过，请修改后重新保存并提交。");
+    });
+    return {};
+}
+
+void GameServer::unequipCustomSkin(const std::string& id, const std::string& exceptUserId) {
+    for (const std::string& userId : database_.playerIds()) {
+        const auto* record = database_.findProgress(userId);
+        if (userId == exceptUserId || !record || record->equippedSkinId != id) continue;
+        auto& changed = database_.progress(userId);
+        changed.equippedSkinId.clear();
+        changed.renderFlags = PlayerRenderNone;
+    }
+    for (auto& [connection, session] : sessions_) {
+        if (!session.authenticated() || session.userId == exceptUserId) continue;
+        if (session.arena && session.arena->equippedSkinId == id) {
+            session.arena->equippedSkinId.clear();
+            session.arena->renderFlags = PlayerRenderNone;
+        }
+        for (const Entity body : bodiesOf(session)) {
+            auto* visuals = world_.tryGet<PlayerVisuals>(body);
+            if (!visuals || visuals->equippedSkinId != id) continue;
+            visuals->equippedSkinId.clear();
+            visuals->renderFlags = PlayerRenderNone;
+        }
+    }
+}
+
 void GameServer::handleDeleteSkin(Session& session, net::Connection& connection,
                                   ByteReader& reader) {
     const std::string id = reader.str();
     if (!reader.ok() || !session.authenticated()) return;
 
-    Json& catalog = database_.rawTable("customSkins");
-    const Json& stored = catalog;
-    if (!stored[id].isObject()) return;
-    const std::string author = stored[id]["author"].asString();
-    const std::string name = stored[id]["name"].asString();
-
-    // Case-blind, as when the skin was counted against its author's limit.
-    const bool owner = lowerCase(author) == lowerCase(session.username);
-    if (!session.admin && !owner) {
-        sendSkinChat(connection, "You can only take down your own skins.");
+    const Json& saved = database_.storedTable("customSkins")[id];
+    if (!saved.isObject()) return;
+    const auto skin = skinFromJson(saved);
+    const bool owner = saved["ownerId"].isString() ? saved["ownerId"].asString() == session.userId
+        : lowerCase(skin.author) == lowerCase(session.username);
+    if (!session.admin && !owner && !(skin.published && canModeratePublicSkins(session))) {
+        sendSkinChat(connection, "You do not have permission to delete this skin.");
         return;
     }
-    catalog.erase(id);
+    database_.rawTable("customSkins").erase(id);
     skinLooks_.erase(id);
+    unequipCustomSkin(id);
     database_.markDirty();
 
     ByteWriter w;
     w.u8(static_cast<std::uint8_t>(net::ServerMessage::SkinDeleted));
     w.str(id);
     broadcastToAuthenticated(w);
-    sendSkinChat(connection, owner ? "Deleted \"" + name + "\"."
-                                   : "Took down \"" + name + "\" by " + author + ".");
+    sendSkinChat(connection, owner ? "Deleted \"" + skin.name + "\"."
+                                   : "Took down \"" + skin.name + "\" by " + skin.author + ".");
 }
 
 const SkinLook& GameServer::catalogSkinLook(const CustomSkin& skin) {
@@ -6034,7 +6945,19 @@ void GameServer::servicePracticeTrials(double nowMillis) {
             distanceSq(player->position, dummy->position) <= 800.0 * 800.0 &&
             practiceLoadoutKey(*equipped) == trial.loadout;
         if (valid && nowMillis < trial.endsAt) continue;
-        if (valid) savePracticeScore(database_, session.userId, practiceLoadout(content(), *equipped), trial.damage);
+        if (valid) {
+            Json breakdown = Json::array();
+            for (const auto& source : trial.sources) {
+                Json row = Json::object();
+                if (source.petal < content().petalCount()) row["petal"] = content().petal(source.petal).id;
+                row["tier"] = rarityIndex(source.rarity);
+                row["seconds"] = Json::array();
+                for (double damage : source.seconds) row["seconds"].push(damage);
+                breakdown.push(std::move(row));
+            }
+            savePracticeScore(database_, session.userId, practiceLoadout(content(), *equipped),
+                              trial.damage, std::move(breakdown));
+        }
         if (auto* connection = listener_.find(session.connection)) {
             if (valid && trial.damage > 0.0) {
                 sendNotice(*connection, net::NoticeSeverity::Good, "10 秒测试结束，成绩默认私密。");
@@ -6076,7 +6999,7 @@ void GameServer::handlePracticeBoard(Session& session, net::Connection& connecti
                 sendNotice(connection, net::NoticeSeverity::Info, "请靠近丛林训练区的超级木桩，以单个角色开始测试。");
             } else {
                 session.practiceTrial = {session.entity, target, clockMillis_ + net::kPracticeWindowSeconds * 1000.0,
-                                         0.0, practiceLoadoutKey(*equipped)};
+                                         0.0, practiceLoadoutKey(*equipped), {}};
                 sendNotice(connection, net::NoticeSeverity::Good, "10 秒木桩测试开始。保持配装并攻击超级木桩。");
             }
             break;
@@ -6109,10 +7032,49 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
     if (!reader.ok()) return;
     if(config_.authorityHyper) {
         Json query=Json::object();query["kind"]="leaderboard";query["offset"]=double(requestedOffset);
-        query["includeAdmins"]=includeAdmins;query["admin"]=session.admin;
+        query["includeAdmins"]=includeAdmins;query["admin"]=session.admin;query["account"]=session.userId;
         queueSharedView(session,connection,query);return;
     }
 
+    constexpr double kLeaderboardCacheMillis = 5000.0;
+    auto& cache = leaderboardCache_[includeAdmins ? 1 : 0];
+    if (wallClockMillis_ >= cache.refreshAtMillis) {
+        refreshLeaderboard(cache, includeAdmins);
+        cache.refreshAtMillis = wallClockMillis_ + kLeaderboardCacheMillis;
+    }
+    if (wallClockMillis_ >= leaderboardHoldingsRefreshAtMillis_) {
+        leaderboardHoldings_ = hyperHoldingBoard(database_, database_.nowMillis());
+        leaderboardHoldingsRefreshAtMillis_ = wallClockMillis_ + kLeaderboardCacheMillis;
+    }
+
+    ByteWriter w;
+    w.u8(static_cast<std::uint8_t>(net::ServerMessage::Leaderboard));
+    w.u8(cache.shown);
+    w.u32(cache.users);
+    w.u32(session.admin ? cache.activeToday : 0);
+    w.raw(cache.rows.data(), cache.rows.size());
+    const auto& holdings = leaderboardHoldings_;
+    const auto total = static_cast<std::uint32_t>(holdings.size());
+    const auto offset = total ? std::min(requestedOffset / kHyperBoardPageSize,
+        (total - 1) / kHyperBoardPageSize) * kHyperBoardPageSize : 0;
+    const auto end = std::min(total, offset + kHyperBoardPageSize);
+    w.u32(total); w.u32(offset); w.u16(static_cast<std::uint16_t>(end - offset));
+    for (auto i = offset; i < end; ++i) {
+        const auto& row = holdings[i];
+        w.str(row.name); w.str(row.petal); w.u32(row.count); w.u32(row.ownerTotal);
+    }
+    w.raw(cache.playtimes.data(), cache.playtimes.size());
+    const auto rankOf = [&](const auto& ranks) {
+        const auto found = ranks.find(session.username);
+        return found == ranks.end() ? 0u : found->second;
+    };
+    w.u32(rankOf(cache.levelRanks));
+    w.u32(rankOf(cache.playtimeRanks));
+    w.u32(hyperHoldingOwnerRank(holdings, session.username));
+    connection.send(w);
+}
+
+void GameServer::refreshLeaderboard(LeaderboardCache& cache, bool includeAdmins) {
     // Ranked over ACCOUNTS, not over the players currently online: the board is
     // a record of progress, and a top player who logged off has not lost it.
     struct Row {
@@ -6126,9 +7088,12 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
     // each row's cached text, so one request used to have the next save
     // re-serialise the whole users table on the tick thread (Database::Table).
     const Database& accounts = database_;
+    const std::int64_t dayAgo = accounts.nowMillis() - 24 * 60 * 60 * 1000;
+    cache.activeToday = 0;
     for (const std::string& username : accounts.usernames()) {
         const Account* account = accounts.findUser(username);
         if (account == nullptr) continue;
+        if (account->lastActiveAtMillis >= dayAgo) ++cache.activeToday;
         // Staff are off the board unless the asker ticked "Show Admins on
         // Leaderboard". The browser's getLeaderboard(limit, includeAdmins)
         // honours that for any caller, not only an admin: it reveals names
@@ -6142,47 +7107,39 @@ void GameServer::handleLeaderboard(const Session& session, net::Connection& conn
     // still one byte on the wire, so the count below stays a u8.
     constexpr std::size_t kRows = 50;
     const std::size_t shown = std::min(kRows, rows.size());
-    std::partial_sort(rows.begin(), rows.begin() + static_cast<long>(shown), rows.end(),
-                      [](const Row& a, const Row& b) { return a.totalXp > b.totalXp; });
+    std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
+        return a.totalXp != b.totalXp ? a.totalXp > b.totalXp : *a.name < *b.name;
+    });
+    cache.levelRanks.clear();
+    for (std::size_t i = 0; i < rows.size(); ++i)
+        cache.levelRanks.emplace(*rows[i].name, static_cast<std::uint32_t>(i + 1));
 
     // The count beside the title is over every account, not over the 50 rows
     // sent. The active-today figure rides along only for an admin, which is
     // how the browser's payload leaves the field out for everyone else -- and 0
     // is the same answer as "absent" to the panel, since the asker is always
     // active today themselves.
-    const std::int64_t dayAgo = database_.nowMillis() - 24 * 60 * 60 * 1000;
-    std::uint32_t activeToday = 0;
-    if (session.admin) {
-        for (const std::string& username : accounts.usernames()) {
-            const Account* account = accounts.findUser(username);
-            if (account && account->lastActiveAtMillis >= dayAgo) ++activeToday;
+    cache.users = static_cast<std::uint32_t>(accounts.userCount());
+    cache.shown = static_cast<std::uint8_t>(shown);
+    cache.rows.clear();
+    for (std::size_t i = 0; i < shown; ++i) {
+        cache.rows.str(*rows[i].name);
+        cache.rows.u16(static_cast<std::uint16_t>(levelFromTotalXp(rows[i].totalXp).level));
+        cache.rows.f64(rows[i].totalXp);
+    }
+    const auto playtimes = playtimeBoard(accounts, includeAdmins, accounts.userCount());
+    const auto shownPlaytime = std::min(kRows, playtimes.size());
+    cache.playtimeRanks.clear();
+    cache.playtimes.clear();
+    cache.playtimes.u8(static_cast<std::uint8_t>(shownPlaytime));
+    for (std::size_t i = 0; i < playtimes.size(); ++i) {
+        const auto& row = playtimes[i];
+        cache.playtimeRanks.emplace(row.name, static_cast<std::uint32_t>(i + 1));
+        if (i < shownPlaytime) {
+            cache.playtimes.str(row.name);
+            cache.playtimes.f64(row.seconds);
         }
     }
-
-    ByteWriter w;
-    w.u8(static_cast<std::uint8_t>(net::ServerMessage::Leaderboard));
-    w.u8(static_cast<std::uint8_t>(shown));
-    w.u32(static_cast<std::uint32_t>(database_.userCount()));
-    w.u32(activeToday);
-    for (std::size_t i = 0; i < shown; ++i) {
-        w.str(*rows[i].name);
-        w.u16(static_cast<std::uint16_t>(levelFromTotalXp(rows[i].totalXp).level));
-        w.f64(rows[i].totalXp);
-    }
-    const auto holdings = hyperHoldingBoard(accounts, database_.nowMillis());
-    const auto total = static_cast<std::uint32_t>(holdings.size());
-    const auto offset = total ? std::min(requestedOffset / kHyperBoardPageSize,
-        (total - 1) / kHyperBoardPageSize) * kHyperBoardPageSize : 0;
-    const auto end = std::min(total, offset + kHyperBoardPageSize);
-    w.u32(total); w.u32(offset); w.u16(static_cast<std::uint16_t>(end - offset));
-    for (auto i = offset; i < end; ++i) {
-        const auto& row = holdings[i];
-        w.str(row.name); w.str(row.petal); w.u32(row.count); w.u32(row.ownerTotal);
-    }
-    const auto playtimes = playtimeBoard(accounts, includeAdmins);
-    w.u8(static_cast<std::uint8_t>(playtimes.size()));
-    for (const auto& row : playtimes) { w.str(row.name); w.f64(row.seconds); }
-    connection.send(w);
 }
 
 // ---------------------------------------------------------------------------
@@ -6319,7 +7276,9 @@ ByteWriter GameServer::guildRosterMessage(const Json& guild) {
     w.str(guildDisplayName(guild));
     w.str(guild["description"].asString());
     w.str(guild["leaderUsername"].asString());
-    w.str(guild["deputyUsername"].asString());
+    const auto deputies = guildDeputies(guild);
+    w.u8(static_cast<std::uint8_t>(deputies.size()));
+    for (const auto& deputy : deputies) w.str(deputy);
     w.u16(static_cast<std::uint16_t>(members.size()));
     for (std::size_t i = 0; i < members.size(); ++i) {
         const std::string member = members[i].asString();
@@ -6446,7 +7405,7 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
         }
         for (auto& row : rows) {
             const auto found = guildByMember.find(row.sortKey);
-            if (found != guildByMember.end()) row.guild = found->second;
+            if (found != guildByMember.end()) row.guild = publicGuildTag(found->second);
         }
     }
     if(config_.authorityAuth) {
@@ -6476,7 +7435,7 @@ void GameServer::serviceOnlineRoster(double nowMillis) {
             const auto shard=item["shard"].asString();if(shard==local||(shard!="one"&&shard!="two"))continue;
             Row row;row.account=item["account"].asString();
             if(std::any_of(rows.begin(),rows.end(),[&](const Row& r){return r.account==row.account;}))continue;
-            row.name=item["name"].asString();row.guild=item["guild"].asString();row.location=item["location"].asString();
+            row.name=item["name"].asString();row.guild=publicGuildTag(item["guild"].asString());row.location=item["location"].asString();
             row.level=static_cast<std::uint16_t>(std::clamp(item["level"].asInt(),1,65535));
             row.sortKey=lowerCase(row.name);row.shard=shard=="one"?1:2;row.sameShard=false;
             rows.push_back(std::move(row));
@@ -6604,13 +7563,12 @@ void GameServer::guildCreate(Session& session, net::Connection& connection,
     }
     if (!validGuildName(name)) {
         sendNotice(connection, net::NoticeSeverity::Warning,
-                   "Guild tag must be exactly 5 alphanumeric characters (A鈥揨, 0鈥?).");
+                   "Guild tag must contain only A-Z and 0-9.");
         return;
     }
-    // No display name is the tag: the card always has something to say.
-    const std::string displayName =
-        trimmed(rawDisplayName).empty() ? name : trimmed(rawDisplayName);
-    if (!validGuildDisplayName(displayName)) {
+    // An omitted display name falls back to the tag when shown.
+    const std::string displayName = trimmed(rawDisplayName);
+    if (!displayName.empty() && !validGuildDisplayName(displayName)) {
         sendNotice(connection, net::NoticeSeverity::Warning,
                    "Guild name must be 1-" + std::to_string(kMaxGuildDisplayName) +
                        " letters, digits, spaces or punctuation.");
@@ -6624,7 +7582,7 @@ void GameServer::guildCreate(Session& session, net::Connection& connection,
     Json& guilds = database_.rawTable("guilds");
     if (guilds.contains(name)) {
         sendNotice(connection, net::NoticeSeverity::Warning,
-                   "A guild named \"" + name + "\" already exists.");
+                   "A guild named \"" + publicGuildTag(name) + "\" already exists.");
         return;
     }
 
@@ -6641,7 +7599,8 @@ void GameServer::guildCreate(Session& session, net::Connection& connection,
     database_.markDirty();
 
     sendNotice(connection, net::NoticeSeverity::Good,
-               "Guild \"" + escapedMarkup(displayName) + "\" [" + name + "] created.");
+               "Guild \"" + escapedMarkup(displayName.empty() ? publicGuildTag(name) : displayName) +
+                   "\" [" + publicGuildTag(name) + "] created.");
     broadcastGuildRoster(guilds[name]);
 }
 
@@ -6723,8 +7682,11 @@ void GameServer::guildInvite(Session& session, net::Connection& connection,
     }
     const Json& guild = database_.storedTable("guilds")[guildName];
     const std::string inviter = lowerCase(session.username);
+    const auto deputies = guildDeputies(guild);
     if (lowerCase(guild["leaderUsername"].asString()) != inviter &&
-        lowerCase(guild["deputyUsername"].asString()) != inviter) {
+        std::none_of(deputies.begin(), deputies.end(), [&](const auto& name) {
+            return lowerCase(name) == inviter;
+        })) {
         sendNotice(connection, net::NoticeSeverity::Warning,
                    "Only the guild leader or deputy can invite players.");
         return;
@@ -6865,9 +7827,7 @@ void GameServer::handleGuildLeave(Session& session, net::Connection& connection)
         promoted = guild["memberUsernames"][std::size_t{0}].asString();
         guild["leaderUsername"] = promoted;
     }
-    const std::string deputy = lowerCase(guild["deputyUsername"].asString());
-    if (!deputy.empty() && (deputy == lowerCase(session.username) || deputy == lowerCase(promoted)))
-        guild.erase("deputyUsername");
+    setGuildDeputies(guild, guildDeputies(guild));
     database_.markDirty();
 
     sendGuildSystem(guild, session.username + " has left the guild.");
@@ -6899,14 +7859,14 @@ void GameServer::guildTransfer(Session& session, net::Connection& connection,
     }
     const auto member = guild["memberUsernames"][static_cast<std::size_t>(at)].asString();
     guild["leaderUsername"] = member;
-    if (lowerCase(guild["deputyUsername"].asString()) == lowerCase(member)) guild.erase("deputyUsername");
+    setGuildDeputies(guild, guildDeputies(guild));
     database_.markDirty();
     sendGuildSystem(guild, session.username + " 已将会长转让给 " + member + "。");
     broadcastGuildRoster(guild);
 }
 
 void GameServer::guildDeputy(Session& session, net::Connection& connection,
-                             const std::string& raw) {
+                             const std::string& raw, bool remove) {
     if (!session.authenticated()) return;
     const auto guildName = guildNameForUser(session.username);
     if (guildName.empty()) return;
@@ -6915,22 +7875,38 @@ void GameServer::guildDeputy(Session& session, net::Connection& connection,
         sendNotice(connection, net::NoticeSeverity::Warning, "只有现任会长可以设置副会长。");
         return;
     }
-    const std::string target = trimmed(raw);
+    auto deputies = guildDeputies(guild);
+    std::string target = trimmed(raw);
     if (target.empty()) {
-        if (guild["deputyUsername"].asString().empty()) return;
-        guild.erase("deputyUsername");
-        sendGuildSystem(guild, "已撤销副会长职位。");
-    } else {
-        const int index = guildMemberIndex(guild, target);
-        if (index < 0 || lowerCase(target) == lowerCase(session.username)) {
-            sendNotice(connection, net::NoticeSeverity::Warning, "请选择本公会的其他成员。");
+        if (remove || deputies.size() != 1) {
+            sendNotice(connection, net::NoticeSeverity::Info, "使用 /guild-deputy 名称任命，/guild-undeputy 名称撤销。");
             return;
         }
-        const auto member = guild["memberUsernames"][static_cast<std::size_t>(index)].asString();
-        if (guild["deputyUsername"].asString() == member) return;
-        guild["deputyUsername"] = member;
+        target = deputies.front();
+        remove = true;
+    }
+    const int index = guildMemberIndex(guild, target);
+    if (index < 0 || lowerCase(target) == lowerCase(session.username)) {
+        sendNotice(connection, net::NoticeSeverity::Warning, "请选择本公会的其他成员。");
+        return;
+    }
+    const auto member = guild["memberUsernames"][static_cast<std::size_t>(index)].asString();
+    const auto appointed = std::find(deputies.begin(), deputies.end(), member);
+    if (remove) {
+        if (appointed == deputies.end()) return;
+        deputies.erase(appointed);
+        sendGuildSystem(guild, member + " 的副会长职位已撤销。");
+    } else {
+        if (appointed != deputies.end()) return;
+        if (deputies.size() >= kMaxGuildDeputies) {
+            sendNotice(connection, net::NoticeSeverity::Warning,
+                       "副会长名额已满，最多 " + std::to_string(kMaxGuildDeputies) + " 人。");
+            return;
+        }
+        deputies.push_back(member);
         sendGuildSystem(guild, member + " 已成为副会长，可以邀请新成员。");
     }
+    setGuildDeputies(guild, deputies);
     database_.markDirty();
     broadcastGuildRoster(guild);
 }
@@ -6967,7 +7943,7 @@ void GameServer::guildKick(Session& session, net::Connection& connection,
     const std::string member = guild["memberUsernames"][static_cast<std::size_t>(at)].asString();
     Json& members = guild["memberUsernames"];
     members.items().erase(members.items().begin() + at);
-    if (lowerCase(guild["deputyUsername"].asString()) == lowerCase(member)) guild.erase("deputyUsername");
+    setGuildDeputies(guild, guildDeputies(guild));
     database_.markDirty();
 
     sendGuildSystem(guild, member + " was kicked from the guild by " + session.username + ".");
@@ -7716,6 +8692,7 @@ void GameServer::serviceNearbyRevives(double nowMillis) {
 
 void GameServer::handleRespawn(Session& session) {
     if (!session.authenticated()) return;
+    if (session.inRift) return;
     if (dungeons_ && dungeons_->inWave(world_, session.entity) && !isStanding(world_, session.entity)) {
         if (auto* connection = listener_.find(session.connection))
             sendNotice(*connection, net::NoticeSeverity::Info, "队友靠近你 3 秒可救援，清完当前波也可复活。");
@@ -7748,6 +8725,21 @@ void GameServer::handleRespawn(Session& session) {
         despawnPlayer(session, false);
     }
     if (corpseRealm == Realm::Arena || respawnAtDoor) corpseKnown = false;
+    if (config_.workshopPreview) {
+        if (const MapData* map = worldMaps_.forRealm(corpseRealm)) {
+            const auto& entries = map->playerSpawns();
+            std::vector<const MapElement*> checkpoints;
+            for (const auto* entry : entries) {
+                if (entry->spawnId.rfind("workshop_respawn_", 0) == 0) checkpoints.push_back(entry);
+            }
+            if (!checkpoints.empty()) {
+                corpsePos = checkpoints[rng_.below(static_cast<std::uint32_t>(checkpoints.size()))]->centre();
+                corpseKnown = true;
+            } else {
+                corpseKnown = false;
+            }
+        }
+    }
     const Entity reborn = corpseKnown ? spawnPlayerNear(session, corpseRealm, corpsePos)
                                       : spawnPlayer(session);
     // The snapshot stream restates the body but never the realm. If somehow
@@ -7829,21 +8821,23 @@ bool GameServer::canMarkPlayer(Entity target, Entity marker, Rarity rarity) {
     return found == markProtectedUntil_.end() || clockMillis_ >= found->second;
 }
 
-bool GameServer::sendMarkedPlayerToHel(Entity target, Entity marker, Rarity rarity) {
+bool GameServer::transportMarkedPlayer(Entity target, Entity marker, Rarity rarity, bool toVoid, bool frozen) {
     if (!canMarkPlayer(target, marker, rarity)) return false;
     const Transform origin = world_.get<Transform>(target);
     bool found = false;
-    Realm realm = worldMaps_.realmOfId("hel", found);
-    if (!found) return false;
-    if (worldMaps_.isPrestige(origin.realm)) {
-        realm = worldMaps_.prestigeRealm(realm, found);
+    Realm realm = worldMaps_.realmOfId(toVoid ? "zorr_void" : frozen ? "zorr_arctic" : "hel", found);
+    if (!found || (frozen && worldMaps_.isPrestige(origin.realm))) return false;
+    if (!toVoid && !frozen && worldMaps_.isPrestige(origin.realm)) {
+        realm = worldMaps_.prestigeRealm(realm, found, worldMaps_.forRealm(origin.realm)->prestigeLevel());
         if (!found) return false;
     }
     const auto* map = worldMaps_.forRealm(realm);
     if (!map) return false;
     std::vector<MobDisc> blockers;
     collectSpawnBlockers(realm, blockers);
-    Vec2 spawn = map->defaultSpawn(rng_, *terrain_, &blockers);
+    Vec2 spawn;
+    if (!toVoid || !map->spawnAt("void-entry", rng_, *terrain_, spawn, &blockers))
+        spawn = map->defaultSpawn(rng_, *terrain_, &blockers);
     const auto* body = world_.tryGet<Body>(target);
     spawn = playerRespawnPosition(*terrain_, realm, spawn, body ? body->radius : 25.0);
     // Protection is per account, not per corpse/petal/caster. Expired rows are
@@ -7859,6 +8853,14 @@ bool GameServer::sendMarkedPlayerToHel(Entity target, Entity marker, Rarity rari
     hp.invulnerableUntilMillis = clockMillis_ + kRespawnInvulnerabilitySeconds * 1000.0;
     world_.remove<Dead>(target);
     if (world_.has<Unrevivable>(target)) world_.remove<Unrevivable>(target);
+    if (toVoid) {
+        Query<Bounty>{world_}.each([&](Entity, Bounty& bounty) {
+            auto& shares = bounty.contributors;
+            shares.erase(std::remove_if(shares.begin(), shares.end(), [&](const Bounty::Share& share) {
+                return share.player == target;
+            }), shares.end());
+        });
+    }
     onPlayerRevived(target, NULL_ENTITY);
     moveEntityToRealm(target, realm, spawn);
     auto& pads = world_.ensure<TeleporterState>(target);
@@ -7868,7 +8870,9 @@ bool GameServer::sendMarkedPlayerToHel(Entity target, Entity marker, Rarity rari
     pads.markReturnAvailable = true;
     victim->hasDeathSite = false;
     if (auto* connection = listener_.find(victim->connection)) {
-        sendNotice(*connection, net::NoticeSeverity::Info, hyper
+        if (toVoid) sendSystem(*connection, "Void Mark：已被传送到虚空。");
+        else if (frozen) sendSystem(*connection, "冰封印记：已被传送到极地。可使用 /mark-return 返回。");
+        else sendNotice(*connection, net::NoticeSeverity::Info, hyper
             ? "H Mark：已传送至地狱，30秒后可用 /mark-return 返回原处。死亡或返回菜单解除滞留；5分钟内免疫其他Mark。"
             : "Mark：已传送至地狱，可立即用 /mark-return 返回原处；5分钟内免疫其他Mark。");
     }
@@ -7998,10 +9002,11 @@ Entity GameServer::spawnPlayerNear(Session& session, Realm realm, Vec2 around) {
 Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) {
     const Realm requestedRealm = realm;
     routePyramidEntrance(realm, spawn);
+    routeJurassicEntrance(realm, spawn);
     // The realm is settled on the session BEFORE the account is applied, and
     // the arena's scratch record with it: applyAccountToEntity reads both.
     session.realm = realm;
-    session.arena.reset();
+    if (!session.inRift) session.arena.reset();
     if (realm == Realm::Arena) session.arena = startArenaRun(database_.progress(session.userId));
 
     const Entity entity = createPlayerBody(session, realm, spawn);
@@ -8021,6 +9026,7 @@ Entity GameServer::finishPlayerSpawn(Session& session, Realm realm, Vec2 spawn) 
     if (session.pyramidMapRealm != realm) session.pyramidMapRevealed = false;
     session.entity = entity;
     session.stage = SessionStage::Playing;
+    session.dummyDamage.clear();
     // A fresh body has a death of its own still to announce.
     session.deathReported = false;
     session.hasDeathSite = false;
@@ -8048,8 +9054,11 @@ Entity GameServer::createPlayerBody(Session& session, Realm realm, Vec2 spawn) {
     world_.add<Knockback>(entity);
     // In the ring players are hostile to each other; everywhere else they are
     // not. Petals and pets copy this Faction, so the whole kit follows.
-    world_.add<Faction>(entity, Faction{Team::Players, realm == Realm::Arena});
-    if (realm == Realm::Arena) world_.add<ArenaScore>(entity);
+    const bool riftCombat = session.inRift && !session.riftEliminated &&
+                            riftPhase_ != RiftPhase::Cooldown;
+    world_.add<Faction>(entity, Faction{Team::Players, realm == Realm::Arena || riftCombat});
+    if (session.inRift) world_.add<RiftPlayer>(entity);
+    if (realm == Realm::Arena || riftCombat) world_.add<ArenaScore>(entity);
     world_.add<PlayerInput>(entity);
     world_.add<PlayerLocation>(entity);
     world_.add<PlayerModifiers>(entity);
@@ -8068,6 +9077,7 @@ Entity GameServer::createPlayerBody(Session& session, Realm realm, Vec2 spawn) {
     // asked for; the account name stays on the session for chat and for saves.
     world_.add<PlayerAccount>(entity,
                               PlayerAccount{session.userId,
+                                            session.inRift ? "Rift Player" :
                                             session.displayName.empty() ? session.username
                                                                         : session.displayName,
                                             session.connection, session.admin});
@@ -8132,7 +9142,7 @@ void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity)
 
     Health& health = world_.ensure<Health>(entity);
     const double previousFraction = health.max > 0 ? health.current / health.max : 1.0;
-    health.max = realm == Realm::Arena
+    health.max = (realm == Realm::Arena || world_.has<RiftPlayer>(entity))
                      ? kArenaMaxHealth
                      : maxHealthForLevel(level) * skills.statScale(SkillId::Health);
     // Preserve the FRACTION across a max-health change, so levelling up mid
@@ -8152,6 +9162,7 @@ void GameServer::applyAccountToEntity(const PlayerRecord& record, Entity entity)
     world_.get<ContactDamage>(entity).intervalMillis = 0.0;
 
     Loadout& loadout = world_.ensure<Loadout>(entity);
+    loadout.activeSlots = skills.loadoutSlots();
     for (std::size_t i = 0; i < kLoadoutSlots; ++i) {
         const WornSlot worn = wornSlot(record, i, realm);
         loadout.slots[i].configIndex = worn.petalIndex;
@@ -8177,7 +9188,7 @@ void GameServer::bankExperience() {
     // kill. Use the merged splitter progress before a death can reap the body.
     for (auto& entry : sessions_) {
         Session& session = entry.second;
-        if (!session.playing() || session.realm == Realm::Arena) continue;
+        if (!session.playing() || session.arena) continue;
         const PlayerProgress* progress = world_.tryGet<PlayerProgress>(session.entity);
         if (progress == nullptr) continue;
 
@@ -8193,7 +9204,7 @@ void GameServer::bankExperience() {
 }
 
 void GameServer::persistPlayer(const Session& session) {
-    if (!session.playing() || !world_.isAlive(session.entity)) return;
+    if (!session.playing() || session.arena || !world_.isAlive(session.entity)) return;
     const PlayerProgress* progress = world_.tryGet<PlayerProgress>(session.entity);
     if (!progress) return;
 
@@ -8221,7 +9232,13 @@ void GameServer::despawnPlayer(Session& session, bool persist) {
     endSplit(session, clockMillis_, false);
     if (persist) persistPlayer(session);
     // Leaving the ring, by any door, is the end of the run.
-    if (session.arena) endArenaRun(session);
+    if (session.arena) {
+        if (session.inRift) session.arena.reset();
+        else endArenaRun(session);
+    }
+    clearRiftPrizes(session);
+    session.inRift = false;
+    session.riftEliminated = false;
     session.realm = Realm::Overworld;
 
     // The petals and pets belong to the body, not the account, so they go
@@ -8230,6 +9247,7 @@ void GameServer::despawnPlayer(Session& session, bool persist) {
 
     session.entity = NULL_ENTITY;
     session.stage = SessionStage::Authenticated;
+    session.dummyDamage.clear();
     views_[session.connection].reset();
     // Same reason as the spawn: the id this member was known by is gone, and a
     // roster still naming it points every squadmate's HUD at nothing.
@@ -8266,8 +9284,10 @@ void GameServer::moveEntityToRealm(Entity entity, Realm realm, Vec2 position) {
     if (!world_.isAlive(entity)) return;
     Transform* transform = world_.tryGet<Transform>(entity);
     if (transform == nullptr) return;
+    if (isRiftRealm(transform->realm) != isRiftRealm(realm)) return;
     const Realm requestedRealm = realm;
     routePyramidEntrance(realm, position);
+    routeJurassicEntrance(realm, position);
     if (realm != requestedRealm) {
         if (const auto* body = world_.tryGet<Body>(entity)) {
             position = playerRespawnPosition(*terrain_, realm, position, body->radius);
@@ -8397,7 +9417,7 @@ std::string GameServer::biomeOfRealm(Realm realm) const {
     // A twin is a biome of its own: nobody in the garden can see a flower in
     // the prestige garden, so the two can no more share a squad than the
     // garden and the desert can.
-    return map->prestige() ? kPrestigeMapPrefix + map->biome() : map->biome();
+    return map->prestige() ? (map->prestigeLevel() == 2 ? kPrestigeTwoMapPrefix : kPrestigeMapPrefix) + map->biome() : map->biome();
 }
 
 std::string GameServer::biomeLabel(const std::string& biome) const {
@@ -8442,7 +9462,7 @@ Realm GameServer::spawnRealmFor(const Session& session) const {
     // The same door on the map's prestige twin: the twin is the same file, so
     // the door's element index means the same rectangle on it.
     bool found = false;
-    const Realm twin = worldMaps_.prestigeRealm(plain, found);
+    const Realm twin = worldMaps_.prestigeRealm(plain, found, session.prestige);
     return found ? twin : plain;
 }
 
@@ -8552,6 +9572,55 @@ void GameServer::sendPyramidMapState(Session& session) {
     }
 }
 
+Realm GameServer::activeJurassicRealm(Realm realm) const {
+    const auto* map = worldMaps_.forRealm(realm);
+    if (!map || map->biome() != "jurassic" || jurassicCycle_ < 0 || jurassicLayouts_.empty())
+        return realm;
+    const Realm active = jurassicLayouts_[static_cast<std::size_t>(jurassicCycle_) % jurassicLayouts_.size()];
+    if (!map->prestige()) return active;
+    bool found = false;
+    const auto twin = worldMaps_.prestigeRealm(active, found);
+    return found ? twin : realm;
+}
+
+void GameServer::routeJurassicEntrance(Realm& realm, Vec2& position) {
+    const Realm active = activeJurassicRealm(realm);
+    if (active == realm) return;
+    realm = active;
+    position = worldMaps_.forRealm(realm)->defaultSpawn(rng_, *terrain_);
+}
+
+void GameServer::serviceJurassicRotation(std::int64_t cycle) {
+    if (cycle == jurassicCycle_ || jurassicLayouts_.empty()) return;
+    const bool first = jurassicCycle_ < 0;
+    jurassicCycle_ = cycle;
+    const Realm active = activeJurassicRealm(jurassicLayouts_.front());
+    bool found = false;
+    const Realm twin = worldMaps_.prestigeRealm(active, found);
+    const Realm second = worldMaps_.prestigeRealm(active, found, 2);
+    spawning_->setActiveJurassicRealms(active, twin, second);
+    if (first) return;
+
+    std::vector<Entity> leaving;
+    Query<PlayerTag, Transform>{world_}.each([&](Entity e, PlayerTag&, Transform& at) {
+        if (activeJurassicRealm(at.realm) != at.realm) leaving.push_back(e);
+    });
+    for (const Entity player : leaving) {
+        Realm realm = world_.get<Transform>(player).realm;
+        Vec2 position;
+        routeJurassicEntrance(realm, position);
+        if (const auto* body = world_.tryGet<Body>(player))
+            position = playerRespawnPosition(*terrain_, realm, position, body->radius);
+        if (auto* pads = world_.tryGet<TeleporterState>(player)) pads->markHoldUntilMillis = 0.0;
+        moveEntityToRealm(player, realm, position);
+    }
+    std::vector<Entity> retired;
+    Query<MobTag, Transform>{world_}.each([&](Entity e, MobTag&, Transform& at) {
+        if (!world_.has<Pet>(e) && activeJurassicRealm(at.realm) != at.realm) retired.push_back(e);
+    });
+    for (const Entity mob : retired) world_.destroy(mob);
+}
+
 Realm GameServer::activePyramidRealm(Realm realm) const {
     const auto* map = worldMaps_.forRealm(realm);
     if (!map || map->biome() != "pyramid" || pyramidCycle_ < 0 || pyramidLayouts_.empty()) return realm;
@@ -8559,7 +9628,7 @@ Realm GameServer::activePyramidRealm(Realm realm) const {
     const Realm active = pyramidLayouts_[static_cast<std::size_t>(pyramidCycle_) % pyramidLayouts_.size()];
     if (!map->prestige()) return active;
     bool found = false;
-    const auto twin = worldMaps_.prestigeRealm(active, found);
+    const auto twin = worldMaps_.prestigeRealm(active, found, map->prestigeLevel());
     return found ? twin : realm;
 }
 
@@ -8568,7 +9637,7 @@ void GameServer::updatePyramidSpawnRealms() {
     const Realm active = activePyramidRealm(pyramidLayouts_.front());
     bool found = false;
     const Realm twin = worldMaps_.prestigeRealm(active, found);
-    spawning_->setActivePyramidRealms(active, twin);
+    spawning_->setActivePyramidRealms(active, twin, worldMaps_.prestigeRealm(active, found, 2));
 }
 
 void GameServer::routePyramidEntrance(Realm& realm, Vec2& position) {
@@ -8693,15 +9762,17 @@ bool GameServer::expireTimedHammer(PlayerRecord& record) {
     database_.markDirty();return expired;
 }
 void GameServer::serviceTimedHammers(double now) {
-    if(now<nextTimedHammerSweep_)return;nextTimedHammerSweep_=now+1000;
-    for(auto& [id,session]:sessions_) {
-        if(!session.authenticated())continue;
-        auto& record=database_.progress(session.userId);
-        if(record.extra["titanHammerLeases"].size()==0 &&
-           !(record.extra["titanHammerExpiresAt"].asDouble(0)>0)&&
-           !record.extra["temporaryHyperHammer"]["active"].asBool(false))continue;
-        liveRecord(session);
-        if(!expireTimedHammer(record))continue;
+    if (now < nextTimedHammerSweep_) return;
+    nextTimedHammerSweep_ = now + 1000;
+    for (auto& [id, session] : sessions_) {
+        if (!session.authenticated()) continue;
+        // Reading the sweep eligibility must not freeze an account's entire
+        // inventory for a pending save. Only hammer owners need a writable row.
+        const auto* record = database_.findProgress(session.userId);
+        if (!record || (record->extra["titanHammerLeases"].size() == 0 &&
+                       !(record->extra["titanHammerExpiresAt"].asDouble(0) > 0) &&
+                       !record->extra["temporaryHyperHammer"]["active"].asBool(false))) continue;
+        if (!expireTimedHammer(database_.progress(session.userId))) continue;
         if(session.playing())applyAccountToSession(session);
         if(auto* connection=listener_.find(id)) {
             sendNotice(*connection,net::NoticeSeverity::Info,"限时雷神之锤已到期，可前往泰坦重新兑换。");

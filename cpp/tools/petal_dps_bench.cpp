@@ -80,7 +80,7 @@ Result measure(std::uint16_t index, Rarity rarity, double separation,
         movement.runPlayerPhase(world,terrain,now,net::kTickSeconds);
         petals.run(world,content(),now,net::kTickSeconds,commands,&terrain,&events);
         rebuild();
-        combat.beginTick(world,now,net::kTickSeconds,events);
+        combat.beginTick(world,content(),now,net::kTickSeconds,events);
         combat.runContactPhase(world,grid,content(),now);
         ai.run(world,terrain,grid,active,now,net::kTickSeconds,commands);
         movement.runWorldPhase(world,terrain,now,net::kTickSeconds);

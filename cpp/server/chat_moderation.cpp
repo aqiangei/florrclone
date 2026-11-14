@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <initializer_list>
+#include <regex>
 #include <utility>
 #include <vector>
 
@@ -65,6 +66,11 @@ constexpr Listed kBlocked[] = {
     {"towelhead", Fit::Inside},
     // Harassment.
     {"kys", Fit::Whole},        {"killyourself", Fit::Inside},
+};
+
+// Exact phrases keep the Chinese filter focused on clear personal abuse.
+constexpr const char* kBlockedChinese[] = {
+    "操你妈", "操你媽", "艹你妈", "艹你媽", "死全家",
 };
 
 /// Real words a listed one sits inside. A match that lies wholly within one
@@ -297,13 +303,14 @@ struct Drawn {
 
 /// Every character `source` draws, in order, read as a client does --
 /// honouring <a> or dropping it with its content, as `links` says.
-std::vector<Drawn> drawnCharacters(const std::string& source, bool links) {
+std::vector<Drawn> drawnCharacters(const std::string& source, bool links, std::string& visible) {
     MarkupOptions options;
     options.links = links;
     std::vector<Drawn> drawn;
     for (const MarkupSpan& span : parseMarkup(source, options)) {
         if (span.lineBreak || !span.image.empty()) {
             drawn.push_back({Kind::Gap, {}});
+            visible += ' ';
             continue;
         }
         for (std::size_t at = 0; at < span.text.size();) {
@@ -312,6 +319,7 @@ std::vector<Drawn> drawnCharacters(const std::string& source, bool links) {
             Drawn character{Kind::Mark, {}};
             character.kind = read(codePoint, character.cell);
             drawn.push_back(character);
+            if (character.kind != Kind::Hidden) visible.append(span.text, at, length);
             at += length;
         }
     }
@@ -458,7 +466,12 @@ bool findListed(const Word& read, const Listed& listed, Found&& found) {
 
 /// The first listed word `source` draws, read with or without <a>, or null.
 const char* findBlocked(const std::string& source, bool links) {
-    for (const Word& word : wordsIn(drawnCharacters(source, links))) {
+    std::string visible;
+    const auto drawn = drawnCharacters(source, links, visible);
+    for (const char* phrase : kBlockedChinese) {
+        if (visible.find(phrase) != std::string::npos) return phrase;
+    }
+    for (const Word& word : wordsIn(drawn)) {
         std::vector<std::pair<std::size_t, std::size_t>> allowed;
         for (const Listed& listed : kAllowed) {
             findListed(word, listed, [&](std::size_t from, std::size_t to) {
@@ -585,6 +598,22 @@ bool chatLineDrawsNothing(const std::string& line) {
         if (codePoint != ' ') drawsSomething = true;
     });
     return !drawsSomething;
+}
+
+bool chatLineContainsWebsite(const std::string& line) {
+    std::string visible;
+    bool link = false;
+    eachDrawn(line, [&](std::uint32_t ch, const MarkupSpan& span) {
+        link = link || !span.href.empty();
+        if (ch >= 0xFF01 && ch <= 0xFF5E) ch -= 0xFEE0;
+        if (ch == 0x3002) ch = '.';
+        visible.push_back(ch <= 127 ? static_cast<char>(ch) : ' ');
+    });
+    if (link) return true;
+    static const std::regex website(
+        R"((https?\s*:\s*/\s*/|(?:^|[^a-z0-9_])(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})|(?:[0-9]{1,3}\.){3}[0-9]{1,3})(?![a-z0-9_-])))",
+        std::regex::icase | std::regex::optimize);
+    return std::regex_search(visible, website);
 }
 
 } // namespace flix

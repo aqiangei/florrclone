@@ -80,6 +80,8 @@
 #include "shared/game/terrain.h"
 
 namespace flix {
+
+class WorldMaps;
 class ServerWorkers;
 
 /// A mob's petal ring, as mobs.json declares it (shared/game/config.h). Named
@@ -658,6 +660,8 @@ public:
     /// wanders, a storm's headings, a web's angle -- so a test gets the same
     /// walk twice.
     explicit MobAiSystem(World& world, std::uint64_t seed = 0xA1B2C3D4E5F60717ull);
+    void setFullSimulation(bool enabled) { fullSimulation_ = enabled; }
+    const WorldMaps* worldMaps = nullptr;
 
     /// Mints the wire id a projectile is broadcast under. Unset, a volley still
     /// flies and still hurts, but no client ever sees it -- replication carries
@@ -756,6 +760,7 @@ private:
         bool centipedeCrawl = false;
         /// Roams on held headings when idle.
         bool diggerAi = false;
+        double blinkMillis = 0;
         /// Circles its target inside its standoff. See pursueTarget().
         bool hornetStrafe = false;
         /// Holds still off a target and jumps at one. See steerJump(); the
@@ -820,6 +825,7 @@ private:
         Vec2 position;
         Realm realm = Realm::Overworld;
         int tier = 0;
+        bool ghost = false;
     };
     struct PetTargetPlan {
         Entity previous = NULL_ENTITY;
@@ -911,11 +917,11 @@ private:
     void roam(const Terrain& terrain, const Transform& transform, Motion& motion, MobAi& ai,
               const Drive& drive, double speed, double nowMillis, double dt);
 
-    /// Weather. Blows toward a point re-picked on its own fast clock, and from
-    /// kSandstormSuckRarity up drags the players around it in as it goes.
-    Vec2 steerSandstorm(World& world, const SpatialGrid& grid, Entity self, const MobType& type,
-                        const Transform& transform, MobAi& ai, double speed, double nowMillis,
-                        double dt);
+    /// Follows bulb glow when visible, otherwise blows toward a point re-picked
+    /// on its own clock. From kSandstormSuckRarity up it also drags nearby players.
+    Vec2 steerSandstorm(World& world, const Terrain& terrain, const SpatialGrid& grid,
+                        Entity self, const MobType& type, const Transform& transform,
+                        MobAi& ai, double speed, double nowMillis, double dt);
     /// Drags every player within kSandstormSuckRange toward `from`, which is
     /// where the storm ends this tick rather than where it started it.
     void suckPlayers(World& world, const SpatialGrid& grid, Vec2 from, Realm realm, double dt);
@@ -984,7 +990,7 @@ private:
     /// off); a HOSTILE one lets go past kMobTargetLeashScale times the circle
     /// it noticed the target in, or after kMobSightGraceMillis behind a wall.
     /// Writes the wall clock into `ai`, hence not const on it.
-    bool holdTarget(const World& world, const Terrain& terrain, Vec2 from, Realm realm, MobAi& ai,
+    bool holdTarget(const World& world, const Terrain& terrain, Entity self, Vec2 from, Realm realm, MobAi& ai,
                     double range, double nowMillis) const;
 
     /// The player a mob turns on this tick, or NULL_ENTITY. Neutral and
@@ -1084,6 +1090,7 @@ private:
 
     Rng rng_;
     Stats stats_;
+    bool fullSimulation_ = false;
     PlayerProximityIndex activePlayersIndex_{kMobActiveRadius};
     static constexpr double kSleepReach = kMobTargetRetainRadius + 1000.0;
     static constexpr double kPassiveSleepReach = kMobActiveRadius + 1000.0;
@@ -1095,10 +1102,12 @@ private:
 
     /// Upper bounds for each realm's broadphase. Individual notice circles
     /// are still evaluated using the target player's own modifiers.
+    bool deepBulbApplies(const World&, Entity, Realm, Vec2) const;
     struct AggroLimits {
         double bonus = 0.0;
         double scale = 1.0;
         bool raised = false;
+        bool litBulb = false;
     };
     std::array<AggroLimits, kMaxRealms> realmAggro_{};
 

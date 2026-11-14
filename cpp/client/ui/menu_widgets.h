@@ -26,8 +26,10 @@
 #include "client/ui/menu_style.h"
 #include "client/ui/menu_theme.h"
 #include "shared/core/types.h"
+#include "shared/game/constants.h"
 #include "shared/game/rarity.h"
 #include "shared/game/skills.h"
+#include "shared/net/protocol.h"
 
 namespace flix { struct EquippedPetal; }
 
@@ -127,6 +129,13 @@ Rect paintTooltip(Canvas&, double x, double y, const std::vector<TooltipLine>&,
 /// the thing being read.
 Vec2 tooltipAnchor(Rect anchor, Vec2 size, double viewWidth, double viewHeight);
 
+/// The ordinary server reload after use or breakage. Equip delays and
+/// separate charge timers are measured independently.
+inline double ordinaryPetalReloadMillis(double baseMillis, double reloadScale) {
+    const double base = baseMillis > 0.0 ? baseMillis : flix::kDefaultPetalReloadMillis;
+    return std::max(base * reloadScale * flix::kPetalReloadFeelScale, flix::net::kTickMillis);
+}
+
 /// Name / tier / description / HP / damage (and the rest of florr's petal
 /// card). Shared by the inventory grid and the loadout bar. `reloadScale` is
 /// the Reload talent times the bar's golden-leaf cut, so the header matches
@@ -136,7 +145,8 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
 
 std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rarity,
                                            const SkillSet& skills, double reloadScale, int slot = -1,
-                                           double triangleBonus = 0.0, bool showHyperTechnique = true);
+                                           double triangleBonus = 0.0, bool showHyperTechnique = true,
+                                           std::optional<double> baseReloadMillis = std::nullopt);
 
 /// The 200 ms the browser waits before a tooltip appears, and the mouse-down
 /// that cancels it. One per hoverable grid; `update` is called every frame

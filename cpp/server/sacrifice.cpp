@@ -39,7 +39,7 @@ constexpr double kSacrificeSpawnMaxGapMillis = 24.0 * 60.0 * 60.0 * 1000.0;
 
 /// The map the sacrifice appears on, by id, and the tier it appears at.
 constexpr const char* kSacrificeMapId = "hel";
-constexpr Rarity kSacrificeSpawnRarity = Rarity::Apex;
+constexpr Rarity kSacrificeSpawnRarity = Rarity::Ascendant;
 
 /// How long one lies on the ground: until somebody takes it. A drop's own
 /// lifetime is minutes at most, and Hel is a big place to search.

@@ -1228,7 +1228,9 @@ void App::drawChat(Canvas& canvas, double time) {
                 // nowrap`.
                 const double room = column.right() - 4.0 - afterCommand;
                 const std::string description =
-                    ellipsize(std::string("- ") + matches[i]->description, 12.0, room);
+                    ellipsize(std::string("- ") + (ui::language() == ui::Language::Zh &&
+                        std::string_view(matches[i]->command) == "/wave"
+                        ? "波次试炼：开房 / 加入房号 / 退出" : matches[i]->description), 12.0, room);
                 chatRun(canvas, description, afterCommand, baseline, 12.0, kPaper, 0.5);
                 y += kChatSuggestionRowHeight;
             }

@@ -171,6 +171,7 @@ enum Toggle : int {
     kAntialiasing,
     kGpuAcceleration,
     kDisableUltraParticles,
+    kSimplifyCombatEffects,
     /// One value, two rows: Graphics calls it "Show Console Logs" and Advanced
     /// "Show Console Logs on Screen", as the browser does.
     kShowConsoleLogs,
@@ -195,6 +196,7 @@ enum Slider : int { kRenderScale, kMobFramerate, kInterpolation, kUiScale };
 
 enum Button : int {
     kSaveControls,
+    kPresetAutosave,
     kResetControls,
     kResetTutorial,
     kGrantAdmin,
@@ -297,6 +299,8 @@ bool* toggleValue(PanelState& st, ClientSettings& settings, int id) {
         case kInvertDefend: return &settings.invertDefend;
         case kHideOtherPetals: return &settings.render.hideOtherPetals;
         case kHideOtherPets: return &settings.render.hideOtherPets;
+        case kDisableUltraParticles: return &settings.render.disableUltraPetalParticles;
+        case kSimplifyCombatEffects: return &settings.render.simplifyCombatEffects;
         case kScreenShake: return &settings.render.screenShake;
         case kShowAdminsOnLeaderboard: return &settings.showAdminsOnLeaderboard;
         case kDesynchronizedCanvas: return &settings.desynchronizedCanvas;
@@ -714,6 +718,17 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.label(tr(Msg::HoldSavePreset), p.cy + 8.0, 12.0, kPaper, kInk);
             p.cy += 20.0;
 
+            if (ctx.net.haveSession()) {
+                const bool enabled = ctx.net.profile().presetAutosave;
+                const char* label = enabled
+                    ? trEnZh("Preset autosave: On", "自动覆盖当前预设：开")
+                    : trEnZh("Preset autosave: Off", "自动覆盖当前预设：关");
+                if (p.button(Rect{contentX, p.cy, contentW, 30.0}, label, kNeutralFill, 13.0, kPresetAutosave)) {
+                    ctx.net.setPresetAutosave(!enabled);
+                }
+                p.cy += 36.0;
+            }
+
             p.cy += 10.0;
             const double btnW = (contentW - 10.0) / 2.0;
             // Every rebind is already live; the browser's Save Controls only
@@ -761,6 +776,16 @@ bool SettingsPanel::render(MenuContext& ctx) {
             p.checkbox(kScreenShake, tr(Msg::ScreenShake));
             p.checkbox(kShowStats, tr(Msg::ShowStats));
             p.checkbox(kShowExactValues, tr(Msg::ShowExactValues));
+            {
+                const bool chinese = language() == Language::Zh;
+                const auto unit = static_cast<int>(settings.render.damageNumberUnit);
+                const char* units[] = {chinese ? "完整数字" : "Full", "K", "M"};
+                const std::string label = std::string(chinese ? "伤害飘字单位  " : "Damage numbers  ") +
+                                          units[unit];
+                if (p.button(Rect{p.x, p.cy, p.w, 26.0}, label.c_str(), kNeutralFill, 12.0, 9903))
+                    settings.render.damageNumberUnit = static_cast<WorldRenderer::DamageNumberUnit>((unit + 1) % 3);
+                p.cy += kRowStride;
+            }
             p.checkbox(kDynamicSkybox, tr(Msg::DynamicSkybox));
             p.checkbox(kMobDeathAnimation, tr(Msg::MobDeathAnimation));
             p.checkbox(kAntialiasing, tr(Msg::Antialiasing));
@@ -770,6 +795,7 @@ bool SettingsPanel::render(MenuContext& ctx) {
                 p.cy+=kRowStride;
             }else p.checkbox(kDesynchronizedCanvas, tr(Msg::DesynchronizedCanvas));
             p.checkbox(kDisableUltraParticles, tr(Msg::DisableUltraParticles));
+            p.checkbox(kSimplifyCombatEffects, trEnZh("Simplify combat effects", "简化战斗特效"));
             p.checkbox(kShowConsoleLogs, tr(Msg::ShowConsoleLogs));
 
             p.cy += 5.0;

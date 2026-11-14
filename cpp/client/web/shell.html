@@ -6,7 +6,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="florr.clone">
-    <title>florrc.lone</title>
+    <title>AshFlor</title>
     <meta name="description" content="florr.io clone">
     <meta name="florr-client-assets" content="FLIX_CLIENT_ASSET_ROUTING">
     <meta name="keywords" content="florr, florr.io, florr clone, flowrix, flowrix pro, flowrix.pro, florrclone cryodome, zorr, zorr.pro, gardn, io games, online game, multiplayer game, browser game, web game">
@@ -51,6 +51,16 @@
         #council-link {flex:1.15;min-width:0;}
         #open-server-guide {flex:1;min-width:0;font:inherit;cursor:pointer;
             border-color:#245e3b;background:#388355;text-shadow:0 2px #245e3b;box-shadow:0 4px #245e3b;}
+        #lobby-feedback {position:fixed;z-index:6;display:flex;align-items:center;gap:10px;
+            color:#f5fff6;font-weight:700;text-shadow:0 1px 3px #153a22;}
+        #lobby-feedback[hidden] {display:none;}
+        #lobby-feedback a {flex:none;display:grid;place-items:center;min-height:44px;
+            padding:0 .65em;border:3px solid #245e3b;border-radius:10px;box-sizing:border-box;
+            background:#388355;color:#fff;text-decoration:none;font-weight:700;white-space:nowrap;}
+        #lobby-feedback small {max-width:18em;font-size:.82em;line-height:1.3;text-wrap:balance;}
+        #lobby-feedback[data-beside] small {position:absolute;left:0;top:calc(100% + 8px);
+            width:215px;pointer-events:none;}
+        #lobby-feedback a:focus-visible {outline:3px solid #fff1a1;outline-offset:3px;}
         #lobby-links[data-compact] svg {display:none;}
         #council-link svg {width:1.25em;height:1.25em;flex:none;}
         #council-link:hover {background:#a455e6;transform:translateY(-1px);box-shadow:0 5px #54217d;}
@@ -153,6 +163,7 @@
             justify-content:space-between;gap:8px;padding:8px 10px 8px 14px;background:#6b9dd6;
         }
         .server-notice-header h2 {color:#fff;font-size:20px;-webkit-text-stroke-width:2.6px;}
+        #server-notice-countdown {display:block;font-size:12px;font-weight:normal;-webkit-text-stroke:0;color:#122c48;}
         .server-notice-body {padding:0 14px 14px;}
         #serverNotice p {margin:8px 0;}
         #serverNotice a {display:flex;align-items:center;min-height:44px;margin:5px 0;padding:3px 9px;
@@ -193,6 +204,11 @@
     </a>
     <button id="open-server-guide" type="button">服务器指引</button>
     </nav>
+    <aside id="lobby-feedback" hidden>
+      <a id="lobby-feedback-link" target="_blank" rel="noopener"
+         aria-describedby="lobby-feedback-reward">去留言板</a>
+      <small id="lobby-feedback-reward">建议被采纳并实际改进，可获随机永久超凡</small>
+    </aside>
     <section id="loadingScreen" aria-label="游戏加载">
       <div class="loading-entry">
         <svg class="loading-mascot" viewBox="0 0 128 128" aria-hidden="true">
@@ -248,22 +264,25 @@
     </section>
     <dialog id="serverNotice" aria-labelledby="server-notice-title">
       <div class="server-notice-header">
-        <h2 id="server-notice-title">服务器指引</h2>
+        <h2 id="server-notice-title">服务器指引<small id="server-notice-countdown">20 秒后自动关闭</small></h2>
         <form method="dialog">
           <button id="closeServerNotice" type="submit" aria-label="关闭服务器指引">×</button>
         </form>
       </div>
       <div class="server-notice-body">
         <div class="server-official-site">
-          <strong>重要提醒！！！今后的正式访问地址</strong>
+          <strong>AshFlor 官方入口</strong>
           <a href="https://ashflor.com/">https://ashflor.com/</a>
-          <p><b>你现在使用的网址以后可能会失效！</b>请现在就收藏上面的域名，也可以截图保存。以后请从这个地址进入游戏。</p>
         </div>
+        <a href="/workshop.html">地图工坊</a>
         <p>各服务器直连地址</p>
-        <a data-server href="http://154.219.105.158:8088/">一服 · 154.219.105.158:8088</a>
-        <a data-server href="http://154.219.105.161:10000/">二服 · 154.219.105.161:10000</a>
+        <a data-server href="http://103.91.210.16:8089/">一服 · 103.91.210.16:8089</a>
+        <a data-server href="http://202.189.23.253:67/">二服 · 202.189.23.253:67</a>
         <a data-server href="http://154.219.105.164:10000/">三服 · 154.219.105.164:10000</a>
         <a data-server href="http://1.14.76.55/">四服 · 1.14.76.55</a>
+        <p>旧账号可直接登录原服。游客请用原浏览器打开旧入口，自动迁移后进入新站。也可以在「账户」里先设置用户名和密码。</p>
+        <a href="http://154.219.105.158:8088/migrate">一服 · 从旧入口迁移游客</a>
+        <a href="http://154.219.105.161:10000/migrate">二服 · 从旧入口迁移游客</a>
         <p><strong>各服存档独立，互不相通。</strong>等级、花瓣和装备只保存在获得它们的服务器。</p>
         <p>请在「账户」里设置用户名和密码，建议填写 QQ 号作为找回凭据。未填写 QQ 号而丢失账号，恕不负责找回。</p>
         <p>QQ群 <strong>227990150</strong></p>
@@ -334,7 +353,11 @@
   const meta = document.getElementById('loading-meta');
   const retry = document.getElementById('loading-retry');
   const quality = document.getElementById('loading-quality');
-  const lowGraphics = query.get('quality') === 'low';
+  const isIPad = /iPad/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const legacyIPad = isIPad && typeof CanvasRenderingContext2D.prototype.roundRect !== 'function';
+  const qualityOverride = query.get('quality');
+  const lowGraphics = qualityOverride === 'low' || (qualityOverride !== 'standard' && legacyIPad);
   window.flixLowMemoryGraphics = lowGraphics;
   status.toggleAttribute('data-static', lowGraphics);
   quality.textContent = lowGraphics ? '标准画质' : '低清模式';
@@ -344,25 +367,53 @@
   quality.href = qualityUrl.href;
   const serverNotice = document.getElementById('serverNotice');
   const noticeKey = 'florr-server-guide-official-site-dismissed';
-  const openNotice = () => {
-    if (!serverNotice.open) serverNotice.showModal();
+  let noticeDismissed = false;
+  try { noticeDismissed = sessionStorage.getItem(noticeKey) === '1'; } catch (_) {}
+  const noticeCountdown = document.getElementById('server-notice-countdown');
+  let noticeTimer = 0, noticeDeadline = 0, noticePointerOutside = false;
+  const updateNoticeCountdown = () => {
+    const seconds = Math.max(0, Math.ceil((noticeDeadline - performance.now()) / 1000));
+    noticeCountdown.textContent = seconds + ' 秒后自动关闭';
+    if (!seconds && serverNotice.open) serverNotice.close();
   };
+  const openNotice = () => {
+    if (serverNotice.open) return;
+    clearInterval(noticeTimer);
+    noticePointerOutside = false;
+    noticeDeadline = performance.now() + 20000;
+    serverNotice.showModal();
+    updateNoticeCountdown();
+    noticeTimer = setInterval(updateNoticeCountdown, 1000);
+  };
+  const outsideNotice = event => {
+    const rect = serverNotice.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right ||
+      event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  serverNotice.addEventListener('pointerdown', event => {
+    noticePointerOutside = event.target === serverNotice && outsideNotice(event);
+  });
+  serverNotice.addEventListener('pointercancel', () => { noticePointerOutside = false; });
+  serverNotice.addEventListener('click', event => {
+    if (noticePointerOutside && event.target === serverNotice && outsideNotice(event)) serverNotice.close();
+    noticePointerOutside = false;
+  });
   document.getElementById('open-server-guide').onclick = openNotice;
   document.getElementById('loading-server-guide').onclick = openNotice;
   serverNotice.addEventListener('close', () => {
+    if (serverNotice.open) return;
+    clearInterval(noticeTimer);
+    noticeTimer = 0;
+    noticeDismissed = true;
     try { sessionStorage.setItem(noticeKey, '1'); } catch (_) {}
   });
-  const officialEntry = Array.from(serverNotice.querySelectorAll('[data-server]'), link => link.host);
-  if (officialEntry.includes(location.host)) {
-    let dismissed = false;
-    try { dismissed = sessionStorage.getItem(noticeKey) === '1'; } catch (_) {}
-    if (!dismissed) openNotice();
-  }
+  const officialEntry = Array.from(serverNotice.querySelectorAll('[data-server]'), link => link.hostname);
+  if (officialEntry.includes(location.hostname) && !noticeDismissed) openNotice();
   const began = performance.now();
   let failed = false, queued = false, bytes = 0, total = 0, lastProgress = began;
   let stallGuideOpened = false;
   const showStallGuide = () => {
-    if (stallGuideOpened) return;
+    if (stallGuideOpened || noticeDismissed) return;
     stallGuideOpened = true;
     openNotice();
   };
@@ -386,12 +437,12 @@
         : '资源下载后会自动启动，请保持页面打开。';
       if(total>0){progress.max=total;progress.value=bytes;}else progress.removeAttribute('value');
     },
-    error(message) {
+    error(message, showGuide = true) {
       failed=true;status.hidden=false;stage.textContent='暂时未能进入游戏';detail.textContent=message;
       progress.hidden=true;retry.hidden=false;meta.textContent='你的账号和存档不会因此丢失。';
-      showStallGuide();
+      if (showGuide) showStallGuide();
     },
-    finish() { if(!failed){status.hidden=true;window.florrMobileReady();} }
+    finish() { status.hidden=true;window.florrMobileReady(); }
   };
   const recoveryKey = '_flix_recover';
   let recovering = false;
@@ -414,7 +465,7 @@
     const stalledFor = performance.now() - lastProgress;
     if (bytes && stalledFor > 10000 && stage.textContent === '正在下载游戏资源')
       detail.textContent=(queued?'已获下载名额。':'')+'当前传输较慢，下载中断会自动重试。';
-    if (stalledFor >= 15000) showStallGuide();
+    if (stalledFor >= 15000 && stage.textContent !== '正在绘制游戏画面') showStallGuide();
   },500);
 
 
@@ -452,12 +503,7 @@
     print: (text) => console.log(text),
     printErr: (text) => console.warn(text),
     setStatus: (text) => {
-      if (!text) {
-        ui.finish();
-        canvas.focus();
-        return;
-      }
-      ui.phase('正在启动游戏', '资源已就绪，正在准备画面和本地设置。');
+      if (text) ui.phase('正在启动游戏', '资源已就绪，正在准备画面和本地设置。');
     },
   };
   window.Module = Module;
@@ -502,6 +548,18 @@
   const quiet = () => booting && !gameStarted;
   const showStatus = game.setStatus;
   game.setStatus = (text) => { if (!quiet()) showStatus(text); };
+  let firstFrameWatchdog;
+  const waitForFirstFrame = () => {
+    ui.phase('正在绘制游戏画面', '游戏引擎已启动，正在准备第一帧。');
+    firstFrameWatchdog = setTimeout(() => {
+      ui.error('游戏画面未能启动。请点「重新连接」，或尝试低清模式。', false);
+    }, gameArguments.includes('--low-memory') ? 30000 : 15000);
+  };
+  game.flixFirstFrame = () => {
+    clearTimeout(firstFrameWatchdog);
+    ui.finish();
+    canvas.focus();
+  };
 
   // What the page downloads is bundle.js -- emscripten's runtime glue -- and
   // bundle.wasm, the client itself with mobs.json, petals.json,
@@ -521,12 +579,54 @@
   //
   // The uncompressed files still ship, and nothing depends on the compressed
   // pair being there: a build served straight out of cpp/build-web has none
-  // (compressing is a staging step -- an incremental relink should not spend
-  // a second deflating five megabytes), and DecompressionStream is missing
-  // from browsers older than 2023. Either way this falls through to the plain
-  // file.
-  let canInflate=false;
-  try { new DecompressionStream('deflate-raw');canInflate=true; } catch (_) {}
+  // (compressing is a staging step). Old Safari can still use the same
+  // compressed artifacts through the local JavaScript inflater.
+  let nativeInflate = false;
+  try { new DecompressionStream('deflate-raw'); nativeInflate = true; } catch (_) {}
+  let LegacyInflate;
+  const legacyInflate = () => {
+    if (LegacyInflate) return LegacyInflate;
+    const module = { exports: {} };
+    const exports = module.exports;
+@FLIX_LEGACY_INFLATE_JS@
+    return LegacyInflate = module.exports.Inflate;
+  };
+  const inflateAsset = (body) => {
+    if (nativeInflate) return body.pipeThrough(new DecompressionStream('deflate-raw'));
+    const Inflate = legacyInflate();
+    const reader = body.getReader();
+    let inflate;
+    let produced = false;
+    return new ReadableStream({
+      start(controller) {
+        inflate = new Inflate((chunk, final) => {
+          if (chunk.length) {
+            controller.enqueue(chunk);
+            produced = true;
+          }
+          if (final) controller.close();
+        });
+      },
+      async pull() {
+        produced = false;
+        try {
+          // A DEFLATE header can span more than one input chunk.
+          while (!produced) {
+            const { value, done } = await reader.read();
+            if (done) {
+              inflate.push(new Uint8Array(0), true);
+              return;
+            }
+            inflate.push(value, false);
+          }
+        } catch (error) {
+          await reader.cancel(error).catch(() => {});
+          throw error;
+        }
+      },
+      cancel(reason) { return reader.cancel(reason); }
+    });
+  };
   const recoveryToken=new URLSearchParams(location.search).get('_flix_recover');
   const ui=window.flixLoading;
   // The entry can provide static asset routes in this document. A standalone
@@ -640,7 +740,7 @@
     for(let attempt=0;attempt<2;attempt++){
       const controller=new AbortController();let timer;
       try {
-        let packed=canInflate;
+        let packed=true;
         let url=resourceUrl(name+(packed?'.bin':''));
         let useMirror=attempt===0&&!recoveryToken&&packed&&name==='bundle.wasm'&&wasmMirror&&directAssets?.['bundle.wasm.bin'];
         timer=setTimeout(()=>controller.abort(),useMirror?6000:25000);
@@ -661,7 +761,7 @@
           });
           downloadCompleted(name);
           if(!quiet())ui.phase('正在解压游戏资源','下载完成，正在处理本地资源。');
-          return new Response(bytes.stream().pipeThrough(new DecompressionStream('deflate-raw')),
+          return new Response(inflateAsset(new Response(bytes).body),
             {headers:{'Content-Type':contentType}});
         }
         response??=await assetResponse(useMirror?wasmMirror:url,controller.signal,0,attempt>0);
@@ -691,7 +791,7 @@
           }
         });
         if(consumeStream){
-          const body=packed?stream.pipeThrough(new DecompressionStream('deflate-raw')):stream;
+          const body=packed?inflateAsset(stream):stream;
           return await consumeStream(new Response(body,{headers:{'Content-Type':contentType}}));
         }
         // Buffer the SMALL compressed artifact once. A failed transfer can be
@@ -699,8 +799,8 @@
         const bytes=await new Response(stream).arrayBuffer();
         clearTimeout(timer);
         if(name==='bundle.wasm'&&!quiet())ui.phase(packed?'正在解压游戏资源':'正在准备游戏资源','下载完成，正在处理本地资源。');
-        let body=new Blob([bytes]).stream();
-        if(packed)body=body.pipeThrough(new DecompressionStream('deflate-raw'));
+        const original=new Response(bytes).body;
+        const body=packed?inflateAsset(original):original;
         return new Response(body,{headers:{'Content-Type':contentType}});
       } catch(error){
         clearTimeout(timer);
@@ -742,6 +842,7 @@
     runtime = new Promise((resolve, reject) => {
       game.onRuntimeInitialized = () => {
         runtimeReady = true;
+        if (gameStarted) waitForFirstFrame();
         resolve();
       };
       runtimeFailed = reject;
@@ -818,7 +919,8 @@
     }
     // A runtime the script already had loaded put nothing on screen to take
     // down; one still loading shows its progress from here on.
-    if (!runtimeReady) status.hidden = false;
+    if (runtimeReady) waitForFirstFrame();
+    else status.hidden = false;
     const started = loadRuntime();
     if (!booting) return;
     started.then(async () => {

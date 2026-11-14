@@ -2,6 +2,7 @@
 #include "server/workers.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <tuple>
 #include <map>
@@ -637,10 +638,22 @@ void LootSystem::tryCollect(World& world, Entity player, Vec2 playerPosition, Re
     // A bot's body carries no connection; see DropItem::humansOnly.
     if (drop->humansOnly && owner == 0) return;
     if (!mayPickUp(*drop, player, owner)) return;
+    if (drop->quantity == 0 || drop->quantity > kMaxStackCount) {
+        std::fprintf(stderr, "[loot] rejected invalid ground stack: petal=%u tier=%u quantity=%u\n",
+                     static_cast<unsigned>(drop->configIndex),
+                     static_cast<unsigned>(rarityIndex(drop->rarity)),
+                     static_cast<unsigned>(drop->quantity));
+        commands.destroy(candidate);
+        return;
+    }
 
     const Pickup pickup{drop->quantity, player, drop->configIndex, drop->rarity};
-    pickups_.push_back(pickup);
-    if (onPickup) onPickup(pickup);
+    if (drop->riftPrize) {
+        if (!collectRiftPrize || !collectRiftPrize(pickup)) return;
+    } else {
+        pickups_.push_back(pickup);
+        if (onPickup) onPickup(pickup);
+    }
 
     const NetId* dropId = world.tryGet<NetId>(candidate);
     const NetId* playerId = world.tryGet<NetId>(player);
@@ -728,7 +741,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             const Entity e = entry.entity;
             auto& item = world.get<DropItem>(e);
             const auto& position = world.get<Transform>(e);
-            if (item.configIndex != petal || item.rarity != rarity || position.realm != realm ||
+             if (item.configIndex != petal || item.rarity != rarity || position.realm != realm ||
+                 item.quantity >= kMaxStackCount ||
                 distanceSq(position.position, at) > 150.0 * 150.0 ||
                 item.eligible.size() != eligible.size()) continue;
             bool same = true;
@@ -767,6 +781,11 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         const MobType* type = world.tryGet<MobType>(corpse);
         const Transform* transform = world.tryGet<Transform>(corpse);
         if (type == nullptr || transform == nullptr) continue;
+        if (const auto* subdivision = world.tryGet<CancerSubdivision>(corpse);
+            subdivision && subdivision->spawnedCopy) {
+            world.add<LootAwarded>(corpse);
+            continue;
+        }
         const auto* wave = world.tryGet<WaveEnemy>(corpse);
         const bool waveBoss = wave && (type->rarity == Rarity::Unique || type->rarity == Rarity::Apex);
         double& waveReady = type->rarity == Rarity::Apex ? nextWaveHyperLootMillis_ : nextWaveEternalLootMillis_;
@@ -774,7 +793,8 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             world.add<LootAwarded>(corpse);
             continue;
         }
-        hyperKill=type->rarity==Rarity::Apex;
+        const bool apexKill = type->rarity == Rarity::Ascendant;
+        hyperKill = type->rarity == Rarity::Apex || apexKill;
         reducedClaimants.clear();
 
         // Read the corpse out in full first. Everything below is a structural
@@ -782,12 +802,13 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // too: adding LootAwarded moves the corpse out of its row, and the
         // corpse swapped into that row may be standing on another map.
         const std::uint16_t mobIndex = type->configIndex;
-        const Rarity mobRarity = type->rarity;
+        const Rarity mobRarity = apexKill ? Rarity::Apex : type->rarity;
         const Vec2 at = transform->position;
         const Realm realm = transform->realm;
         const Health* health = world.tryGet<Health>(corpse);
         const double maxHealth = health != nullptr ? health->max : 0.0;
-        const double damageFloor = lootDamageFloor(mobRarity, maxHealth);
+        const double damageFloor = apexKill ? lootDamageFloor(maxHealth) :
+                                                    lootDamageFloor(mobRarity, maxHealth);
 
         // Loot slots go to the highest positive contributors, just like XP.
         ranked_.clear();
@@ -813,6 +834,15 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
             });
             selectLootRecipients(ranked_, lootSlotsForRarity(mobRarity), squads, eligible_,
                                  damageFloor);
+        }
+
+        if (const auto* inherited = world.tryGet<InheritedLootClaims>(corpse)) {
+            for (const auto& claim : inherited->recipients) {
+                const Entity player = liveContributorBody(world, {claim.player, claim.owner, 0.0});
+                if (player != NULL_ENTITY &&
+                    std::find(eligible_.begin(), eligible_.end(), player) == eligible_.end())
+                    eligible_.push_back(player);
+            }
         }
 
         // A common mob rolls its authored rows one by one; everything above
@@ -865,6 +895,54 @@ void LootSystem::awardDeaths(World& world, const ContentRegistry& content, Rng& 
         // from everybody else. kRarityCount is "no orb worn", which is almost
         // every flower in the game, and then nothing splits.
         const auto baseEligible=eligible_;
+        if (apexKill && !table.empty()) {
+            std::vector<const DropTables::Entry*> apexPool;
+            for (const auto& entry : table) {
+                if (entry.kind == DropTables::Kind::RandomPetal ||
+                    (entry.petalIndex < content.petalCount() &&
+                     !content.petal(entry.petalIndex).isAdminPetal &&
+                     !petalHasOwnSource(content.petal(entry.petalIndex)) &&
+                     petalComesAt(content.petal(entry.petalIndex), Rarity::Ascendant))) {
+                    apexPool.push_back(&entry);
+                }
+            }
+            std::vector<std::string> paidAccounts;
+            for (const Entity claimant : baseEligible) {
+                if (apexPool.empty()) break;
+                const auto* account = world.tryGet<PlayerAccount>(claimant);
+                const auto* location = world.tryGet<Transform>(claimant);
+                if (!account || account->connection == 0 || account->userId.empty() ||
+                    !location || location->realm != realm ||
+                    std::find(paidAccounts.begin(), paidAccounts.end(), account->userId) != paidAccounts.end())
+                    continue;
+                const bool contributed = std::any_of(ranked_.begin(), ranked_.end(),
+                    [&](const Bounty::Share& share) {
+                        return (share.owner == account->connection || share.player == claimant) &&
+                               share.damage >= damageFloor;
+                    });
+                if (!contributed) continue;
+                paidAccounts.push_back(account->userId);
+                if (!rng.chance(kApexPetalDropChance)) continue;
+                // One personal roll per kill. Magic conversion only changes the
+                // selected type, so it cannot change the odds or rarity.
+                const auto* entry = apexPool[rng.below(apexPool.size())];
+                auto petal = entry->kind == DropTables::Kind::RandomPetal
+                    ? tables_.randomPetal(rng, Rarity::Ascendant) : entry->petalIndex;
+                if (petal == kInvalidIndex) continue;
+                const auto magic = entry->magicPetal != kNoPetal
+                    ? entry->magicPetal : content.magicFormOf(petal);
+                const int orbTier = wornOrbTier(world, content, claimant, magicOrb);
+                if (magic < content.petalCount() && orbTier != kRarityCount &&
+                    orbTier >= rarityIndex(content.petal(magic).minRarity)) petal = magic;
+                const Entity drop = spawnDrop(world, petal, Rarity::Ascendant, at, realm, {claimant});
+                if (drop != NULL_ENTITY) {
+                    auto& item = world.get<DropItem>(drop);
+                    item.humansOnly = true;
+                    item.singleCopy = true;
+                    fresh_.push_back(drop);
+                }
+            }
+        }
         std::vector<std::uint16_t> hyperEternalPool;
         std::vector<HyperEternalDropWeight> hyperWeights;
         if(hyperKill)for(const auto& entry:table)

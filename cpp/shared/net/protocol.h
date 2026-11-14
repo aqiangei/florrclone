@@ -24,7 +24,7 @@ using ConnectionId = std::uint32_t;
 /// Bumped whenever any message layout in this file changes.
 // Version 80 also requires the shared visible-garbage content rules so an
 // older painter cannot connect and show items the server will not award.
-inline constexpr std::uint16_t kProtocolVersion = 113; // Whole-bag Eternal forge and petal recycling.
+inline constexpr std::uint16_t kProtocolVersion = 127; // Apex hammer forge and holder query.
 
 /// "Not one of the rotating store's cards": a purchase at the full ladder
 /// price. Any other value is a slot index the server checks against the offers
@@ -106,7 +106,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< the same query is an opcode with the same two
                         ///< parameters.
     GuildCreate,        ///< str tag, str displayName. The tag is the guild's
-                        ///< key -- 5 alphanumerics, upper-cased server-side --
+                        ///< key -- ASCII letters or digits, upper-cased server-side --
                         ///< and the display name is free text; an empty one
                         ///< falls back to the tag. (Version 45.)
     GuildInvite,        ///< str username
@@ -173,7 +173,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< Per-account/per-petal price ledger; never takes
                         ///< items from another account. Requires live body
                         ///< near a Titan NPC. (Rules updated v73.)
-    TitanHolder,        ///< u16 itemType -- who holds that petal at universal,
+    TitanHolder,        ///< u16 itemType (0xffff for Apex hammer) -- who holds that petal at universal,
                         ///< for the titan to remember forging it for. Answered
                         ///< only to a flower standing at the titan, and at most
                         ///< once per kTitanHolderQueryMillis per session: a
@@ -201,7 +201,7 @@ enum class ClientMessage : std::uint8_t {
                         ///< OracleCraft's oracle is found; the tier only says
                         ///< WHICH one when two stand close. Never a roll, and
                         ///< all or nothing. (Version 55.)
-    Absorb,             ///< u8 recycle (0 XP, 1 stars), u16 stackCount, { u16 itemType, u8 rarity, u32 count }*
+    Absorb,             ///< u8 reserved (must be 0 for XP), u16 stackCount, { u16 itemType, u8 rarity, u32 count }*
                         ///< -- the craft window's Absorb side: every staged
                         ///< stack in ONE request, destroyed for XP
                         ///< (shared/game/absorb.h). All or nothing: one stack
@@ -245,6 +245,8 @@ enum class ClientMessage : std::uint8_t {
     AccountQQ,          ///< bool save, str value if saving; private account record only.
     RequestPracticeBoard, ///< bool includeAdmins, u8 action, u32 own record id.
     RequestWaveRoomStatus, ///< no payload.
+    SkinReview,        ///< u8 SkinReviewAction, str skinId for decisions.
+    SetPresetAutosave, ///< bool enabled.
 };
 
 enum class ServerMessage : std::uint8_t {
@@ -271,7 +273,8 @@ enum class ServerMessage : std::uint8_t {
                         ///< line can also be drawn as a bubble over that body;
                         ///< 0 for anything the server said in its own voice.
     Notice,             ///< u8 severity, str text
-    Died,               ///< str killerName, u32 xpLost, u32 survivedTicks
+    Died,               ///< str killerName, u32 xpLost, u32 survivedTicks, u32 stack count,
+                        ///< then {u16 petal, u8 rarity, u32 credited quantity} per stack
     CraftResult,        ///< u8 success, u16 itemType, u8 rarity, u32 crafted,
                         ///< u8 petalsReturned, str reason, u32 attempts, u32 consumed (v71). `crafted` is how
                         ///< many upgrades the pool produced and
@@ -281,7 +284,8 @@ enum class ServerMessage : std::uint8_t {
     Leaderboard,        ///< u8 count, u32 totalAccounts, u32 dailyActiveUsers,
                         ///< { str name, u16 level, f64 totalXp }*, then u32 hyperTotal,
                         ///< u32 hyperOffset, u16 hyperCount,
-                        ///< { str name, str petal, u32 count, u32 ownerTotal }*.
+                        ///< { str name, str petal, u32 count, u32 ownerTotal }*, u8 playtimeCount,
+                        ///< { str name, f64 seconds }*, then u32 self level, playtime and hyper ranks.
                         ///< `dailyActiveUsers` is 0 for a non-admin, where the
                         ///< TypeScript server's payload left the field out.
     Pong,               ///< u64 clientTimeMillis, u64 serverTimeMillis
@@ -300,7 +304,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< The shop panel's own reply channel: a refusal is a
                         ///< modal on the card, not a line in the chat, so it
                         ///< cannot travel as a Notice.
-    SkinCatalog,        ///< u8 isAdmin, str equippedSkinId, u16 count,
+    SkinCatalog,        ///< u8 SkinCatalogFlags, str equippedSkinId, u16 count,
                         ///< { CustomSkin }*. Sent once per authentication: the
                         ///< studio's Browse tab lists it, and it is also what
                         ///< lets a client draw a skin somebody else is wearing.
@@ -312,7 +316,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< `more` is set when the page filled the requested
                         ///< limit, which is the TypeScript build's `hasMore`.
     GuildUpdate,        ///< u8 joined, str tag, str displayName, str description,
-                        ///< str leader, str deputy, u16 memberCount,
+                        ///< str leader, u8 deputyCount, { str deputy }*, u16 memberCount,
                         ///< { str username, u8 online, str location }*.
                         ///< `joined` 0 is the TypeScript build's
                         ///< `guildUpdate null` and carries no rest.
@@ -425,7 +429,7 @@ enum class ServerMessage : std::uint8_t {
                         ///< there -- so the client goes back to the title
                         ///< screen as if it had left. The Profile after it is
                         ///< the one a LeaveGame is answered with. (Version 57.)
-    AbsorbResult,       ///< u8 ok, f64 reward (XP or stars), u32 petalsAbsorbed, str reason
+    AbsorbResult,       ///< u8 ok, f64 XP, u32 petalsAbsorbed, str reason
                         ///< -- the answer to ClientMessage::Absorb. On a
                         ///< refusal nothing was taken and `reason` says why.
                         ///< The Profile follows it. (Version 58.)
@@ -473,6 +477,8 @@ enum class ServerMessage : std::uint8_t {
     AccountQQ,          ///< bool saved, str current value; only to the authenticated owner.
     PracticeBoard,      ///< u32 own rank, then private and public ranked record lists.
     WaveRoomStatus,     ///< u8 occupied seats, bool personal daily star cap reached.
+    SkinReviewQueue,    ///< u8 count, followed by CustomSkin rows awaiting review.
+    RiftStatus,         ///< bool admissionOpen.
 };
 
 // ---------------------------------------------------------------------------
@@ -516,6 +522,15 @@ enum class NotificationKind : std::uint8_t {
     StarCode,
     UniversalCraft,     ///< a universal forged at a titan (version 47)
     PermanentHyperForge,
+    AscendantCraft,
+};
+
+enum class SkinReviewAction : std::uint8_t { List, Approve, Reject };
+
+/// Server-held abilities announced with the skin catalog.
+enum SkinCatalogFlags : std::uint8_t {
+    SkinCatalogAdmin = 1u << 0,
+    SkinCatalogModerator = 1u << 1,
 };
 
 /// What the Profile says about the account itself rather than its progress:
@@ -528,6 +543,7 @@ enum AccountFlags : std::uint8_t {
     /// server keeps to itself -- so the session token is the only way into the
     /// account, and ChangePassword does not ask for the current one.
     kAccountNoPassword = 1u << 1,
+    kAccountPresetAutosaveOff = 1u << 2,
 };
 
 /// Which shop action a ShopResult answers.
@@ -579,7 +595,10 @@ inline constexpr std::size_t kMaxAnnouncementBytes = 120;
 enum InputFlags : std::uint8_t {
     InputAttack  = 1 << 0,
     InputDefend  = 1 << 1,
+    InputHideForeignPetals = 1 << 2,
+    InputHideForeignPets   = 1 << 3,
 };
+inline constexpr std::uint8_t kInputVisibilityMask = InputHideForeignPetals | InputHideForeignPets;
 
 /// One tick of intent from a client.
 ///
@@ -1007,11 +1026,20 @@ enum class EventKind : std::uint8_t {
     Explosion,      ///< Positional burst. Berry launches use the colour byte
                     ///< for their style and the existing amount slot for heading.
     /// A lightning strike: `position` is where it landed and `radius` its
-    /// reach. The ONLY event with a variable tail -- u8 count, then that many
+    /// reach. Its tail is a u8 count, then that many
     /// f32 x, f32 y -- because a bolt is drawn to each mob the strike hit and
     /// the client has no way to work out which those were: the strike's damage
     /// is resolved a tick later, by which time the dead are gone.
     Lightning,
+    /// Absolute viewer-only state, repeated while the damaged dummy is visible.
+    /// Its record contains only u32 dummy net id, f64 DPS, f64 total damage.
+    PracticeMeter,
+};
+
+struct PracticeMeter {
+    std::uint32_t netId = 0;
+    double dps = 0;
+    double total = 0;
 };
 
 /// How many struck mobs ride a Lightning event.

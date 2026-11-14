@@ -54,6 +54,7 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::RedeemCode:          return "redeemCode";
         case net::ClientMessage::PublishSkin:         return "publishSkin";
         case net::ClientMessage::EquipSkin:           return "equipSkin";
+        case net::ClientMessage::SkinReview:         return "skinReview";
         case net::ClientMessage::DeleteSkin:          return "deleteSkin";
         case net::ClientMessage::RequestNotifications:return "notifications";
         case net::ClientMessage::GuildCreate:         return "guildCreate";
@@ -69,6 +70,7 @@ const char* clientMessageName(std::uint8_t id) {
         case net::ClientMessage::OracleCraft:         return "oracleCraft";
         case net::ClientMessage::SwapLoadoutRows:     return "swapLoadoutRows";
         case net::ClientMessage::SaveLoadoutPreset:   return "saveLoadoutPreset";
+        case net::ClientMessage::SetPresetAutosave:   return "setPresetAutosave";
         case net::ClientMessage::LoadLoadoutPreset:   return "loadLoadoutPreset";
         case net::ClientMessage::Trade:               return "trade";
         case net::ClientMessage::AdminDb:             return "adminDb";
@@ -97,6 +99,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::Revived:             return "revived";
         case net::ServerMessage::CraftResult:         return "craftResult";
         case net::ServerMessage::PracticeBoard:       return "practiceBoard";
+        case net::ServerMessage::RiftStatus:          return "riftStatus";
         case net::ServerMessage::WaveRoomStatus:      return "waveRoomStatus";
         case net::ServerMessage::Leaderboard:         return "leaderboard";
         case net::ServerMessage::Pong:                return "pong";
@@ -106,6 +109,7 @@ const char* serverMessageName(std::uint8_t id) {
         case net::ServerMessage::SkinCatalog:         return "skinCatalog";
         case net::ServerMessage::SkinPublished:       return "skinPublished";
         case net::ServerMessage::SkinDeleted:         return "skinDeleted";
+        case net::ServerMessage::SkinReviewQueue:    return "skinReviewQueue";
         case net::ServerMessage::Notifications:       return "notifications";
         case net::ServerMessage::SquadUpdate:         return "squadUpdate";
         case net::ServerMessage::GuildUpdate:         return "guildUpdate";
@@ -158,6 +162,7 @@ bool NetClient::connect(const std::string& host, std::uint16_t port) {
 }
 
 void NetClient::disconnect() {
+    riftOpen_ = false;
     dialer_.disconnect();
     status_ = Status::Offline;
     clearViewOnSnapshot_ = false;
@@ -319,9 +324,12 @@ void NetClient::forgetAccount() {
     skinCatalog_.clear();
     equippedSkinId_.clear();
     skinAdmin_ = false;
+    skinModerator_ = false;
+    skinReviewQueue_.clear();
     practiceBoard_ = {};
     leaderboard_.clear();
     playtimeLeaderboard_.clear();
+    ownLevelRank_ = ownPlaytimeRank_ = ownHyperRank_ = 0;
     hyperBoard_.clear(); hyperHoldingsTotal_ = hyperHoldingsOffset_ = 0;
     leaderboardPending_ = false;
     notifications_.clear();
@@ -411,12 +419,16 @@ void NetClient::forgetWorld() {
     revived = false;
 }
 
-void NetClient::sendInput(const net::InputFrame& input) {
-    if (status_ != Status::Playing) return;
+bool NetClient::sendInput(const net::InputFrame& input) {
+    // The next control sample replaces this one. Leave space for ordered
+    // commands and send the newest controls when the connection drains.
+    constexpr std::size_t kInputBacklogLimit = 512;
+    if (status_ != Status::Playing || dialer_.outboundBacklog() >= kInputBacklogLimit) return false;
     ByteWriter w;
     beginMessage(w, net::ClientMessage::Input);
     input.write(w);
     send(w);
+    return true;
 }
 
 void NetClient::sendChat(const std::string& text) {
@@ -447,6 +459,13 @@ void NetClient::swapLoadoutSlots(int a, int b) {
 void NetClient::swapLoadoutRows() {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::SwapLoadoutRows);
+    send(w);
+}
+
+void NetClient::setPresetAutosave(bool enabled) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::SetPresetAutosave);
+    w.boolean(enabled);
     send(w);
 }
 
@@ -557,12 +576,12 @@ void NetClient::requestAssemble(Rarity rarity, std::uint8_t recipe, std::uint16_
     send(w);
 }
 
-void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks, bool recycle) {
+void NetClient::requestAbsorb(const std::vector<AbsorbStack>& stacks) {
     if (stacks.empty()) return;
     const std::size_t count = std::min<std::size_t>(stacks.size(), kMaxAbsorbStacks);
     ByteWriter w;
     beginMessage(w, net::ClientMessage::Absorb);
-    w.boolean(recycle);
+    w.u8(0); // reserved mode, XP only
     w.u16(static_cast<std::uint16_t>(count));
     for (std::size_t i = 0; i < count; ++i) {
         w.u16(stacks[i].petalIndex);
@@ -586,6 +605,14 @@ void NetClient::requestPermanentHyperForge(std::uint16_t petalIndex) {
     beginMessage(w, net::ClientMessage::TitanForge);
     w.u16(petalIndex);
     w.u8(kPermanentHyperForgeMode);
+    send(w);
+}
+
+void NetClient::requestApexHammerForge(std::uint16_t fragmentIndex) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::TitanForge);
+    w.u16(fragmentIndex);
+    w.u8(kApexHammerForgeMode);
     send(w);
 }
 
@@ -692,6 +719,14 @@ void NetClient::deleteSkin(const std::string& id) {
     ByteWriter w;
     beginMessage(w, net::ClientMessage::DeleteSkin);
     w.str(id);
+    send(w);
+}
+
+void NetClient::requestSkinReview(net::SkinReviewAction action, const std::string& id) {
+    ByteWriter w;
+    beginMessage(w, net::ClientMessage::SkinReview);
+    w.u8(static_cast<std::uint8_t>(action));
+    if (action != net::SkinReviewAction::List) w.str(id);
     send(w);
 }
 
@@ -1075,6 +1110,15 @@ void NetClient::adminControl(net::ConnectionId player, const std::string& userna
     send(w);
 }
 
+void NetClient::adminSetMuted(net::ConnectionId player, const std::string& accountId, bool muted) {
+    ByteWriter w;
+    beginAdminDashboard(w, net::AdminDashboardOp::SetMuted);
+    w.u32(player);
+    w.str(accountId);
+    w.u8(muted ? 1 : 0);
+    send(w);
+}
+
 void NetClient::adminRelease() {
     ByteWriter w;
     beginAdminDashboard(w, net::AdminDashboardOp::Release);
@@ -1273,15 +1317,20 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::Profile:      handleProfile(reader); break;
         case net::ServerMessage::ProfileDelta: handleProfileDelta(reader); break;
         case net::ServerMessage::JoinAccepted: handleJoinAccepted(reader); break;
-        case net::ServerMessage::Snapshot:
+        case net::ServerMessage::Snapshot: {
             if (clearViewOnSnapshot_) {
                 const Realm currentRealm = view_.realm();
                 view_.clear();
                 view_.setRealm(currentRealm);
                 clearViewOnSnapshot_ = false;
             }
-            view_.applySnapshot(reader);
+            auto next = connection.nextBufferedMessage();
+            const bool queuedSnapshot = next &&
+                next->u8() == static_cast<std::uint8_t>(net::ServerMessage::Snapshot);
+            view_.applySnapshot(reader, renderClockMillis(),
+                                !queuedSnapshot || connection.frameAgeMillis() < 150.0);
             break;
+        }
         case net::ServerMessage::Chat:         handleChat(reader); break;
         case net::ServerMessage::Notice:       handleNotice(reader); break;
         case net::ServerMessage::Died:         handleDied(reader); break;
@@ -1319,12 +1368,24 @@ void NetClient::onMessage(net::Connection& connection, ByteReader& reader) {
         case net::ServerMessage::SkinCatalog:   handleSkinCatalog(reader); break;
         case net::ServerMessage::SkinPublished: handleSkinPublished(reader); break;
         case net::ServerMessage::SkinDeleted:   handleSkinDeleted(reader); break;
+        case net::ServerMessage::SkinReviewQueue: {
+            std::vector<CustomSkin> queue;
+            const auto count = reader.u8();
+            for (int i = 0; i < count; ++i) {
+                CustomSkin skin;
+                if (!readCustomSkin(reader, skin)) return;
+                queue.push_back(std::move(skin));
+            }
+            if (reader.ok()) skinReviewQueue_ = std::move(queue);
+            break;
+        }
         case net::ServerMessage::Notifications: handleNotifications(reader); break;
         case net::ServerMessage::SquadUpdate:   handleSquadUpdate(reader); break;
         case net::ServerMessage::GuildUpdate:   handleGuildUpdate(reader); break;
         case net::ServerMessage::GuildInviteReceived: handleGuildInviteReceived(reader); break;
         case net::ServerMessage::DebugStats:    handleDebugStats(reader); break;
         case net::ServerMessage::MazeInfo:      handleMazeInfo(reader); break;
+        case net::ServerMessage::RiftStatus:     riftOpen_ = reader.boolean(); break;
         case net::ServerMessage::RealmChange:   handleRealmChange(reader); break;
         case net::ServerMessage::Teleported:    teleported_ = true; break;
         case net::ServerMessage::ChangePasswordResult: handleChangePasswordResult(reader); break;
@@ -1473,6 +1534,7 @@ void NetClient::handleProfile(ByteReader& reader) {
     const std::uint8_t accountFlags = reader.u8();
     next.guest = (accountFlags & net::kAccountGuest) != 0;
     next.hasPassword = (accountFlags & net::kAccountNoPassword) == 0;
+    next.presetAutosave = (accountFlags & net::kAccountPresetAutosaveOff) == 0;
     next.totalXp = reader.f64();
     next.level = reader.u16();
     next.stars = reader.f64();
@@ -1772,6 +1834,23 @@ void NetClient::handlePracticeBoard(ByteReader& reader) {
             row.atMillis = reader.f64();
             row.published = reader.boolean();
             const auto loadout = Json::parseOrNull(reader.str());
+            const auto breakdown = Json::parseOrNull(reader.str());
+            for (const auto& item : breakdown.items()) {
+                const auto& seconds = item["seconds"].items();
+                if (seconds.size() != net::kPracticeWindowSeconds) continue;
+                PracticeBoardDamage source;
+                source.petal = item["petal"].asString();
+                source.rarity = clampRarity(item["tier"].asInt());
+                for (std::size_t second = 0; second < seconds.size(); ++second) {
+                    source.seconds[second] = std::max(0.0, seconds[second].asDouble());
+                    source.total += source.seconds[second];
+                }
+                if (std::isfinite(source.total) && source.total > 0)
+                    row.breakdown.push_back(std::move(source));
+            }
+            std::stable_sort(row.breakdown.begin(), row.breakdown.end(), [](const auto& a, const auto& b) {
+                return a.total > b.total;
+            });
             for (const auto& item : loadout.items()) {
                 if (row.loadout.size() == kLoadoutActiveSlots) break;
                 row.loadout.push_back({item["slot"].asInt(), item["petal"].asString(),
@@ -1816,7 +1895,13 @@ void NetClient::handleLeaderboard(ByteReader& reader) {
         LeaderboardRow row; row.name = reader.str(); row.totalXp = reader.f64();
         playtimes.push_back(std::move(row));
     }
+    const auto levelRank = reader.u32();
+    const auto playtimeRank = reader.u32();
+    const auto hyperRank = reader.u32();
     if (!reader.ok()) return;
+    ownLevelRank_ = levelRank;
+    ownPlaytimeRank_ = playtimeRank;
+    ownHyperRank_ = hyperRank;
     playtimeLeaderboard_ = std::move(playtimes);
     hyperBoard_ = std::move(holdings);
     hyperHoldingsTotal_ = hyperTotal; hyperHoldingsOffset_ = hyperOffset;
@@ -1928,7 +2013,9 @@ void NetClient::handleGuildUpdate(ByteReader& reader) {
         next.name = reader.str();
         next.description = reader.str();
         next.leader = reader.str();
-        next.deputy = reader.str();
+        const auto deputyCount = reader.u8();
+        for (std::uint8_t i = 0; i < deputyCount; ++i)
+            next.deputies.push_back(reader.str());
         const std::uint16_t count = reader.u16();
         next.members.reserve(count);
         for (std::uint16_t i = 0; i < count; ++i) {
@@ -2037,6 +2124,7 @@ void NetClient::handleJoinAccepted(ByteReader& reader) {
 
     status_ = Status::Playing;
     dead_ = false;
+    runLoot_.clear();
     revived = false;
     clearViewOnSnapshot_ = false;
     view_.clear();
@@ -2155,7 +2243,7 @@ const CustomSkin* NetClient::findSkin(const std::string& id) const {
 }
 
 void NetClient::handleSkinCatalog(ByteReader& reader) {
-    const bool admin = reader.boolean();
+    const auto flags = reader.u8();
     const std::string equipped = reader.str();
     const std::uint16_t count = reader.u16();
     std::vector<CustomSkin> skins;
@@ -2167,7 +2255,9 @@ void NetClient::handleSkinCatalog(ByteReader& reader) {
     }
     if (!reader.ok()) return;
     skinCatalog_ = std::move(skins);
-    skinAdmin_ = admin;
+    skinAdmin_ = (flags & net::SkinCatalogAdmin) != 0;
+    skinModerator_ = (flags & net::SkinCatalogModerator) != 0;
+    if (!skinModerator_) skinReviewQueue_.clear();
     equippedSkinId_ = equipped;
 }
 
@@ -2269,10 +2359,24 @@ void NetClient::handleNotice(ByteReader& reader) {
 }
 
 void NetClient::handleDied(ByteReader& reader) {
-    killerName_ = reader.str();
+    auto killer = reader.str();
     reader.u32();   // xp lost
     reader.u32();   // ticks survived
-    if (!reader.ok()) return;
+    const auto count = reader.u32();
+    constexpr std::size_t stackBytes = 7;
+    if (!reader.ok() || reader.remaining() % stackBytes != 0 ||
+        count != reader.remaining() / stackBytes) return;
+    std::vector<Profile::Stack> collected;
+    collected.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto petal = reader.u16();
+        const auto tier = reader.u8();
+        const auto quantity = reader.u32();
+        if (petal < content().petalCount() && tier < kRarityCount && quantity > 0)
+            collected.push_back({petal, static_cast<Rarity>(tier), quantity});
+    }
+    killerName_ = std::move(killer);
+    runLoot_ = std::move(collected);
     dead_ = true;
 }
 

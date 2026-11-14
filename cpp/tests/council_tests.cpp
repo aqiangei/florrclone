@@ -22,6 +22,25 @@ TEST(council_weights_votes_snapshot_and_persistence) {
     auto anonymous=council::request(db,"",view);CHECK_EQ(anonymous["me"].asString(),"");CHECK_EQ(anonymous["players"].size(),2u);
     auto signedIn=council::request(db,at,view);CHECK_EQ(signedIn["me"].asString(),aid);CHECK_EQ(signedIn["accountName"].asString(),"councilAlice");
     auto adminView=council::request(db,mt,view);CHECK_EQ(adminView["accountName"].asString(),"councilAdmin");CHECK(adminView["admin"].asBool());
+    Json identity=Json::object();identity["action"]="identity";
+    const auto councilIdentity=council::request(db,at,identity);
+    CHECK_EQ(councilIdentity["me"].asString(),aid);
+    CHECK_EQ(councilIdentity["accountName"].asString(),"councilAlice");
+    CHECK(!councilIdentity["canClose"].asBool());
+    CHECK(councilIdentity["players"].isNull());
+    CHECK(councilIdentity["polls"].isNull());
+    CHECK(council::request(db,mt,identity)["canClose"].asBool());
+    CHECK_EQ(council::request(db,"invalid",identity)["me"].asString(),"");
+    Json rankingData=Json::object();rankingData["action"]="ranking-data";
+    const auto councilRanking=council::request(db,"",rankingData);
+    CHECK_EQ(councilRanking["players"].size(),2u);
+    for (const auto& row : councilRanking["players"].items()) {
+        CHECK(row["id"].asString() == aid || row["id"].asString() == bid);
+        CHECK_EQ(row["recordedSeconds"].asDouble(),0.0);
+        CHECK(row["levelScore"].asDouble() > 0);
+        CHECK(row["units"].isNull());
+    }
+    CHECK(councilRanking["polls"].isNull());
     Json create=Json::object();create["action"]="create";create["title"]="Balance update";
     CHECK(!council::request(db,mt,create)["error"].isNull());
     auto out=council::request(db,at,create);CHECK(out["error"].isNull());CHECK_EQ(out["polls"].size(),1u);
@@ -89,7 +108,7 @@ TEST(council_cold_start_does_not_give_one_early_visitor_forty_percent) {
     auto rows=council::weights(db);int total=0;for(const auto& row:rows.items()){total+=row["units"].asInt();CHECK(row["units"].asInt()<26000);}CHECK_EQ(total,1000000);
 }
 
-TEST(council_legacy_level_credit_is_once_only_and_separate_from_real_time) {
+TEST(council_weights_ignore_archived_legacy_level_credit) {
     Database db;std::string error;const std::string path="/tmp/florr-council-legacy.json";std::remove(path.c_str());CHECK(db.load(path,error));
     auto a=db.createUser("legacyPlayer","password123"),m=db.createUser("legacyAdmin","password123");CHECK(a.ok());CHECK(m.ok());a.account->admin=false;m.account->admin=true;
     const auto id=a.account->id;db.progress(id).totalXp=10000000;db.rawTable("councilActivity")[id]=120;
@@ -98,7 +117,7 @@ TEST(council_legacy_level_credit_is_once_only_and_separate_from_real_time) {
     CHECK_NEAR(saved["accounts"][id]["seconds"].asDouble(),credit,0.001);CHECK(saved["accounts"][m.account->id].isNull());
     db.progress(id).totalXp=1e12;auto b=db.createUser("newPlayerLater","password123");b.account->admin=false;db.progress(b.account->id).totalXp=10000000;
     CHECK(council::initializeLegacyActivity(db));CHECK_EQ(db.storedTable("councilLegacyActivity").dump(),saved.dump());
-    const auto rows=council::weights(db);for(const auto& row:rows.items())if(row["id"].asString()==id){CHECK_NEAR(row["recordedSeconds"].asDouble(),120,0.001);CHECK_NEAR(row["creditedSeconds"].asDouble(),credit,0.001);}
+    const auto rows=council::weights(db);for(const auto& row:rows.items())if(row["id"].asString()==id){CHECK_NEAR(row["recordedSeconds"].asDouble(),120,0.001);CHECK_NEAR(row["seconds"].asDouble(),120,0.001);CHECK(row["creditedSeconds"].isNull());}
     db.markDirty();CHECK(db.save());Database reload;CHECK(reload.load(path,error));CHECK(council::initializeLegacyActivity(reload));CHECK_EQ(reload.storedTable("councilLegacyActivity").dump(),saved.dump());
 }
 

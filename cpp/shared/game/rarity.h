@@ -15,7 +15,7 @@ namespace flix {
 enum class Rarity : std::uint8_t {
     Common = 0, Uncommon, Rare, Epic, Legendary,
     Mythic, Ultra, Super, Unique, Apex,
-    Universal, Admin, PermanentHyper,
+    Universal, Admin, PermanentHyper, Ascendant,
     Count
 };
 
@@ -24,7 +24,7 @@ inline constexpr int kRarityCount = static_cast<int>(Rarity::Count);
 inline constexpr std::array<const char*, kRarityCount> kRarityNames = {
     "common", "uncommon", "rare", "epic", "legendary",
     "mythic", "ultra", "super", "unique", "apex",
-    "universal", "admin", "permanent_hyper",
+    "universal", "admin", "permanent_hyper", "ascendant",
 };
 
 /// Display names, used on drop labels and inventory tooltips.
@@ -32,7 +32,7 @@ inline constexpr std::array<const char*, kRarityCount> kRarityNames = {
 inline constexpr std::array<const char*, kRarityCount> kRarityLabels = {
     "Common", "Unusual", "Rare", "Epic", "Legendary",
     "Mythic", "Ultra", "Super", "Eternal", "Hyper",
-    "Devine", "Admin", "Permanent Hyper",
+    "Devine", "Admin", "Permanent Hyper", "Apex",
 };
 
 /// Tier colours. These carry meaning at a glance -- a player reads rarity from
@@ -53,6 +53,7 @@ inline constexpr std::array<std::uint32_t, kRarityCount> kRarityColors = {
     0x29292Fu,  // devine     near-black
     0xFFB020u,  // admin      gold (give-only; not in florrclone)
     0xE7BD60u,  // permanent hyper
+    0xFF00FFu,  // Apex (new player-facing tier)
 };
 
 inline constexpr int rarityIndex(Rarity r) { return static_cast<int>(r); }
@@ -60,7 +61,7 @@ inline constexpr Rarity petalGameplayRarity(Rarity r) {
     return r == Rarity::PermanentHyper ? Rarity::Apex : r;
 }
 inline constexpr int petalTier(Rarity r) { return rarityIndex(petalGameplayRarity(r)); }
-inline constexpr bool isHyperPetal(Rarity r) { return petalGameplayRarity(r) == Rarity::Apex; }
+inline constexpr bool isHyperPetal(Rarity r) { return petalGameplayRarity(r) == Rarity::Apex || r == Rarity::Ascendant; }
 inline constexpr bool samePetalTier(Rarity a, Rarity b) {
     return petalGameplayRarity(a) == petalGameplayRarity(b);
 }
@@ -105,6 +106,7 @@ Rarity parseRarity(const std::string& name);
 /// One rung up, stopping at apex: no upgrade -- a craft, an oracle, a lucky
 /// drop -- ever reaches universal.
 inline constexpr Rarity upgradeRarity(Rarity r) {
+    if (r == Rarity::PermanentHyper) return Rarity::Ascendant;
     const int i = rarityIndex(r);
     return i + 1 < kLadderRarityCount ? static_cast<Rarity>(i + 1) : r;
 }
@@ -170,7 +172,7 @@ inline constexpr std::array<double, kLadderRarityCount> kMobDamageScale = {
 };
 // Wild H bodies used a 12x Eternal jump. Contact now uses 6x; projectile,
 // poison and other ability ladders retain their existing authored strength.
-inline constexpr double mobContactScale(Rarity rarity) { return rarity == Rarity::Apex ? 0.5 : 1.0; }
+inline constexpr double mobContactScale(Rarity rarity) { return (rarity == Rarity::Apex || rarity == Rarity::Ascendant) ? 0.5 : 1.0; }
 
 /// Mob armour per tier: a flat amount subtracted from every DIRECT hit.
 ///
@@ -376,13 +378,14 @@ inline double petalEvasionScale(double authored, Rarity r) {
 /// tier from a base of 64%, so common->uncommon is routine and the top tiers
 /// are a genuine gamble.
 inline double craftSuccessChance(Rarity from) {
+    if (from == Rarity::PermanentHyper) return 0.025;
     return 0.64 / std::pow(2.0, rarityIndex(from));
 }
 
 /// Whether anything -- the forge or the oracle -- crafts out of this tier.
 /// Ordinary crafting stops at Super; Eternal and Hyper use their dedicated recipes.
 inline constexpr bool craftsOutOf(Rarity from) {
-    return rarityIndex(from) >= 0 && rarityIndex(from) < rarityIndex(Rarity::Super);
+    return from == Rarity::PermanentHyper || rarityIndex(from) < rarityIndex(Rarity::Super);
 }
 
 /// What an oracle charges for ONE guaranteed upgrade out of `from`: this many
@@ -406,6 +409,8 @@ inline constexpr std::array<int, kRarityCount> kOracleCraftCost = {
     0,     // apex: nothing above it
     0,     // universal: only ever given
     0,     // admin: give command only
+    120,   // permanent hyper -> Apex
+    0,     // Apex
 };
 
 inline constexpr int oracleCraftCost(Rarity from) {

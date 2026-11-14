@@ -58,6 +58,8 @@ enum class AdminDashboardOp : std::uint8_t {
     /// Answered with Result, and with Control when there was something to
     /// release.
     Release,
+    /// u32 connection, str account ID, u8 muted. Answered with Result.
+    SetMuted,
 };
 
 /// What an AdminDashboard server message carries.
@@ -92,6 +94,7 @@ enum AdminDashboardPlayerFlags : std::uint8_t {
     AdminDashboardDead        = 1 << 0,   ///< the flower is a corpse
     AdminDashboardControlled  = 1 << 1,   ///< an admin is steering it
     AdminDashboardControlling = 1 << 2,   ///< its player is steering someone else's
+    AdminDashboardMuted       = 1 << 3,
 };
 
 /// Rows per Players page and stacks per Inventory page.
@@ -100,6 +103,7 @@ inline constexpr std::uint16_t kAdminDashboardPageSize = 50;
 /// One row of the player list.
 struct AdminDashboardPlayer {
     ConnectionId connection = 0;
+    std::string accountId;
     /// The ACCOUNT, which is what every console command resolves a person by.
     std::string username;
     /// The nameplate, which is whatever the player typed on the title screen.
@@ -115,7 +119,7 @@ struct AdminDashboardStack {
     std::uint32_t count = 0;
 };
 
-/// u32 connection, str username, str name, u8 realm, u8 flags.
+/// u32 connection, str account ID, str username, str name, u8 realm, u8 flags.
 void writeAdminDashboardPlayer(ByteWriter&, const AdminDashboardPlayer&);
 /// False when the reader ran off the end; `out` is then unspecified.
 bool readAdminDashboardPlayer(ByteReader&, AdminDashboardPlayer& out);

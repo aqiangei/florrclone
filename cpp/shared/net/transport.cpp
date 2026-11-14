@@ -264,6 +264,16 @@ double Connection::frameAgeMillis() const {
     return std::max(0.0, steadyMillis() - frameArrivedMillis_);
 }
 
+std::optional<ByteReader> Connection::nextBufferedMessage() const {
+    const std::size_t available = inbound_.size() - inboundConsumed_;
+    if (available < kFrameHeaderBytes) return std::nullopt;
+    const auto* head = inbound_.data() + inboundConsumed_;
+    std::uint32_t length = 0;
+    std::memcpy(&length, head, sizeof length);
+    if (length > kMaxFrameBytes || length > available - kFrameHeaderBytes) return std::nullopt;
+    return ByteReader(head + kFrameHeaderBytes, length);
+}
+
 void Connection::compactOutbound() {
     while(!outboundBoundaries_.empty()&&outboundBoundaries_.front().end<=outboundSent_)outboundBoundaries_.pop_front();
     if (outboundSent_ == outbound_.size()) {

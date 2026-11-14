@@ -57,6 +57,23 @@ TEST(a_client_connects_registers_and_joins) {
     CHECK(client.view().self().maxHealth > 0);
     CHECK(client.view().self().health > 0);
     CHECK_EQ(client.view().self().level, 1);
+
+    net::InputFrame controls;
+    controls.sequence = 1;
+    controls.flags = net::InputAttack;
+    CHECK(client.sendInput(controls));
+    controls.sequence = 2;
+    controls.flags = net::kInputVisibilityMask;
+    CHECK(client.sendInput(controls));
+    CHECK(h.stepUntil({&client}, [&] {
+        const auto* session = testsupport::GameServerPeer::sessionOf(h.server, "alice");
+        return session && session->lastInputSequence == 2;
+    }));
+    const auto* session = testsupport::GameServerPeer::sessionOf(h.server, "alice");
+    if (session) {
+        CHECK_EQ(session->snapshotVisibility, net::kInputVisibilityMask);
+        CHECK_EQ(h.server.world().get<PlayerInput>(session->entity).current.flags, 0);
+    }
 }
 
 TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
@@ -86,9 +103,37 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     notice.u8(static_cast<std::uint8_t>(net::ServerMessage::Notice));
     notice.u8(static_cast<std::uint8_t>(net::NoticeSeverity::Info));
     notice.str(std::string(24 * 1024, 'x'));
-    for (int i = 0; i < 3; ++i) slowConnection->send(notice);
+    slowConnection->send(notice);
+    const auto queuedNotice = slowConnection->pendingBytes();
+    GameServerPeer::stageSnapshots(h.server);
+    CHECK_EQ(slowConnection->pendingBytes(), queuedNotice);
+    slowConnection->send(notice);
+    slowConnection->send(notice);
     const auto slowQueued = slowConnection->pendingBytes();
     const auto healthyQueued = healthyConnection->pendingBytes();
+
+    // A real training hit during skipped snapshots must survive even though
+    // its floating number will never be sent to the stalled client.
+    World& world = h.server.world();
+    const Entity dummy = world.create();
+    constexpr std::uint32_t dummyId = 900000;
+    const auto dummyType = content().mobIndex("target_dummy");
+    world.add<NetId>(dummy, NetId{dummyId});
+    world.add<Replicated>(dummy, Replicated{net::EntityKind::Npc, 0, dummyType, Rarity::Apex});
+    world.add<Transform>(dummy, world.get<Transform>(slowSession->entity));
+    world.add<NpcTag>(dummy);
+    world.add<Npc>(dummy, Npc{dummyType, Rarity::Apex});
+    world.add<Faction>(dummy, Faction{Team::Hostiles, false});
+    world.add<Health>(dummy, Health{100, 100});
+    auto& combat = GameServerPeer::practiceCombat(h.server);
+    const auto hit = [&](Entity attacker, double amount) {
+        CHECK_NEAR(combat.applyDamage(world, dummy, attacker, amount, h.clock).applied, amount, 1e-6);
+    };
+    constexpr double firstHit = 7'000'000'006.0;
+    constexpr double nextHit = 10'300'000'009.0;
+    constexpr double observerHit = 19'000'000'000.0;
+    hit(slowSession->entity, firstHit);
+    hit(healthySession->entity, observerHit);
 
     // While old bytes are still waiting, health changes twice. Only the
     // healthy connection should be encoded before the slow one can drain.
@@ -103,6 +148,7 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     GameServerPeer::stageOnlineRoster(h.server, h.clock + 2000.0);
     health.current = health.max * 0.5;
     const double latest = health.current;
+    hit(slowSession->entity, nextHit);
     events.pickedUp(900002, ownNetId, at.position, at.realm, 0, Rarity::Common, 3, slowSession->connection);
     GameServerPeer::stageSnapshots(h.server);
     const double rosterAt = h.clock + 4000.0;
@@ -147,10 +193,39 @@ TEST(a_backlogged_viewer_resumes_with_the_latest_delta_after_its_queue_drains) {
     };
     CHECK_EQ(ownPicked(slow), std::uint32_t{5});
     CHECK_EQ(ownPicked(healthy), std::uint32_t{0});
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).total, firstHit + nextHit, 1e-6);
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).dps, (firstHit + nextHit) / 10.0, 1e-6);
+    CHECK_NEAR(healthy.view().practiceMeter(dummyId).total, observerHit, 1e-6);
+
+    const Entity spawnedDummy = world.create();
+    constexpr std::uint32_t spawnedDummyId = 900003;
+    world.add<NetId>(spawnedDummy, NetId{spawnedDummyId});
+    world.add<Replicated>(spawnedDummy, Replicated{net::EntityKind::Mob, 0, dummyType, Rarity::Common});
+    world.add<Transform>(spawnedDummy, world.get<Transform>(dummy));
+    world.add<MobTag>(spawnedDummy);
+    world.add<MobType>(spawnedDummy, MobType{dummyType, Rarity::Common, 1});
+    world.add<Health>(spawnedDummy, Health{100, 100});
+    CHECK_NEAR(combat.applyDamage(world, spawnedDummy, slowSession->entity, 25, h.clock).applied, 25, 1e-6);
+    GameServerPeer::stageSnapshots(h.server);
+    drain();
+    CHECK_NEAR(slow.view().practiceMeter(spawnedDummyId).total, 25, 1e-6);
+    CHECK_NEAR(healthy.view().practiceMeter(spawnedDummyId).total, 0, 1e-6);
+    world.destroy(spawnedDummy);
+    CHECK(std::none_of(slow.view().events().begin(), slow.view().events().end(), [&](const ViewEvent& event) {
+        return event.kind == net::EventKind::Damage && event.netId == dummyId;
+    }));
     slow.view().events().clear();
     GameServerPeer::stageSnapshots(h.server);
     drain();
     CHECK_EQ(ownPicked(slow), std::uint32_t{0});
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).total, firstHit + nextHit, 1e-6);
+
+    // No rendered frames during this interval, but ten seconds still pass on
+    // the server. The cumulative amount survives the expired DPS window.
+    h.server.tick(h.clock + 10'000);
+    drain();
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).dps, 0, 1e-6);
+    CHECK_NEAR(slow.view().practiceMeter(dummyId).total, firstHit + nextHit, 1e-6);
 }
 
 TEST(a_wrong_password_is_refused_and_a_right_one_is_not) {
@@ -324,15 +399,16 @@ TEST(a_change_password_needs_the_current_one) {
 }
 
 TEST(a_new_password_the_rules_refuse_never_reaches_the_account) {
-    Harness h("changepw-rules");
+    Harness h("changepw-rules", {}, flix::testsupport::dataDir(), 0, [](ServerConfig& config) {
+        config.backgroundSave = true;
+    });
     if (!h.ready) { CHECK(false); return; }
 
     NetClient client;
     CHECK(loginNew(h, client, "hasty", "long-enough-password"));
 
-    // Under Database::validPassword's eight characters. The client's own form
-    // catches this first; the server is what makes it true.
-    client.requestChangePassword("long-enough-password", "short");
+    // Empty passwords are refused by the live rules.
+    client.requestChangePassword("long-enough-password", "");
     CHECK(h.stepUntil({&client}, [&] { return client.passwordOutcome().pending; }));
     CHECK(!client.passwordOutcome().ok);
     CHECK(!client.passwordOutcome().message.empty());
@@ -346,7 +422,9 @@ TEST(a_new_password_the_rules_refuse_never_reaches_the_account) {
 }
 
 TEST(changing_a_password_revokes_the_tokens_it_replaces) {
-    Harness h("changepw-tokens");
+    Harness h("changepw-tokens", {}, flix::testsupport::dataDir(), 0, [](ServerConfig& config) {
+        config.backgroundSave = true;
+    });
     if (!h.ready) { CHECK(false); return; }
 
     NetClient client;
@@ -363,6 +441,14 @@ TEST(changing_a_password_revokes_the_tokens_it_replaces) {
     CHECK(!after.empty());
     CHECK(after != before);
     CHECK(client.sessionTokenRenewed);
+    {
+        Database reloaded;
+        std::string error;
+        CHECK(reloaded.load(h.dbPath, error));
+        CHECK(reloaded.passwordMatches("rotator", "new-password2"));
+        CHECK(!reloaded.resolveSession(before, false));
+        CHECK(reloaded.resolveSession(after, false) != nullptr);
+    }
 
     // A token minted before the change resumes nothing, which is most of the
     // point: a session somebody else was holding is what a password change is
@@ -382,6 +468,44 @@ TEST(changing_a_password_revokes_the_tokens_it_replaces) {
     resumed.resumeSession(after);
     CHECK(h.stepUntil({&resumed}, [&] { return resumed.authAnswered; }));
     CHECK_EQ(static_cast<int>(resumed.authStatus), static_cast<int>(net::AuthStatus::Ok));
+}
+
+TEST(a_background_password_write_failure_restores_the_old_credentials) {
+    Harness h("changepw-write-failure", {}, flix::testsupport::dataDir(), 0, [](ServerConfig& config) {
+        config.backgroundSave = true;
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    const bool loggedIn = loginNew(h, client, "restorepw", "old-password1");
+    CHECK(loggedIn);
+    if (!loggedIn) return;
+    auto& db = const_cast<Database&>(h.server.database());
+    CHECK(db.save());
+    const auto before = client.sessionToken();
+    const auto saved = h.dbPath + ".before";
+    const int moved = std::rename(h.dbPath.c_str(), saved.c_str());
+    CHECK_EQ(moved, 0);
+    if (moved != 0) return;
+    const int blocked = ::mkdir(h.dbPath.c_str(), 0700);
+    CHECK_EQ(blocked, 0);
+    if (blocked == 0) {
+        client.requestChangePassword("old-password1", "new-password2");
+        CHECK(h.stepUntil({&client}, [&] { return client.passwordOutcome().pending; }));
+        CHECK(!client.passwordOutcome().ok);
+        CHECK_EQ(client.sessionToken(), before);
+        CHECK_EQ(::rmdir(h.dbPath.c_str()), 0);
+    }
+    const int restored = std::rename(saved.c_str(), h.dbPath.c_str());
+    CHECK_EQ(restored, 0);
+    if (restored != 0) return;
+    CHECK(db.save());
+    Database reloaded;
+    std::string error;
+    CHECK(reloaded.load(h.dbPath, error));
+    CHECK(reloaded.passwordMatches("restorepw", "old-password1"));
+    CHECK(!reloaded.passwordMatches("restorepw", "new-password2"));
+    CHECK(reloaded.resolveSession(before, false) != nullptr);
 }
 
 TEST(a_content_mismatch_is_reported_rather_than_misparsed) {

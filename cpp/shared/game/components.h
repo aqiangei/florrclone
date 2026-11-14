@@ -36,9 +36,16 @@ namespace flix {
 
 struct PlayerTag {};
 struct WavePlayer {};
-struct WaveEnemy { bool canDrop = true; std::uint64_t round = 0; };
+struct WaveEnemy {
+    bool canDrop = true;
+    std::uint64_t round = 0;
+    bool rushing = false;
+};
 struct MobTag {};
 struct GhostTag {};
+struct GhostSparkle {
+    Entity ghost = NULL_ENTITY;
+};
 struct PetalTag {};
 struct ProjectileTag {};
 struct DropTag {};
@@ -136,6 +143,7 @@ struct Health {
     /// shield's yellow on every bite would flash for the whole fight.
     double hitCooldownUntilMillis = 0;
     std::uint64_t directHurtSerial = 0; // landed hostile direct hits; battery trigger
+    Entity directHurtPlayer = NULL_ENTITY;
 
     /// Whether either window is refusing damage at `nowMillis`.
     bool shielded(double nowMillis) const {
@@ -258,7 +266,18 @@ struct PoisonStack {
 /// One component rather than one per affliction: they are read together every
 /// tick, and splitting them would mean three archetype moves every time a mob
 /// is poisoned, slowed and then recovers.
+struct BurnStack {
+    Entity emitter = NULL_ENTITY;
+    Entity owner = NULL_ENTITY;
+    double perSecond = 0;
+    double untilMillis = 0;
+};
+
 struct Afflictions {
+    double cancer = 0.0;
+    double burnPerSecond = 0.0;
+    double burnUntilMillis = 0.0;
+    Entity burnSource = NULL_ENTITY;
     double poisonPerSecond = 0;
     double poisonUntilMillis = 0;
     Entity poisonSource = NULL_ENTITY;
@@ -268,6 +287,10 @@ struct Afflictions {
     /// weaker-but-longer bite dilutes the rate rather than being merged into
     /// it, and a shorter bite is ignored outright however strong it is.
     std::vector<PoisonStack> poisonStacks;
+    std::vector<BurnStack> burns;
+    double frostFactor = 1.0;
+    double frostUntilMillis = 0.0;
+    double frostSpeed(double now) const { return now < frostUntilMillis ? frostFactor : 1.0; }
 
     double slowFactor = 1.0;      ///< multiplies speed; 1 = unaffected
     double slowUntilMillis = 0;
@@ -438,6 +461,21 @@ struct SpongeDamageState {
     std::vector<SpongeDamageEffect> effects;
 };
 
+/// Marks a Bio mob for subdivision, or identifies a copy that has already split.
+struct CancerSubdivision {
+    bool spawnedCopy = false;
+};
+
+/// Eligibility carried from a Stem Cell to its Biologist. Keeping it separate
+/// from Bounty avoids awarding damage, XP or kill credit for the child.
+struct InheritedLootClaims {
+    struct Claim {
+        Entity player = NULL_ENTITY;
+        net::ConnectionId owner = 0;
+    };
+    std::vector<Claim> recipients;
+};
+
 /// XP awarded for landing the killing blow, and the ledger of who contributed.
 ///
 /// Contributions are tracked so that loot and XP go to everyone who fought the
@@ -498,6 +536,7 @@ struct Loadout {
     /// Petal entities currently spawned for each slot. A slot may own several
     /// (clumped petals such as sand spawn as a cluster).
     std::vector<Entity> spawned;
+    int activeSlots = kLoadoutActiveSlots;
 };
 
 /// The orbiting ring's live geometry. On the player, not on each petal, so all
@@ -542,6 +581,8 @@ struct PlayerSkillTree {
 /// the score is the XP it has earned since it walked in, plus whatever a
 /// flower it killed had built up (src/server/playerManager.ts:929,
 /// src/server/playerState.ts:1354). It is what the arena leaderboard ranks.
+struct RiftPlayer {};
+
 struct ArenaScore {
     double score = 0;
 };
@@ -589,7 +630,8 @@ struct PlayerVisuals {
     bool nearbyCorruption = false;
     bool hyperCorruptionExposed = false;
     double hyperCorruptionExposureUntilMillis = 0.0;
-    bool seesGhosts = false;
+    int ghostSightTier = -1;
+    bool canSeeGhost(Rarity rarity) const { return ghostSightTier >= petalTier(rarity); }
 };
 
 /// Passive bonuses summed from equipped petals each tick.
@@ -597,6 +639,13 @@ struct PlayerVisuals {
 /// Recomputed from scratch rather than applied incrementally on equip: an
 /// incremental version has to unwind exactly what it applied, and a single
 /// missed unwind is a permanent stat the player keeps forever.
+struct JurassicSpeedBoost {
+    double coffeeUntilMillis = 0;
+    double coffeeScale = 1;
+    double chillyUntilMillis = 0;
+    double chillyScale = 1;
+};
+
 struct PlayerModifiers {
     std::array<std::uint8_t, kRarityCount> computerParts{};
     std::array<std::uint8_t, kRarityCount> triangleCounts{};
@@ -611,6 +660,21 @@ struct PlayerModifiers {
     /// NO petal damage modifier at all, so collapsing the two costs a fully
     /// talented ring roughly two and a half times its damage.
     double petalDamageScale = 1.0;
+    double jurassicDirectDamageScale = 1.0;
+    std::array<double, kLadderRarityCount> magicBoneDamageBonus{};
+    double amberPetalReduction = 0.0;
+    double scalesBodyReduction = 0.0;
+    double jurassicAmuletBonus = 0.0;
+    double jurassicAmuletFlatDamage = 0.0;
+    double petMoveSpeedScale = 1.0;
+    double summonDamageScale = 1.0;
+    double fireResistance = 0.0;
+    double spillRadiusScale = 1.0;
+    std::array<std::uint8_t, kRarityCount> eggMutationSources{};
+    std::array<bool, kRarityCount> opalTiers{};
+    std::array<double, kRarityCount> stemCellHealChance{};
+    double chloroplastShieldScale = 1.0;
+    double hemoglobinHealBonus = 0.0;
     /// Flat addition to the level's body damage, granted by a worn cutter.
     /// Published here rather than recomputed at each impact so that the
     /// level-up path can rebuild the same figure the petal pass wrote.
@@ -623,6 +687,7 @@ struct PlayerModifiers {
     /// strongest worn poo times the strongest worn bulb; 1.0 is noticed as
     /// usual.
     double aggroRangeScale = 1.0;
+    bool litAggroBulb = false;
     double petalAttractionRadius = 30.0; ///< base loose-petal attraction radius
     /// Extra attack reach, world units: the best attackRange on the bar.
     double attackRange = 0.0;
@@ -765,6 +830,8 @@ struct MobAi {
     /// (kSandstormHeadingMillis), and a roaming digger, every five
     /// (kDiggerRoamMillis).
     double nextHeadingMillis = 0;
+    double nextBlinkMillis = 0;
+    double aggroSuppressedUntilMillis = 0.0;
     /// Which way a crawling centipede head is bending: +1, -1, or 0 for one
     /// that has not crawled yet and picks a side on its first step. See
     /// MobAiSystem::crawl.
@@ -909,6 +976,7 @@ struct HoleTether {
     /// body aside. Cleared by the separation pass the first time it finds the
     /// pair apart, and never set again.
     bool emerging = false;
+    double retreatScale = 1.0;
 };
 
 /// A mob nothing in the world can touch -- the config's `intangible`.
@@ -983,6 +1051,9 @@ struct Pet {
     /// squad's size and a squad being replaced does not recall it.
     double expiresAtMillis = 0;
     double damageTalentScale = 1.0; ///< Refreshed from owner talents; shared with ranged attacks.
+    double crystalLeafShield = 0.0;
+    double crystalLeafShieldUntilMillis = 0.0;
+    double previousHealthFraction = 1.0;
 };
 
 /// A summoned mob whose config spawns minions on a clock (`periodic_spawn` --
@@ -1112,6 +1183,7 @@ struct Npc {
     /// makes. 0 for every other NPC.
     std::uint8_t recipe = 0;
     std::uint8_t nextRecipe = 0;
+    /// Monotonic wall-clock deadline, on the same clock as snapshots.
     double recipeRefreshAtMillis = 0;
 };
 
@@ -1136,8 +1208,12 @@ struct Spawner {
 // ---------------------------------------------------------------------------
 
 struct PetalInstance {
+    double combinationStrength = 1.0;
     std::uint8_t dominoPips = 0;
     std::uint8_t diceFace = 0;
+    double chromosomeShield = 0.0;
+    double chromosomeShieldUntilMillis = 0.0;
+    bool magicToothManaRefunded = false;
     // A placed Dark Mark stays over its corpse while it charges. Ordinary
     // petal replication carries its position; no message layout changes.
     Entity markTarget = NULL_ENTITY;
@@ -1209,6 +1285,8 @@ struct PetalInstance {
     /// same petal cannot delay its projectile.
     double nextProjectileMillis = 0;
     double spawnedAtMillis = 0;
+    /// Sub-tick reload time carried forward only by an immediate lightning strike.
+    double lightningReloadCarryMillis = 0;
     bool homing = false;
     /// When the dive home began, so a burst that cannot reach the flower is
     /// still delivered. Zero whenever `homing` is false.
@@ -1431,6 +1509,7 @@ struct DropItem {
     /// Bots walk past it: a petal the whole server is racing for is not a
     /// bot's to take.
     bool humansOnly = false;
+    bool riftPrize = false;
 
     // Cached only in the immutable terrain of a running server's world maps.
     Vec2 settledPosition;
@@ -1449,6 +1528,17 @@ enum class GroundEffectKind : std::uint8_t {
     OpenTomb = 4,
     PyramidMap = 5, // public one-use map scroll, not an inventory petal
     ElectricWeb = 6,
+    GhostSparkle = 7,
+    AcidSpill = 8,
+    LavaSpill = 9,
+    OilSpill = 10,
+    BloodSpill = 11,
+    ElixirSpill = 12,
+    Cryo = 13,
+    Plutonium = 14,
+    Corium = 15,
+    Blood = 16,
+    Fire = 17,
 };
 
 /// What is left lying where a mob with `remains_ms` died -- florr's opened
@@ -1544,9 +1634,12 @@ struct LightningTarget {
     Entity victim = NULL_ENTITY;
     bool fromMagicEye = false;
     Rarity rarity = Rarity::Common;
+    bool fromBattery = false;
+    double burnPerSecond = 0.0;
 };
 struct BurrowState {
-    double untilMillis=0;bool active=false;
+    double untilMillis = 0;
+    bool active = false;
     std::uint16_t wormIndex=UINT16_MAX,desertCentipedeIndex=UINT16_MAX;
 };
 
@@ -1588,6 +1681,19 @@ struct GroundEffect {
     /// Uranium poisons its wearer as well: `owner` at this rate, for
     /// poisonDurationMillis, every tick the field stands, anywhere in its realm.
     double ownerPoisonPerSecond = 0;
+    double slowDurationMillis = 0;
+    double activatesAtMillis = 0;
+    bool showExplosion = false;
+    double burnDamage = 0;
+    double armorReduction = 0;
+    double burnPerSecond = 0.0;
+};
+
+struct Burn {
+    Entity source = NULL_ENTITY;
+    double damage = 0;
+    double startedAtMillis = 0;
+    double untilMillis = 0;
 };
 
 /// When a web-laying mob lays its next web. See WebSpec.
@@ -1635,6 +1741,7 @@ FLIX_COMPONENT(flix::WavePlayer);
 FLIX_COMPONENT(flix::WaveEnemy);
 FLIX_COMPONENT(flix::MobTag);
 FLIX_COMPONENT(flix::GhostTag);
+FLIX_COMPONENT(flix::GhostSparkle);
 FLIX_COMPONENT(flix::PetalTag);
 FLIX_COMPONENT(flix::ProjectileTag);
 FLIX_COMPONENT(flix::DropTag);
@@ -1662,15 +1769,19 @@ FLIX_COMPONENT(flix::Undead);
 FLIX_COMPONENT(flix::Unrevivable);
 FLIX_COMPONENT(flix::RisesUndead);
 FLIX_COMPONENT(flix::Bounty);
+FLIX_COMPONENT(flix::InheritedLootClaims);
+FLIX_COMPONENT(flix::CancerSubdivision);
 FLIX_COMPONENT(flix::Loadout);
 FLIX_COMPONENT(flix::PetalRing);
 FLIX_COMPONENT(flix::PlayerInput);
 FLIX_COMPONENT(flix::PlayerAccount);
 FLIX_COMPONENT(flix::PlayerSkillTree);
 FLIX_COMPONENT(flix::PlayerProgress);
+FLIX_COMPONENT(flix::RiftPlayer);
 FLIX_COMPONENT(flix::ArenaScore);
 FLIX_COMPONENT(flix::PlayerVisuals);
 FLIX_COMPONENT(flix::PlayerModifiers);
+FLIX_COMPONENT(flix::JurassicSpeedBoost);
 FLIX_COMPONENT(flix::PlayerLocation);
 FLIX_COMPONENT(flix::TeleporterState);
 FLIX_COMPONENT(flix::AuraCooldowns);
@@ -1701,6 +1812,7 @@ FLIX_COMPONENT(flix::DropItem);
 FLIX_COMPONENT(flix::SacrificeRitual);
 FLIX_COMPONENT(flix::MobRemains);
 FLIX_COMPONENT(flix::GroundEffect);
+FLIX_COMPONENT(flix::Burn);
 FLIX_COMPONENT(flix::LightningBurst);
 FLIX_COMPONENT(flix::LightningTarget);
 FLIX_COMPONENT(flix::LightningClock);
@@ -1729,6 +1841,12 @@ inline bool isStanding(const World& world, Entity e) {
     const Health* health = world.tryGet<Health>(e);
     return health == nullptr || health->alive();
 }
+/// Ghost ring petals inherit the visibility of their owner.
+inline const MobType* ghostBodyOrRing(const World& world, Entity entity) {
+    if (const auto* seed = world.tryGet<MobRingPetal>(entity)) entity = seed->mob;
+    return world.has<GhostTag>(entity) ? world.tryGet<MobType>(entity) : nullptr;
+}
+
 inline bool canNoticeBurrowed(const World& world,Entity observer,Entity target){
     const auto* burrow=world.tryGet<BurrowState>(target);
     if(!burrow||!burrow->active)return true;

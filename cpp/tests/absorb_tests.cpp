@@ -4,7 +4,6 @@
 #include "shared/game/absorb.h"
 #include "shared/game/components.h"
 #include "shared/game/constants.h"
-#include "shared/game/shop.h"
 
 using namespace flix;
 using flix::testsupport::awaitProfile;
@@ -100,6 +99,65 @@ TEST(the_basic_hyper_and_universals_cannot_be_absorbed) {
     CHECK(absorbable(rose, Rarity::Unique));
     CHECK(!absorbable(rose, Rarity::Apex));
     CHECK(!absorbable(rose, Rarity::Universal));
+}
+
+TEST(legacy_recycle_request_cannot_turn_petals_into_stars) {
+    testsupport::HarnessFiles files("legacy-recycle");
+    ServerConfig config;
+    config.port = 0;
+    config.botCount = 0;
+    config.dataDir = dataDir();
+    config.databasePath = files.dbPath;
+    GameServer server;
+    std::string error;
+    CHECK(server.start(config, error));
+    if (!error.empty()) return;
+
+    net::Connection connection(-1, 86, "127.0.0.1");
+    server.onConnect(connection);
+    const auto send = [&](const ByteWriter& message) {
+        ByteReader reader(message.data(), message.size());
+        server.onMessage(connection, reader);
+        CHECK(reader.ok());
+    };
+    ByteWriter hello;
+    hello.u8(static_cast<std::uint8_t>(net::ClientMessage::Hello));
+    hello.u16(net::kProtocolVersion);
+    hello.u32(content().contentHash());
+    send(hello);
+    ByteWriter guest;
+    guest.u8(static_cast<std::uint8_t>(net::ClientMessage::RegisterGuest));
+    send(guest);
+    ByteWriter join;
+    join.u8(static_cast<std::uint8_t>(net::ClientMessage::JoinGame));
+    join.u16(1280);
+    join.u16(720);
+    join.str("");
+    join.str("Recycle QA");
+    join.boolean(false);
+    send(join);
+
+    const Entity player = onlyPlayer(server.world());
+    CHECK(player != NULL_ENTITY);
+    if (player == NULL_ENTITY) return;
+    const auto userId = server.world().get<PlayerAccount>(player).userId;
+    auto& record = testsupport::GameServerPeer::authorityDb(server).progress(userId);
+    const auto rose = content().petalIndex("rose");
+    record.setItemCount(Rarity::Super, "petal_rose", 10);
+    const auto stars = record.stars;
+    const auto xp = record.totalXp;
+
+    ByteWriter recycle;
+    recycle.u8(static_cast<std::uint8_t>(net::ClientMessage::Absorb));
+    recycle.u8(1);
+    recycle.u16(1);
+    recycle.u16(rose);
+    recycle.u8(static_cast<std::uint8_t>(Rarity::Super));
+    recycle.u32(10);
+    send(recycle);
+    CHECK_EQ(record.itemCount(Rarity::Super, "petal_rose"), 10);
+    CHECK_EQ(record.stars, stars);
+    CHECK_EQ(record.totalXp, xp);
 }
 
 TEST(absorbing_on_the_title_screen_pays_the_account) {
@@ -250,40 +308,5 @@ TEST(absorbing_in_the_world_levels_the_flower_up_on_the_spot) {
     // Profile that followed already counts it.
     CHECK(awaitProfile(h, client, [&](const Profile& p) {
         return p.totalXp == before + earnedXp && p.stackCount(rose, Rarity::Legendary) == 0u;
-    }));
-}
-
-TEST(recycling_for_stars_uses_listed_prices_and_is_atomic) {
-    Harness h("recycle-stars", [](const std::string& path) {
-        seedUser(path, "recycler", "secret1");
-        seedStack(path, "recycler", "petal_rose", Rarity::Super, 20);
-        seedStack(path, "recycler", "petal_rose", Rarity::Unique, 2);
-    });
-    CHECK(h.ready);
-    if (!h.ready) return;
-    NetClient client;
-    CHECK(loginAs(h, client, "recycler", "secret1"));
-    const auto rose = content().petalIndex("rose");
-    const double before = client.profile().stars;
-    const double beforeXp = client.profile().totalXp;
-    const auto send = [&](const std::vector<NetClient::AbsorbStack>& stacks) {
-        client.requestAbsorb(stacks, true);
-        CHECK(h.stepUntil({&client}, [&] { return client.absorbOutcome().pending; }));
-        const auto reply = client.absorbOutcome();
-        client.absorbOutcome().pending = false;
-        return reply;
-    };
-    CHECK(!send({{rose, Rarity::Super, 5}, {rose, Rarity::Unique, 1}}).success);
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Super), 20u);
-    CHECK_EQ(client.profile().stackCount(rose, Rarity::Unique), 2u);
-    CHECK(!send({{rose, Rarity::Super, 11}, {rose, Rarity::Super, 10}}).success);
-    const auto result = send({{rose, Rarity::Super, 5}, {rose, Rarity::Super, 2}});
-    const double stars = std::floor(shopPrice(rose, Rarity::Super) * 7.0 / 10.0);
-    CHECK(result.success);
-    CHECK_EQ(result.reward, stars);
-    CHECK_EQ(result.absorbed, 7u);
-    CHECK(awaitProfile(h, client, [&](const Profile& profile) {
-        return profile.stars == before + stars && profile.totalXp == beforeXp &&
-               profile.stackCount(rose, Rarity::Super) == 13;
     }));
 }

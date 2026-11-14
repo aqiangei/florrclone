@@ -279,6 +279,16 @@ public:
         events_.push_back(std::move(e));
     }
 
+    void explosion(Vec2 at, double radius, Realm realm) {
+        WireEvent e;
+        e.kind = net::EventKind::Explosion;
+        e.position = at;
+        e.radius = radius;
+        e.realm = realm;
+        e.positional = true;
+        events_.push_back(e);
+    }
+
     void markCriticalSince(std::size_t first, std::uint32_t victim) {
         for (std::size_t i=first;i<events_.size();++i)
             if (events_[i].kind==net::EventKind::Damage && events_[i].netId==victim)
@@ -322,9 +332,13 @@ public:
         Entity splitOther = NULL_ENTITY;
         net::WaveHud wave;
         bool loadShedding = false;
+        bool showAllVisibleLoot = false;
+        std::uint8_t visibility = 0;
         /// All current replicated centres, shared read-only by workers.
         const SpatialGrid* entityGrid = nullptr;
+        double mobRadiusPadding = 0.0;
         std::optional<double> wallMillis;
+        std::vector<net::PracticeMeter> practiceMeters;
     };
 
     /// Appends a complete Snapshot payload (message id included) to `out`.
@@ -389,6 +403,7 @@ public:
     /// so a pathological world cannot ask the server to build a frame past the
     /// transport's limit.
     std::size_t maxEntities = 8000;
+    static constexpr double kMobVisualReachPerRadius = 1.25;
 
 private:
     struct Candidate {

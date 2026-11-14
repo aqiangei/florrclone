@@ -41,6 +41,7 @@ struct Profile {
     /// token is the only way into the account and a password change asks for
     /// no current one (net::kAccountNoPassword).
     bool hasPassword = true;
+    bool presetAutosave = true;
     double totalXp = 0;
     int talentPointBonus = 0;
     int level = 1;
@@ -72,7 +73,7 @@ struct Profile {
             if (i < 0 || static_cast<std::size_t>(i) >= loadout.size()) return EquippedPetal{};
             const Slot& at = loadout[static_cast<std::size_t>(i)];
             return at.empty() ? EquippedPetal{} : EquippedPetal{at.petalIndex, at.rarity, at.rarity};
-        });
+        }, skills.loadoutSlots());
     }
 
     /// The cosmetic bit currently worn, or PlayerRenderNone.
@@ -120,6 +121,13 @@ struct PracticeBoardItem {
     Rarity rarity = Rarity::Common;
 };
 
+struct PracticeBoardDamage {
+    std::string petal;
+    Rarity rarity = Rarity::Common;
+    std::array<double, net::kPracticeWindowSeconds> seconds{};
+    double total = 0;
+};
+
 struct PracticeBoardRow {
     std::uint32_t id = 0;
     std::string name;
@@ -127,6 +135,7 @@ struct PracticeBoardRow {
     double atMillis = 0.0;
     bool published = false;
     std::vector<PracticeBoardItem> loadout;
+    std::vector<PracticeBoardDamage> breakdown;
 };
 
 struct PracticeBoard {
@@ -174,7 +183,7 @@ struct GuildState {
     std::string name;
     std::string description;
     std::string leader;
-    std::string deputy;
+    std::vector<std::string> deputies;
     std::vector<Member> members;
 
     std::size_t onlineCount() const {
@@ -602,6 +611,7 @@ public:
     void flush() { dialer_.flush(); }
 
     Status status() const { return status_; }
+    bool riftOpen() const { return riftOpen_; }
     /// Whether this client is holding an account: logged in, or in a game.
     /// Everything the server says about an account or a world is only
     /// meaningful while this holds.
@@ -648,7 +658,7 @@ public:
     /// placed the body by then, and that is the truth either way.
     void cancelJoin() { joinPending_ = false; }
     void leaveGame();
-    void sendInput(const net::InputFrame&);
+    bool sendInput(const net::InputFrame&);
     void sendChat(const std::string& text);
     void setLoadoutSlot(int slot, std::uint16_t petalIndex, Rarity rarity);
     void swapLoadoutSlots(int a, int b);
@@ -658,6 +668,7 @@ public:
     /// stores the whole loadout on the account; loading re-equips it, and the
     /// server answers both with a Notice.
     void saveLoadoutPreset(int preset);
+    void setPresetAutosave(bool enabled);
     void loadLoadoutPreset(int preset);
     /// Clicks the petal in an active loadout slot.
     ///
@@ -698,12 +709,14 @@ public:
     };
     /// Destroys every one of `stacks` for XP, in one request (shared/game/
     /// absorb.h prices it). The answer lands in absorbOutcome().
-    void requestAbsorb(const std::vector<AbsorbStack>& stacks, bool recycle = false);
+    void requestAbsorb(const std::vector<AbsorbStack>& stacks);
     /// Forges kTitanForgeCost apex of this petal into one universal at the
     /// titan the body is standing at.
     void requestTitanForge(std::uint16_t petalIndex, bool hyper=false, bool eternalFragment=true, bool batch=false);
+    /// Pass kNoPetal to exchange all eligible Eternal stacks in the bag.
     void requestPermanentHyperForge(std::uint16_t petalIndex);
     void requestTitanForgeAll();
+    void requestApexHammerForge(std::uint16_t fragmentIndex);
     /// Asks the titan the body is standing at who holds this petal at
     /// universal. The answer lands in titanHolder(); the server drops a query
     /// that comes too soon after the last, so a caller asks again until one
@@ -754,6 +767,7 @@ public:
     /// and the server's answer is the persistence, not the confirmation.
     void equipSkin(const std::string& id);
     void deleteSkin(const std::string& id);
+    void requestSkinReview(net::SkinReviewAction, const std::string& id = {});
     /// `includeAdmins` is the "Show Admins on Leaderboard" switch: without it
     /// the server leaves admin accounts off the board.
     void requestPracticeBoard(bool includeAdmins, net::PracticeBoardAction action = net::PracticeBoardAction::Read,
@@ -827,6 +841,7 @@ public:
     void adminControl(net::ConnectionId player, const std::string& username);
     /// Asks to give the steered flower back.
     void adminRelease();
+    void adminSetMuted(net::ConnectionId player, const std::string& accountId, bool muted);
     const AdminDashboardState& adminDashboard() const { return adminDashboard_; }
     /// Whether this client is steering another player's flower right now --
     /// which is when the snapshot's self block describes THAT flower and not
@@ -937,6 +952,8 @@ public:
     const CustomSkin* findSkin(const std::string& id) const;
     const std::string& equippedSkinId() const { return equippedSkinId_; }
     bool isSkinAdmin() const { return skinAdmin_; }
+    bool canModeratePublicSkins() const { return skinModerator_; }
+    const std::vector<CustomSkin>& skinReviewQueue() const { return skinReviewQueue_; }
 
     /// Puts a locally generated System line in the transcript. Every notice
     /// the reference makes, its own included, is a chat line and nothing more.
@@ -989,6 +1006,9 @@ public:
     const std::vector<HyperHoldingRow>& hyperBoard() const { return hyperBoard_; }
     std::uint32_t hyperHoldingsTotal() const { return hyperHoldingsTotal_; }
     std::uint32_t hyperHoldingsOffset() const { return hyperHoldingsOffset_; }
+    std::uint32_t ownLeaderboardRank(bool playtime, bool hyper) const {
+        return hyper ? ownHyperRank_ : playtime ? ownPlaytimeRank_ : ownLevelRank_;
+    }
     bool leaderboardPending() const { return leaderboardPending_; }
     /// How many accounts the server holds, and how many of them authenticated
     /// in the last day. The second is 0 for a non-admin, which is how the
@@ -1108,6 +1128,7 @@ public:
     /// by a yggdrasil raising this body back up.
     bool dead() const { return dead_; }
     const std::string& killerName() const { return killerName_; }
+    const std::vector<Profile::Stack>& runLoot() const { return runLoot_; }
 
     /// Set once each time a yggdrasil raised this body. Cleared by whoever
     /// reads it, like `reconnected`: the socket knows the player is alive
@@ -1145,6 +1166,7 @@ private:
     void handleJoinAccepted(ByteReader&);
     void handleRealmChange(ByteReader&);
     void handleMazeInfo(ByteReader&);
+    bool riftOpen_ = false;
     void handleChat(ByteReader&);
     /// The conversation already in progress when this account signed in, put
     /// ABOVE whatever the transcript holds: it is older than all of it.
@@ -1248,12 +1270,15 @@ private:
     std::vector<CustomSkin> skinCatalog_;
     std::string equippedSkinId_;
     bool skinAdmin_ = false;
+    bool skinModerator_ = false;
+    std::vector<CustomSkin> skinReviewQueue_;
 
     PracticeBoard practiceBoard_;
     std::vector<LeaderboardRow> leaderboard_;
     std::vector<LeaderboardRow> playtimeLeaderboard_; // totalXp stores seconds in these rows.
     std::vector<HyperHoldingRow> hyperBoard_;
     std::uint32_t hyperHoldingsTotal_ = 0, hyperHoldingsOffset_ = 0;
+    std::uint32_t ownLevelRank_ = 0, ownPlaytimeRank_ = 0, ownHyperRank_ = 0;
     bool leaderboardPending_ = false;
     std::uint32_t totalAccounts_ = 0;
     std::uint32_t dailyActiveUsers_ = 0;
@@ -1318,6 +1343,7 @@ private:
 
     bool dead_ = false;
     std::string killerName_;
+    std::vector<Profile::Stack> runLoot_;
     /// See joinPending().
     bool joinPending_ = false;
 

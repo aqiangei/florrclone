@@ -223,6 +223,7 @@ public:
     /// that player's client before its next snapshot, and the connection
     /// layer is the only thing that can send it.
     std::function<void(Entity, Realm, Vec2)> onTeleport;
+    bool riftOpen = false;
 
     /// Which flowers a pad may take at all. Null means every flower; the
     /// server answers false for its bots, whose controller only knows the
@@ -238,7 +239,13 @@ public:
     /// preserve that ordering while this class still owns all integration.
     void runPlayerPhase(World& world, const Terrain& terrain, double nowMillis, double dt,
                         double controlSeconds = 0.0);
-    void runWorldPhase(World& world, const Terrain& terrain, double nowMillis, double dt);
+    struct WorldPhaseTiming {
+        double mobStepsMs = 0, separationSolveMs = 0;
+        double mobStepJoinMs = 0, separationJoinMs = 0;
+    };
+    void runWorldPhase(World& world, const Terrain& terrain, double nowMillis, double dt,
+                       bool profile = false);
+    const WorldPhaseTiming& lastWorldPhaseTiming() const { return worldPhaseTiming_; }
 
 private:
     /// Queries are cached because rebuilding one per tick throws away the
@@ -301,6 +308,7 @@ private:
         Vec2 position;
         Team team = Team::Hostiles;
         Realm realm = Realm::Overworld;
+        int ghostTier = -1;
     };
 
     /// One mob in the separation pass, flattened out of the ECS.
@@ -380,14 +388,15 @@ private:
     /// never do), and each other (by mass). Runs after separation, so it sees
     /// the mobs where they finally stand this tick.
     void collideLooseBodies(World& world, const Terrain& terrain);
-    void moveMobs(World& world, const Terrain& terrain, double nowMillis, double dt);
+    WorldPhaseTiming worldPhaseTiming_;
+    void moveMobs(World& world, const Terrain& terrain, double nowMillis, double dt, double* joinMs);
     bool stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 from,
                           Vec2& position, double radius, double wallRadius = kMobWallRadius) const;
     void moveProjectiles(World& world, const Terrain& terrain, double dt);
 
     /// Pushes overlapping mobs apart. Runs once everything has moved, so a
     /// shove is never undone by the mover it was computed against.
-    void separateMobs(World& world, const Terrain& terrain);
+    void separateMobs(World& world, const Terrain& terrain, WorldPhaseTiming* timing);
     /// Flattens the eligible mobs into `separationSet_` and files them in
     /// `separationGrid_`.
     void buildSeparationSet(World& world);
@@ -396,9 +405,9 @@ private:
     bool activeForSeparation(Vec2 position, Realm realm, Rarity rarity) const;
 
     /// Collected lazily: a tick with no seeking projectile pays nothing.
-    void collectSeekTargets();
+    void collectSeekTargets(const World& world);
     Entity findSeekTarget(Entity self, const Projectile& projectile, Team team,
-                          Vec2 position, double heading, Realm realm) const;
+                          Vec2 position, double heading, Realm realm, int ghostSightTier) const;
     /// The one-shot launch correction. Returns the velocity the shot leaves
     /// with, which is `velocity` itself when nothing was in the cone.
     Vec2 aimAtLaunch(World& world, Entity self, Vec2 position,

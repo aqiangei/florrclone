@@ -4,13 +4,20 @@
 #include "test.h"
 
 #include "server_harness.h"
+#include "client/render/sprites.h"
+#include "client/render/world_renderer.h"
+#include "client/ui/chat_i18n.h"
+#include "client/ui/i18n.h"
+#include "render_rig.h"
 #include "server/db.h"
 #include "server/practice_board.h"
 #include "server/systems/spawning.h"
 #include "server/systems/combat.h"
 #include "server/systems/dungeons.h"
 #include "server/systems/loot.h"
+#include "server/systems/petals.h"
 #include "shared/game/prestige.h"
+#include "shared/game/assembler.h"
 #include "shared/game/difficulty.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/skills.h"
@@ -18,6 +25,7 @@
 #include "shared/game/terrain.h"
 #include "test_data.h"
 
+#include <deque>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -67,7 +75,790 @@ Realm realmOf(World& world, Entity e) {
 
 } // namespace
 
-TEST(jurassic_links_both_jungles_and_stocks_all_six_species) {
+static void checkBioMap(const char* mapId, int expectedWalls, std::uint32_t sourceMaskHash) {
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    bool found = false;
+    const Realm realm = maps.realmOfId(mapId, found);
+    CHECK(found);
+    if (!found) return;
+    const auto& registry = shippedContent();
+    DropTables drops;
+    CHECK(drops.load(registry, dataDir() + "/mob_drops.json", error));
+    int walls = 0;
+    std::uint32_t maskHash = 2166136261u;
+    for (int y = 0; y < 100; ++y) {
+        for (int x = 0; x < 100; ++x) {
+            const bool blocked = terrain.blocked(Terrain::tileCenter(x, y), realm);
+            walls += blocked;
+            maskHash = (maskHash ^ static_cast<std::uint32_t>(blocked)) * 16777619u;
+        }
+    }
+    CHECK_EQ(walls, expectedWalls);
+    CHECK_EQ(maskHash, sourceMaskHash);
+    Rng rng{42};
+    const auto& choices = maps.spawnChoices();
+    CHECK(std::any_of(choices.begin(), choices.end(), [realm](const auto& choice) {
+        return choice.realm == realm;
+    }));
+    const auto at = maps.forRealm(realm)->defaultSpawn(rng, terrain);
+    CHECK(!terrain.resolveWall(at, kPlayerBaseRadius, realm).collided);
+    int exits = 0;
+    for (const auto& element : maps.forRealm(realm)->elements()) {
+        if (element.kind == MapElementKind::Npc && element.npcId == "bio_assembler")
+            CHECK(!terrain.resolveWall(element.centre(), kPlayerBaseRadius, realm).collided);
+        if (element.kind != MapElementKind::Teleporter) continue;
+        CHECK(!terrain.resolveWall(element.centre(), kPlayerBaseRadius, realm).collided);
+        WorldMaps::Destination out;
+        if (!maps.resolveTeleporter(element, rng, terrain, out)) { CHECK(false); continue; }
+        if (out.realm == realm) {
+            CHECK(std::string_view(mapId) != "bio");
+            CHECK(element.padId == "bio-centre-entry" || element.padId == "bio-centre-return");
+            continue;
+        }
+        CHECK_EQ(maps.forRealm(out.realm)->id(), std::string("computer"));
+        ++exits;
+    }
+    CHECK_EQ(exits, 1);
+    World world;
+    CommandBuffer commands{world};
+    SpawnSystem spawning;
+    spawning.worldMaps = &maps;
+    spawning.mobCap = 0;
+    for (int step = 0; step < 15; ++step) {
+        spawning.run(world, terrain, registry, {{at, realm}}, rng,
+                     50000.0 + step * kPopulationIntervalMillis, net::kTickSeconds, commands);
+        commands.flush();
+    }
+    std::vector<SpawnSystem::LatentSite> sites;
+    spawning.latentSites(realm, sites);
+    std::set<std::uint16_t> species;
+    std::array<int, 8> regions{};
+    for (const auto& site : sites) {
+        CHECK(!terrain.blocked(site.position, realm));
+        species.insert(site.mobIndex);
+        const auto column = static_cast<std::size_t>(site.position.x / (25 * kTileSize));
+        const auto row = static_cast<std::size_t>(site.position.y / (50 * kTileSize));
+        if (column < 4 && row < 2) ++regions[row * 4 + column];
+    }
+    std::printf("[%s] %zu sites, %zu ambient species\n", mapId, sites.size(), species.size());
+    CHECK_EQ(sites.size(), std::size_t(74));
+    for (const int count : regions) CHECK(count > 0);
+    CHECK_EQ(species.size(), std::size_t(10));
+    const auto stem = registry.mobIndex("bio_stem_cell");
+    const auto biologist = registry.mobIndex("bio_biologist");
+    CHECK_EQ(registry.mob(stem).deathSpawn.mobIndex, biologist);
+    species.insert(biologist);
+    for (const auto id : species) {
+        const auto& entries = drops.forMob(id);
+        CHECK(std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
+            const auto& petal = registry.petal(entry.petalIndex);
+            return petal.petMobIndex == id && petalHasOwnSource(petal);
+        }));
+    }
+}
+
+TEST(zorr_bio_loads_original_grid_and_local_drops) {
+    checkBioMap("bio", 5299, 1217319098u);
+    checkBioMap("bio_micro", 5222, 875546567u);
+    checkBioMap("bio_lab", 4841, 3231680166u);
+}
+
+TEST(zorr_bio_and_jurassic_spawn_announcements_use_the_client_language) {
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+    const auto saved = ui::language();
+    const std::string virus = "<b style=\"color: #112233;\">A Super Virus has spawned somewhere!</b>";
+    const std::string raptor = "<b style=\"color: #112233;\">A Super Velociraptor has spawned!</b>";
+    ui::setLanguage(ui::Language::Zh);
+    CHECK_EQ(ui::localizeChatText(virus), "<b style=\"color: #112233;\">超级 病毒 已在某处生成！</b>");
+    CHECK_EQ(ui::localizeChatText(raptor), "<b style=\"color: #112233;\">超级 迅猛龙 已生成！</b>");
+    ui::setLanguage(ui::Language::En);
+    CHECK_EQ(ui::localizeChatText(virus), virus);
+    CHECK_EQ(ui::localizeChatText(raptor), raptor);
+    ui::setLanguage(saved);
+}
+
+TEST(zorr_bio_rna_stacks_and_dna_checks_the_hatchling_tier) {
+    const auto& content = shippedContent();
+    World world;
+    CommandBuffer commands{world};
+    PetalSystem petals;
+    const Entity flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<Transform>(flower, Transform{{5000, 5000}, 0});
+    world.add<Body>(flower, Body{25, 1});
+    world.add<Health>(flower, Health{100, 100});
+    world.add<Loadout>(flower);
+    world.add<PlayerModifiers>(flower);
+    world.add<PetalRing>(flower);
+    auto& bar = world.get<Loadout>(flower).slots;
+    bar[0] = {content.petalIndex("rna"), Rarity::Common};
+    bar[1] = {content.petalIndex("rna"), Rarity::Rare};
+    bar[2] = {content.petalIndex("dna"), Rarity::Rare};
+    petals.run(world, content, 1000, net::kTickSeconds, commands);
+    commands.flush();
+    const auto& modifiers = world.get<PlayerModifiers>(flower);
+    CHECK_NEAR(modifiers.petMoveSpeedScale, 1.1008, 1e-12);
+    CHECK_EQ(modifiers.eggMutationSources[rarityIndex(Rarity::Common)], 1);
+    CHECK_EQ(modifiers.eggMutationSources[rarityIndex(Rarity::Rare)], 1);
+    CHECK_EQ(modifiers.eggMutationSources[rarityIndex(Rarity::Epic)], 0);
+    world.get<Loadout>(flower).slots[1] = {};
+    petals.run(world, content, 1100, net::kTickSeconds, commands);
+    commands.flush();
+    CHECK_NEAR(world.get<PlayerModifiers>(flower).petMoveSpeedScale, 1.04, 1e-12);
+}
+
+TEST(zorr_bio_biologist_retains_stem_cell_eligibility_without_damage_credit) {
+    const auto& content = shippedContent();
+    const auto stemType = content.mobIndex("bio_stem_cell");
+    const auto scientistType = content.mobIndex("bio_biologist");
+    World world;
+    Terrain terrain;
+    CommandBuffer commands{world};
+    SpawnSystem spawning;
+    const Entity qualified = world.create();
+    world.add<PlayerTag>(qualified);
+    const Entity ineligible = world.create();
+    world.add<PlayerTag>(ineligible);
+    const Entity stem = world.create();
+    world.add<MobType>(stem, MobType{stemType, Rarity::Super});
+    world.add<Transform>(stem, Transform{{5000, 5000}, 0});
+    world.add<Health>(stem, Health{0, 1000});
+    auto& ledger = world.add<Bounty>(stem);
+    ledger.credit(qualified, 100);
+    ledger.credit(ineligible, 2);
+    Rng rng{42};
+    Entity scientist = NULL_ENTITY;
+    for (int attempt = 0; attempt < 100 && scientist == NULL_ENTITY; ++attempt) {
+        spawning.answerDeaths(world, terrain, content, {stem}, rng, 1000.0,
+                              net::kTickSeconds, commands);
+        Query<MobTag, MobType>{world}.each([&](Entity e, MobTag&, MobType& type) {
+            if (type.configIndex == scientistType) scientist = e;
+        });
+    }
+    CHECK(scientist != NULL_ENTITY);
+    if (scientist == NULL_ENTITY) return;
+    CHECK_EQ(world.get<MobType>(scientist).rarity, Rarity::Super);
+    CHECK(world.get<Bounty>(scientist).contributors.empty());
+    const auto* claims = world.tryGet<InheritedLootClaims>(scientist);
+    CHECK(claims && claims->recipients.size() == 1);
+    if (claims && !claims->recipients.empty()) CHECK_EQ(claims->recipients.front().player, qualified);
+}
+
+TEST(zorr_bio_acid_spills_and_diamond_shatters_only_on_break) {
+    const auto& content = shippedContent();
+    World world;
+    CommandBuffer commands{world};
+    PetalSystem petals;
+    const Entity flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<Transform>(flower, Transform{{5000, 5000}, 0});
+    world.add<Body>(flower, Body{25, 1});
+    world.add<Health>(flower, Health{100, 100});
+    world.add<PlayerInput>(flower);
+    world.add<Loadout>(flower);
+    world.add<PlayerModifiers>(flower);
+    world.add<PetalRing>(flower);
+    const auto acid = content.petalIndex("acid");
+    const auto diamond = content.petalIndex("diamond");
+    world.get<Loadout>(flower).slots[0] = {acid, Rarity::Common};
+    world.get<Loadout>(flower).slots[1] = {diamond, Rarity::Common};
+    world.get<PlayerInput>(flower).current.flags = net::InputAttack;
+    const auto tick = [&](double now) {
+        petals.run(world, content, now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    tick(0.0);
+    tick(3000.0);
+    tick(4100.0);
+    tick(4600.0);
+    int patches = 0;
+    Query<GroundEffect>{world}.each([&](Entity, GroundEffect& field) {
+        if (field.kind == GroundEffectKind::AcidSpill) {
+            ++patches;
+            CHECK(field.damagePerSecond > 0.0);
+        }
+    });
+    CHECK_EQ(patches, 1);
+    Entity shardSource = NULL_ENTITY;
+    Query<PetalInstance>{world}.each([&](Entity e, PetalInstance& active) {
+        if (active.configIndex == diamond) shardSource = e;
+    });
+    CHECK(shardSource != NULL_ENTITY);
+    if (shardSource == NULL_ENTITY) return;
+    int shards = 0;
+    const auto countShards = [&] {
+        shards = 0;
+        Query<Projectile>{world}.each([&](Entity, Projectile& shot) {
+            if (shot.petalConfigIndex == diamond) ++shards;
+        });
+    };
+    countShards();
+    CHECK_EQ(shards, 0);
+    world.get<Health>(shardSource).current = 0.0;
+    world.add<Dead>(shardSource);
+    tick(4650.0);
+    countShards();
+    CHECK_EQ(shards, 6);
+    tick(4700.0);
+    countShards();
+    CHECK_EQ(shards, 6);
+}
+
+TEST(zorr_bio_cancer_uses_one_subdivision_without_additional_rewards) {
+    const auto& content = shippedContent();
+    World world;
+    Terrain terrain;
+    CommandBuffer commands{world};
+    SpawnSystem spawning;
+    Rng rng{42};
+    const auto type = content.mobIndex("bio_bacteria");
+    const auto parent = spawning.spawnMob(world, terrain, content, type, Rarity::Rare,
+                                          {5000, 5000}, Realm::Overworld, 0.0, rng);
+    CHECK(parent != NULL_ENTITY);
+    if (parent == NULL_ENTITY) return;
+    world.add<CancerSubdivision>(parent);
+    world.add<Dead>(parent);
+    spawning.answerDeaths(world, terrain, content, {parent}, rng, 100.0, net::kTickSeconds, commands);
+    Entity child = NULL_ENTITY;
+    int copies = 0;
+    Query<MobType, CancerSubdivision>{world}.each(
+        [&](Entity e, MobType& mob, CancerSubdivision& subdivision) {
+            if (!subdivision.spawnedCopy) return;
+            ++copies;
+            child = e;
+            CHECK_EQ(mob.configIndex, type);
+            CHECK(mob.rarity >= Rarity::Uncommon && mob.rarity <= Rarity::Epic);
+            CHECK_EQ(world.get<Bounty>(e).xp, 0.0);
+        });
+    CHECK_EQ(copies, 1);
+    if (child == NULL_ENTITY) return;
+    const Entity flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<Transform>(flower, Transform{{5000, 5000}, 0});
+    world.get<Bounty>(child).credit(flower, world.get<Health>(child).max);
+    world.add<Dead>(child);
+    spawning.answerDeaths(world, terrain, content, {child}, rng, 200.0, net::kTickSeconds, commands);
+    LootSystem loot;
+    std::string error;
+    CHECK(loot.loadTables(content, dataDir() + "/mob_drops.json", error));
+    SpatialGrid grid;
+    EventQueue events;
+    loot.run(world, grid, content, rng, 200.0, net::kTickSeconds, commands, events);
+    commands.flush();
+    CHECK(world.has<LootAwarded>(child));
+    Query<DropTag>{world}.each([&](Entity, DropTag&) { CHECK(false); });
+    copies = 0;
+    Query<CancerSubdivision>{world}.each([&](Entity, CancerSubdivision& state) {
+        if (state.spawnedCopy) ++copies;
+    });
+    CHECK_EQ(copies, 1);
+}
+
+TEST(zorr_bio_cancer_is_consumed_and_pill_treats_it_at_full_health) {
+    const auto& content = shippedContent();
+    World world;
+    CommandBuffer commands{world};
+    PetalSystem petals;
+    const Entity flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<Transform>(flower, Transform{{5000, 5000}, 0});
+    world.add<Body>(flower, Body{25, 1});
+    world.add<Health>(flower, Health{100, 100});
+    world.add<PlayerInput>(flower);
+    world.add<Loadout>(flower);
+    world.add<PlayerModifiers>(flower);
+    world.add<PetalRing>(flower);
+    world.get<Loadout>(flower).slots[0] = {content.petalIndex("cancer"), Rarity::Common};
+    const auto tick = [&](double now) {
+        petals.run(world, content, now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    tick(0.0);
+    tick(4000.0);
+    tick(14100.0);
+    tick(14200.0);
+    const auto* status = world.tryGet<Afflictions>(flower);
+    CHECK(status && status->cancer == 3.0);
+    const double reduced = world.get<Health>(flower).max;
+    world.get<Loadout>(flower).slots[0] = {content.petalIndex("pill"), Rarity::Rare};
+    for (int t = 14300; t < 22000; t += 100) tick(t);
+    CHECK_EQ(world.get<Afflictions>(flower).cancer, 0.0);
+    CHECK(world.get<Health>(flower).max > reduced);
+}
+
+TEST(zorr_bio_blood_patches_strip_wild_mob_armor_and_chloroplast_scales_shields) {
+    const auto& content = shippedContent();
+    World world;
+    CommandBuffer commands{world};
+    EventQueue events;
+    PetalSystem petals;
+    CombatSystem combat;
+    const Entity flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<Transform>(flower, Transform{{5000, 5000}, 0});
+    world.add<Body>(flower, Body{25, 1});
+    world.add<Health>(flower, Health{100, 100});
+    world.add<PlayerInput>(flower);
+    world.add<Loadout>(flower);
+    world.add<PlayerModifiers>(flower);
+    world.add<PetalRing>(flower);
+    world.add<Faction>(flower, Faction{Team::Players, false});
+    auto& loadout = world.get<Loadout>(flower);
+    loadout.slots[0] = {content.petalIndex("blood"), Rarity::Common};
+    loadout.slots[1] = {content.petalIndex("chloroplast"), Rarity::Rare};
+    world.get<PlayerInput>(flower).current.flags = net::InputAttack;
+    for (const double now : {0.0, 3000.0, 4100.0}) {
+        petals.run(world, content, now, net::kTickSeconds, commands);
+        commands.flush();
+    }
+    CHECK_NEAR(world.get<PlayerModifiers>(flower).chloroplastShieldScale, 1.35, 1e-9);
+    Vec2 at;
+    int patches = 0;
+    Query<GroundEffect, Transform>{world}.each([&](Entity, GroundEffect& field, Transform& t) {
+        if (field.kind == GroundEffectKind::Blood) { at = t.position; ++patches; }
+    });
+    CHECK_EQ(patches, 1);
+    if (patches != 1) return;
+    const Entity mob = world.create();
+    world.add<MobTag>(mob);
+    world.add<MobType>(mob, MobType{content.mobIndex("bio_bacteria"), Rarity::Common});
+    world.add<Transform>(mob, Transform{at, 0.0});
+    world.add<Body>(mob, Body{25, 1});
+    world.add<Health>(mob, Health{100, 100});
+    world.add<Faction>(mob, Faction{Team::Hostiles, false});
+    world.add<Armor>(mob, Armor{10});
+    SpatialGrid grid;
+    grid.insert(mob, Realm::Overworld, at, 25);
+    combat.beginTick(world, content, 4110.0, net::kTickSeconds, events);
+    combat.runWorldPhase(world, grid, content, 4110.0, net::kTickSeconds);
+    CHECK(CombatSystem::effectiveArmor(world, mob, 4110.0) < 10.0);
+    CHECK_EQ(world.get<Health>(mob).current, 100.0);
+}
+
+TEST(zorr_bio_oxygen_extends_burning_without_creating_a_second_damage_source) {
+    const auto& content = shippedContent();
+    World world;
+    CombatSystem combat;
+    EventQueue events;
+    CommandBuffer commands{world};
+    SpatialGrid grid;
+    const Vec2 at{5100, 5000};
+
+    const Entity flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<Transform>(flower, Transform{{5000, 5000}, 0});
+    world.add<Faction>(flower, Faction{Team::Players, false});
+    const Entity mob = world.create();
+    world.add<MobTag>(mob);
+    world.add<MobType>(mob, MobType{content.mobIndex("bio_bacteria"), Rarity::Common});
+    world.add<Transform>(mob, Transform{at, 0});
+    world.add<Health>(mob, Health{100, 100});
+    world.add<Body>(mob, Body{24, 1});
+    world.add<Faction>(mob, Faction{Team::Hostiles, false});
+    world.add<Bounty>(mob);
+    grid.insert(mob, Realm::Overworld, at, 24);
+
+    const Entity oxygen = world.create();
+    PetalInstance instance;
+    instance.owner = flower;
+    instance.configIndex = content.petalIndex("oxygen");
+    world.add<PetalInstance>(oxygen, instance);
+    world.add<Transform>(oxygen, Transform{at + Vec2{15, 0}, 0});
+    world.add<Body>(oxygen, Body{10, 1});
+    world.add<Health>(oxygen, Health{30, 30});
+    world.add<Faction>(oxygen, Faction{Team::Players, false});
+    const auto tick = [&](double now) {
+        combat.run(world, grid, content, now, net::kTickSeconds, commands, events);
+        commands.flush();
+    };
+    tick(1000.0);
+    CHECK_EQ(world.get<Health>(mob).current, 100.0);
+    const auto* before = world.tryGet<Afflictions>(mob);
+    CHECK(!before || before->burnPerSecond == 0.0);
+
+    const Entity fire = world.create();
+    world.add<GroundEffectTag>(fire);
+    world.add<Transform>(fire, Transform{at, 0});
+    GroundEffect field;
+    field.kind = GroundEffectKind::Fire;
+    field.owner = flower;
+    field.radius = 50.0;
+    field.burnPerSecond = 4.0;
+    world.add<GroundEffect>(fire, field);
+    world.add<Lifetime>(fire, Lifetime{.20});
+    tick(2000.0);
+    CHECK(world.has<Afflictions>(mob));
+    if (!world.has<Afflictions>(mob)) return;
+    const auto first = world.get<Afflictions>(mob);
+    CHECK_EQ(first.burnSource, flower);
+    CHECK_EQ(first.burnUntilMillis, 5000.0);
+    world.destroy(fire);
+    tick(3050.0);
+    CHECK_EQ(world.get<Afflictions>(mob).burnUntilMillis, 5100.0);
+    CHECK_EQ(world.get<Afflictions>(mob).burnPerSecond, 4.0);
+    CHECK_NEAR(world.get<Health>(mob).current, 99.8, 1e-8);
+    CHECK(!world.get<Bounty>(mob).contributors.empty());
+    world.destroy(oxygen);
+    tick(5200.0);
+    CHECK_EQ(world.get<Afflictions>(mob).burnPerSecond, 0.0);
+    CHECK_NEAR(world.get<Health>(mob).current, 99.8, 1e-8);
+}
+
+TEST(zorr_bio_fire_and_fire_bomb_use_the_shared_burn_field) {
+    const auto& content = shippedContent();
+    const auto fire = content.petalIndex("fire");
+    const auto bomb = content.petalIndex("fire_bomb");
+    const auto missile = content.petalIndex("electron_missile");
+    const auto magic = content.petalIndex("magic_electron_missile");
+    CHECK_EQ(content.magicFormOf(missile), magic);
+    CHECK(content.petalStats(magic, Rarity::Common).requiredMana > 0.0);
+    World world;
+    CommandBuffer commands{world};
+    PetalSystem petals;
+    const Entity flower = world.create();
+    world.add<PlayerTag>(flower);
+    world.add<Transform>(flower, Transform{{5000, 5000}, 0});
+    world.add<Body>(flower, Body{25, 1});
+    world.add<Health>(flower, Health{100, 100});
+    world.add<PlayerInput>(flower);
+    world.add<Loadout>(flower);
+    world.add<PlayerModifiers>(flower);
+    world.add<PetalRing>(flower);
+    world.get<Loadout>(flower).slots[0] = {fire, Rarity::Common};
+    world.get<Loadout>(flower).slots[1] = {bomb, Rarity::Common};
+    world.get<PlayerInput>(flower).current.flags = net::InputAttack;
+    const auto tick = [&](double now) {
+        petals.run(world, content, now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    tick(0.0);
+    tick(3000.0);
+    tick(5100.0);
+    int fields = 0;
+    const auto countFields = [&] {
+        fields = 0;
+        Query<GroundEffect>{world}.each([&](Entity, GroundEffect& field) {
+            if (field.kind == GroundEffectKind::Fire) {
+                CHECK_EQ(field.owner, flower);
+                CHECK(field.burnPerSecond > 0.0);
+                ++fields;
+            }
+        });
+    };
+    countFields();
+    CHECK_EQ(fields, 1);
+    Entity shell = NULL_ENTITY;
+    Query<PetalInstance>{world}.each([&](Entity e, PetalInstance& petal) {
+        if (petal.configIndex == bomb) shell = e;
+    });
+    CHECK(shell != NULL_ENTITY);
+    if (shell == NULL_ENTITY) return;
+    world.get<Health>(shell).current = 0.0;
+    world.add<Dead>(shell);
+    tick(5150.0);
+    countFields();
+    CHECK_EQ(fields, 2);
+}
+
+#ifndef __EMSCRIPTEN__
+TEST(zorr_bio_micro_and_lab_centre_pads_round_trip_without_bounce) {
+    Harness h("bio-centre", [](const std::string& path) {
+        seedUser(path, "biocentre", "password7");
+    }, dataDir(), 0);
+    NetClient client;
+    CHECK(h.ready && logIn(h, client, "biocentre"));
+    if (client.status() != NetClient::Status::LoggedIn) return;
+    for (const char* id : {"bio_micro", "bio_lab"}) {
+        const bool joined = join(h, client, "biocentre", false, id);
+        CHECK(joined);
+        if (!joined) return;
+        World& world = h.server.world();
+        const Entity player = bodyNamed(world, "biocentre");
+        CHECK(player != NULL_ENTITY);
+        if (player == NULL_ENTITY) return;
+        world.get<Health>(player).invulnerableUntilMillis = h.clock + 30000;
+        const Realm realm = realmOf(world, player);
+        const auto& maps = h.server.worldMaps();
+        const auto& terrain = h.server.terrain();
+        const auto* map = maps.forRealm(realm);
+        CHECK(map && map->id() == id);
+        if (!map || map->id() != id) return;
+        const MapElement* entry = nullptr;
+        const MapElement* centre = nullptr;
+        for (const auto& element : map->elements()) {
+            if (element.padId == "bio-centre-entry") entry = &element;
+            if (element.padId == "bio-centre-return") centre = &element;
+        }
+        CHECK(entry && centre);
+        if (!entry || !centre) return;
+        for (const auto* pad : {entry, centre})
+            CHECK(!terrain.resolveWall(pad->centre(), kPlayerBaseRadius, realm).collided);
+        const auto nearby = [&](const MapElement& pad) {
+            return distanceSq(world.get<Transform>(player).position, pad.centre()) < 250.0 * 250.0;
+        };
+        const auto take = [&](const MapElement& from, const MapElement& to) {
+            for (int tick = 0; tick < 100; ++tick) {
+                world.get<Transform>(player).position = from.centre();
+                h.step(1, {&client});
+                if (nearby(to)) return true;
+            }
+            return false;
+        };
+        CHECK(take(*entry, *centre));
+        for (int tick = 0; tick < 140 && nearby(*centre); ++tick) {
+            world.get<Transform>(player).position = centre->centre();
+            h.step(1, {&client});
+        }
+        CHECK(nearby(*centre));
+        const Vec2 rest = centre->centre() + Vec2{90.0, 0.0};
+        CHECK(!terrain.resolveWall(rest, kPlayerBaseRadius, realm).collided);
+        world.get<Transform>(player).position = rest;
+        h.step(3, {&client});
+        CHECK(take(*centre, *entry));
+        CHECK(realmOf(world, player) == realm && client.view().realm() == realm);
+        std::printf("[bio centre] %s entry=%.0f,%.0f centre=%.0f,%.0f\n", id,
+            entry->centre().x, entry->centre().y, centre->centre().x, centre->centre().y);
+        client.leaveGame();
+        h.step(10, {&client});
+    }
+}
+
+TEST(zorr_bio_fire_burns_a_mob_through_a_connected_client_loadout) {
+    Harness h("bio-fire", [](const std::string& path) {
+        seedUser(path, "biofire", "password7");
+        seedStack(path, "biofire", "petal_fire", Rarity::Common, 1);
+    }, dataDir(), 0);
+    NetClient client;
+    if (!h.ready || !logIn(h, client, "biofire") || !join(h, client, "biofire", false, "bio")) {
+        CHECK(false);
+        return;
+    }
+    World& world = h.server.world();
+    const Entity flower = bodyNamed(world, "biofire");
+    CHECK(flower != NULL_ENTITY);
+    if (flower == NULL_ENTITY) return;
+    const auto& registry = shippedContent();
+    const auto fire = registry.petalIndex("fire");
+    client.setLoadoutSlot(0, fire, Rarity::Common);
+    Entity petal = NULL_ENTITY;
+    const bool equipped = h.stepUntil({&client}, [&] {
+        Query<PetalInstance>{world}.each([&](Entity entity, const PetalInstance& instance) {
+            if (instance.owner == flower && instance.configIndex == fire) petal = entity;
+        });
+        return petal != NULL_ENTITY;
+    });
+    CHECK(equipped);
+    if (!equipped) return;
+
+    const Transform origin = world.get<Transform>(flower);
+    SpawnSystem spawner;
+    const Entity target = spawner.spawnMob(world, h.server.terrain(), registry,
+        registry.mobIndex("bio_bacteria"), Rarity::Common, origin.position + Vec2{0, 200}, origin.realm,
+        h.clock, h.probeRng);
+    CHECK(target != NULL_ENTITY);
+    if (target == NULL_ENTITY) return;
+    world.get<Health>(flower).invulnerableUntilMillis = h.clock + 10000.0;
+    world.get<Health>(target).current = world.get<Health>(target).max = 10000.0;
+    world.remove<MobAi>(target);
+
+    net::InputFrame attack;
+    attack.flags = net::InputDefend;
+    bool sawFire = false;
+    for (int i = 0; i < 220; ++i) {
+        Query<GroundEffect, Transform>{world}.each(
+            [&](Entity, const GroundEffect& field, const Transform& at) {
+                if (field.owner != flower || field.kind != GroundEffectKind::Fire) return;
+                sawFire = true;
+                world.get<Transform>(target).position = at.position;
+            });
+        attack.sequence++;
+        CHECK(client.sendInput(attack));
+        h.step(1, {&client});
+        const auto* status = world.tryGet<Afflictions>(target);
+        if (status && status->burnPerSecond > 0.0) break;
+    }
+    CHECK(sawFire);
+    const auto* burning = world.tryGet<Afflictions>(target);
+    CHECK(burning && burning->burnPerSecond > 0.0 && burning->burnSource == flower);
+    const double before = world.get<Health>(target).current;
+    h.step(10, {&client});
+    CHECK(world.get<Health>(target).current < before);
+}
+
+TEST(assembler_output_capacity_handles_full_partial_and_reused_stacks) {
+    CHECK_EQ(assemblerOutputCapacity(kMaxStackCount, 2, 0), 0);
+    CHECK_EQ(assemblerOutputCapacity(kMaxStackCount - 5, 2, 0), 2);
+    CHECK_EQ(assemblerOutputCapacity(kMaxStackCount - 5, 3, 2), 5);
+    CHECK_EQ(assemblerOutputCapacity(kMaxStackCount, 2, 2), kMaxStackCount / 2);
+    CHECK_EQ(assemblerOutputCapacity(0, kMaxStackCount + 1LL, 0), 0);
+}
+
+TEST(zorr_bio_assembler_rotates_at_the_hour_and_enforces_atomic_account_cooldown) {
+    static double epoch = 24.0 * kBioAssemblerRotationMillis + 10.0;
+    epoch = 24.0 * kBioAssemblerRotationMillis + 10.0;
+    Harness h("bio-assembler", [](const std::string& path) {
+        seedUser(path, "biobuilder", "password7");
+        seedStack(path, "biobuilder", "petal_rna", Rarity::Common, 6);
+        seedStack(path, "biobuilder", "petal_moon_rock", Rarity::Ultra, 2);
+    }, dataDir(), 0, [](ServerConfig& config) {
+        config.assemblerClock = [] { return epoch; };
+    });
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    if (!logIn(h, client, "biobuilder")) { CHECK(false); return; }
+    if (!join(h, client, "biobuilder", false, "bio")) { CHECK(false); return; }
+
+    World& world = h.server.world();
+    const Entity flower = bodyNamed(world, "biobuilder");
+    CHECK(flower != NULL_ENTITY);
+    if (flower == NULL_ENTITY) return;
+    const auto realm = world.get<Transform>(flower).realm;
+    const auto findMachine = [&] {
+        Entity found = NULL_ENTITY;
+        Query<Npc, Transform>{world}.each([&](Entity e, Npc& npc, Transform& at) {
+            if (at.realm == realm && npc.service == NpcService::Assembler) found = e;
+        });
+        return found;
+    };
+    const Entity station = findMachine();
+    CHECK(station != NULL_ENTITY);
+    if (station == NULL_ENTITY) return;
+    const auto& registry = shippedContent();
+    const auto rna = registry.petalIndex("rna");
+    const auto dna = registry.petalIndex("dna");
+    const auto& spec = registry.mob(world.get<Npc>(station).configIndex).npc;
+    CHECK_EQ(spec.hourlyRecipeSlots, 49);
+    CHECK_EQ(spec.recipes.size(), std::size_t{49});
+    for (int slot = 0; slot < 49; ++slot)
+        CHECK_EQ(assemblyRecipeAtSlot(spec, slot), static_cast<std::uint8_t>(slot));
+    CHECK(spec.recipes[10].previewOnly);
+    CHECK_EQ(spec.recipes[48].inputs.front().petal, registry.petalIndex("moon_rock"));
+    CHECK_EQ(spec.recipes[48].outputs.front().petal, registry.petalIndex("rock"));
+    CHECK_EQ(spec.recipes[48].outputs.front().count, 15);
+    const std::uint8_t recipe = world.get<Npc>(station).recipe;
+    CHECK(recipe < spec.recipes.size());
+    if (recipe >= spec.recipes.size()) return;
+    CHECK_EQ(spec.recipes[recipe].rotationSlot, 24);
+    CHECK_EQ(spec.recipes[world.get<Npc>(station).nextRecipe].rotationSlot, 25);
+    CHECK_EQ(hourlyAssemblyRecipe(spec, 10.0 * kBioAssemblerRotationMillis),
+             kAssemblerUnavailableRecipe);
+    CHECK_EQ(hourlyAssemblyRecipe(spec, (24.0 + 49.0) * kBioAssemblerRotationMillis), recipe);
+
+    const Vec2 centre = world.get<Transform>(station).position;
+    world.get<Transform>(flower).position = centre + Vec2{0, 70};
+    const auto assemble = [&](std::uint16_t count) {
+        client.assembleOutcome().pending = false;
+        client.requestAssemble(Rarity::Common, recipe, count);
+        CHECK(h.stepUntil({&client}, [&] { return client.assembleOutcome().pending; }, 200));
+        return client.assembleOutcome();
+    };
+    CHECK(!assemble(4).success);
+    CHECK_EQ(client.profile().stackCount(rna, Rarity::Common), 6u);
+    CHECK(assemble(1).success);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rna, Rarity::Common) == 4u && p.stackCount(dna, Rarity::Common) == 1u;
+    }));
+    const auto refused = assemble(1);
+    CHECK(!refused.success);
+    CHECK_EQ(refused.reason, std::string("The Bio assembler is cooling down."));
+    CHECK_EQ(client.profile().stackCount(rna, Rarity::Common), 4u);
+    epoch += kBioAssemblerCooldownMillis;
+    CHECK(assemble(1).success);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rna, Rarity::Common) == 2u && p.stackCount(dna, Rarity::Common) == 2u;
+    }));
+    epoch = 25.0 * kBioAssemblerRotationMillis;
+    CHECK(!assemble(1).success);
+    CHECK_EQ(client.profile().stackCount(rna, Rarity::Common), 2u);
+    const Entity previousStation = findMachine();
+    CHECK(previousStation != NULL_ENTITY);
+    if (previousStation == NULL_ENTITY) return;
+    world.get<Npc>(previousStation).recipeRefreshAtMillis = 1.0;
+    epoch = 48.0 * kBioAssemblerRotationMillis;
+    CHECK(h.stepUntil({&client}, [&] {
+        const auto current = findMachine();
+        return current != NULL_ENTITY && world.get<Npc>(current).recipe == 48;
+    }, 200));
+    const auto makeMoon = [&](Rarity tier) {
+        client.assembleOutcome().pending = false;
+        client.requestAssemble(tier, 48, 1);
+        CHECK(h.stepUntil({&client}, [&] { return client.assembleOutcome().pending; }, 200));
+        return client.assembleOutcome().success;
+    };
+    CHECK(!makeMoon(Rarity::Common));
+    CHECK(makeMoon(Rarity::Ultra));
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(registry.petalIndex("moon_rock"), Rarity::Ultra) == 1u &&
+               p.stackCount(registry.petalIndex("rock"), Rarity::Ultra) == 15u;
+    }));
+}
+
+TEST(zorr_bio_new_assembler_slots_trade_real_inventory) {
+    static double epoch;
+    epoch = 4 * kBioAssemblerRotationMillis + 50.0;
+    Harness h("bio-new-slots", [](const std::string& path) {
+        seedUser(path, "slotbuilder", "password7");
+        seedStack(path, "slotbuilder", "petal_bomb", Rarity::Super, 3);
+        seedStack(path, "slotbuilder", "petal_arctic_icicle", Rarity::Super, 6);
+        seedStack(path, "slotbuilder", "petal_mysterious_stick", Rarity::Super, 6);
+        seedStack(path, "slotbuilder", "petal_void_knife", Rarity::Super, 4);
+    }, dataDir(), 0, [&](ServerConfig& config) {
+        config.assemblerClock = [] { return epoch; };
+    });
+    NetClient client;
+    CHECK(h.ready);
+    if (!h.ready || !logIn(h, client, "slotbuilder") ||
+        !join(h, client, "slotbuilder", false, "bio")) { CHECK(false); return; }
+    auto& world = h.server.world();
+    const Entity flower = bodyNamed(world, "slotbuilder");
+    CHECK(flower != NULL_ENTITY);
+    if (flower == NULL_ENTITY) return;
+    const auto findMachine = [&] {
+        Entity station = NULL_ENTITY;
+        Query<Npc, Transform>{world}.each([&](Entity e, Npc& npc, Transform& at) {
+            if (at.realm == world.get<Transform>(flower).realm &&
+                npc.service == NpcService::Assembler) station = e;
+        });
+        return station;
+    };
+    auto count = [&](const char* id, unsigned n) {
+        return client.profile().stackCount(shippedContent().petalIndex(id), Rarity::Super) == n;
+    };
+    for (const auto slot : {4, 17, 34}) {
+        epoch = slot * kBioAssemblerRotationMillis + 50.0;
+        const Entity before = findMachine();
+        CHECK(before != NULL_ENTITY);
+        if (before == NULL_ENTITY) return;
+        if (world.get<Npc>(before).recipe != slot) world.get<Npc>(before).recipeRefreshAtMillis = 1;
+        if (!h.stepUntil({&client}, [&] {
+            const Entity current = findMachine();
+            return current != NULL_ENTITY && world.get<Npc>(current).recipe == slot;
+        }, 200)) { CHECK(false); return; }
+        const auto station = findMachine();
+        world.get<Transform>(flower).position = world.get<Transform>(station).position + Vec2{0,70};
+        client.assembleOutcome().pending = false;
+        client.requestAssemble(Rarity::Super, static_cast<std::uint8_t>(slot), 2);
+        CHECK(h.stepUntil({&client}, [&] { return client.assembleOutcome().pending; }, 200));
+        CHECK(client.assembleOutcome().success);
+        CHECK(awaitProfile(h, client, [&](const Profile&) {
+            if (slot == 4) return count("bomb", 1) && count("arctic_icicle", 2) && count("arctic_cryo_bomb", 2);
+            if (slot == 17) return count("mysterious_stick", 2) && count("plank", 2);
+            return count("mysterious_stick", 0) && count("void_knife", 0) && count("void_scythe", 2);
+        }));
+    }
+}
+
+
+#endif
+
+
+TEST(jurassic_links_both_jungles_and_stocks_all_fifteen_species) {
     WorldMaps maps;
     Terrain terrain;
     std::string error;
@@ -100,40 +891,473 @@ TEST(jurassic_links_both_jungles_and_stocks_all_six_species) {
     checkPad("prestige_jurassic", "prestige_jungle", "from-jungle");
 
     bool found = false;
+    constexpr int side = 100;
+    for (const auto& [id, expectedWalls] : {
+             std::pair{"jurassic", 5083}, {"jurassic_pangea", 6175}, {"jurassic_tectonics", 5661}}) {
+        const Realm realm = maps.realmOfId(id, found);
+        CHECK(found);
+        if (!found) continue;
+        const auto* layout = maps.forRealm(realm);
+        CHECK_EQ(layout->width(), side);
+        CHECK_EQ(layout->height(), side);
+        // The original client paints the set bits as paths. Compare every
+        // effective collision cell, including both prestige twins.
+        const std::string idText = id;
+        const std::uint32_t sourceMaskHash = idText == "jurassic" ? 1962760074u
+            : idText == "jurassic_pangea" ? 3646136026u : 2681293992u;
+        for (int level : {0, 1, 2}) {
+            const Realm current = level == 0 ? realm : maps.prestigeRealm(realm, found, level);
+            CHECK(found);
+            int walls = 0;
+            std::uint32_t maskHash = 2166136261u;
+            for (int y = 0; y < side; ++y) {
+                for (int x = 0; x < side; ++x) {
+                    const bool blocked = terrain.blocked(Terrain::tileCenter(x, y), current);
+                    walls += blocked;
+                    maskHash = (maskHash ^ static_cast<std::uint32_t>(blocked)) * 16777619u;
+                }
+            }
+            CHECK_EQ(walls, expectedWalls);
+            CHECK_EQ(maskHash, sourceMaskHash);
+        }
+        const Vec2 spawn = layout->defaultSpawn(rng, terrain);
+        CHECK(!terrain.resolveWall(spawn, kPlayerBaseRadius, realm).collided);
+        checkPad(id, "jungle", "from-jungle");
+        const std::string prestige = std::string("prestige_") + id;
+        checkPad(prestige.c_str(), "prestige_jungle", "from-jungle");
+    }
+
+    const auto& content = shippedContent();
+    DropTables drops;
+    CHECK(drops.load(content, dataDir() + "/mob_drops.json", error));
+    for (const char* map : {"jurassic", "prestige_jurassic", "jurassic_pangea", "prestige_jurassic_pangea",
+                            "jurassic_tectonics", "prestige_jurassic_tectonics"}) {
+        const Realm instance = maps.realmOfId(map, found);
+        CHECK(found);
+        World world;
+        CommandBuffer commands{world};
+        SpawnSystem spawning;
+        spawning.worldMaps = &maps;
+        spawning.mobCap = 0;
+        for (int step = 0; step < 15; ++step) {
+            spawning.run(world, terrain, content, {{terrain.spawnPoint(instance), instance}},
+                         rng, 50000.0 + step * kPopulationIntervalMillis, net::kTickSeconds, commands);
+            commands.flush();
+        }
+        std::vector<SpawnSystem::LatentSite> sites;
+        spawning.latentSites(instance, sites);
+        std::set<std::uint16_t> species;
+        for (const auto& site : sites) {
+            CHECK(!terrain.blocked(site.position, instance));
+            species.insert(site.mobIndex);
+        }
+        CHECK_EQ(species.size(), std::size_t(15));
+        for (const auto id : species) {
+            CHECK(content.mob(id).id.find("jurassic_") == 0);
+            const auto& pool = drops.forMob(id);
+            CHECK(!pool.empty());
+            double superTail = 0.0;
+            for (const auto& entry : pool) {
+                CHECK(entry.petalIndex != kInvalidIndex);
+                CHECK_EQ(entry.rollGroup, 1);
+                CHECK_EQ(entry.rates.size(), std::size_t(9));
+                superTail += hyperSuperChance(entry.rates);
+                const auto& petal = content.petal(entry.petalIndex);
+                if (petal.petMobIndex != kInvalidIndex) CHECK_EQ(petal.petMobIndex, id);
+            }
+            CHECK(superTail > 0 && superTail <= .0150001);
+        }
+        std::printf("[jurassic] %s: %zu stocked monsters, %zu species\n",
+                    map, sites.size(), species.size());
+    }
+    for (const auto& [mobId, baseId, magicId] : {
+             std::array<const char*, 3>{"jurassic_raptor", "bone", "magic_bone"},
+             std::array<const char*, 3>{"jurassic_fossil", "crystal_leaf", "magic_crystal_leaf"},
+             std::array<const char*, 3>{"jurassic_meteor", "fire", "magic_fire"}}) {
+        const auto base = content.petalIndex(baseId);
+        const auto magic = content.petalIndex(magicId);
+        CHECK(magic != kInvalidIndex);
+        CHECK_EQ(content.magicFormOf(base), magic);
+        const auto& pool = drops.forMob(content.mobIndex(mobId));
+        CHECK(std::any_of(pool.begin(), pool.end(), [&](const auto& row) {
+            return row.petalIndex == base && row.magicRates.empty() && row.rollGroup == 1;
+        }));
+        CHECK(std::none_of(pool.begin(), pool.end(), [&](const auto& row) {
+            return row.petalIndex == magic;
+        }));
+    }
+    const auto mob = [&](const char* id) -> const MobConfig& {
+        return content.mob(content.mobIndex(id));
+    };
+    CHECK(mob("jurassic_raptor").crabStrafe);
+    CHECK(mob("jurassic_acid_bubble").poisonPerSecond > 0);
+    CHECK(mob("jurassic_fossil").petalRing.present);
+    CHECK_EQ(mob("jurassic_volcano").petalRing.petalIndex, content.petalIndex("rock"));
+    CHECK(mob("jurassic_diplodocus").massMultiplier > 1.0);
+
+}
+
+TEST(jurassic_rotation_keeps_prestige_twins_and_retires_wild_mobs) {
+    Harness h("jurassic-rotation", {}, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    const auto& maps = h.server.worldMaps();
+    const auto& terrain = h.server.terrain();
+    auto& world = h.server.world();
+    bool found = false;
+    const Realm entrance = maps.realmOfId("jurassic", found);
+    CHECK(found);
+    const Realm prestigeEntrance = maps.prestigeRealm(entrance, found);
+    CHECK(found);
+    if (!found) return;
+    const auto flower = [&](Realm destination) {
+        const Entity e = world.create();
+        world.add<PlayerTag>(e);
+        world.add<Transform>(e, Transform{terrain.spawnPoint(Realm::Overworld), 0.0, Realm::Overworld});
+        world.add<Body>(e, Body{kPlayerBaseRadius, 1.0});
+        GameServerPeer::markTeleport(h.server, e, destination, terrain.spawnPoint(destination));
+        return e;
+    };
+    const Entity ordinary = flower(entrance);
+    const Entity prestige = flower(prestigeEntrance);
+    std::set<Realm> visited;
+    for (int i = 0; i < 3; ++i) {
+        const Realm old = realmOf(world, ordinary);
+        const Entity mob = world.create();
+        world.add<MobTag>(mob);
+        world.add<Transform>(mob, Transform{terrain.spawnPoint(old), 0.0, old});
+        GameServerPeer::advanceJurassicCycle(h.server);
+        CHECK(!world.isAlive(mob));
+        const Realm current = realmOf(world, ordinary);
+        CHECK(current != old);
+        CHECK(maps.prestigeRealm(current, found) == realmOf(world, prestige));
+        CHECK(found);
+        for (const Entity e : {ordinary, prestige}) {
+            const auto& at = world.get<Transform>(e);
+            CHECK(!terrain.resolveWall(at.position, kPlayerBaseRadius, at.realm).collided);
+        }
+        visited.insert(current);
+    }
+    CHECK_EQ(visited.size(), std::size_t(3));
+}
+
+TEST(jurassic_original_ground_and_rock_wall_render_in_game) {
+    const auto& registry = shippedContent();
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    bool found = false;
     const Realm realm = maps.realmOfId("jurassic", found);
     CHECK(found);
-    for (const int row : {9, 14, 20}) {
-        const auto a = Terrain::tileCenter(row == 14 ? 14 : 16, row);
-        const auto b = Terrain::tileCenter(24, row);
-        CHECK(!terrain.segmentBlocked(a, b, realm));
+    if (!found) return;
+    SpriteCache sprites;
+    CHECK(sprites.build(registry, dataDir()));
+    for (const char* material : {"ground", "wall"}) {
+        for (int y = 0; y < 4; ++y) {
+            for (int x = 0; x < 4; ++x) {
+                const std::string tile = std::string("jurassic_zorr_") + material + "_" +
+                    std::to_string(x) + "_" + std::to_string(y) + ".svg";
+                CHECK(sprites.tileArt(tile) != nullptr);
+            }
+        }
     }
-    CHECK(terrain.segmentBlocked(Terrain::tileCenter(16, 12), Terrain::tileCenter(24, 12), realm));
+    CHECK(sprites.petalDrawable(registry.petalIndex("jurassic_raptor_egg")));
 
+    // Node runs the WebAssembly suite without a browser canvas.
+#if !defined(__EMSCRIPTEN__)
+    WorldRenderer renderer;
+    renderer.setSprites(&sprites);
+    renderer.setContent(&registry);
+    renderer.setWorldMaps(&maps);
+    WorldView view;
+    view.setRealm(realm);
+    constexpr int size = 120;
+    const auto pixel = [&](Vec2 at) {
+        Canvas canvas = Canvas::createVirtual(size, size);
+        renderer.draw(canvas, view, frameCamera(size, at), at, 0.0);
+        return canvas.getImageData(size / 2, size / 2, 1, 1);
+    };
+    Rng rng{42};
+    const auto soil = pixel(maps.forRealm(realm)->defaultSpawn(rng, terrain));
+    Vec2 wallCell;
+    bool foundWall = false;
+    for (int y = 0; y < 100 && !foundWall; ++y) {
+        for (int x = 0; x < 100 && !foundWall; ++x) {
+            wallCell = Terrain::tileCenter(x, y);
+            foundWall = terrain.blocked(wallCell, realm);
+        }
+    }
+    CHECK(foundWall);
+    const auto wall = pixel(wallCell);
+    CHECK(soil.size() == 4 && soil[0] > soil[1] && soil[1] > soil[2] && soil[2] > 0);
+    CHECK(wall.size() == 4 && wall[0] == wall[1] && wall[1] == wall[2] && wall[0] >= 90);
+#endif
+}
+
+TEST(jurassic_lava_stacks_and_oil_only_doubles_while_burning) {
     World world;
+    SpatialGrid grid;
+    CombatSystem combat;
     CommandBuffer commands{world};
-    SpawnSystem spawning;
-    spawning.worldMaps = &maps;
-    spawning.mobCap = 0;
+    EventQueue events;
     const auto& content = shippedContent();
-    for (int step = 0; step < 15; ++step) {
-        spawning.run(world, terrain, content, {{Terrain::tileCenter(22, 9), realm}},
-                     rng, 50000.0 + step * kPopulationIntervalMillis, net::kTickSeconds, commands);
+    const Entity owner = world.create();
+    world.add<PlayerTag>(owner);
+    world.add<Faction>(owner, Faction{Team::Players, true});
+    world.add<Transform>(owner, Transform{{900.0, 900.0}, 0.0});
+    world.add<Health>(owner, Health{1000.0, 1000.0});
+    const Entity target = world.create();
+    world.add<MobTag>(target);
+    world.add<Faction>(target, Faction{Team::Hostiles, false});
+    world.add<Transform>(target, Transform{{1000.0, 900.0}, 0.0});
+    world.add<Body>(target, Body{20.0, 1.0});
+    world.add<Health>(target, Health{1000.0, 1000.0});
+    grid.insert(target, Realm::Overworld, {1000.0, 900.0}, 20.0);
+    const auto& oil = content.petal(content.petalIndex("oil")).spill;
+    const auto& lava = content.petal(content.petalIndex("lava_bomb")).spill;
+    CHECK(oil.kind == SpillKind::Oil);
+    CHECK(lava.kind == SpillKind::Lava && lava.onHit);
+    const Vec2 impact{1000.0, 900.0};
+    const double dt = net::kTickSeconds;
+    CombatSystem::createSpill(world, owner, impact, Rarity::Common, oil, 1.0, 0);
+    combat.run(world, grid, content, 1000.0, dt, commands, events);
+    const double unlit = world.get<Health>(target).current;
+    CHECK_NEAR(unlit, 1000.0 - oil.strength * dt, 1e-8);
+    CombatSystem::createSpill(world, owner, impact, Rarity::Common, lava, 1.0, 0);
+    CombatSystem::createSpill(world, owner, impact, Rarity::Common, lava, 1.0, 0);
+    combat.run(world, grid, content, 1050.0, dt, commands, events);
+    CHECK_EQ(world.get<Afflictions>(target).burns.size(), std::size_t(2));
+    const double before = world.get<Health>(target).current;
+    combat.run(world, grid, content, 1100.0, dt, commands, events);
+    CHECK_NEAR(before - world.get<Health>(target).current,
+               (2.0 * oil.strength + 2.0 * lava.strength) * dt, 1e-8);
+    CHECK_NEAR(world.get<Health>(owner).current, 1000.0, 1e-8);
+
+    const auto& hotWater = content.petal(content.petalIndex("hot_water")).spill;
+    CombatSystem::createSpill(world, owner, impact, Rarity::Common, hotWater, 1.0, 0);
+    combat.run(world, grid, content, 1150.0, dt, commands, events);
+    const auto& status = world.get<Afflictions>(target);
+    CHECK_NEAR(status.frostSpeed(1150.0), .5, 1e-8);
+    CHECK_NEAR(status.frostSpeed(1650.0), 1.0, 1e-8);
+    CHECK_EQ(status.burns.size(), std::size_t(3));
+}
+
+TEST(jurassic_amber_scales_and_chromosome_apply_to_the_right_health_pool) {
+    std::string error;
+    CHECK(loadContent(dataDir(), error));
+    if (!error.empty()) return;
+    World world;
+    CombatSystem combat;
+    const Entity owner = world.create();
+    world.add<PlayerTag>(owner);
+    world.add<Faction>(owner, Faction{Team::Players, true});
+    world.add<Transform>(owner, Transform{{900.0, 900.0}, 0.0});
+    world.add<Health>(owner, Health{100.0, 100.0});
+    auto& mods = world.add<PlayerModifiers>(owner);
+    mods.scalesBodyReduction = .04;
+    mods.amberPetalReduction = .025;
+    world.add<Loadout>(owner);
+    const Entity petal = world.create();
+    world.add<PetalTag>(petal);
+    world.add<Faction>(petal, Faction{Team::Players, true});
+    world.add<Transform>(petal, Transform{{905.0, 900.0}, 0.0});
+    world.add<Health>(petal, Health{100.0, 100.0});
+    auto& instance = world.add<PetalInstance>(petal);
+    instance.owner = owner;
+    instance.slot = 1;
+    instance.chromosomeShield = 10.0;
+    instance.chromosomeShieldUntilMillis = 1500.0;
+    const auto gear = [&](const char* id, Vec2 position, int slot) {
+        const Entity e = world.create();
+        world.add<Transform>(e, Transform{position, 0.0});
+        world.add<Body>(e, Body{10.0, 1.0});
+        auto& gear = world.add<PetalInstance>(e);
+        gear.owner = owner;
+        gear.slot = slot;
+        gear.configIndex = shippedContent().petalIndex(id);
+        world.get<Loadout>(owner).spawned.push_back(e);
+        return e;
+    };
+    const Entity amber = gear("amber", {895.0, 900.0}, 0);
+    const Entity scales = gear("scales", {920.0, 900.0}, 2);
+    const Entity enemy = world.create();
+    world.add<MobTag>(enemy);
+    world.add<Body>(enemy, Body{10.0, 1.0});
+    world.add<Faction>(enemy, Faction{Team::Hostiles, false});
+    world.add<Transform>(enemy, Transform{{920.0, 900.0}, 0.0});
+    world.add<Health>(enemy, Health{100.0, 100.0});
+
+    CHECK_NEAR(combat.applyDamage(world, petal, enemy, 20.0, 1000.0,
+                                  DamageKind::Recoil).applied, 9.5, 1e-8);
+    CHECK_NEAR(world.get<PetalInstance>(petal).chromosomeShield, 0.0, 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, owner, enemy, 20.0, 1000.0).applied, 19.2, 1e-8);
+    world.get<Transform>(scales).position.x += 100.0;
+    CHECK_NEAR(combat.applyDamage(world, owner, enemy, 20.0, 1750.0).applied, 20.0, 1e-8);
+    world.get<PetalInstance>(petal).rarity = Rarity::Uncommon;
+    CHECK_NEAR(combat.applyDamage(world, petal, enemy, 20.0, 1750.0,
+                                  DamageKind::Recoil).applied, 20.0, 1e-8);
+    world.get<PetalInstance>(petal).rarity = Rarity::Common;
+    world.get<PetalInstance>(amber).slot = 2;
+    CHECK_NEAR(combat.applyDamage(world, petal, enemy, 20.0, 1900.0,
+                                  DamageKind::Recoil).applied, 20.0, 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, owner, enemy, 20.0, 2000.0,
+                                  DamageKind::Periodic).applied, 20.0, 1e-8);
+}
+
+TEST(jurassic_feather_cost_and_amulet_squad_damage_follow_equipment_and_map) {
+    World world;
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    bool found = false;
+    const Realm realm = maps.realmOfId("jurassic", found);
+    CHECK(found);
+    if (!found) return;
+    PetalSystem petals;
+    petals.jurassicMaps = &maps;
+    CommandBuffer commands{world};
+    const auto& registry = shippedContent();
+    const Vec2 centre = terrain.spawnPoint(realm);
+    const auto flower = [&](Vec2 at) {
+        const auto e = world.create();
+        world.add<PlayerTag>(e);
+        world.add<Transform>(e, Transform{at, 0.0, realm});
+        world.add<Motion>(e);
+        world.add<Body>(e, Body{kPlayerBaseRadius, 1.0});
+        world.add<Health>(e, Health{maxHealthForLevel(1), maxHealthForLevel(1)});
+        world.add<Faction>(e, Faction{Team::Players, false});
+        world.add<PlayerProgress>(e);
+        world.add<PlayerInput>(e);
+        world.add<PlayerModifiers>(e);
+        world.add<PlayerLocation>(e);
+        world.add<Loadout>(e);
+        world.add<PetalRing>(e);
+        return e;
+    };
+    const Entity wearer = flower(centre);
+    const Entity ally = flower(centre + Vec2{40.0, 0.0});
+    auto& slots = world.get<Loadout>(wearer).slots;
+    slots[0].configIndex = registry.petalIndex("feather");
+    slots[1].configIndex = registry.petalIndex("amulet");
+    world.get<PlayerInput>(wearer).current.moveStrength = 1.0;
+    petals.run(world, registry, 1000.0, net::kTickSeconds, commands, &terrain);
+    // Newly equipped petals have to complete their first reload.
+    petals.run(world, registry, 10000.0, net::kTickSeconds, commands, &terrain);
+    commands.flush();
+    CHECK(world.get<PlayerModifiers>(wearer).speedScale > 1.0);
+    CHECK(world.get<Health>(wearer).current < world.get<Health>(wearer).max);
+    CHECK(world.get<PlayerModifiers>(wearer).jurassicAmuletBonus > 0.0);
+
+    const Entity striker = world.create();
+    world.add<PetalInstance>(striker).owner = ally;
+    world.add<Transform>(striker, Transform{centre, 0.0, realm});
+    world.add<Faction>(striker, Faction{Team::Players, false});
+    const Entity enemy = world.create();
+    world.add<MobTag>(enemy);
+    world.add<Faction>(enemy, Faction{Team::Hostiles, false});
+    world.add<Transform>(enemy, Transform{centre, 0.0, realm});
+    world.add<Health>(enemy, Health{100.0, 100.0});
+    CombatSystem combat;
+    SquadEntityIndex squads;
+    squads.groups = {{{wearer, 1}, {ally, 2}}};
+    squads.group = {{wearer, 0}, {ally, 0}};
+    combat.squads = &squads;
+    CHECK(combat.applyDamage(world, enemy, striker, 10.0, 10050.0).applied > 10.0);
+    CHECK_NEAR(combat.applyDamage(world, enemy, striker, 10.0, 10200.0,
+                                  DamageKind::Periodic).applied, 10.0, 1e-8);
+    world.get<Transform>(wearer).realm = Realm::Overworld;
+    world.get<PlayerInput>(wearer).current.moveStrength = 0.0;
+    petals.run(world, registry, 10500.0, net::kTickSeconds, commands, &terrain);
+    commands.flush();
+    CHECK_NEAR(world.get<PlayerModifiers>(wearer).speedScale, 1.0, 1e-8);
+    CHECK_NEAR(world.get<PlayerModifiers>(wearer).jurassicAmuletBonus, 0.0, 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, enemy, striker, 10.0, 10600.0).applied, 10.0, 1e-8);
+}
+
+TEST(jurassic_magic_petals_pay_for_live_pve_effects) {
+    World world;
+    PetalSystem petals;
+    CommandBuffer commands{world};
+    const auto& registry = shippedContent();
+    const Entity player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Transform>(player, Transform{{900.0, 900.0}, 0.0});
+    world.add<Motion>(player);
+    world.add<Body>(player, Body{kPlayerBaseRadius, 1.0});
+    world.add<Health>(player, Health{100.0, 100.0});
+    world.add<Faction>(player, Faction{Team::Players, true});
+    world.add<PlayerInput>(player);
+    world.add<PlayerModifiers>(player);
+    world.add<PetalRing>(player);
+    auto& slots = world.add<Loadout>(player).slots;
+    slots[0].configIndex = registry.petalIndex("magic_leaf");
+    slots[1].configIndex = registry.petalIndex("magic_bone");
+    slots[1].rarity = Rarity::Uncommon;
+    slots[2].configIndex = registry.petalIndex("magic_bone");
+    slots[3].configIndex = registry.petalIndex("magic_crystal_leaf");
+    slots[4].configIndex = registry.petalIndex("magic_fire");
+    slots[5].configIndex = registry.petalIndex("torch");
+    slots[6].configIndex = registry.petalIndex("magic_torch");
+
+    const auto body = [&](Vec2 at, Realm realm, Team team) {
+        const Entity entity = world.create();
+        world.add<MobTag>(entity);
+        world.add<Transform>(entity, Transform{at, 0.0, realm});
+        world.add<Body>(entity, Body{40.0, 1.0});
+        world.add<Health>(entity, Health{80.0, 100.0});
+        world.add<Faction>(entity, Faction{team, false});
+        return entity;
+    };
+    const Entity summon = body({910.0, 900.0}, Realm::Overworld, Team::Players);
+    world.add<Pet>(summon).owner = player;
+    const Entity away = body({910.0, 900.0}, Realm::Arena, Team::Players);
+    world.add<Pet>(away).owner = player;
+    const Entity enemy = body({920.0, 900.0}, Realm::Overworld, Team::Hostiles);
+    world.get<Body>(enemy).radius = 180.0;
+    const auto step = [&](double now) {
+        petals.run(world, registry, now, net::kTickSeconds, commands);
         commands.flush();
-    }
-    std::vector<SpawnSystem::LatentSite> sites;
-    spawning.latentSites(realm, sites);
-    std::set<std::string> species;
-    for (const auto& site : sites) {
-        CHECK(!terrain.blocked(site.position, realm));
-        species.insert(content.mob(site.mobIndex).id);
-    }
-    CHECK_EQ(species.size(), std::size_t(6));
-    CHECK(species.count("jurassic_tyrannosaurus"));
-    CHECK(content.mob(content.mobIndex("jurassic_raptor")).jump.present);
-    CHECK(content.mob(content.mobIndex("jurassic_tyrannosaurus")).crabStrafe);
-    CHECK_EQ(content.mob(content.mobIndex("jurassic_pteranodon")).projectile.ammoPetalIndex,
-             content.petalIndex("wing"));
-    std::printf("[jurassic] %zu stocked monsters, %zu species\n", sites.size(), species.size());
+    };
+    step(1000.0);
+    auto& mana = world.get<ManaPool>(player);
+    const double initial = mana.current;
+    step(4000.0);
+    CHECK(world.get<ManaPool>(player).current < initial);
+    const auto& bonus = world.get<PlayerModifiers>(player).magicBoneDamageBonus;
+    CHECK_NEAR(bonus[ladderIndex(Rarity::Common)], .12, 1e-8);
+    CHECK_NEAR(bonus[ladderIndex(Rarity::Uncommon)], 0.0, 1e-8);
+
+    world.get<PlayerInput>(player).current.flags = net::InputAttack;
+    world.get<ManaPool>(player).current = 0.0;
+    step(5000.0);
+    CHECK(!world.has<Afflictions>(enemy));
+    CHECK_NEAR(world.get<Pet>(summon).crystalLeafShield, 0.0, 1e-8);
+    CHECK(world.get<Health>(summon).current > 80.0);
+    CHECK_NEAR(world.get<Health>(away).current, 80.0, 1e-8);
+
+    world.add<Afflictions>(player).frostUntilMillis = 6500.0;
+    world.add<Afflictions>(summon).frostUntilMillis = 6500.0;
+    world.add<Afflictions>(away).frostUntilMillis = 6500.0;
+    world.get<ManaPool>(player).current = 20.0;
+    step(6000.0);
+    const auto* status = world.tryGet<Afflictions>(enemy);
+    CHECK(status && status->burns.size() == 1);
+    if (status && !status->burns.empty()) CHECK_NEAR(status->burns[0].untilMillis, 9000.0, 1e-8);
+    CHECK_NEAR(world.get<Pet>(summon).crystalLeafShield, 4.0, 1e-8);
+    CHECK_NEAR(world.get<Pet>(away).crystalLeafShield, 0.0, 1e-8);
+    CHECK(world.get<ManaPool>(player).current < 18.0);
+    CHECK_NEAR(world.get<Afflictions>(player).frostUntilMillis, 6445.0, 1e-8);
+    CHECK_NEAR(world.get<Afflictions>(summon).frostUntilMillis, 6445.0, 1e-8);
+    CHECK_NEAR(world.get<Afflictions>(away).frostUntilMillis, 6500.0, 1e-8);
+
+    CombatSystem combat;
+    CHECK_NEAR(combat.applyDamage(world, summon, enemy, 2.0, 6050.0).applied, 0.0, 1e-8);
+    CHECK_NEAR(world.get<Pet>(summon).crystalLeafShield, 2.0, 1e-8);
+    CHECK_NEAR(combat.applyDamage(world, summon, enemy, 6.0, 7550.0).applied, 6.0, 1e-8);
 }
 
 TEST(jurassic_feedback_bone_stats_and_moon_rock_price) {
@@ -154,15 +1378,15 @@ TEST(jurassic_feedback_bone_stats_and_moon_rock_price) {
     CHECK(!registry.petalStats(orb, Rarity::Apex).breakable);
     std::string error;
     CHECK(loadContent(dataDir(), error));
-    CHECK_NEAR(shopPrice("basic", Rarity::Super), 4188.0, 1e-9);
+    CHECK_NEAR(shopPrice("basic", Rarity::Super), 30000.0, 1e-9);
     const auto moon = registry.petalIndex("moon_rock");
     CHECK_NEAR(shopPrice(moon, Rarity::Ultra), 9000.0, 1e-9);
-    CHECK_NEAR(shopPrice(moon, Rarity::Super), 45000.0, 1e-9);
+    CHECK_NEAR(shopPrice(moon, Rarity::Super), 772000.0, 1e-9);
     CHECK_NEAR(shopOfferPrice(moon, Rarity::Super, 30), 31500.0, 1e-9);
-    CHECK(!shopSellsRarity(Rarity::Unique));
+    CHECK(shopSellsRarity(Rarity::Unique));
 }
 
-TEST(guild_deputy_can_invite_but_cannot_manage_or_transfer) {
+TEST(guild_deputies_can_invite_but_cannot_manage_or_transfer) {
     Harness h("guild-deputy", [](const std::string& path) {
         for (const char* name : {"leader", "deputy", "guest", "outsider"})
             seedUser(path, name, "password7");
@@ -185,7 +1409,12 @@ TEST(guild_deputy_can_invite_but_cannot_manage_or_transfer) {
     h.step(10, clients);
     CHECK(!guest.guildInvite().waiting);
     boss.sendChat("/guild-deputy deputy");
-    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputy == "deputy"; }));
+    const std::vector<std::string> firstDeputy{"deputy"};
+    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputies == firstDeputy; }));
+    // An existing singleton record still grants its invitation rights.
+    auto& guild = GameServerPeer::authorityDb(h.server).rawTable("guilds")["ALPHA"];
+    guild.erase("deputyUsernames");
+    guild["deputyUsername"] = "deputy";
     deputy.requestGuildInvite("guest");
     CHECK(h.stepUntil(clients, [&] { return guest.guildInvite().waiting; }));
     guest.requestGuildAccept();
@@ -198,17 +1427,28 @@ TEST(guild_deputy_can_invite_but_cannot_manage_or_transfer) {
     h.step(20, clients);
     CHECK(guest.guild().joined);
     CHECK_EQ(boss.guild().leader, std::string("leader"));
-    CHECK_EQ(boss.guild().deputy, std::string("deputy"));
+    CHECK(boss.guild().deputies == firstDeputy);
     CHECK(boss.guild().name != "Changed");
 
     boss.sendChat("/guild-deputy guest");
-    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputy == "guest"; }));
-    deputy.requestGuildInvite("outsider");
+    const std::vector<std::string> bothDeputies{"deputy", "guest"};
+    CHECK(h.stepUntil(clients, [&] { return deputy.guild().deputies == bothDeputies; }));
+    guest.requestGuildInvite("outsider");
+    CHECK(h.stepUntil(clients, [&] { return outsider.guildInvite().waiting; }));
+    outsider.requestGuildAccept();
+    CHECK(h.stepUntil(clients, [&] { return outsider.guild().joined; }));
+    boss.sendChat("/guild-deputy outsider");
     h.step(10, clients);
-    CHECK(!outsider.guildInvite().waiting);
+    CHECK(boss.guild().deputies == bothDeputies);
     boss.sendChat("/guild-transfer guest");
     CHECK(h.stepUntil(clients, [&] { return boss.guild().leader == "guest"; }));
-    CHECK(boss.guild().deputy.empty());
+    CHECK(boss.guild().deputies == firstDeputy);
+    guest.sendChat("/guild-deputy outsider");
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies.size() == 2; }));
+    guest.sendChat("/guild-undeputy outsider");
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies == firstDeputy; }));
+    deputy.requestGuildLeave();
+    CHECK(h.stepUntil(clients, [&] { return boss.guild().deputies.empty(); }));
 }
 
 TEST(hyper_corruption_exposure_allows_retaliation_and_continue_returns_to_spawn) {
@@ -476,7 +1716,7 @@ TEST(a_copies_entry_cannot_also_be_prestige) {
 // What grows there
 // ---------------------------------------------------------------------------
 
-TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
+TEST(an_empty_prestige_twin_stocks_regular_mobs_and_leaves_its_eternal_on_cooldown) {
     World world;
     CommandBuffer commands{world};
     Terrain terrain;
@@ -533,10 +1773,7 @@ TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
     mobs.each([&](Entity, MobTag&, Transform& transform, MobType& type) {
         if (maps.isPrestige(transform.realm)) CHECK(!barredFromPrestige(type.rarity));
     });
-    // And no clock was dealt for one: a twin is not a boss biome.
-    for (const SpawnSystem::BiomeBossClock& clock : spawner.bossClocks()) {
-        CHECK(clock.biome.rfind(kPrestigeMapPrefix, 0) != 0);
-    }
+    CHECK(spawner.bossCooldownLeft(Rarity::Unique, prestigeGarden, 50000.0) > 0);
     // Spawn a real announcing tier in the ordinary biome. Supers in the
     // cold stock are below the global announcement threshold.
     const auto& content = shippedContent();
@@ -552,7 +1789,7 @@ TEST(an_prestige_twin_grows_every_band_a_tier_up_and_no_boss_above_super) {
     CHECK(announced);
 }
 
-TEST(prestige_hel_deep_stock_contains_more_super_mobs) {
+TEST(prestige_hel_stock_is_denser_and_upper_bands_have_more_supers) {
     World world;
     CommandBuffer commands{world};
     Terrain terrain;
@@ -572,27 +1809,42 @@ TEST(prestige_hel_deep_stock_contains_more_super_mobs) {
     CHECK(found);
     if (!found) return;
 
+    std::size_t ordinaryStock = 0;
     for (const auto realm : {hel, prestigeHel}) {
         std::vector<SpawnSystem::LatentSite> sites;
         spawner.latentSites(realm, sites);
         int deep = 0;
         int supers = 0;
+        int middle = 0;
+        int middleSupers = 0;
         for (const auto& site : sites) {
+            if (realm == prestigeHel) CHECK(!barredFromPrestige(site.rarity));
+            if (site.difficulty == 50.0) {
+                ++middle;
+                middleSupers += site.rarity == Rarity::Super;
+            }
             if (site.difficulty < 60.0) continue;
             CHECK_EQ(site.difficulty, realm == prestigeHel ? 65.0 : 60.0);
-            if (realm == prestigeHel) CHECK(!barredFromPrestige(site.rarity));
             ++deep;
             supers += site.rarity == Rarity::Super;
         }
         CHECK(deep >= 12);
-        if (realm == prestigeHel) CHECK(supers > deep * 0.4 && supers < deep * 0.9);
-        else CHECK(supers < deep * 0.1);
-        std::printf("Hel deep stock (%s): %d of %d Super\n",
-                    realm == prestigeHel ? "prestige" : "ordinary", supers, deep);
+        if (realm == prestigeHel) {
+            CHECK(sites.size() > ordinaryStock);
+            CHECK(middleSupers > middle * 0.23 && middleSupers < middle * 0.55);
+            CHECK(supers > deep * 0.4 && supers < deep * 0.9);
+            CHECK(supers * middle > middleSupers * deep);
+        } else {
+            ordinaryStock = sites.size();
+            CHECK(supers < deep * 0.1);
+        }
+        std::printf("Hel stock (%s): %zu total, %d/%d middle Super, %d/%d deepest Super\n",
+                    realm == prestigeHel ? "prestige" : "ordinary", sites.size(),
+                    middleSupers, middle, supers, deep);
     }
 }
 
-TEST(prestige_jungle_and_sewers_box_wake_local_mobs_at_the_shared_ambient_limit) {
+TEST(prestige_jungle_sewers_and_hel_wake_local_mobs_at_the_shared_ambient_limit) {
     World world;
     CommandBuffer commands{world};
     Terrain terrain;
@@ -672,6 +1924,77 @@ TEST(prestige_jungle_and_sewers_box_wake_local_mobs_at_the_shared_ambient_limit)
     CHECK(boxNearby > 0);
     CHECK(spawner.census().mobs <= kMaxLiveMobs);
     std::printf("[sewers] %d mobs near the box at the ambient budget\n", boxNearby);
+
+    const Realm helRealm = maps.realmOfId("prestige_hel", found);
+    CHECK(found);
+    if (!found) return;
+    const Vec2 hel = terrain.resolveCircle({4252.0, 12721.0}, kPlayerBaseRadius, helRealm);
+    viewers.push_back({hel, helRealm});
+    tick(55'650.0);
+    int helNearby = 0;
+    mobs.each([&](Entity, MobTag&, Transform& at, MobType& type, AmbientMob&) {
+        if (at.realm != helRealm) return;
+        CHECK(!barredFromPrestige(type.rarity));
+        if (std::abs(at.position.x - hel.x) <= 1400.0 &&
+            std::abs(at.position.y - hel.y) <= 1000.0) ++helNearby;
+    });
+    CHECK(helNearby > 0);
+    CHECK(spawner.census().mobs <= kMaxLiveMobs);
+    std::printf("[prestige hel] %d mobs near the upper band at the ambient budget\n", helNearby);
+}
+
+TEST(deep_prestige_factory_refills_at_the_shared_ambient_limit) {
+    WorldMaps maps;
+    Terrain terrain;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    if (!error.empty()) return;
+    bool found = false;
+    const Realm realm = maps.realmOfId("prestige_computer", found);
+    CHECK(found);
+    if (!found) return;
+
+    World world;
+    CommandBuffer commands{world};
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    spawner.sizePlacementGrids(terrain);
+    Rng rng{42};
+    std::vector<RealmPoint> viewers;
+    const auto tick = [&](double now) {
+        spawner.run(world, terrain, shippedContent(), viewers, rng, now, net::kTickSeconds, commands);
+        commands.flush();
+    };
+    for (int pass = 0; pass < 12; ++pass) tick(50'000 + pass * kPopulationIntervalMillis);
+    CHECK(spawner.census().mobs > 0);
+    spawner.mobCap = spawner.census().mobs + 128; // Existing live mobs use the entire normal budget.
+
+    // End of the winding difficulty-70 section on the shipped Factory map.
+    const Vec2 terminal{3456.0, 14464.0};
+    CHECK(!terrain.blocked(terminal, realm));
+    viewers.push_back({terminal, realm});
+    const auto reachable = [&] {
+        std::vector<Entity> local;
+        Query<AmbientMob, MobTag, Transform, MobType> mobs{world};
+        mobs.without<Dead>();
+        mobs.each([&](Entity e, AmbientMob& ambient, MobTag&, Transform& where, MobType& type) {
+            if (ambient.zone != kInvalidIndex && where.realm == realm &&
+                rarityIndex(type.rarity) < rarityIndex(Rarity::Unique) &&
+                std::abs(where.position.x - terminal.x) <= kSpawnViewportHalfWidth &&
+                std::abs(where.position.y - terminal.y) <= kSpawnViewportHalfHeight &&
+                !terrain.segmentBlocked(terminal, where.position, realm)) local.push_back(e);
+        });
+        return local;
+    };
+    tick(55'550); // A new viewer must wake monsters between population passes.
+    const auto cleared = reachable();
+    CHECK(!cleared.empty());
+    for (const Entity entity : cleared) world.add<Dead>(entity);
+    tick(56'000);
+    for (const Entity entity : cleared) world.destroy(entity);
+    for (int pass = 1; pass <= 16; ++pass) tick(56'000 + pass * kPopulationIntervalMillis);
+    CHECK(!reachable().empty());
+    CHECK(spawner.census().mobs <= spawner.mobCap);
 }
 
 TEST(jungle_refills_near_a_stationary_viewer_after_kills) {
@@ -867,7 +2190,220 @@ TEST(authored_maps_wake_blocked_ambient_records_without_viewer_movement) {
     }
 }
 
-TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
+TEST(ghosts_spawn_independently_of_ambient_slots_outside_hel) {
+    const double tile = kTileSize;
+    auto fixture = fixtureMap(100, 100, fixtureDoor("spawn", "Spawn", 2 * tile, 2 * tile,
+                                    tile, tile, true, 0.0), "",
+                                    fixtureBand(tile, tile, 98 * tile, 98 * tile, "bee 100%", 35.0));
+    fixture.insert(fixture.rfind('}'), R"(,"properties":[{"name":"spawnCurve","value":"florrclone"}])");
+    const auto dir = stageDataDir("ghost-natural", {{"garden", fixture}, {"hel", fixture}});
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dir, &terrain, error));
+    bool found = false;
+    const Realm garden = maps.realmOfId("garden", found);
+    CHECK(found);
+    const Realm hel = maps.realmOfId("hel", found);
+    CHECK(found);
+    const auto ghost = shippedContent().mobIndex("ghost");
+    World world;
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    spawner.restoreBossClock("garden", 1e9, 1e9);
+    spawner.restoreBossClock("hel", 1e9, 1e9);
+    CommandBuffer commands{world};
+    Rng rng{23};
+    const std::vector<RealmPoint> viewers{{{50*tile,50*tile}, garden}, {{50*tile,50*tile}, hel}};
+    int peak = 0;
+    for (int tick = 0; tick <= 6; ++tick) {
+        spawner.run(world, terrain, shippedContent(), viewers, rng, 10'000.0 + tick * 90'000.0,
+                    net::kTickSeconds, commands);
+        commands.flush();
+        int count = 0;
+        int ordinary = 0;
+        Query<MobTag, Transform, AmbientMob>{world}.each(
+            [&](Entity e, MobTag&, Transform& at, AmbientMob& ambient) {
+                if (ambient.independentGhost) {
+                    CHECK(at.realm == garden);
+                    CHECK(world.has<GhostTag>(e));
+                    CHECK_EQ(ambient.zone, kInvalidIndex);
+                    ++count;
+                } else {
+                    ++ordinary;
+                }
+            });
+        CHECK(count <= 3);
+        CHECK_EQ(spawner.census().mobs, ordinary);
+        peak = std::max(peak, count);
+    }
+    CHECK_EQ(peak, 3);
+    std::vector<SpawnSystem::LatentSite> sites;
+    spawner.latentSites(garden, sites);
+    CHECK(sites.size() >= 100);
+    CHECK(std::none_of(sites.begin(), sites.end(), [&](const auto& site) {
+        return site.mobIndex == ghost;
+    }));
+    removeDataDir(dir);
+}
+
+TEST(ghosts_spawn_at_most_three_in_shipped_prestige_sewers_during_restock) {
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dataDir(), &terrain, error));
+    bool found = false;
+    const auto realm = maps.realmOfId("prestige_sewers", found);
+    CHECK(found);
+    if (!found) return;
+    World world;
+    CommandBuffer commands{world};
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    Rng rng{672};
+    const Vec2 box = terrain.resolveCircle({21400.0, 4050.0}, kPlayerBaseRadius, realm);
+    const std::vector<RealmPoint> viewers{{box, realm}};
+    int peak = 0;
+    int totalRemoved = 0;
+    for (int i = 0; i < 60; ++i) {
+        spawner.run(world, terrain, shippedContent(), viewers, rng,
+                    10'000.0 + i * 15'000.0, net::kTickSeconds, commands);
+        commands.flush();
+        int ghosts = 0;
+        int ordinary = 0;
+        std::vector<Entity> ordinaryNearby;
+        Query<MobTag, Transform, AmbientMob>{world}.each(
+            [&](Entity e, MobTag&, Transform& at, AmbientMob& ambient) {
+                if (at.realm != realm || !isStanding(world, e)) return;
+                if (world.has<GhostTag>(e)) {
+                    CHECK(ambient.independentGhost);
+                    CHECK_EQ(ambient.zone, kInvalidIndex);
+                    ++ghosts;
+                } else if (ambient.zone != kInvalidIndex) {
+                    ++ordinary;
+                    if (distanceSq(at.position, box) < 1300.0 * 1300.0 && ordinaryNearby.size() < 15)
+                        ordinaryNearby.push_back(e);
+                }
+            });
+        CHECK(ghosts <= 3);
+        CHECK(ordinary > 0);
+        peak = std::max(peak, ghosts);
+        for (const auto e : ordinaryNearby) world.destroy(e);
+        totalRemoved += static_cast<int>(ordinaryNearby.size());
+    }
+    CHECK_EQ(peak, 3);
+    CHECK(totalRemoved > 10);
+    std::printf("[prestige sewers] ghost peak %d, ordinary mobs removed during restock %d\n",
+                peak, totalRemoved);
+}
+
+TEST(apex_crab_uses_the_existing_ocean_hyper_slot) {
+    const double tile = kTileSize;
+    auto map = fixtureMap(40, 40, fixtureDoor("spawn", "Spawn", 2 * tile, 2 * tile,
+                          tile, tile, true, 0.0), "",
+                          fixtureBand(tile, tile, 38 * tile, 38 * tile, "crab 100%", 70.0));
+    map.insert(1, R"("properties":[{"name":"spawnCurve","type":"string","value":"florrclone"}],)");
+    const auto dir = stageDataDir("ocean-apex-refill", {{"ocean", map}});
+    CHECK(writeText(dir + "/maps.json", R"({"maps":[{"file":"ocean.tmj","prestige":true}]})"));
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dir, &terrain, error));
+    bool found = false;
+    const Realm ocean = maps.realmOfId("ocean", found);
+    CHECK(found);
+
+    bool sawApex = false;
+    bool sawHyper = false;
+    for (int seed = 1; seed <= 96 && !(sawApex && sawHyper); ++seed) {
+        World world;
+        SpawnSystem spawner;
+        spawner.worldMaps = &maps;
+        spawner.restoreBossClock("ocean", 100000000.0, 0.0);
+        CommandBuffer commands{world};
+        Rng rng{static_cast<std::uint32_t>(seed)};
+        int slots = 0;
+        Entity wildApex = NULL_ENTITY;
+        for (int pass = 0; pass < 3; ++pass) {
+            spawner.run(world, terrain, shippedContent(), {}, rng,
+                        20000.0 + pass * kPopulationIntervalMillis, net::kTickSeconds, commands);
+            commands.flush();
+            slots = 0;
+            Query<MobType, Transform, AmbientMob>{world}.each(
+                [&](Entity entity, MobType& type, Transform& at, AmbientMob& ambient) {
+                    if (type.rarity != Rarity::Apex && type.rarity != Rarity::Ascendant) return;
+                    CHECK_EQ(at.realm, ocean);
+                    CHECK(ambient.managedPopulation);
+                    CHECK_EQ(type.configIndex, shippedContent().mobIndex("crab"));
+                    ++slots;
+                    if (type.rarity == Rarity::Ascendant) wildApex = entity;
+                    sawHyper |= type.rarity == Rarity::Apex;
+                });
+            CHECK(slots <= 1);
+        }
+        if (wildApex != NULL_ENTITY) {
+            sawApex = true;
+            const double now = 20000.0 + 3 * kPopulationIntervalMillis;
+            world.add<Dead>(wildApex);
+            spawner.run(world, terrain, shippedContent(), {}, rng, now,
+                        net::kTickSeconds, commands);
+            commands.flush();
+            CHECK_NEAR(spawner.bossCooldownLeft(Rarity::Apex, ocean, now),
+                       kApexSpawnCooldownMillis, 1e-9);
+        }
+    }
+    CHECK(sawHyper && sawApex);
+    removeDataDir(dir);
+}
+
+TEST(prestige_twin_promotes_a_natural_super_and_starts_its_own_eternal_clock) {
+    const double tile = kTileSize;
+    const auto dir = stageDataDir("prestige-eternal", {{"garden", fixtureMap(40, 40,
+        fixtureDoor("spawn", "Spawn", 2 * tile, 2 * tile, tile, tile, true, 0.0), "",
+        fixtureBand(tile, tile, 38 * tile, 38 * tile, "garden 100%", 200.0))}});
+    CHECK(writeText(dir + "/maps.json", R"({"maps":[{"file":"garden.tmj","prestige":true}]})"));
+    World world;
+    Terrain terrain;
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(dir, &terrain, error));
+    bool found = false;
+    const Realm twin = maps.realmOfId("prestige_garden", found);
+    CHECK(found);
+    if (!found) { removeDataDir(dir); return; }
+
+    SpawnSystem spawner;
+    spawner.worldMaps = &maps;
+    spawner.restoreBossClock("prestige_garden", 0.0, 0.0);
+    spawner.restoreBossClock("garden", 800000.0, 800000.0);
+    CommandBuffer commands{world};
+    Rng rng{42};
+    double now = 10000.0;
+    for (int i = 0; i < 60; ++i) {
+        now = 10000.0 + i * kPopulationIntervalMillis;
+        spawner.run(world, terrain, shippedContent(), {{terrain.spawnPoint(twin), twin}},
+                    rng, now, net::kTickSeconds, commands);
+        commands.flush();
+        if (spawner.bossCooldownLeft(Rarity::Unique, twin, now) > 0.0) break;
+    }
+
+    int eternals = 0;
+    Query<MobTag, Transform, MobType> mobs{world};
+    mobs.each([&](Entity, MobTag&, Transform& at, MobType& type) {
+        if (at.realm != twin) return;
+        if (type.rarity == Rarity::Unique) ++eternals;
+        CHECK(type.rarity != Rarity::Apex);
+    });
+    CHECK_EQ(eternals, 1);
+    CHECK_NEAR(spawner.bossCooldownLeft(Rarity::Unique, twin, now), kUniqueSpawnCooldownMillis, 1e-9);
+    CHECK_NEAR(spawner.bossCooldownLeft(Rarity::Unique, Realm::Overworld, now), 800000.0 - now, 1e-9);
+    CHECK(std::any_of(spawner.bossSpawns.begin(), spawner.bossSpawns.end(), [&](const auto& spawn) {
+        return spawn.realm == twin && spawn.rarity == Rarity::Unique;
+    }));
+    removeDataDir(dir);
+}
+
+TEST(manual_spawn_cannot_put_a_unique_or_apex_into_a_prestige_twin) {
     World world;
     Terrain terrain;
     SpawnSystem spawner;
@@ -888,7 +2424,7 @@ TEST(nothing_puts_a_unique_or_apex_into_an_prestige_twin) {
                            rng) == NULL_ENTITY);
     CHECK(spawner.spawnMob(world, terrain, shippedContent(), bee, Rarity::Apex, at, twin, 0.0,
                            rng) == NULL_ENTITY);
-    // Super is the ceiling, not over it.
+    // A manual Super still works.
     CHECK(spawner.spawnMob(world, terrain, shippedContent(), bee, Rarity::Super, at, twin, 0.0,
                            rng) != NULL_ENTITY);
 }
@@ -1435,7 +2971,8 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
     CHECK(h.stepUntil({&guest}, [&] { return guest.waveResultNotice().sequence > 0; }));
     CHECK(guest.waveResultNotice().lines[1].find("本局 +0 星星") != std::string::npos);
 
-    const double initialStars = host.profile().stars;
+    const auto awardedStars = [&] { return world.get<PlayerProgress>(hostBody).stars; };
+    const double initialStars = awardedStars();
     double total = initialStars;
     constexpr int wavesPerRun = 5;
     for (int run = 0; run < 4; ++run) {
@@ -1449,15 +2986,16 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
         for (int wave = 1; wave <= wavesPerRun; ++wave) {
             total += 7500.0;
             CHECK(h.stepUntil({&host, &guest}, [&] {
+                if (awardedStars() >= total) return true;
                 for (const Entity enemy : Query<WaveEnemy>{world}.collect()) {
                     if (!isStanding(world, enemy)) continue;
                     if (world.get<MobType>(enemy).rarity == Rarity::Unique) sawEternal = true;
                     world.get<Bounty>(enemy).credit(hostBody, world.get<Health>(enemy).max);
                     world.add<Dead>(enemy);
                 }
-                return host.profile().stars >= total;
+                return false;
             }, 850));
-            CHECK_NEAR(host.profile().stars, total, 1e-9);
+            CHECK_NEAR(awardedStars(), total, 1e-9);
         }
         CHECK(sawEternal);
         const auto noticeBefore = host.waveResultNotice().sequence;
@@ -1467,7 +3005,145 @@ TEST(wave_chat_creates_a_private_code_and_round_trips_to_the_origin) {
         }));
         CHECK(host.waveResultNotice().lines[1] == "通关 5 波 · 本局 +37500 星星");
     }
+    CHECK(h.stepUntil({&host, &guest}, [&] { return host.profile().stars >= total; }));
     CHECK_NEAR(host.profile().stars, initialStars + 150000.0, 1e-9);
+}
+
+TEST(wave_kills_feed_totem_without_paying_world_kill_rewards) {
+    Harness h("wave-totem", [](const std::string& path) {
+        seedUser(path, "totemhost", "password7");
+        Database db;
+        std::string error;
+        CHECK(db.load(path, error));
+        const auto* account = db.findUser("totemhost");
+        if (!account) { CHECK(false); return; }
+        db.progress(account->id).addItem(Rarity::Uncommon, "petal_totem", 1);
+        db.markDirty();
+        CHECK(db.save());
+    }, dataDir(), 0);
+    NetClient host;
+    if (!h.ready || !logIn(h, host, "totemhost") || !join(h, host, "totemhost", false)) {
+        CHECK(false);
+        return;
+    }
+    World& world = h.server.world();
+    const Entity player = bodyNamed(world, "totemhost");
+    const auto totem = content().petalIndex("totem");
+    host.setLoadoutSlot(0, totem, Rarity::Uncommon);
+    CHECK(h.stepUntil({&host}, [&] {
+        const auto& slot = world.get<Loadout>(player).slots[0];
+        return slot.configIndex == totem && !slot.broken;
+    }));
+    host.sendChat("/wave start");
+    CHECK(h.stepUntil({&host}, [&] { return world.has<WavePlayer>(player); }));
+    h.clock += 30000.0;
+    CHECK(h.stepUntil({&host}, [&] { return Query<WaveEnemy>{world}.count() >= 2; }, 60));
+    const auto enemies = Query<WaveEnemy>{world}.collect();
+    if (enemies.size() < 2) return;
+    const Vec2 defender = world.get<Transform>(player).position;
+    const Vec2 firstSpawn = world.get<Transform>(enemies[1]).position;
+    const double initialGap = distance(defender, firstSpawn);
+    world.get<Health>(player).invulnerableUntilMillis = std::numeric_limits<double>::infinity();
+    CHECK(h.stepUntil({&host}, [&] {
+        const auto* ai = world.tryGet<MobAi>(enemies[1]);
+        const auto* at = world.tryGet<Transform>(enemies[1]);
+        return ai && at && ai->target == player &&
+               distance(at->position, defender) <= initialGap - 80.0;
+    }, 40));
+    world.get<MobType>(enemies[1]).rarity = Rarity::Mythic;
+    auto& db = GameServerPeer::authorityDb(h.server);
+    const auto account = db.findUser("totemhost")->id;
+    const auto oldKills = db.findProgress(account)->mobKills;
+    const auto before = world.get<PlayerProgress>(player);
+    auto& health = world.get<Health>(player);
+    health.invulnerableUntilMillis = std::numeric_limits<double>::infinity();
+    health.current = health.max * 0.5;
+    const double lowHealth = health.current;
+    for (const Entity enemy : {enemies[0], enemies[1]}) {
+        const auto position = world.get<Transform>(enemy);
+        const auto damage = world.get<Health>(enemy).max * 2;
+        const Entity hit = world.create();
+        world.add<GroundEffectTag>(hit);
+        world.add<Transform>(hit, position);
+        world.add<GroundEffect>(hit, GroundEffect{GroundEffectKind::Poison, player, 1.0,
+                                                0.0, 1.0, Rarity::Common, damage});
+        world.add<LightningBurst>(hit);
+        world.add<LightningTarget>(hit, LightningTarget{enemy});
+    }
+    CHECK(h.stepUntil({&host}, [&] {
+        const auto* regeneration = world.tryGet<TotemRegeneration>(player);
+        return regeneration && regeneration->stacks.size() == 2 &&
+            world.get<Health>(player).current > lowHealth;
+    }, 20));
+    CHECK_NEAR(world.get<PlayerProgress>(player).stars, before.stars, 1e-9);
+    CHECK_NEAR(world.get<PlayerProgress>(player).totalXp, before.totalXp, 1e-9);
+    CHECK(db.findProgress(account)->mobKills.dump() == oldKills.dump());
+    host.sendChat("/wave leave");
+    CHECK(h.stepUntil({&host}, [&] { return !world.has<WavePlayer>(player); }, 20));
+    CHECK(!world.has<TotemRegeneration>(player));
+}
+
+TEST(wave_batches_find_another_bearing_when_a_meteor_blocks_the_spawn) {
+    const auto firstBatch = [](const std::vector<Vec2>& obstacles, bool dead, bool otherRealm) {
+        World world;
+        Terrain terrain;
+        WorldMaps maps;
+        std::string error;
+        CHECK(maps.load(dataDir(), &terrain, error));
+        if (!error.empty()) return std::vector<Vec2>{};
+        const auto& content = shippedContent();
+        SpawnSystem spawner;
+        spawner.worldMaps = &maps;
+        DungeonSystem dungeon;
+        dungeon.worldMaps = &maps;
+        dungeon.moveToRealm = [&](Entity e, Realm realm, Vec2 position) {
+            world.get<Transform>(e) = Transform{position, 0.0, realm};
+        };
+        CombatSystem combat;
+        Rng rng{42u};
+        CommandBuffer commands{world};
+        const Entity player = world.create();
+        world.add<PlayerTag>(player);
+        world.add<Body>(player, Body{25.0, 1.0});
+        world.add<Health>(player, Health{100.0, 100.0});
+        world.add<Transform>(player, Transform{terrain.spawnPoint(Realm::Overworld), 0.0});
+        dungeon.run(world, terrain, content, spawner, combat, rng, 0.0, commands);
+        dungeon.waveCommand(world, terrain, player, "start", rng, 1000.0);
+        const auto realm = world.get<Transform>(player).realm;
+        CHECK(dungeon.inWave(world, player));
+        for (const Vec2 at : obstacles) {
+            const Entity meteor = world.create();
+            world.add<PlantedMeteor>(meteor, PlantedMeteor{player});
+            world.add<Transform>(meteor, Transform{at, 0.0, otherRealm ? Realm::Overworld : realm});
+            world.add<Body>(meteor, Body{100.0, 1.0});
+            if (dead) world.add<Dead>(meteor);
+        }
+        dungeon.run(world, terrain, content, spawner, combat, rng, 31100.0, commands);
+        commands.flush();
+
+        std::vector<Vec2> positions;
+        Query<WaveEnemy, Transform, Body>{world}.each(
+            [&](Entity, WaveEnemy&, Transform& at, Body& body) {
+                positions.push_back(at.position);
+                if (!dead && !otherRealm) {
+                    for (const Vec2 meteor : obstacles)
+                        CHECK(distance(at.position, meteor) >= 100.0 + body.radius);
+                }
+            });
+        return positions;
+    };
+    const auto clear = firstBatch({}, false, false);
+    CHECK_EQ(clear.size(), 2u);
+    if (clear.empty()) return;
+    const std::vector<Vec2> blocker{clear.front()};
+    CHECK_EQ(firstBatch(blocker, false, false).size(), clear.size());
+    for (const auto& ignored : {firstBatch(blocker, true, false), firstBatch(blocker, false, true)}) {
+        CHECK_EQ(ignored.size(), clear.size());
+        if (ignored.size() == clear.size()) {
+            for (std::size_t i = 0; i < clear.size(); ++i)
+                CHECK_NEAR(distance(ignored[i], clear[i]), 0.0, 1e-9);
+        }
+    }
 }
 
 TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
@@ -1552,11 +3228,23 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     CHECK(dungeon.inWave(world, members[0]));
     spawner.mobCap = kMaxLiveMobs;
 
+    // Start the squad near a corner, far away from the old centre rings.
+    for (int i = 0; i < 4; ++i)
+        world.get<Transform>(members[i]).position = {240.0 + i * 55.0, 240.0};
+
     double now = 31100.0;
     int total = 0;
+    std::set<std::uint16_t> gardenMobs, desertMobs, oceanMobs;
+    const auto species = [&](std::uint16_t id, std::initializer_list<const char*> names) {
+        return std::any_of(names.begin(), names.end(), [&](const char* name) {
+            return id == content.mobIndex(name);
+        });
+    };
     for (int wave = 1; wave <= 21; ++wave) {
         const bool boss = wave % 5 == 0;
-        const int expected = boss ? 1 : 24 + 2 * std::min(wave - 1, 8);
+        const bool swarm = wave == 7 || wave == 13 || wave == 17;
+        const int ordinary = 28 + 2 * std::min(wave - 1, 8);
+        const int expected = boss ? 1 : swarm ? ordinary + ordinary / 2 : ordinary;
         const auto theme = wave % 10 == 0 ? net::WaveTheme::HyperBoss :
                            boss ? net::WaveTheme::EternalBoss :
                            wave == 7 ? net::WaveTheme::Bubble :
@@ -1570,8 +3258,12 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
             CHECK_EQ(hud.round, static_cast<unsigned>(wave));
             CHECK_EQ(static_cast<int>(hud.theme), static_cast<int>(theme));
             const auto mobs = Query<WaveEnemy>{world}.collect();
-            if (seen == 0) CHECK_EQ(mobs.size(), static_cast<std::size_t>(boss ? 1 : 3));
-            CHECK(mobs.size() <= 3);
+            if (seen == 0) CHECK_EQ(mobs.size(), static_cast<std::size_t>(boss || swarm ? 1 : 2));
+            CHECK(mobs.size() <= (swarm ? 26u : 10u));
+            if (swarm && now - start >= 16800.0 && expected - seen >= 26)
+                CHECK_EQ(mobs.size(), std::size_t(26));
+            if (wave == 1 && now - start >= 16000.0 && expected - seen >= 10)
+                CHECK_EQ(mobs.size(), std::size_t(10));
             if (wave == 2) CHECK(isStanding(world, members[1]));
             for (const Entity mob : mobs) {
                 const auto& at = world.get<Transform>(mob);
@@ -1580,6 +3272,14 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
                 const auto& type = world.get<MobType>(mob);
                 CHECK_EQ(world.get<WaveEnemy>(mob).round, static_cast<std::uint64_t>(wave));
                 CHECK(at.realm == realm);
+                CHECK(world.get<MobAi>(mob).kind ==
+                      (type.configIndex == content.mobIndex("sandstorm") ? AiKind::Sandstorm : AiKind::Hostile));
+                CHECK(world.get<MobAi>(mob).aggroRange >= terrain.realmExtent(realm).length());
+                const auto nearParty = std::any_of(members.begin(), members.begin() + 4, [&](Entity player) {
+                    return isStanding(world, player) &&
+                        distance(at.position, world.get<Transform>(player).position) <= 961.0;
+                });
+                CHECK(nearParty);
                 CHECK(!terrain.resolveWall(at.position, body.radius, realm).collided);
                 CHECK_EQ(world.get<Bounty>(mob).xp, 0.0);
                 CHECK(CombatSystem::canDamage(world, members[0], mob));
@@ -1595,6 +3295,17 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
                 } else if (wave == 7 || wave == 13 || wave == 17) {
                     CHECK_EQ(type.configIndex, content.mobIndex(
                         wave == 7 ? "bubble" : wave == 13 ? "sandstorm" : "golden_leafbug"));
+                } else if (wave == 1) {
+                    CHECK(species(type.configIndex, {"bee", "baby_ant", "ladybug"}));
+                    gardenMobs.insert(type.configIndex);
+                } else if (wave == 4) {
+                    CHECK(species(type.configIndex, {"sandstorm", "cactus", "beetle", "scorpion", "shiny_ladybug", "desert_ladybug",
+                        "soldier_fire_ant", "digger"}));
+                    desertMobs.insert(type.configIndex);
+                } else if (wave == 8) {
+                    CHECK(species(type.configIndex, {"bubble", "sponge", "shell", "crab",
+                        "starfish", "jellyfish"}));
+                    oceanMobs.insert(type.configIndex);
                 }
                 // Hold the final batch to near its deadline; 21 clears exceed ten minutes.
                 if (seen + static_cast<int>(mobs.size()) == expected && now - start < 42000.0) continue;
@@ -1627,6 +3338,9 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     CHECK_EQ(guestAwards, 1);
     CHECK(spawner.bossSpawns.empty());
     CHECK(summaries.empty());
+    CHECK(gardenMobs.size() >= 3);
+    CHECK(desertMobs.size() >= 3);
+    CHECK(oceanMobs.size() >= 3);
     std::printf("[wave] %d enemies in 21 waves, paid each of the first 20 clears\n", total);
 
     dungeon.waveCommand(world, terrain, members[0], "leave", rng, now);
@@ -1635,8 +3349,18 @@ TEST(wave_is_endless_bounded_spaced_and_rewards_participation) {
     CHECK(summaries[members[0]].find("+1 限时锤") != std::string::npos);
     const auto survivors = Query<WaveEnemy>{world}.collect();
     CHECK(!survivors.empty());
+    // Leave a full pack alive at the deadline so cleanup holds the next wave.
+    tick(now + 16000.0);
+    const auto beforeCleanup = Query<WaveEnemy>{world}.collect();
+    CHECK(beforeCleanup.size() > 4);
     tick(now + 45000.0);
-    CHECK_EQ(dungeon.waveHudFor(world, members[1], now + 45000.0).round, 23u);
+    const auto cleanupHud = dungeon.waveHudFor(world, members[1], now + 45000.0);
+    CHECK_EQ(cleanupHud.round, 22u);
+    CHECK_EQ(cleanupHud.remainingMillis, 0u);
+    CHECK_EQ(Query<WaveEnemy>{world}.count(), beforeCleanup.size());
+    for (const auto enemy : beforeCleanup) CHECK(world.get<WaveEnemy>(enemy).rushing);
+    tick(now + 60000.0);
+    CHECK_EQ(dungeon.waveHudFor(world, members[1], now + 60000.0).round, 23u);
     bool overlapped = false;
     for (const auto enemy : Query<WaveEnemy>{world}.collect()) {
         if (world.get<WaveEnemy>(enemy).round == 23) overlapped = true;
@@ -1689,6 +3413,9 @@ TEST(wave_stars_accumulate_per_wave_to_the_daily_cap_across_reloads) {
     CHECK(reachedDailyCap);
     CHECK_NEAR(restarted.progress("wave-account").stars, 150000.0, 1e-9);
     CHECK_EQ(restarted.awardWaveStars("other-account"), 7500);
+    CHECK_EQ(restarted.awardWaveStars("other-account", nullptr, 11), 8250);
+    CHECK_EQ(restarted.awardWaveStars("other-account", nullptr, 19), 8250);
+    CHECK_EQ(restarted.awardWaveStars("other-account", nullptr, 20), 9000);
     waveStarClock += 86400000ll;
     CHECK(!restarted.waveDailyStarCapReached("wave-account"));
     CHECK_EQ(restarted.awardWaveStars("wave-account"), 7500);
@@ -1787,6 +3514,15 @@ TEST(practice_history_round_trips_real_timed_trial_and_publication) {
     auto& combat = GameServerPeer::practiceCombat(h.server);
     combat.applyDamage(world, dummy, player, 1000.0,
                        GameServerPeer::practiceClock(h.server), DamageKind::Reflect);
+    const Entity shot = world.create();
+    auto& projectile = world.add<Projectile>(shot);
+    projectile.owner = player;
+    projectile.petalConfigIndex = content().petalIndex("basic");
+    projectile.rarity = Rarity::Super;
+    world.add<Transform>(shot, world.get<Transform>(player));
+    const auto result = combat.applyDamage(world, dummy, shot, 100000000.0,
+        ownerSession->practiceTrial.endsAt - 7900.0, DamageKind::Direct);
+    CHECK(result.applied > 0.0);
     h.clock += 10000;
     h.step(4, {&owner, &viewer});
     owner.requestPracticeBoard(false);
@@ -1802,6 +3538,18 @@ TEST(practice_history_round_trips_real_timed_trial_and_publication) {
     const auto id = row.id;
     CHECK(!row.published);
     CHECK(row.damage > 0.0);
+    CHECK_EQ(row.breakdown.size(), 2u);
+    if (row.breakdown.size() == 2) {
+        const auto& first = row.breakdown[1];
+        const auto& second = row.breakdown[0];
+        CHECK(first.petal.empty());
+        CHECK_EQ(second.petal, "basic");
+        CHECK(second.rarity == Rarity::Super);
+        CHECK_NEAR(first.total + second.total, row.damage, 1e-9);
+        CHECK_NEAR(first.seconds[0], first.total, 1e-9);
+        CHECK_NEAR(second.seconds[2], second.total, 1e-9);
+        CHECK_NEAR(second.seconds[9], 0.0, 1e-9);
+    }
     owner.requestPracticeBoard(false, net::PracticeBoardAction::Publish, id);
     CHECK(h.stepUntil({&owner, &viewer}, [&] {
         return !owner.practiceBoard().pending && !owner.practiceBoard().own.empty() &&
@@ -1812,6 +3560,8 @@ TEST(practice_history_round_trips_real_timed_trial_and_publication) {
         return !viewer.practiceBoard().pending && viewer.practiceBoard().published.size() == 1;
     }));
     CHECK(viewer.practiceBoard().own.empty());
+    if (!viewer.practiceBoard().published.empty())
+        CHECK_EQ(viewer.practiceBoard().published.front().breakdown.size(), 2u);
     owner.requestPracticeBoard(false, net::PracticeBoardAction::Hide, id);
     CHECK(h.stepUntil({&owner, &viewer}, [&] {
         return !owner.practiceBoard().pending && !owner.practiceBoard().own.empty() &&

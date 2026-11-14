@@ -216,7 +216,7 @@ bool App::start(const AppConfig& config, std::string& errorOut) {
     spawnChoices_.push_back(
         SpawnChoice{"default", "Default", 0x00BE4Fu, Realm::Overworld, -1, {}, {}});
     spawnChoices_.push_back(
-        SpawnChoice{kArenaSpawnChoice, "PVP Arena", 0xDC3C3Cu, Realm::Arena, -1, {}, {}});
+        SpawnChoice{kArenaSpawnChoice, "Rift", 0xDC3C3Cu, Realm::Arena, -1, {}, {}});
     spawnChoices_.push_back(
         SpawnChoice{kMazeSpawnChoice, "Maze", 0x573D80u, Realm::Maze, -1, {}, {}});
     for (const SpawnChoice& choice : worldMaps_.spawnChoices()) spawnChoices_.push_back(choice);
@@ -851,7 +851,9 @@ void App::frame(double dt) {
     // ALT is a latch (default off): exact HUD numbers, spawn bands, rarity
     // glow. Skip while typing so chat / fields keep Alt as a modifier.
     if (!chatOpen_ && !menus_.wantsText() &&
-        (window_.keyPressed(Key::LeftAlt) || window_.keyPressed(Key::RightAlt))) {
+        (window_.keyPressed(Key::LeftAlt) || window_.keyPressed(Key::RightAlt) ||
+         (!menus_.anyOpen() && boundKeyPressed(window_,
+             menus_.settings().controlKey(ControlAction::ToggleAltDisplay))))) {
         altMode_ = !altMode_;
     }
     // The copy above resets it every frame, so it has to be put back after it.
@@ -928,7 +930,6 @@ void App::frame(double dt) {
     canvasPhaseMark_ = canvasOpsEmitted();
 #endif
     if (inWorld) {
-        tallyRunLoot();
         renderer_.ingestEvents(net_.view());
         renderer_.update(dt);
         // Bubbles expire on the frame clock, like every other timed visual
@@ -948,6 +949,7 @@ void App::frame(double dt) {
             net_.selfPlaced() ? net_.view().selfDrawnPosition() : net_.arrival();
         camera_.snapTo(selfDrawn);
         prepareDarkness(selfDrawn);
+        renderer_.setRiftOpen(net_.riftOpen());
         renderer_.draw(canvas, net_.view(), camera_, selfDrawn, timeSeconds_);
         // Aim assist over the world (and under darkness / HUD), like AshFlor.
         drawMovementHelper(canvas);
@@ -1069,13 +1071,17 @@ void App::frame(double dt) {
 #ifdef __EMSCRIPTEN__
     // Use this frame's actual menu bounds, in the same design coordinates as
     // the daily card. The link occupies the free top gap, never the icon strip.
-    EM_ASM({
+    EM_ASM(({
         const links=document.getElementById("lobby-links");
         const council=document.getElementById("council-link");
         const guide=document.getElementById("open-server-guide");
         const canvas=Module.canvas;
+        const feedback=document.getElementById("lobby-feedback");
+        const feedbackLink=document.getElementById("lobby-feedback-link");
         if(!links||!council||!guide||!canvas)return;
-        links.hidden=!$0;if(!$0)return;
+        links.hidden=!$0;
+        if(feedback)feedback.hidden=!$0;
+        if(!$0)return;
         const box=canvas.getBoundingClientRect();const scale=box.width/$1;
         const left=$2+12;const right=$1-($4?252:16);const space=right-left;
         const compact=space*scale<220;
@@ -1093,8 +1099,43 @@ void App::frame(double dt) {
             council.querySelector('span').textContent=compact?'议会':'议会投票 ↗';
             guide.textContent=compact?'服务器':'服务器指引';
         }
-    }, (screen_==Screen::Login||screen_==Screen::Lobby)&&!menus_.anyOpen()&&!net_.joinPending(),
-       window_.width(),menus_.stripRight(),menus_.stripBottom(),screen_==Screen::Lobby&&net_.dailyStreak().known);
+        if(feedback&&feedbackLink){
+            const font=links.style.fontSize;
+            const placement=[key,box.height,$5,$6,innerHeight].join(',');
+            if(Module.feedbackPlacement!==placement){
+                Module.feedbackPlacement=placement;
+                feedback.style.fontSize=font;
+                const margin=8;
+                const rightEdge=Math.min(box.right,innerWidth)-margin;
+                const rowLeft=box.left+$5*scale+margin;
+                const rowRight=$4?box.left+right*scale:rightEdge;
+                const rowTop=box.top+Math.max(4,5*scale);
+                const linksRect=links.getBoundingClientRect();
+                const buttonWidth=feedbackLink.getBoundingClientRect().width;
+                const beside=box.width>=900&&rowLeft+buttonWidth<=rowRight&&
+                    (rowLeft>=linksRect.right+margin||rowLeft+buttonWidth+margin<=linksRect.left||
+                     rowTop+50<=linksRect.top);
+                feedback.toggleAttribute('data-beside',beside);
+                if(beside){
+                    feedback.style.left=rowLeft+'px';
+                    feedback.style.top=rowTop+'px';
+                    feedback.style.width=buttonWidth+'px';
+                }else{
+                    const freeWidth=Math.min(310,box.width-32);
+                    feedback.style.left=(box.left+(box.width-freeWidth)/2)+'px';
+                    feedback.style.top=Math.max(linksRect.bottom+10,box.top+Math.min(160,box.height*.20),
+                        $4?box.top+($6?266:170)*scale:0)+'px';
+                    feedback.style.width=freeWidth+'px';
+                }
+            }
+            const target=new URL(UTF8ToString($7));
+            target.searchParams.set('from',location.href);
+            target.searchParams.set('name',Module.feedbackUsername||'');
+            if(feedbackLink.href!==target.href) feedbackLink.href=target.href;
+        }
+    }), (screen_==Screen::Login||screen_==Screen::Lobby)&&!menus_.anyOpen()&&!net_.joinPending(),
+       window_.width(),menus_.stripRight(),menus_.stripBottom(),screen_==Screen::Lobby&&net_.dailyStreak().known,
+       menus_.feedbackRight(),streakDetailsOpen_,kAshflorFeedbackBoard);
 #endif
     if (menus_.settings().craftBlacklistDirty) {
         if (menus_.settings().save(settingsPath())) menus_.settings().craftBlacklistDirty = false;

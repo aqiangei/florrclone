@@ -11,10 +11,12 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <future>
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "server/account_limits.h"
@@ -28,6 +30,7 @@
 #include "server/squads.h"
 #include "shared/core/world.h"
 #include "shared/game/components.h"
+#include "shared/game/hyper_board.h"
 #include "shared/game/map_elements.h"
 #include "shared/game/skin_likeness.h"
 #include "shared/game/spatial.h"
@@ -98,6 +101,7 @@ double monotonicMillis();
 inline constexpr int kMaxBots = 100;
 
 struct ServerConfig {
+    double (*assemblerClock)() = nullptr;
     std::uint16_t port = 3000;
     std::string dataDir = "data";
     std::string databasePath = "inventory.json";
@@ -138,8 +142,14 @@ struct ServerConfig {
     int botCount = 0;
     bool loadShedding = false;
     bool adaptivePacing = true;
+    bool fullMobSimulation = false;
     bool backgroundSave = false;
     bool tickProbe = false;
+    int sharedSkinRealm = 0;
+    std::string skinReviewKey;
+    std::function<void(int, const Json&, std::function<void(Json)>)> sharedSkinReview;
+    bool contactVisitProbe = false;
+    bool workshopPreview = false;
     /// The `/admin db` key to use as is, instead of the one in the key file
     /// beside the database. Empty means the file. Only the offline page sets
     /// it: its server is a browser tab with no file anybody can open, and a
@@ -175,6 +185,7 @@ public:
     /// the server has stopped.
     void serviceArrivals();
     double nextStepDelayMillis() const;
+    bool applySharedSkinSnapshot(const Json& snapshot);
 
     /// Flushes every playing account and the database, then drops the
     /// listener. run() does this on the way out; the emscripten build calls it
@@ -312,6 +323,7 @@ private:
     void handleLogin(Session&, net::Connection&, ByteReader&);
     void handleResume(Session&, net::Connection&, ByteReader&);
     void handleChangePassword(Session&, net::Connection&, ByteReader&);
+    void pollPasswordChange();
     /// A guest picks its name, once. Renames the account everywhere the server
     /// files it by name -- the database's rows, the guild records, a pending
     /// guild invitation -- and tells the squad and the guild.
@@ -357,7 +369,7 @@ private:
     /// session's account, bank its pickups into whichever account the socket
     /// had switched to, and be orphaned for good by the next join.
     void leaveWorld(Session&);
-    void handleInput(Session&, ByteReader&);
+    void handleInput(Session&, const net::Connection&, ByteReader&);
     void handleChat(Session&, net::Connection&, ByteReader&);
     void handleSetLoadout(Session&, ByteReader&);
     /// A client's digest of the bag and bar it holds, against the server's
@@ -415,9 +427,27 @@ private:
     void handlePublishSkin(Session&, net::Connection&, ByteReader&);
     void handleEquipSkin(Session&, net::Connection&, ByteReader&);
     void handleDeleteSkin(Session&, net::Connection&, ByteReader&);
+    void handleSkinReview(Session&, net::Connection&, ByteReader&);
+    Json localSkinReviewQueue() const;
+    Json relaySkinReview(const std::string&, const Json&);
+    std::string decideSkinReview(const std::string&, bool approve);
+    void sendSkinReviewQueue(net::Connection&, const Json& sources = {});
     void handlePracticeBoard(Session&, net::Connection&, ByteReader&);
     void servicePracticeTrials(double nowMillis);
     void handleLeaderboard(const Session&, net::Connection&, ByteReader&);
+    struct LeaderboardCache {
+        ByteWriter rows;
+        ByteWriter playtimes;
+        std::unordered_map<std::string, std::uint32_t> levelRanks, playtimeRanks;
+        double refreshAtMillis = -1.0;
+        std::uint32_t users = 0;
+        std::uint32_t activeToday = 0;
+        std::uint8_t shown = 0;
+    };
+    std::array<LeaderboardCache, 2> leaderboardCache_;
+    std::vector<HyperHoldingRow> leaderboardHoldings_;
+    double leaderboardHoldingsRefreshAtMillis_ = -1.0;
+    void refreshLeaderboard(LeaderboardCache&, bool includeAdmins);
     void handleNotifications(net::Connection&, ByteReader&);
     void handleUsePetal(Session&, ByteReader&);
 
@@ -636,7 +666,7 @@ private:
     void guildInvite(Session&, net::Connection&, const std::string& target);
     void guildKick(Session&, net::Connection&, const std::string& target);
     void guildTransfer(Session&, net::Connection&, const std::string& target);
-    void guildDeputy(Session&, net::Connection&, const std::string& target);
+    void guildDeputy(Session&, net::Connection&, const std::string& target, bool remove = false);
     void guildInviteToSquad(Session&, net::Connection&, const std::string& target);
 
     // -- squads ------------------------------------------------------------
@@ -921,6 +951,7 @@ private:
     /// Local through sayInPublic, a guild or squad line, a whisper -- so the
     /// mute is one rule and its notice one sentence (server/chat_commands.cpp).
     bool speakerMuted(const Session&, net::Connection&);
+    bool setAccountMuted(const Session& actor, Account& account, bool muted, std::string& answer);
     /// Readies a line a player is about to say to others on `channel` --
     /// `to` is the recipient of a whisper, empty otherwise. Cuts every picture
     /// not served by a listed image host, telling them what went and why, and
@@ -971,6 +1002,7 @@ private:
     /// database_.save() behind a fresh look at which bosses stand, so the
     /// boss clocks reach the disk exactly as they are. Every save goes
     /// through here: the periodic one and persistAll.
+    void captureBossClocksForSave();
     bool saveDatabase(bool periodic = false, bool stopping = false);
 
     // --- the sacrifice (server/sacrifice.cpp) -------------------------------
@@ -1019,7 +1051,11 @@ private:
     /// The whole published-skin catalog, this client's admin flag and the skin
     /// its account is wearing. Sent once per authentication, beside the
     /// profile: a client that has not seen a skin cannot draw whoever wears it.
+    bool canModeratePublicSkins(const Session&) const;
     void sendSkinCatalog(Session&, net::Connection&);
+    void expireSharedSkinSources();
+    void broadcastSharedSkinRemoval(const std::string& id);
+    void unequipCustomSkin(const std::string& skinId, const std::string& exceptUserId = {});
     /// A published skin's sampled look (skin_likeness.h), sampled again only
     /// when the shapes filed under its id change -- `/admin db` can edit a
     /// catalog row in place, so the id alone does not say the picture is the
@@ -1098,6 +1134,26 @@ private:
     /// A flower died in the ring: its score and its whole arena bag go to the
     /// flower that killed it, if that was another arena player.
     void settleArenaDeath(Session& victim, Entity killer);
+    bool isRiftRealm(Realm realm) const;
+    void serviceRift(bool settle);
+    Entity enterRiftPrizeRoom(Session&);
+    void spawnRiftPrizes(Session&);
+    bool collectRiftPrize(Entity player, std::uint16_t petal, Rarity rarity);
+    void clearRiftPrizes(Session&);
+    bool riftAdmissionOpen() const;
+    void sendRiftStatus(net::Connection&);
+    void broadcastRiftStatus();
+    void enterRift(Session& session, Vec2 position);
+    void leaveRift(Session& session);
+    void recordRiftDeath(Session& session, Entity killer);
+    void handleRiftCommand(Session&, net::Connection&, const std::string& argument);
+    void riftTeleport(Entity entity, Realm realm, Vec2 position);
+    enum class RiftPhase { Cooldown, Open, Running, Results };
+    RiftPhase riftPhase_ = RiftPhase::Cooldown;
+    double riftDeadline_ = 0.0;
+    std::unordered_set<std::string> riftEntrants_;
+    std::vector<std::pair<Entity, Vec2>> riftArrivals_;
+    std::string riftPyramid_ = "rift_pyramid";
     /// Copies the live entity's progress back onto the account record. Called
     /// on leave, on death, and periodically -- a crash must not cost a session
     /// of progress.
@@ -1141,7 +1197,7 @@ private:
     /// it keeps the death card over a flower it will not steer.
     void onPlayerRevived(Entity revived, Entity reviver);
     bool canMarkPlayer(Entity target, Entity marker, Rarity rarity);
-    bool sendMarkedPlayerToHel(Entity target, Entity marker, Rarity rarity);
+    bool transportMarkedPlayer(Entity target, Entity marker, Rarity rarity, bool toVoid = false, bool frozen = false);
 
     /// Every mob body in `realm`, as the discs a spawn point has to clear. One
     /// realm's, because a spawn is judged crowded by what stands on ITS map,
@@ -1474,6 +1530,7 @@ private:
 
     // -- tick phases -------------------------------------------------------
     void runSystems(double nowMillis, double dt);
+    void applyVoidGravity(double dt);
 
     /// Moves what the loot system handed out into the owning accounts.
     void bankPickups();
@@ -1492,6 +1549,21 @@ private:
     std::string hyperBarrierCaptured_,hyperBarrierApplied_,hyperBarrierReady_;
     struct PendingHyper { Json request; std::string attempt,transaction,user; net::ConnectionId connection=0; std::uint16_t petal=0; bool forge=false; };
     PendingHyper pendingHyper_;
+    struct PasswordChangeResult {
+        bool verified = false;
+        std::string hash, reason;
+    };
+    struct PasswordChangeWork {
+        net::ConnectionId connection = 0;
+        std::string token, address;
+        Account expected;
+        std::future<PasswordChangeResult> future;
+    } passwordChange_;
+    struct PendingLocalHyper;
+    std::unique_ptr<PendingLocalHyper> pendingLocalHyper_;
+    void pollLocalHyper(bool shuttingDown = false);
+    void notifyLocalHyper(const std::string& winner, std::uint16_t input,
+                          const std::vector<std::string>& affected, bool apexHammer = false);
     bool serviceHyperBarrier();
     bool beginSharedHyper(Session&,net::Connection&,Json,std::uint16_t,bool);
     void finishSharedHyper(const Json&);
@@ -1774,6 +1846,13 @@ private:
     double lastDropBonusTickWallMillis_ = 0;
     double wallClockMillis_ = 0;
     double nextCouncilSampleMillis_ = 0;
+    double nextSharedSkinExpiryCheck_ = 0;
+    struct SharedSkinSource {
+        double capturedAt = 0;
+        bool available = false;
+        std::unordered_map<std::string, CustomSkin> skins;
+    };
+    std::array<SharedSkinSource, 3> sharedSkinSources_;
 
     /// How long tick() itself took, drained once a second into a DebugStats
     /// broadcast. The mean says what the server costs at rest; the worst
@@ -1818,6 +1897,7 @@ private:
         std::string lagFrame, workFrame, sessionsFrame;
     } tickProbeWindow_;
     double tickCadenceStartMillis_ = 0;
+    double lastMeasuredTps_ = 0;
     double tickCadenceMaxWorkMillis_ = 0;
     double tickCadenceMaxLagMillis_ = 0;
     unsigned tickCadenceSamples_ = 0;
@@ -1837,6 +1917,11 @@ private:
     std::string describeTickPhases(double tookMillis) const;
     std::array<TickPhase, 24> tickPhases_{};
     std::size_t tickPhaseCount_ = 0;
+    double contactBeginMs_ = 0;
+    double nextContactVisitBurstMs_ = 0;
+    unsigned contactVisitTicksLeft_ = 0;
+    enum class ContactVisitFrame { None, Trigger, Sample };
+    ContactVisitFrame contactVisitFrame_ = ContactVisitFrame::None;
     std::array<TickPhase, 11> sessionPhases_{};
     std::size_t sessionPhaseCount_ = 0;
     double tickStartedMillis_ = 0;
@@ -1896,6 +1981,11 @@ private:
     std::int64_t pyramidCycle_ = -1;
     std::vector<Realm> pyramidLayouts_;
     void updatePyramidSpawnRealms();
+    std::int64_t jurassicCycle_ = -1;
+    std::vector<Realm> jurassicLayouts_;
+    Realm activeJurassicRealm(Realm realm) const;
+    void routeJurassicEntrance(Realm& realm, Vec2& position);
+    void serviceJurassicRotation(std::int64_t cycle);
     Realm activePyramidRealm(Realm realm) const;
     void routePyramidEntrance(Realm& realm, Vec2& position);
     void servicePyramidRotation(std::int64_t cycle);

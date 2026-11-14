@@ -94,15 +94,12 @@ constexpr double kIconCap = 48.0;
 /// half and leaves a sliver of plate showing round the art.
 constexpr double kIconInset = kCellRim * 0.5 + 2.0;
 
-/// Every rung of the ladder is a column, apex included: a biome's apex clock
-/// puts one in the world now and then, and it is the rarest cell on the
-/// sheet. Universal is above the ladder, and no mob is ever that.
-///
-/// The drop table stops a tier short. An apex mob's graded drop is capped at
-/// unique (LootSystem::finishDropRarity), and no lesser mob grades past it,
-/// so an apex column there would always be empty.
-constexpr int kTierColumns = kLadderRarityCount;
+constexpr int kTierColumns = kLadderRarityCount + 1;
 constexpr int kDropTiers = kLadderRarityCount - 1;
+constexpr int kDropColumns = kDropTiers + 1;
+constexpr Rarity dropColumnRarity(int column) {
+    return column == kDropTiers ? Rarity::Ascendant : clampRarity(column);
+}
 
 constexpr double kGridWidth = kTierColumns * kCell + (kTierColumns - 1) * kGridGap;
 constexpr double kCardWidth = kGridWidth + kPad * 2.0 + kScrollbarWidth + 4.0 + kGridSlack;
@@ -398,7 +395,7 @@ struct DropCell {
 
 struct DropRow {
     const DropDef* meta = nullptr;   ///< row identity: (type, itemType)
-    std::array<DropCell, kDropTiers> cells{};
+    std::array<DropCell, kDropColumns> cells{};
 };
 
 /// Mirrors the server drop pipeline so the tooltip shows real rates.
@@ -413,9 +410,11 @@ struct DropRow {
 /// down. Every graded outcome is then clamped up to the mob's rarity floor;
 /// chaff is not, which is what keeps it chaff.
 std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
-                                     std::array<bool, kDropTiers>& usedTiers, int orbTier = kRarityCount) {
+                                     std::array<bool, kDropColumns>& usedTiers, int orbTier = kRarityCount) {
     std::vector<DropRow> rows;
     const std::vector<DropDef>& table = mobDropTable(mobIndex,orbTier);
+    const bool apex = mobRarity == Rarity::Ascendant;
+    if (apex) mobRarity = Rarity::Apex;
     if (table.empty()) return rows;
 
     const int tier = rarityIndex(mobRarity);
@@ -429,16 +428,19 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
     const auto push = [&](const DropDef& drop, Rarity rarity, double probability,
                           int floorTier = 0) {
         if (probability <= 0) return;
-        rarity=payoutDropRarity(rarity,mobRarity);
-        if(mobRarity==Rarity::Apex&&rarity==Rarity::Unique&&!hyperEternalCell)return;
-        int column = dropTier(rarity);
+        const bool apexDrop = rarity == Rarity::Ascendant;
+        if (!apexDrop) rarity = payoutDropRarity(rarity, mobRarity);
+        if (mobRarity == Rarity::Apex && rarity == Rarity::Unique && !hyperEternalCell) return;
+        int column = apexDrop ? kDropTiers : dropTier(rarity);
         if (column < 0) return;
         if (column < floorTier) column = floorTier;
-        if(drop.orbTier<kRarityCount)column=std::max(rarityIndex(content().petal(drop.petalIndex).minRarity),std::min(column,drop.orbTier));
+        if (!apexDrop && drop.orbTier < kRarityCount)
+            column = std::max(rarityIndex(content().petal(drop.petalIndex).minRarity),
+                              std::min(column, drop.orbTier));
         // Below the petal's lowest tier the server drops nothing at all
         // (petalComesAt), so there is no chance to quote.
         if (drop.petalIndex != kInvalidIndex &&
-            !petalComesAt(content().petal(drop.petalIndex), static_cast<Rarity>(column))) {
+            !petalComesAt(content().petal(drop.petalIndex), dropColumnRarity(column))) {
             return;
         }
 
@@ -459,6 +461,25 @@ std::vector<DropRow> computeMobDrops(std::uint16_t mobIndex, Rarity mobRarity,
         cell.probability += probability;
         usedTiers[static_cast<std::size_t>(column)] = true;
     };
+
+    if (apex && !content().mob(mobIndex).chainBody) {
+        // The special roll picks one row, independent of all ordinary trials.
+        const auto& authored = mobDropTable(mobIndex, kRarityCount);
+        const auto inPool = [](const DropDef& drop) {
+            return drop.itemType == "random" ||
+                   (drop.petalIndex < content().petalCount() &&
+                    !content().petal(drop.petalIndex).isAdminPetal &&
+                    !petalHasOwnSource(content().petal(drop.petalIndex)) &&
+                    petalComesAt(content().petal(drop.petalIndex), Rarity::Ascendant));
+        };
+        const auto poolSize = std::count_if(authored.begin(), authored.end(), inPool);
+        if (poolSize > 0 && authored.size() == table.size()) {
+            for (std::size_t i = 0; i < authored.size(); ++i) {
+                if (inPool(authored[i]))
+                    push(table[i], Rarity::Ascendant, 100.0 * kApexPetalDropChance / poolSize);
+            }
+        }
+    }
 
     if(mobRarity==Rarity::Apex){
         std::vector<const DropDef*> pool;
@@ -589,7 +610,7 @@ void drawDropCard(Canvas& canvas, const SpriteCache& sprites, double cellX, doub
     ItemTile tile;
     tile.petalIndex = cell.drop->petalIndex;
     tile.rarity = rarity;
-    if (cell.drop->maxQuantity > 1) tile.badge = "x" + std::to_string(cell.drop->maxQuantity);
+    if (rarity != Rarity::Ascendant && cell.drop->maxQuantity > 1) tile.badge = "x" + std::to_string(cell.drop->maxQuantity);
     tile.timeSeconds = timeSeconds;
     drawItemTile(canvas, sprites, {cardX, rowY, kCardSize, kCardSize}, tile);
 
@@ -635,10 +656,10 @@ int galleryOrbTier(const Profile& profile) {
     return best;
 }
 std::vector<GalleryDropPreview> galleryDropPreview(std::uint16_t mob,Rarity rarity,int orbTier){
-    std::array<bool,kDropTiers> used{};std::vector<GalleryDropPreview> out;
+    std::array<bool, kDropColumns> used{};std::vector<GalleryDropPreview> out;
     for(const auto& row:computeMobDrops(mob,rarity,used,orbTier))
-        for(int tier=0;tier<kDropTiers;++tier)if(row.cells[tier].drop)
-            out.push_back({row.cells[tier].drop->petalIndex,static_cast<Rarity>(tier),row.cells[tier].probability});
+        for(int tier=0;tier<kDropColumns;++tier)if(row.cells[tier].drop)
+            out.push_back({row.cells[tier].drop->petalIndex,dropColumnRarity(tier),row.cells[tier].probability});
     return out;
 }
 
@@ -687,7 +708,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
     // Declaration order, not index order: the registry's indices are sorted.
     for (const std::uint16_t mobIndex : mobRows().order) {
         for (int tier = 0; tier < kTierColumns; ++tier) {
-            const Rarity rarity = clampRarity(tier);
+            const Rarity rarity = tier == kLadderRarityCount ? Rarity::Ascendant : clampRarity(tier);
             Cell cell;
             cell.rect = {startX + tier * (kCell + kGridGap), y, kCell, kCell};
             cell.mobIndex = mobIndex;
@@ -884,7 +905,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
         stat("Speed: " + fixedDecimals(mobRows().speed[cell.mobIndex], 2), 0.0);
         stat("XP: " + abbreviateNumber(stats.xp), 0.0);
 
-        std::array<bool, kDropTiers> usedTiers{};
+        std::array<bool, kDropColumns> usedTiers{};
         if(config.id=="garbage") {
             stat(trEnZh("Drops exactly the visible petal types.","开袋掉落与外观中的花瓣种类一致。"),6.0);
             stat(trEnZh("Each visible type is guaranteed at least once.","每个可见种类至少掉落1件。"),0.0);
@@ -892,10 +913,14 @@ bool GalleryPanel::render(MenuContext& ctx) {
         }
         const std::vector<DropRow> rows = config.id=="garbage" ? std::vector<DropRow>{} : computeMobDrops(cell.mobIndex, cell.rarity, usedTiers, galleryOrbTier(ctx.net.profile()));
         std::vector<int> columns;
-        for (int i = 0; i < kDropTiers; ++i) {
+        for (int i = 0; i < kDropColumns; ++i) {
             if (usedTiers[static_cast<std::size_t>(i)]) columns.push_back(i);
         }
         const bool hasDrops = !rows.empty() && !columns.empty();
+        if (hasDrops && cell.rarity == Rarity::Ascendant) {
+            stat(trEnZh("Apex column: chance per eligible kill",
+                        "Apex 列为每次达标击杀的概率"), 0.0);
+        }
 
         const double tableWidth = static_cast<double>(columns.size()) * kDropCellW;
         const double dropsHeight =
@@ -934,7 +959,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
             TextStyle header = galleryStyle(10.0, kPaper);
             header.align = Align::Centre;
             for (std::size_t i = 0; i < columns.size(); ++i) {
-                const Rarity rarity = clampRarity(columns[i]);
+                const Rarity rarity = dropColumnRarity(columns[i]);
                 header.fill = rarityColor(rarity);
                 text(canvas, rarityTr(rarity),
                      tableX + static_cast<double>(i) * kDropCellW + kDropCellW * 0.5,
@@ -950,7 +975,7 @@ bool GalleryPanel::render(MenuContext& ctx) {
                     // as an empty frame.
                     const DropCell& square = rows[r].cells[static_cast<std::size_t>(columns[i])];
                     if (square.drop == nullptr) continue;
-                    drawDropCard(canvas, ctx.sprites, cellX, rowY, clampRarity(columns[i]), square,
+                    drawDropCard(canvas, ctx.sprites, cellX, rowY, dropColumnRarity(columns[i]), square,
                                  ctx.timeSeconds);
                 }
             }

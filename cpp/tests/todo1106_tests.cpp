@@ -607,7 +607,7 @@ TEST(todo1106_projectiles_use_summon_projectile_talent) {
             const auto index = c.petalIndex(id);
             CHECK_NEAR(c.petalStats(index, Rarity::Super).lightningDamagePerHit,
                        120.0 * petalStrengthScale(Rarity::Super), 1e-6);
-            CHECK_NEAR(c.petalStats(index, Rarity::Unique).lightningDamagePerHit, 383818.5, 1e-6);
+            CHECK_NEAR(c.petalStats(index, Rarity::Unique).lightningDamagePerHit, 372009.0, 1e-6);
         }
         double damage[3]={};
         for(int variant=0;variant<3;++variant){
@@ -622,7 +622,7 @@ TEST(todo1106_projectiles_use_summon_projectile_talent) {
             }
             std::printf("PROJECTILE %s variant %d damage %.3f\n",id,variant,damage[variant]);CHECK(damage[variant]>0);
         }
-        if (blueberries) CHECK_NEAR(damage[0], 767637.0, 1e-6);
+        if (blueberries) CHECK_NEAR(damage[0], 744018.0, 1e-6);
         CHECK_NEAR(damage[1],2.5*damage[0],1e-6);
         CHECK_NEAR(damage[2],damage[0],1e-6);
     }
@@ -731,7 +731,8 @@ TEST(todo1107_berry_ranges_and_blueberry_tooltip_use_current_stats) {
     CHECK(base > 0);
     SkillSet skills;
     skills.set(SkillId::Damage, 2);
-    const auto damageText = std::to_string(std::llround(base * skills.effectScale(SkillId::Damage)));
+    skills.set(SkillId::PetDamage, 3);
+    const auto damageText = std::to_string(std::llround(base * 0.5 * skills.effectScale(SkillId::Damage)));
     const auto lines = ui::petalTooltipLines(blueberry, Rarity::Unique, skills, 1.0);
     CHECK(std::any_of(lines.begin(), lines.end(), [&](const auto& line) {
         auto actual = line.altText;
@@ -928,4 +929,45 @@ TEST(todo1106_loadout_presets_restore_independent_talents) {
     CHECK(h.stepUntil({&client}, [&] { return client.profile().skills.level(SkillId::Damage) == 0; }));
     client.loadLoadoutPreset(10);
     CHECK(h.stepUntil({&client}, [&] { return client.profile().skills.level(SkillId::Damage) < 0; }));
+}
+
+TEST(prestige_loadout_with_missing_talents_does_not_inherit_the_previous_tree) {
+    Harness h("prestige-loadout-talent-switch", [](const std::string& path) {
+        seedUser(path, "keeper", "password7");
+        Database db;
+        std::string error;
+        db.load(path, error);
+        const auto* account = db.findUser("keeper");
+        if (!account) return;
+        auto& record = db.progress(account->id);
+        record.talentPointBonus = 400;
+        record.skills.set(SkillId::Damage, 0);
+        record.skills.set(SkillId::Prestige, 0);
+        record.loadoutPresets[loadoutPresetName(1)].resize(kLoadoutSlots);
+        db.markDirty();
+        db.save();
+    }, dataDir(), 0);
+    CHECK(h.ready);
+    if (!h.ready) return;
+    NetClient client;
+    CHECK(connectClient(h, client));
+    client.requestLogin("keeper", "password7");
+    CHECK(h.stepUntil({&client}, [&] { return client.profile().skills.prestigeUnlocked(); }));
+    client.joinGame(1280, 720, "", "keeper", true);
+    auto& world = h.server.world();
+    CHECK(h.stepUntil({&client}, [&] { return bodyNamed(world, "keeper") != NULL_ENTITY; }));
+    const auto flower = bodyNamed(world, "keeper");
+    if (flower == NULL_ENTITY) return;
+    const auto realm = world.get<Transform>(flower).realm;
+    CHECK(h.server.worldMaps().isPrestige(realm));
+    client.saveLoadoutPreset(0);
+    CHECK(h.stepUntil({&client}, [&] { return !client.profile().presets[0].empty(); }));
+    client.loadLoadoutPreset(1);
+    CHECK(h.stepUntil({&client}, [&] { return client.profile().skills.level(SkillId::Damage) < 0; }));
+    CHECK(world.get<PlayerSkillTree>(flower).skills.level(SkillId::Damage) < 0);
+    CHECK(world.get<PlayerSkillTree>(flower).skills.prestigeUnlocked());
+    CHECK_EQ(world.get<Transform>(flower).realm, realm);
+    client.loadLoadoutPreset(0);
+    CHECK(h.stepUntil({&client}, [&] { return client.profile().skills.level(SkillId::Damage) == 0; }));
+    CHECK_EQ(world.get<PlayerSkillTree>(flower).skills.level(SkillId::Damage), 0);
 }

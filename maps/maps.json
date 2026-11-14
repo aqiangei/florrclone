@@ -124,6 +124,91 @@
     {
       "file": "jurassic.tmj",
       "prestige": true
+    },
+    {
+      "file": "zorr_void.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "zorr_astral.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "zorr_null.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "jurassic_pangea.tmj",
+      "prestige": true
+    },
+    {
+      "file": "jurassic_tectonics.tmj",
+      "prestige": true
+    },
+    {
+      "file": "bio.tmj"
+    },
+    {
+      "file": "bio_micro.tmj"
+    },
+    {
+      "file": "bio_lab.tmj"
+    },
+    {
+      "file": "rift_ant_hell.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_factory.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_hel.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_main.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_ocean.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_sewers.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_victory.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_pyramid.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_pyramid_alt.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_pyramid_west.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "rift_pyramid_east.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "zorr_arctic.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "zorr_glacier.tmj",
+      "appendAfterPrestige": true
+    },
+    {
+      "file": "zorr_polar.tmj",
+      "appendAfterPrestige": true
     }
   ]
 }

@@ -61,7 +61,8 @@ std::string formatXp(double xp) {
 }
 
 double practiceRowHeight(const PracticeBoardRow& row) {
-    return kRowHeight + 18.0 * ((row.loadout.size() + 1) / 2);
+    return kRowHeight + 18.0 * ((row.loadout.size() + 1) / 2) +
+        (row.breakdown.empty() ? 22.0 : 105.0 + 20.0 * row.breakdown.size());
 }
 
 std::string practiceDate(double millis) {
@@ -94,6 +95,9 @@ void LeaderboardPanel::reset() {
     hyper_ = false;
     playtime_ = false;
     damage_ = false;
+    chartRecord_ = 0;
+    chartPlayer_.clear();
+    chartSource_ = 0;
     barDrag() = {};
 }
 
@@ -126,8 +130,9 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     const Rect refreshRect{panel.right() - 140.0, panel.y + 10.0, 80.0, 30.0};
     // Inside the card's border on three sides, so neither the rows nor the
     // track ever paint over the frame.
-    const Rect view{panel.x + kMenuBorder, panel.y + kHeaderHeight, panel.w - kMenuBorder * 2,
-                    std::max(0.0, panel.h - kHeaderHeight - kMenuBorder)};
+    const double bodyTop = kHeaderHeight + (damage_ ? 0.0 : 28.0);
+    const Rect view{panel.x + kMenuBorder, panel.y + bodyTop, panel.w - kMenuBorder * 2,
+                    std::max(0.0, panel.h - bodyTop - kMenuBorder)};
     const Rect bar{view.right() - kScrollbarWidth, view.y, kScrollbarWidth, view.h};
 
     // An empty board still reserves a row's worth of height, which is what
@@ -229,6 +234,13 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
     pillButton(canvas, hyperTab, "超凡持有", hyper_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, timeTab, "有效游玩时间", playtime_ ? 0x85530Cu : kLeaderboardSkin.border);
     pillButton(canvas, damageTab, "伤害统计", damage_ ? 0x85530Cu : kLeaderboardSkin.border);
+    if (!damage_) {
+        const auto rank = ctx.net.ownLeaderboardRank(playtime_, hyper_);
+        const std::string status = pending ? "查询中" : rank ? "第 " + std::to_string(rank) + " 名" : "未上榜";
+        TextStyle info;
+        info.size = 15;
+        text(canvas, "我的排行  " + status, panel.x + 15.0, panel.y + 103.0, info);
+    }
     if (hyper_) {
         const auto pages = std::max(1u, (ctx.net.hyperHoldingsTotal()+kHyperBoardPageSize-1)/kHyperBoardPageSize);
         TextStyle info; info.size=12; info.strokeWidth=0;
@@ -302,6 +314,69 @@ bool LeaderboardPanel::render(MenuContext& ctx) {
                     label.size = fit(itemLabel, half - 9.0, 13.0);
                     text(canvas, itemLabel, left + (j % 2) * half, top + kRowHeight + 18.0 * (j / 2) + 8.0, label);
                 }
+                const double details = top + kRowHeight + 18.0 * ((row.loadout.size() + 1) / 2);
+                label.size = 12;
+                if (row.breakdown.empty()) {
+                    text(canvas, "旧成绩 · 无逐秒明细", left, details + 10, label);
+                    continue;
+                }
+                std::array<double, net::kPracticeWindowSeconds> seconds{};
+                const Rect wholeChart{left, details + 20 * row.breakdown.size(), right - left, 20};
+                if (ctx.pressed() && view.contains(mouse) && wholeChart.contains(mouse)) {
+                    chartRecord_ = 0;
+                    chartSource_ = 0;
+                }
+                for (std::size_t j = 0; j < row.breakdown.size(); ++j) {
+                    const auto& source = row.breakdown[j];
+                    for (std::size_t k = 0; k < seconds.size(); ++k) seconds[k] += source.seconds[k];
+                    const auto index = content().petalIndex(source.petal);
+                    const auto name = source.petal.empty() ? std::string("其他伤害") :
+                        std::string(rarityTr(source.rarity)) + " " +
+                        petalNameTr(source.petal, index == kInvalidIndex ? source.petal.c_str() :
+                                     content().petal(index).name.c_str());
+                    const double at = details + 20 * j + 10;
+                    const Rect sourceRow{left, at - 10, right - left, 20};
+                    const bool selected = chartRecord_ == row.id && chartPlayer_ == row.name &&
+                                          chartSource_ == j + 1;
+                    if (ctx.pressed() && view.contains(mouse) && sourceRow.contains(mouse)) {
+                        chartRecord_ = selected ? 0 : row.id;
+                        chartPlayer_ = row.name;
+                        chartSource_ = selected ? 0 : j + 1;
+                    }
+                    label.fill = selected ? 0x7EEFC6u : kPaper;
+                    label.align = Align::Left;
+                    label.size = fit(name, (right - left) * 0.65, 12);
+                    text(canvas, name, left, at, label);
+                    char percent[32];
+                    std::snprintf(percent, sizeof(percent), "%.1f%%",
+                                  100 * source.total / std::max(1.0, row.damage));
+                    label.align = Align::Right;
+                    label.size = 12;
+                    text(canvas, formatCompact(source.total) + "  " + percent, right, at, label);
+                }
+                const bool single = chartRecord_ == row.id && chartPlayer_ == row.name &&
+                                    chartSource_ > 0 && chartSource_ <= row.breakdown.size();
+                if (single) seconds = row.breakdown[chartSource_ - 1].seconds;
+                label.fill = kPaper;
+                const double chartTop = details + 20 * row.breakdown.size() + 12;
+                const double chartBottom = chartTop + 64;
+                const double peak = *std::max_element(seconds.begin(), seconds.end());
+                label.align = Align::Left;
+                text(canvas, std::string(single ? "单花瓣 DPS · 点此看全套 · " : "全套 DPS · 点花瓣查看 · ") +
+                     "峰值 " + formatCompact(peak), left, chartTop, label);
+                canvas.beginPath();
+                for (std::size_t j = 0; j < seconds.size(); ++j) {
+                    const double x = left + (right - left) * j / (seconds.size() - 1);
+                    const double pointY = chartBottom - 45 * seconds[j] / peak;
+                    if (j == 0) canvas.moveTo(x, pointY);
+                    else canvas.lineTo(x, pointY);
+                }
+                setStroke(canvas, 0x7EEFC6u);
+                canvas.setLineWidth(2.0f);
+                canvas.stroke();
+                text(canvas, "1 s", left, chartBottom + 14, label);
+                label.align = Align::Right;
+                text(canvas, std::to_string(net::kPracticeWindowSeconds) + " s", right, chartBottom + 14, label);
             }
         };
         draw(practice.own, true);

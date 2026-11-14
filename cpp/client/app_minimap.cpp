@@ -18,6 +18,7 @@
 
 #include "client/app.h"
 
+#include <string_view>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -26,6 +27,7 @@
 
 #include "client/minimap.h"
 #include "client/ui/draw.h"
+#include "client/ui/content_i18n.h"
 #include "client/ui/menu_widgets.h"
 #include "client/ui/menu_style.h"
 #include "shared/game/constants.h"
@@ -324,7 +326,7 @@ const Canvas* App::minimapStatic(bool rarityGlow) {
          annotations != nullptr ? annotations->elements() : kNoElements) {
         const bool pad = element.kind == MapElementKind::Teleporter;
         const bool npc = element.kind == MapElementKind::Npc;
-        if (!pad && !npc) continue;
+        if ((!pad && !npc) || element.padId == "rift") continue;
         // An area's NPC stands somewhere in it that the server picks: there
         // is no one spot to mark, and its middle would be a lie.
         if (npc && element.npcRoams()) continue;
@@ -488,6 +490,19 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         name.baseline = Baseline::Bottom;
         text(canvas, *label, dx, dy - radius - 2.0, name);
     };
+    const MapData* map = worldMaps_.forRealm(realm);
+    if (map) {
+        for (const auto& element : map->elements()) {
+            if (element.kind != MapElementKind::Teleporter ||
+                (element.targetMap != "zorr_void" && element.targetMap != "zorr_astral" &&
+                 element.targetMap != "zorr_null")) continue;
+            const std::string fallback = element.targetMap == "zorr_void" ? "Void" :
+                                         element.targetMap == "zorr_astral" ? "Astral" : "Null";
+            const std::string destination = ui::biomeTr(element.targetMap, fallback.c_str());
+            dot(element.centre(), 4.0, 0xBE9CEAu, true, &destination);
+        }
+    }
+
     // AOI stream first (fresh); then OnlineRoster fills in far-away humans the
     // viewport never carries. Bots only exist in AOI -- they are not sessions.
     const SquadState& squad = net_.squad();
@@ -581,9 +596,13 @@ void App::drawMinimap(Canvas& canvas, bool expanded) {
         caption.size = 14.0;
         caption.align = Align::Centre;
         caption.baseline = Baseline::Alphabetic;
-        const std::string captionText =
+        const std::string& captionText =
             named->displayName().empty() ? named->id() : named->displayName();
-        text(canvas, captionText, x + side * 0.5, y + side + 18.0, caption);
+        const auto& id = named->id();
+        const bool useTranslation = named->biome() == "bio" || named->biome() == "jurassic" ||
+                                    id == "wave" || id.rfind("rift_", 0) == 0;
+        const char* localized = useTranslation ? ui::biomeTr(id, captionText.c_str()) : captionText.c_str();
+        text(canvas, localized, x + side * 0.5, y + side + 18.0, caption);
     }
 }
 
@@ -668,7 +687,26 @@ void App::drawOnlineRoster(Canvas& canvas) {
             listTop + (static_cast<double>(i) + 0.5) * kRosterRow - onlineRosterScroll_.offset;
         std::string line = entry.name + "  Lv" + std::to_string(entry.level);
         if (!entry.guild.empty()) line += "  [" + entry.guild + "]";
-        if (!entry.location.empty()) line += "  " + entry.location;
+        if (!entry.location.empty()) {
+            const auto& location = entry.location;
+            std::string_view name = location;
+            std::string_view prefix;
+            if (name.substr(0, 12) == "Prestige II ") {
+                prefix = "prestige_2_";
+                name.remove_prefix(12);
+            } else if (name.substr(0, 9) == "Prestige ") {
+                prefix = "prestige_";
+                name.remove_prefix(9);
+            }
+            const char* biome = (name == "Jurassic" || name == "jurassic") ? "jurassic" :
+                name == "Pangea" ? "jurassic_pangea" :
+                name == "Tectonics" ? "jurassic_tectonics" :
+                name == "Bio" ? "bio" :
+                name == "Micro" ? "bio_micro" :
+                name == "Lab" ? "bio_lab" : nullptr;
+            line += "  ";
+            line += biome ? ui::biomeTr(std::string(prefix) + biome, location.c_str()) : location.c_str();
+        }
         else {
             line += "  ";
             line += tr(Msg::LobbyParen);

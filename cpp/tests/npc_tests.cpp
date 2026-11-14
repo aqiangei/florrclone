@@ -157,11 +157,11 @@ bool ensureShippedContent() {
 // The price list and the content
 // ---------------------------------------------------------------------------
 
-TEST(the_oracle_charges_the_stated_price_for_every_tier) {
+TEST(apex_oracle_charges_the_stated_price_for_every_tier) {
     // The design's own numbers, tier by tier -- "unusual" is this game's
     // uncommon. Apex and universal cost nothing because nothing crafts out of
     // either.
-    const int expected[] = {7, 11, 19, 34, 65, 128, 253, 0, 0, 0, 0, 0, 0};
+    const int expected[] = {7, 11, 19, 34, 65, 128, 253, 0, 0, 0, 0, 0, 30, 0};
     static_assert(sizeof(expected) / sizeof(expected[0]) == kRarityCount);
     for (int i = 0; i < kRarityCount; ++i) {
         CHECK_EQ(oracleCraftCost(static_cast<Rarity>(i)), expected[i]);
@@ -786,8 +786,7 @@ TEST(a_hostile_npc_bites_the_flower_touching_it_and_breaks_the_petals_striking_i
 TEST(a_dummy_counts_a_hit_as_yours_only_on_your_own_wire) {
     // Two flowers, one dummy, one of them hitting it. The hitter's snapshots
     // mark every number on the dummy as theirs; the watcher is sent the same
-    // numbers, none of them marked -- so the watcher's DPS readout stays at
-    // zero while the hitter's climbs.
+    // numbers, none of them marked. The absolute meter is sent only to the hitter.
     const double dummyX = kTileSize * 8.0;
     const double y = kTileSize * 8.0;
     const std::string dir =
@@ -842,6 +841,9 @@ TEST(a_dummy_counts_a_hit_as_yours_only_on_your_own_wire) {
     CHECK_EQ(count(hitter, false), 0);
     CHECK(count(watcher, false) > 3);
     CHECK_EQ(count(watcher, true), 0);
+    CHECK(hitter.view().practiceMeter(dummyId).dps > 0);
+    CHECK(hitter.view().practiceMeter(dummyId).total > 0);
+    CHECK_NEAR(watcher.view().practiceMeter(dummyId).total, 0, 1e-9);
     removeDataDir(dir);
 }
 
@@ -2064,6 +2066,7 @@ TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
     const std::string dir = titanWorld("titan-forge-all");
     Harness h("titan-forge-all", [](const std::string& path) {
         seedAccount(path, "smith");
+        seedAccount(path, "watcher");
         seedStack(path, "smith", "petal_rose", Rarity::Super, 41);
         seedWorn(path, "smith", 0, "rose", Rarity::Super);
         seedStack(path, "smith", "petal_fragment", Rarity::Super, 31);
@@ -2072,9 +2075,10 @@ TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
         seedStack(path, "smith", "petal_leaf", Rarity::Super, 9);
     }, dir, 0);
     if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
-    NetClient client;
+    NetClient client, watcher;
     CHECK(joinAs(h, client, "smith"));
-    const std::vector<NetClient*> clients{&client};
+    CHECK(joinAs(h, watcher, "watcher"));
+    const std::vector<NetClient*> clients{&client, &watcher};
     h.step(3, clients);
     const auto rose = content().petalIndex("rose");
     const auto fragment = content().petalIndex("fragment");
@@ -2096,6 +2100,13 @@ TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
     CHECK_EQ(outcome.quantity, 3u);
     CHECK(outcome.reason.find("获得 6 个永恒") != std::string::npos);
     CHECK(outcome.reason.find("消耗 80 个超级") != std::string::npos);
+    const auto summaryCount = [](const NetClient& player) {
+        return std::count_if(player.chat().begin(), player.chat().end(), [](const auto& message) {
+            return message.text.find("一键锻造完成：共 3 种，获得 6 个永恒") != std::string::npos;
+        });
+    };
+    CHECK_EQ(summaryCount(client), 0);
+    CHECK_EQ(summaryCount(watcher), 0);
     CHECK(awaitProfile(h, client, [&](const Profile& profile) {
         return profile.stackCount(rose, Rarity::Unique) == 3 &&
                profile.stackCount(fragment, Rarity::Unique) == 2 &&
@@ -2115,6 +2126,49 @@ TEST(titan_forge_all_exchanges_bagged_supers_in_one_request) {
     CHECK(awaitForge(h, clients, client, outcome));
     CHECK(!outcome.success);
     CHECK_EQ(client.profile().stackCount(rose, Rarity::Unique), 3u);
+    removeDataDir(dir);
+}
+
+TEST(permanent_hyper_forge_all_respects_recipe_and_stack_space) {
+    const std::string dir = titanWorld("permanent-hyper-forge-all");
+    Harness h("permanent-hyper-forge-all", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_rose", Rarity::Unique, 89);
+        seedWorn(path, "smith", 0, "rose", Rarity::Unique);
+        seedStack(path, "smith", "petal_wing", Rarity::Unique, 60);
+        seedStack(path, "smith", "petal_wing", Rarity::PermanentHyper, kMaxStackCount - 1);
+        seedStack(path, "smith", "petal_fragment", Rarity::Unique, 90);
+    }, dir, 0);
+    if (!h.ready) { CHECK(false); removeDataDir(dir); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const std::vector<NetClient*> clients{&client};
+    standAtTitan(h, clients, "smith");
+    client.requestPermanentHyperForge(kNoPetal);
+    TitanForgeOutcome outcome;
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(outcome.success);
+    CHECK_EQ(outcome.petalIndex, kNoPetal);
+    CHECK_EQ(outcome.quantity, 3u);
+    CHECK(outcome.reason.find("获得 6 个永久超凡") != std::string::npos);
+    const auto rose = content().petalIndex("rose");
+    const auto wing = content().petalIndex("wing");
+    const auto fragment = content().petalIndex("fragment");
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(rose, Rarity::PermanentHyper) == 2 &&
+               p.stackCount(wing, Rarity::PermanentHyper) == kMaxStackCount;
+    }));
+    const auto& profile = client.profile();
+    CHECK_EQ(profile.stackCount(rose, Rarity::Unique), 29u);
+    CHECK_EQ(profile.stackCount(wing, Rarity::Unique), 30u);
+    CHECK_EQ(profile.stackCount(fragment, Rarity::Unique), 0u);
+    CHECK_EQ(profile.stackCount(fragment, Rarity::PermanentHyper), 3u);
+    CHECK_EQ(profile.loadout[0].petalIndex, rose);
+    CHECK_EQ(profile.loadout[0].rarity, Rarity::Unique);
+    client.requestPermanentHyperForge(kNoPetal);
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(!outcome.success);
+    CHECK_EQ(client.profile().stackCount(rose, Rarity::PermanentHyper), 2u);
     removeDataDir(dir);
 }
 
@@ -2144,14 +2198,28 @@ TEST(permanent_hyper_exchange_consumes_only_bagged_eternals_and_saves_the_new_id
         CHECK_EQ(outcome.success, succeeds);
         CHECK_EQ(outcome.quantity, succeeds ? 1u : 0u);
     };
+    const auto blood = content().petalIndex("blood_sacrifice");
     exchange(rose, false); // Outside the titan's service radius.
+    exchange(blood, false);
     standAtTitan(h, clients, "smith");
-    for (const char* id : {"mjolnir", "timed_mjolnir", "fragment", "blood_sacrifice"}) {
+    for (const char* id : {"mjolnir", "timed_mjolnir"}) {
         const auto index = content().petalIndex(id);
         const auto before = client.profile().stackCount(index, Rarity::Unique);
         exchange(index, false);
         CHECK_EQ(client.profile().stackCount(index, Rarity::Unique), before);
     }
+    const auto fragment = content().petalIndex("fragment");
+    exchange(fragment, true);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(fragment, Rarity::Unique) == 0 &&
+               p.stackCount(fragment, Rarity::PermanentHyper) == 1;
+    }));
+    exchange(blood, true);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(blood, Rarity::Unique) == 0 &&
+               p.stackCount(blood, Rarity::PermanentHyper) == 1;
+    }));
+    exchange(blood, false);
     const auto wing = content().petalIndex("wing");
     exchange(wing, false);
     CHECK_EQ(client.profile().stackCount(wing, Rarity::Unique), 30u);
@@ -2198,6 +2266,8 @@ TEST(permanent_hyper_exchange_consumes_only_bagged_eternals_and_saves_the_new_id
         const auto* record = restored.findProgress(user->id);
         CHECK(record && record->loadout[0] && record->loadout[0]->rarity == Rarity::PermanentHyper);
         CHECK(record && record->itemCount(Rarity::PermanentHyper, "petal_rose") == 1);
+        CHECK(record && record->itemCount(Rarity::PermanentHyper, "petal_blood_sacrifice") == 1);
+        CHECK(record && record->itemCount(Rarity::Unique, "petal_blood_sacrifice") == 0);
     }
     removeDataDir(dir);
 }
@@ -3157,7 +3227,7 @@ TEST(pyramid_map_scrolls_reveal_one_visit_without_inventory_and_refill) {
     CHECK(!explorer.pyramidMapRevealed);
 }
 
-TEST(permanent_titan_forge_broadcasts_eternal_theme_to_other_accounts) {
+TEST(permanent_titan_eternal_forge_pays_without_global_chat) {
     const auto dir=titanWorld("titan-broadcast");
     Harness h("titan-broadcast",[](const std::string& path){
         seedAccount(path,"smith");seedAccount(path,"watcher");
@@ -3169,15 +3239,14 @@ TEST(permanent_titan_forge_broadcasts_eternal_theme_to_other_accounts) {
     const auto oldLanguage=ui::language();ui::setLanguage(ui::Language::En);
     const auto before=watcher.chat().size();smith.requestTitanForge(content().petalIndex("rose"));
     TitanForgeOutcome out;CHECK(awaitForge(h,both,smith,out));CHECK(out.success);
-    CHECK(h.stepUntil(both,[&]{for(std::size_t n=before;n<watcher.chat().size();++n)
-        if(watcher.chat()[n].text.find("has been forged by")!=std::string::npos)return true;return false;},60));
-    char color[8];std::snprintf(color,sizeof color,"#%06x",rarityColor(Rarity::Unique));
-    bool seen=false;for(std::size_t n=before;n<watcher.chat().size();++n){const auto& text=watcher.chat()[n].text;
-        if(text.find("has been forged by")==std::string::npos)continue;seen=true;
-        CHECK(text.find(color)!=std::string::npos);CHECK(text.find("Eternal")!=std::string::npos);
-        CHECK(text.find("@smith")!=std::string::npos);CHECK(text.find("forged x1")!=std::string::npos);
-        CHECK(text.find("consumed x10")!=std::string::npos);}
-    CHECK(seen);ui::setLanguage(oldLanguage);removeDataDir(dir);
+    CHECK(h.stepUntil(both, [&] {
+        return smith.profile().stackCount(content().petalIndex("rose"), Rarity::Unique) == 1;
+    }));
+    h.step(10, both);
+    for (std::size_t n = before; n < watcher.chat().size(); ++n)
+        CHECK(watcher.chat()[n].text.find("has been forged by") == std::string::npos);
+    ui::setLanguage(oldLanguage);
+    removeDataDir(dir);
 }
 
 TEST(timed_hammer_leases_expire_equipped_and_bag_copies_independently) {
@@ -3314,13 +3383,13 @@ TEST(shop_locked_rotation_survives_login_and_purchase_charges_exact_quote) {
     const auto current=shopOffers(buyer.lockedShopRotation).front();
     const auto beforeBulk=buyer.profile().stackCount(current.petalIndex,current.rarity);
     const auto beforeStars=buyer.profile().stars;
-    buyer.requestBuyPetal(current.petalIndex,current.rarity,0,125);
-    CHECK(awaitProfile(h,buyer,[&](const Profile& p){return p.stackCount(current.petalIndex,current.rarity)==beforeBulk+125;}));
-    CHECK_NEAR(buyer.profile().stars,beforeStars-current.price*125,1e-6);
+    buyer.requestBuyPetal(current.petalIndex,current.rarity,0,330);
+    CHECK(awaitProfile(h,buyer,[&](const Profile& p){return p.stackCount(current.petalIndex,current.rarity)==beforeBulk+330;}));
+    CHECK_NEAR(buyer.profile().stars,beforeStars-current.price*330,1e-6);
     CHECK_EQ(starsForKill(Rarity::Mythic),1);CHECK_EQ(starsForKill(Rarity::Ultra),5);CHECK_EQ(starsForKill(Rarity::Super),25);
     for(std::uint16_t p=0;p<content().petalCount();++p)if(shopSellsPetal(p)){
         CHECK(shopPrice(p,Rarity::Rare)>=1);CHECK(shopPrice(p,Rarity::Super)>=shopPrice(p,Rarity::Rare));
-        CHECK(!shopSellsRarity(Rarity::Unique));
+        CHECK(shopSellsRarity(Rarity::Unique));
     }
     removeDataDir(dir);
 }
@@ -3363,7 +3432,7 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     Harness h("hyper-network",[](const std::string& path){
         seedAccount(path,"alpha");seedStack(path,"alpha","petal_rose",Rarity::Unique,5);
         seedAccount(path,"beta");seedStack(path,"beta","petal_rose",Rarity::Unique,5);
-    },dir,0);CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
+    },dir,0,[](ServerConfig& config){config.backgroundSave=true;});CHECK(h.ready);if(!h.ready){removeDataDir(dir);return;}
     NetClient alpha,beta;CHECK(joinAs(h,alpha,"alpha"));CHECK(joinAs(h,beta,"beta"));
     std::vector<NetClient*> both{&alpha,&beta};h.step(3,both);standAtTitan(h,both,"alpha");standAtTitan(h,both,"beta");
     auto& db=const_cast<Database&>(h.server.database());hyperForgeTestNow=1000;
@@ -3377,10 +3446,183 @@ TEST(hyper_forge_network_publishes_holder_protection_and_replaces_online_owner) 
     CHECK_EQ(beta.profile().stackCount(rose,Rarity::Unique),5u);
     hyperForgeTestNow=1000+15LL*3600000;
     beta.requestTitanForge(rose,true);CHECK(awaitForge(h,both,beta,out));CHECK(out.success);
+    {
+        Database reloaded; std::string error;
+        CHECK(reloaded.load(h.dbPath,error));
+        const auto* alphaAccount=std::as_const(db).findUser("alpha");
+        const auto* betaAccount=std::as_const(db).findUser("beta");
+        CHECK(alphaAccount&&betaAccount);
+        if(alphaAccount&&betaAccount) {
+            const auto* previous=reloaded.findProgress(alphaAccount->id);
+            const auto* winner=reloaded.findProgress(betaAccount->id);
+            CHECK(previous&&winner);
+            if(previous&&winner) {
+                CHECK_EQ(previous->itemCount(Rarity::Unique,"petal_rose"),4);
+                CHECK_EQ(previous->itemCount(Rarity::Apex,"petal_rose"),0);
+                CHECK_EQ(winner->itemCount(Rarity::Unique,"petal_rose"),0);
+                CHECK_EQ(winner->itemCount(Rarity::Apex,"petal_rose"),1);
+            }
+            const auto& forges=reloaded.storedTable("hyperForges");
+            CHECK_EQ(forges.size(),std::size_t{1});
+            if(forges.size()==1) CHECK_EQ(forges[forges.keys().front()]["owner"].asString(),betaAccount->id);
+        }
+    }
     CHECK(awaitProfile(h,alpha,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==0&&p.stackCount(rose,Rarity::Unique)==4;}));
     CHECK(awaitProfile(h,beta,[&](const Profile&p){return p.stackCount(rose,Rarity::Apex)==1&&p.stackCount(rose,Rarity::Unique)==0;}));
     removeDataDir(dir);
 }
+TEST(hyper_forge_network_survives_council_activity_credit) {
+    const auto dir = titanWorld("hyper-active-council");
+    Harness h("hyper-active-council", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_rose", Rarity::Unique, 5);
+    }, dir, 0, [](ServerConfig& config) { config.backgroundSave = true; });
+    CHECK(h.ready);
+    if (!h.ready) { removeDataDir(dir); return; }
+
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const std::vector<NetClient*> clients{&client};
+    standAtTitan(h, clients, "smith");
+    using Peer = testsupport::GameServerPeer;
+    auto* session = Peer::sessionOf(h.server, "smith");
+    CHECK(session);
+    if (!session) { removeDataDir(dir); return; }
+    auto& db = Peer::authorityDb(h.server);
+    const std::string account = session->userId;
+    const auto before = db.findProgress(account)->extra["councilActiveSeconds"].asDouble();
+    const auto rose = content().petalIndex("rose");
+
+    client.requestTitanForge(rose, true);
+    for (int i = 0; i < 20 && !Peer::localForgePending(h.server); ++i) {
+        client.poll(1);
+        h.server.serviceNetwork(1);
+    }
+    CHECK(Peer::localForgePending(h.server));
+    if (!Peer::localForgePending(h.server)) { removeDataDir(dir); return; }
+
+    // Force an ordinary activity sample between request capture and staging.
+    // The claimant's materials, ownership and protection are untouched.
+    h.clock += 1000;
+    session->councilSampleAt = h.clock - 1000;
+    session->councilActiveUntil = h.clock + 1000;
+    Peer::makeCouncilSampleDue(h.server, h.clock);
+    h.server.tick(h.clock);
+    session->councilActiveUntil = 0;
+
+    TitanForgeOutcome outcome;
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(outcome.success);
+    CHECK_NEAR(db.findProgress(account)->extra["councilActiveSeconds"].asDouble(),
+               before + 1, 1e-9);
+    CHECK_EQ(db.findProgress(account)->itemCount(Rarity::Apex, "petal_rose"), 1);
+    CHECK_EQ(db.findProgress(account)->itemCount(Rarity::Unique, "petal_rose"), 0);
+    removeDataDir(dir);
+}
+
+namespace {
+void checkHyperTakeoverRetry(const char* fixture, const char* input, const char* output, int cost,
+                             bool continuedProgress = false) {
+    const auto dir = titanWorld(fixture);
+    const auto materialKey = std::string("petal_") + input;
+    Harness h(fixture, [&](const std::string& path) {
+        seedAccount(path, "owner");
+        seedAccount(path, "challenger");
+        seedStack(path, "owner", materialKey.c_str(), Rarity::Unique, cost);
+        seedStack(path, "challenger", materialKey.c_str(), Rarity::Unique, cost);
+        seedStack(path, "challenger", "petal_rock", Rarity::Apex, 1);
+        seedStack(path, "challenger", "petal_leaf", Rarity::Apex, 1);
+    }, dir, 0, [](ServerConfig& config) { config.backgroundSave = true; });
+    CHECK(h.ready);
+    if (!h.ready) { removeDataDir(dir); return; }
+
+    NetClient owner, challenger;
+    CHECK(joinAs(h, owner, "owner"));
+    CHECK(joinAs(h, challenger, "challenger"));
+    const std::vector<NetClient*> both{&owner, &challenger};
+    standAtTitan(h, both, "owner");
+    standAtTitan(h, both, "challenger");
+    using Peer = testsupport::GameServerPeer;
+    auto& db = Peer::authorityDb(h.server);
+    hyperForgeTestNow = 1000;
+    db.setClock(+[] { return hyperForgeTestNow; });
+    const auto material = content().petalIndex(input);
+    const auto reward = content().petalIndex(output);
+    TitanForgeOutcome outcome;
+    owner.requestTitanForge(material, true);
+    CHECK(awaitForge(h, both, owner, outcome));
+    CHECK(outcome.success);
+    hyperForgeTestNow += 15LL * 3600000;
+
+    challenger.requestTitanHolder(material);
+    CHECK(h.stepUntil(both, [&] {
+        const auto* holder = challenger.titanHolder(material);
+        return holder && *holder == "owner" && challenger.hyperHoldings() == 2 &&
+               challenger.hyperProtectionLeft(material) == 0 &&
+               challenger.hyperInputCost(material) == cost;
+    }));
+    challenger.requestTitanForge(material, true);
+    for (int i = 0; i < 40 && !Peer::localForgePending(h.server); ++i) {
+        challenger.poll(1);
+        h.server.serviceNetwork(1);
+    }
+    CHECK(Peer::localForgePending(h.server));
+    CHECK(db.canStageForgeSave());
+    h.server.serviceNetwork(0);  // Hand the initial transfer to the writer.
+    CHECK(!db.canStageForgeSave());
+
+    auto& world = h.server.world();
+    auto& progress = world.get<PlayerProgress>(bodyNamed(world, "owner"));
+    double earnedXp = progress.totalXp + 123.0;
+    progress.totalXp = earnedXp;
+    if (continuedProgress) {
+        // Wait for the first cancellation to clear, before the server
+        // starts its retry. Change XP after the second snapshot is captured.
+        for (int i = 0; i < 400 && !db.canStageForgeSave(); ++i)
+            h.server.serviceNetwork(1);
+        CHECK(Peer::localForgePending(h.server));
+        CHECK(db.canStageForgeSave());
+        h.server.serviceNetwork(0);
+        CHECK(!db.canStageForgeSave());
+        earnedXp += 1.0;
+        world.get<PlayerProgress>(bodyNamed(world, "owner")).totalXp = earnedXp;
+    }
+    CHECK(awaitForge(h, both, challenger, outcome));
+    CHECK(outcome.success);
+    CHECK(awaitProfile(h, challenger, [&](const Profile& p) {
+        return p.stackCount(reward, Rarity::Apex) == 1 &&
+               p.stackCount(material, Rarity::Unique) == 0;
+    }));
+    CHECK(awaitProfile(h, owner, [&](const Profile& p) {
+        return p.stackCount(reward, Rarity::Apex) == 0 &&
+               p.stackCount(material, Rarity::Unique) == static_cast<unsigned>(cost - 1);
+    }));
+    const auto* account = std::as_const(db).findUser("owner");
+    CHECK(account);
+    Database reloaded;
+    std::string error;
+    CHECK(reloaded.load(h.dbPath, error));
+    if (account) {
+        const auto* saved = reloaded.findProgress(account->id);
+        CHECK(saved);
+        if (saved) CHECK_NEAR(saved->totalXp, earnedXp, 1e-9);
+    }
+    removeDataDir(dir);
+}
+}  // namespace
+
+TEST(hyper_hammer_takeover_retries_when_the_previous_owner_earns_xp) {
+    checkHyperTakeoverRetry("hyper-hammer-retry", "fragment", "mjolnir", 10);
+}
+
+TEST(hyper_egg_takeover_retries_with_expired_protection_and_two_holdings) {
+    checkHyperTakeoverRetry("hyper-egg-retry", "egg", "egg", 5);
+}
+
+TEST(hyper_egg_takeover_commits_when_the_previous_owner_keeps_earning_xp) {
+    checkHyperTakeoverRetry("hyper-egg-continuous-progress", "egg", "egg", 5, true);
+}
+
 TEST(hyper_hammer_network_forges_mjolnir_from_ten_eternal_fragments) {
     const auto dir=titanWorld("hyper-hammer-network");
     Harness h("hyper-hammer-network",[](const std::string& path){seedAccount(path,"smith");seedStack(path,"smith","petal_fragment",Rarity::Unique,10);},dir,0);
@@ -3389,6 +3631,67 @@ TEST(hyper_hammer_network_forges_mjolnir_from_ten_eternal_fragments) {
     client.requestTitanForge(content().petalIndex("fragment"),true);TitanForgeOutcome out;CHECK(awaitForge(h,clients,client,out));CHECK(out.success);
     CHECK_EQ(out.petalIndex,content().petalIndex("mjolnir"));
     CHECK(awaitProfile(h,client,[&](const Profile&p){return p.stackCount(out.petalIndex,Rarity::Apex)==1&&p.stackCount(content().petalIndex("fragment"),Rarity::Unique)==0;}));removeDataDir(dir);
+}
+TEST(apex_hammer_fragments_upgrade_at_ocean_oracle) {
+    const double cell = kTileSize;
+    const auto map = fixtureMap(24, 24,
+        fixtureDoor("meadow", "Meadow", cell * 2, cell * 2, cell, cell, true, 0.0),
+        std::string(), std::string(), {}, {}, {}, fixtureNpc(kOracleX, kOracleY, "oracle", "epic"));
+    const auto dir = stageDataDir("apex-hammer-oracle", {{"ocean", map}});
+    Harness h("apex-hammer-oracle", [](const std::string& path) {
+        seedAccount(path, "seer");
+        seedStack(path, "seer", "petal_fragment", Rarity::PermanentHyper, 120);
+        seedStack(path, "seer", "petal_mjolnir", Rarity::PermanentHyper, 120);
+    }, dir, 0);
+    CHECK(h.ready);
+    if (!h.ready) { removeDataDir(dir); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "seer"));
+    standBeside(h, client, "oracle");
+    const auto fragment = content().petalIndex("fragment");
+    OracleOutcome out;
+    client.requestOracleCraft(fragment, Rarity::PermanentHyper);
+    CHECK(awaitOracle(h, client, out));
+    CHECK(out.success);
+    CHECK_EQ(out.spent, 120u);
+    CHECK_EQ(out.rarity, Rarity::Ascendant);
+    client.requestOracleCraft(content().petalIndex("mjolnir"), Rarity::PermanentHyper);
+    CHECK(awaitOracle(h, client, out));
+    CHECK(!out.success);
+    removeDataDir(dir);
+}
+TEST(apex_hammer_network_forge_and_quote) {
+    const auto dir = titanWorld("apex-hammer-network");
+    Harness h("apex-hammer-network", [](const std::string& path) {
+        seedAccount(path, "smith");
+        seedStack(path, "smith", "petal_fragment", Rarity::Ascendant, 5);
+    }, dir, 0);
+    CHECK(h.ready);
+    if (!h.ready) { removeDataDir(dir); return; }
+    NetClient client;
+    CHECK(joinAs(h, client, "smith"));
+    const std::vector<NetClient*> clients{&client};
+    h.step(3, clients);
+    const auto fragment = content().petalIndex("fragment");
+    const auto hammer = content().petalIndex("mjolnir");
+    client.requestApexHammerForge(fragment);
+    TitanForgeOutcome outcome;
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(!outcome.success);
+    standAtTitan(h, clients, "smith");
+    client.requestTitanHolder(kNoPetal);
+    CHECK(h.stepUntil(clients, [&] {
+        return client.titanHolder(kNoPetal) && client.hyperInputCost(kNoPetal) == 5;
+    }, 120));
+    client.requestApexHammerForge(fragment);
+    CHECK(awaitForge(h, clients, client, outcome));
+    CHECK(outcome.success);
+    CHECK_EQ(outcome.petalIndex, hammer);
+    CHECK(awaitProfile(h, client, [&](const Profile& p) {
+        return p.stackCount(hammer, Rarity::Ascendant) == 1 &&
+               p.stackCount(fragment, Rarity::Ascendant) == 0;
+    }));
+    removeDataDir(dir);
 }
 TEST(hyper_garden_and_jungle_network_quotes_and_holdings_are_independent){
     const double cell=kTileSize;

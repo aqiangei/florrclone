@@ -79,8 +79,11 @@ TEST(todo1106_stick_summons_use_hyper_stats_and_talent_without_changing_count) {
             if(variant == 0) {
                 baseCount=pets.size(); baseHealth=w.get<Health>(pets[0]).max;
                 baseDamage=w.get<ContactDamage>(pets[0]).amount;
+                CHECK_EQ(baseCount, 2u);
                 const auto& storm = c.mob(c.mobIndex("sandstorm"));
-                CHECK_NEAR(baseDamage, storm.damage * petalStatScale(Rarity::Unique) * 1.5, 1e-6);
+                const double sourceDamageScale = std::string_view(id) == "magic_stick" ? 1.25 : 0.55;
+                CHECK_NEAR(baseDamage, storm.damage * petalStatScale(Rarity::Unique) * 1.5 *
+                                       sourceDamageScale, 1e-6);
             } else {
                 CHECK_EQ(pets.size(), baseCount*3);
                 for(auto pet : pets) {
@@ -104,6 +107,79 @@ TEST(todo1106_stick_summons_use_hyper_stats_and_talent_without_changing_count) {
             }
         }
     }
+}
+
+TEST(hyper_stick_gets_its_squad_when_magic_stick_is_due_to_fill_the_cap) {
+    const auto& content = testsupport::shippedContent();
+    World world;
+    PetalSystem petals;
+    CommandBuffer commands{world};
+    const auto player = world.create();
+    world.add<PlayerTag>(player);
+    world.add<Transform>(player, Transform{{5000, 5000}, 0});
+    world.add<Body>(player, Body{25, 1});
+    world.add<Health>(player, Health{100, 100});
+    world.add<PlayerModifiers>(player);
+    world.add<PetalRing>(player);
+    world.add<Loadout>(player);
+    world.add<PlayerInput>(player);
+    auto tick = [&](double now) {
+        petals.run(world, content, now, .05, commands);
+        commands.flush();
+    };
+    auto petCount = [&](int slot) {
+        return world.get<PetalSlotState>(player).slots[slot].pets.size();
+    };
+
+    world.get<Loadout>(player).slots[0] = {content.petalIndex("magic_stick"), Rarity::Apex};
+    world.get<Loadout>(player).slots[2] = {content.petalIndex("mana_orb"), Rarity::Apex};
+    tick(0);
+    world.get<Loadout>(player).slots[1] = {content.petalIndex("mysterious_stick"), Rarity::Apex};
+    tick(1000);
+    tick(2500);
+    tick(3500);
+
+    // Model 24 surviving temporary storms away from the hatch point. At 4500
+    // the magic stick is due to cast six more before the ordinary stick acts.
+    const auto sandstorm = content.mobIndex("sandstorm");
+    for (int i = 0; i < 24; ++i) {
+        const auto pet = world.create();
+        world.add<Pet>(pet, Pet{player, 0, 20000});
+        world.add<MobType>(pet, MobType{sandstorm, Rarity::Apex, 1.0});
+        world.get<PetalSlotState>(player).slots[0].pets.push_back(pet);
+    }
+    auto refillMana = [&] {
+        auto& mana = world.get<ManaPool>(player);
+        CHECK(mana.max >= content.petalStats(content.petalIndex("magic_stick"), Rarity::Apex).petManaCost);
+        mana.current = mana.max;
+    };
+    refillMana();
+    tick(4500);
+    CHECK_EQ(petCount(0), 24u);
+    CHECK_EQ(petCount(1), 6u);
+    CHECK_NEAR(world.get<ManaPool>(player).current, world.get<ManaPool>(player).max, 1e-9);
+    if (petCount(1) != 6u) return;
+
+    const auto squad = world.get<PetalSlotState>(player).slots[1].pets;
+    for (const auto pet : squad) CHECK_EQ(world.get<MobType>(pet).rarity, Rarity::Apex);
+    world.destroy(squad.front());
+    refillMana();
+    tick(6500);
+    CHECK_EQ(petCount(0), 24u);
+    CHECK_EQ(petCount(1), 5u);
+    tick(7499);
+    CHECK_EQ(petCount(1), 5u);
+    tick(7500);
+    CHECK_EQ(petCount(1), 6u);
+    for (std::size_t i = 1; i < squad.size(); ++i) CHECK(world.isAlive(squad[i]));
+
+    // Once the ordinary stick is removed, Magic Stick can use all 30 places.
+    world.get<Loadout>(player).slots[1] = {};
+    refillMana();
+    tick(8500);
+    CHECK_EQ(petCount(0), 30u);
+    CHECK_EQ(petCount(1), 0u);
+    CHECK(world.get<ManaPool>(player).current < world.get<ManaPool>(player).max);
 }
 
 TEST(todo1106_totem_counter_tracks_active_stacks_and_clears_on_swap) {

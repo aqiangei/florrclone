@@ -29,6 +29,9 @@ struct Fixture {
     Entity viewer = NULL_ENTITY;
     Entity splitOther = NULL_ENTITY;
     bool loadShedding = false;
+    bool showAllVisibleLoot = false;
+    std::uint8_t visibility = 0;
+    bool keepTransientEffects = true;
     net::WaveHud wave;
     /// The viewer's squadmates (Replicator::Frame::alwaysVisible), if any.
     std::vector<Entity> squad;
@@ -78,6 +81,8 @@ struct Fixture {
         frame.events = &events;
         frame.splitOther = splitOther;
         frame.loadShedding = loadShedding;
+        frame.showAllVisibleLoot = showAllVisibleLoot;
+        frame.visibility = visibility;
         frame.wave = wave;
         frame.alwaysVisible = squad.empty() ? nullptr : &squad;
         replicator.build(world, viewer, view, frame, out);
@@ -85,7 +90,7 @@ struct Fixture {
         ByteReader reader(out.data(), out.size());
         const std::uint8_t id = reader.u8();
         CHECK_EQ(id, static_cast<std::uint8_t>(net::ServerMessage::Snapshot));
-        CHECK(into.applySnapshot(reader, receivedMillis));
+        CHECK(into.applySnapshot(reader, receivedMillis, keepTransientEffects));
         CHECK(reader.ok());
         return out.size();
     }
@@ -94,6 +99,50 @@ struct Fixture {
 std::uint32_t netIdOf(World& w, Entity e) { return w.get<NetId>(e).value; }
 
 } // namespace
+
+TEST(snapshot_ignores_invalid_pickup_cues_and_keeps_valid_stacks) {
+    Fixture f;
+    const auto player = netIdOf(f.world, f.viewer);
+    f.events.pickedUp(100, player, {1000, 1000}, Realm::Overworld, 2, Rarity::Ultra, 4100000000u, 1);
+    f.events.pickedUp(101, player, {1000, 1000}, Realm::Overworld, 3, Rarity::Ultra, 2200000000u, 1);
+    f.events.pickedUp(102, player, {1000, 1000}, Realm::Overworld, 4, Rarity::Ultra, 7u, 1);
+
+    WorldView view;
+    f.tick(view, 1, 1000);
+    CHECK_EQ(view.events().size(), 1u);
+    if (view.events().size() != 1u) return;
+    CHECK_EQ(view.events().front().pickupQuantity, 7u);
+    CHECK_NEAR(view.events().front().amount, 4.0, 1e-9);
+    CHECK(view.events().front().pickupByAccount);
+}
+
+TEST(invalid_ground_stack_never_reaches_pickup_accounting) {
+    Fixture f;
+    f.world.add<PlayerModifiers>(f.viewer);
+    LootSystem loot;
+    SpatialGrid grid;
+    const auto drop = [&](std::uint16_t petal, std::uint32_t quantity) {
+        const Vec2 at{1000, 1000};
+        const auto entity = loot.spawnDrop(f.world, petal, Rarity::Ultra, at, Realm::Overworld, {f.viewer});
+        f.world.add<NetId>(entity, NetId{f.ids.next()});
+        f.world.get<DropItem>(entity).quantity = quantity;
+        grid.insert(entity, Realm::Overworld, at, f.world.get<Body>(entity).radius);
+        return entity;
+    };
+    const auto corrupt = drop(2, 4100000000u);
+    const auto valid = drop(3, 7u);
+    CommandBuffer commands{f.world};
+    Rng rng{42};
+    loot.run(f.world, grid, testsupport::shippedContent(), rng, 1000.0, .05, commands, f.events);
+    commands.flush();
+
+    CHECK(!f.world.isAlive(corrupt));
+    CHECK(!f.world.isAlive(valid));
+    CHECK_EQ(loot.pickups().size(), 1u);
+    if (loot.pickups().size() == 1u) CHECK_EQ(loot.pickups().front().quantity, 7u);
+    CHECK_EQ(f.events.events().size(), 1u);
+    if (f.events.events().size() == 1u) CHECK_EQ(f.events.events().front().pickupQuantity, 7u);
+}
 
 TEST(remote_level_theme_prefers_permanent_hyper_over_contested_at_the_same_rank) {
     Fixture f;
@@ -197,6 +246,30 @@ TEST(wave_hud_replicates_lobby_theme_and_exit) {
     CHECK_EQ(client.self().waveRemainingMillis, 0.0);
 }
 
+TEST(snapshot_ghost_ring_has_the_same_visibility_as_its_owner) {
+    Fixture f;
+    const auto ghost = f.addMob({1100, 1000}, Rarity::Super);
+    f.world.add<GhostTag>(ghost);
+    f.world.add<MobType>(ghost, MobType{7, Rarity::Super, 1});
+    const auto petal = f.world.create();
+    f.world.add<MobRingPetal>(petal, MobRingPetal{ghost, 0, 0});
+    f.world.add<Transform>(petal, Transform{{1148, 1000}, 0});
+    f.world.add<NetId>(petal, NetId{f.ids.next()});
+    auto& rep = f.world.add<Replicated>(petal);
+    rep.kind = net::EntityKind::Petal;
+    rep.rarity = Rarity::Super;
+    rep.spawnFlags = net::SpawnRingPetal;
+    const auto ghostId = netIdOf(f.world, ghost);
+    const auto petalId = netIdOf(f.world, petal);
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK(client.entities().find(ghostId) == client.entities().end());
+    CHECK(client.entities().find(petalId) == client.entities().end());
+    f.world.add<PlayerVisuals>(f.viewer).ghostSightTier = petalTier(Rarity::Super);
+    f.tick(client, 2, 1050);
+    CHECK(client.entities().find(ghostId) != client.entities().end());
+    CHECK(client.entities().find(petalId) != client.entities().end());
+}
 TEST(equipped_dice_replicates_a_new_face_without_respawning) {
     Fixture fixture;
     const Entity petal = fixture.world.create();
@@ -578,10 +651,24 @@ TEST(todo1107_manual_wide_view_keeps_distant_mobs_visible_under_load) {
     f.tick(client, 1, 1000);
     CHECK(client.entities().count(id));
     if (!client.entities().count(id)) return;
-    const double first = client.entities().at(id).targetPosition.x;
     f.world.get<Transform>(mob).position.x -= 25;
     f.tick(client, 2, 1050);
-    CHECK_NEAR(client.entities().at(id).targetPosition.x, first, 0.05);
+    CHECK_NEAR(client.entities().at(id).targetPosition.x,
+               f.world.get<Transform>(mob).position.x, 0.05);
+}
+
+TEST(a_large_mob_is_preloaded_by_its_body_edge_under_load) {
+    Fixture f;
+    f.loadShedding = true;
+    const Vec2 centre = f.world.get<Transform>(f.viewer).position;
+    const Entity mob = f.addMob(centre + Vec2{0, kViewportHeight * 1.2 + 120},
+                                Rarity::Super, 320.0);
+    const Entity outside = f.addMob(centre + Vec2{0, kViewportHeight * 1.2 + 120},
+                                    Rarity::Common, 30.0);
+    WorldView client;
+    f.tick(client, 1, 1000);
+    CHECK(client.entities().count(netIdOf(f.world, mob)) == 1);
+    CHECK(client.entities().count(netIdOf(f.world, outside)) == 0);
 }
 
 TEST(a_big_mob_half_on_screen_is_current_every_snapshot) {
@@ -849,6 +936,12 @@ TEST(nearby_low_tier_ground_loot_is_bounded_and_keeps_claims) {
     CHECK_EQ(entities.count(farUltra), std::size_t(1));
     for (std::size_t i = 0; i < nearby.size(); ++i)
         CHECK_EQ(entities.count(nearby[i]), static_cast<std::size_t>(i >= 12));
+    f.showAllVisibleLoot = true;
+    f.tick(client, 2, 1050);
+    CHECK_EQ(entities.count(reserved), std::size_t(0));
+    CHECK_EQ(entities.count(farLow), std::size_t(1));
+    CHECK_EQ(entities.count(farUltra), std::size_t(1));
+    for (const auto id : nearby) CHECK_EQ(entities.count(id), std::size_t(1));
 }
 
 TEST(events_are_scoped_to_what_the_client_can_see) {
@@ -1952,6 +2045,71 @@ TEST(todo1106_hide_other_petals_covers_ground_fields_and_lightning_but_not_wild_
     CHECK(foreign(client,f.world,theirs));CHECK(!foreign(client,f.world,hostile));
 }
 
+TEST(visibility_settings_omit_foreign_equipment_and_restore_it_as_new_state) {
+    Fixture f;
+    WorldView client;
+    const auto other = f.addPlayer("alice", {1100, 1000});
+    f.world.get<PlayerAccount>(other).connection = 2;
+    const auto petal = addOwnedPetal(f, other, {1120, 1000});
+    const auto pet = addPet(f, other, {1100, 1060});
+    const auto shot = addShot(f, pet, other, Team::Players, {1150, 1040});
+    const auto own = addOwnedPetal(f, f.viewer, {1020, 1000});
+    const auto wild = f.addMob({900, 1000});
+    for (int i = 0; i < 30; ++i) {
+        addPet(f, other, {1100.0, 1060.0 + i});
+        addOwnedPetal(f, other, {1120.0, 1000.0 + i});
+    }
+    const auto present = [&](Entity e) { return client.entities().count(netIdOf(f.world, e)) == 1; };
+    const auto fullBytes = f.tick(client, 1, 1000);
+    CHECK(present(petal) && present(pet) && present(shot));
+    f.visibility = net::InputHideForeignPetals;
+    f.tick(client, 2, 1050);
+    CHECK(!present(petal) && present(pet) && present(shot));
+    f.visibility = net::InputHideForeignPets;
+    f.tick(client, 3, 1100);
+    CHECK(present(petal) && !present(pet) && !present(shot));
+    f.visibility = net::kInputVisibilityMask;
+    f.events.lightning({1050, 1000}, 100, Realm::Overworld, {{1060, 1000}}, false, pet);
+    f.events.lightning({1050, 1000}, 100, Realm::Overworld, {{1060, 1000}}, false, wild);
+    f.tick(client, 4, 1150);
+    CHECK(!present(petal) && !present(pet) && !present(shot));
+    CHECK(present(other) && present(own) && present(wild));
+    CHECK_EQ(client.events().size(), 1u);
+
+    f.view = ClientView{};
+    WorldView fresh;
+    f.events.clear();
+    const auto hiddenBytes = f.tick(fresh, 5, 1200);
+    CHECK(hiddenBytes * 2 < fullBytes);
+    std::printf("visibility fixture initial snapshot: %zu -> %zu bytes\n", fullBytes, hiddenBytes);
+    f.world.get<Transform>(pet).position.x = 1200;
+    f.visibility = 0;
+    f.tick(fresh, 6, 1250);
+    CHECK_NEAR(fresh.entities().at(netIdOf(f.world, pet)).targetPosition.x, 1200, 1e-3);
+}
+
+TEST(catching_up_keeps_delta_pickup_and_damage_but_omits_old_lightning) {
+    Fixture f;
+    WorldView client;
+    f.tick(client, 1, 1000);
+    const auto mob = f.addMob({1100, 1000});
+    const auto id = netIdOf(f.world, mob);
+    f.keepTransientEffects = false;
+    f.events.lightning({1100, 1000}, 80, Realm::Overworld, {{1110, 1000}});
+    f.events.damage(id, 10, {1100, 1000}, Realm::Overworld, 0, f.viewer, 1);
+    f.events.pickedUp(90000, netIdOf(f.world, f.viewer), {1100, 1000}, Realm::Overworld,
+                      0, Rarity::Rare, 2, 1);
+    f.tick(client, 2, 1050);
+    CHECK_EQ(client.events().size(), 2u);
+    CHECK(client.entities().count(id) == 1);
+    CHECK(std::any_of(client.events().begin(), client.events().end(), [](const ViewEvent& event) {
+        return event.kind == net::EventKind::PickedUp && event.pickupQuantity == 2;
+    }));
+    CHECK(std::any_of(client.events().begin(), client.events().end(), [](const ViewEvent& event) {
+        return event.kind == net::EventKind::Damage && (event.flag & net::DamageByViewer);
+    }));
+}
+
 TEST(a_splitter_halfs_petals_and_pets_are_the_viewers_own) {
     // The parked half is a second body on the viewer's connection. It is not
     // `viewer`, and what it owns must still never read as somebody else's.
@@ -2037,4 +2195,17 @@ TEST(craft_quantity_and_cost_are_translated_in_replayed_system_messages) {
     const auto text=ui::localizeChatText("<b style=\"color: #2bffa3;\">A Super Rose has been crafted by <b style=\"color: #00ff00;\">@smith</b> [<b style=\"color: yellow;\">smith</b>]</b> (crafted x85, consumed x19996)");
     CHECK(text.find("crafted")==std::string::npos);CHECK(text.find("合成 ×85")!=std::string::npos);CHECK(text.find("消耗 ×19996")!=std::string::npos);
     ui::setLanguage(old);
+}
+
+TEST(wild_lightning_visible_endpoint_survives_offscreen_source) {
+    Fixture f;
+    WorldView client;
+    const auto wild = f.addMob({10000, 1000}, Rarity::Apex, 9000);
+    f.events.lightning({10000,1000}, 9300, Realm::Overworld, {{1000,1000}}, false, wild);
+    f.tick(client, 1, 1000);
+    CHECK_EQ(client.events().size(), 1u);
+    if (client.events().empty()) return;
+    CHECK_EQ(client.events()[0].points.size(), 1u);
+    CHECK_EQ(client.events()[0].flag & net::LightningForeign, 0);
+    CHECK_EQ(client.events()[0].flag & net::LightningFromPet, 0);
 }

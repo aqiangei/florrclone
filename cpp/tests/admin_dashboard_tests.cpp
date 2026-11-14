@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "client/ui/menus.h"
+#include "server/chat_moderation.h"
 #include "server/db.h"
 #include "server_harness.h"
 #include "shared/game/config.h"
@@ -1009,4 +1010,69 @@ TEST(dashboard_requests_are_billed_like_the_console_commands_they_stand_in_for) 
     CHECK(h.stepUntil(all, [&] { return !helper.adminDashboard().playersPending; }));
     CHECK(!helper.adminDashboard().playersRefused);
     CHECK(!helper.adminDashboard().players.empty());
+}
+
+TEST(public_chat_website_filter_and_online_mute_use_server_authority) {
+    for (const std::string website : {"HTTPS://example.org", "example.org/x",
+         "203.0.113.10:8080", "exa<b>mple</b>&#46;org", "ｅｘａｍｐｌｅ。ｏｒｇ",
+         "<a href=\"https://example.org\">click here</a>"}) {
+        CHECK(chatLineContainsWebsite(website));
+    }
+    for (const std::string text : {"normal chat", "打怪。继续", "hp 12.5", "hey. ready?"}) {
+        CHECK(!chatLineContainsWebsite(text));
+    }
+
+    Harness h("admin-chat-moderation", [](const std::string& path) {
+        seedUsers(path, {"warden", "guestone"}, {"warden"});
+    });
+    NetClient admin, guest;
+    const std::vector<NetClient*> clients{&admin, &guest};
+    CHECK(enterWorld(h, clients, {"warden", "guestone"}, {"Warden", "Guest"}));
+    admin.adminDashboardPlayers("", 0);
+    CHECK(h.stepUntil(clients, [&] { return admin.adminDashboard().players.size() == 2; }));
+    const auto& players = admin.adminDashboard().players;
+    const auto row = std::find_if(players.begin(), players.end(), [](const auto& entry) {
+        return entry.username == "guestone";
+    });
+    CHECK(row != players.end());
+    if (row == players.end()) return;
+    const auto target = *row;
+
+    const auto* account = [&] { return h.server.database().findUserById(target.accountId); }();
+    CHECK(account != nullptr);
+    if (!account) return;
+    const auto muted = [&] {
+        const auto* current = h.server.database().findUserById(target.accountId);
+        return current && current->muted;
+    };
+    guest.adminSetMuted(target.connection, target.accountId, true);
+    admin.adminSetMuted(target.connection, "different-account", true);
+    admin.sendChat("/admin announce official https://example.org");
+    CHECK(h.stepUntil(clients, [&] {
+        return std::any_of(guest.chat().begin(), guest.chat().end(), [](const auto& line) {
+            return line.text.find("official") != std::string::npos;
+        });
+    }));
+    CHECK(!muted());
+
+    guest.sendChat("https://example.org/blocked");
+    CHECK(h.stepUntil(clients, [&] {
+        return std::any_of(guest.chat().begin(), guest.chat().end(), [](const auto& line) {
+            return line.text.find("公共聊天不允许") != std::string::npos;
+        });
+    }));
+    CHECK(std::none_of(admin.chat().begin(), admin.chat().end(), [](const auto& line) {
+        return line.text.find("/blocked") != std::string::npos;
+    }));
+    admin.adminSetMuted(target.connection, target.accountId, true);
+    CHECK(h.stepUntil(clients, muted));
+    guest.sendChat("silenced player");
+    admin.adminSetMuted(target.connection, target.accountId, false);
+    CHECK(h.stepUntil(clients, [&] { return !muted(); }));
+    guest.sendChat("can speak again");
+    CHECK(h.stepUntil(clients, [&] {
+        return std::any_of(admin.chat().begin(), admin.chat().end(), [](const auto& line) {
+            return line.text.find("can speak again") != std::string::npos;
+        });
+    }));
 }

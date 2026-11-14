@@ -345,7 +345,8 @@ public:
     /// so the same mobs live in it; its doors are never offered on their own
     /// -- a join reaches one by asking for the plain door with the prestige
     /// flag set.
-    bool prestige() const { return prestige_; }
+    bool prestige() const { return prestigeLevel_ != 0; }
+    int prestigeLevel() const { return prestigeLevel_; }
 
     /// The `.tmj` this was read from, as it was passed to loadTiled(). Empty
     /// for a map a harness built in memory.
@@ -481,7 +482,7 @@ public:
     /// the one it arrived on. Only the first pad the flower is standing on
     /// gets to act, but every pad's suction is applied on the way there.
     TeleportStep stepTeleporters(Vec2 centre, double deltaSeconds, double nowMillis,
-                                 TeleporterState& state) const;
+                                 TeleporterState& state, bool riftOpen = true) const;
 
 private:
     /// WorldMaps resolves pad-to-pad links (`to`) into ordinary destinations
@@ -514,7 +515,7 @@ private:
     Realm realm_ = Realm::Overworld;
     std::string id_;
     std::string templateId_;
-    bool prestige_ = false;
+    int prestigeLevel_ = 0;
     std::string sourcePath_;
     std::string displayName_;
     std::string biome_;
@@ -612,7 +613,7 @@ public:
     /// The prestige twin of the map in `plain`, with `found` false (and
     /// `plain` returned) for a realm that has none: the arena, the maze, an
     /// instanced copy, or a twin already.
-    Realm prestigeRealm(Realm plain, bool& found) const;
+    Realm prestigeRealm(Realm plain, bool& found, int level = 1) const;
 
     /// True when `realm` is a prestige twin.
     bool isPrestige(Realm realm) const;
@@ -677,7 +678,7 @@ private:
 
     std::vector<MapData> maps_;
     /// Per map slot: the slot of its prestige twin, or -1.
-    std::vector<int> twinSlot_;
+    std::array<std::vector<int>, 2> twinSlots_;
     std::vector<SpawnChoice> spawnChoices_;
     std::vector<SpawnChoice> doors_;
     std::vector<std::string> warnings_;

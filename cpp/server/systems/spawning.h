@@ -75,6 +75,8 @@
 
 namespace flix {
 
+struct SquadEntityIndex;
+
 // ---------------------------------------------------------------------------
 // Components owned by this system
 // ---------------------------------------------------------------------------
@@ -85,6 +87,12 @@ namespace flix {
 /// script, or anything else spawned outside this system has none, so it is
 /// neither counted against the caps nor recycled out from under its owner.
 struct SuperFarmMob {}; // Extra Super stock in high-threat farming bands.
+inline constexpr double kNewLeechContactGraceMillis = 3000.0;
+
+struct NewLeechContactGrace {
+    double untilMillis = 0.0;
+};
+
 struct AmbientMob {
     /// Last time the mob was inside any player's buffered viewport. Stamped at
     /// spawn, so a mob placed into an empty world still gets the full grace period rather
@@ -105,6 +113,10 @@ struct AmbientMob {
     /// apexes): the later of them is the one that goes. A sequence rather
     /// than a time, because a band stocks dozens in one tick.
     std::uint64_t spawnOrder = 0;
+    /// Replaced by a dedicated quota, never by the ordinary band refill.
+    bool managedPopulation = false;
+    std::uint16_t replacedSpecies = kInvalidIndex;
+    bool independentGhost = false;
 };
 
 /// A nest working through the escalating `spawn_waves` list in its config.
@@ -166,6 +178,9 @@ struct LatentMob {
     double readyMillis = 0;
     std::uint16_t mobIndex = kInvalidIndex;
     Rarity rarity = Rarity::Common;
+    std::uint16_t replacedSpecies = kInvalidIndex;
+    bool ghostAlreadyAnnounced = false;
+    bool previouslyAwake = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -373,6 +388,7 @@ inline constexpr Rarity kAnnouncedRarity = Rarity::Unique;
 inline constexpr double kUniqueSpawnCooldownMillis = 5.0 * 60.0 * 1000.0;
 inline constexpr int kEternalPopulationTarget = 3;
 inline constexpr int kHyperPopulationTarget = 1;
+inline constexpr double kNaturalApexChance = 0.10;
 // AshFlor BJ: no apex time gate — one per biome may stand; when it dies the
 // next upgrade may place another immediately (cooldown was 2h upstream).
 inline constexpr double kApexSpawnCooldownMillis = 30.0 * 60.0 * 1000.0;
@@ -452,6 +468,7 @@ public:
     /// anything. It does not shrink the map's population, only how much of it
     /// is awake at once.
     int mobCap = kMaxLiveMobs;
+    double latentWakeMargin = kLatentWakeMargin;
 
     void sizePlacementGrids(const Terrain& terrain) {
         placementGrid_.sizeToRealms(terrain);
@@ -477,7 +494,12 @@ public:
     /// them itself through spawnMob().
     const WorldMaps* worldMaps = nullptr;
 
-    void setActivePyramidRealms(Realm ordinary, Realm prestige);
+    void setActivePyramidRealms(Realm ordinary, Realm prestige, Realm prestigeTwo = Realm::Arena);
+
+    void setRiftSpawning(double rarityProgress, const std::string& pyramid);
+    void clearRiftPopulation();
+    void setActiveJurassicRealms(Realm ordinary, Realm prestige, Realm prestigeTwo = Realm::Arena);
+    void setActiveBiomeRealms(const char* biome, Realm ordinary, Realm prestige, Realm prestigeTwo);
 
     /// A boss the last pass admitted, for whoever owns the chat channel.
     ///
@@ -527,7 +549,7 @@ public:
     /// lying about and clears the ones whose time is up.
     void answerDeaths(World& world, const Terrain& terrain, const ContentRegistry& content,
                       const std::vector<Entity>& dead, Rng& rng, double nowMillis, double dt,
-                      CommandBuffer& commands);
+                      CommandBuffer& commands, const SquadEntityIndex* squads = nullptr);
 
     /// Places one mob, with its nest escorts if it has any, and returns it.
     /// NULL_ENTITY when `mobIndex` names nothing, or when it is a unique or an
@@ -761,6 +783,8 @@ private:
         /// band: "is this band worth walking at all" is one rectangle test
         /// against the viewports, and "is this band full" is a size().
         std::vector<LatentMob> latent;
+        /// Species owed by kills whose replacement could not yet be placed.
+        std::vector<std::uint16_t> pendingSpecies;
         /// Live mobs this band placed, as of the last census. Stale by up to
         /// one census between passes, which self-corrects: an over-count
         /// delays a replacement by half a second, an under-count is spent on a
@@ -819,7 +843,8 @@ private:
     bool stockZone(World& world, const Terrain& terrain, const ContentRegistry& content,
                    SpawnZone& zone, std::uint16_t zoneIndex, const std::vector<Viewer>& viewers,
                    Rng& rng, double nowMillis, Slot slot = Slot::TopUp, Vec2 lostAt = Vec2{},
-                   bool fixedSuper = false, Rarity managedTier = Rarity::Super, bool superFarm = false);
+                   bool fixedSuper = false, Rarity managedTier = Rarity::Super, bool superFarm = false,
+                   std::uint16_t replacementType = kInvalidIndex);
 
     /// Gives each band back the population that died in it, where it died.
     ///
@@ -842,6 +867,8 @@ private:
     /// record the rest of this pass spaces itself against, and on the list the
     /// next census looks for it on.
     void noteLiveBandMob(World& world, Entity e, std::uint16_t zone);
+
+    bool isDeepPrestigeFactory(const SpawnZone& zone) const;
 
     /// Brings every record `seers` can now see to life, all in the same pass,
     /// and none of them in any of `viewers`' laps. The cheap half is the
@@ -965,7 +992,7 @@ private:
                       std::uint16_t mobIndex, Rarity rarity, Vec2 position, Realm realm,
                       double nowMillis, Rng& rng, int depth, std::uint16_t zone,
                       std::optional<double> facing = std::nullopt, bool clockGated = true,
-                      bool announce = true);
+                      bool announce = true, bool prestigePromotion = false);
 
     /// Lays a centipede's body out behind its head, each segment linked to the
     /// one in front. Driven from spawnMobAt so that every path to a head --
@@ -1020,6 +1047,8 @@ private:
     /// not carry.
     std::optional<Query<PlayerTag, Transform>> playerBodies_;
 
+    void stockGhosts(World&, const Terrain&, const ContentRegistry&, double nowMillis);
+    std::array<double, kMaxRealms> nextGhostSpawnMillis_{};
     Census census_;
     double nextPopulationMillis_ = 0;
 
@@ -1027,6 +1056,13 @@ private:
     /// once. Bands from EVERY staged map, each tagged with its realm, each
     /// holding its own share of the world's latent population.
     std::vector<SpawnZone> zones_;
+    struct ManagedVacancy {
+        std::uint16_t zone = kInvalidIndex;
+        std::uint16_t mobIndex = kInvalidIndex;
+        Rarity rarity = Rarity::Common;
+        bool superFarm = false;
+    };
+    std::vector<ManagedVacancy> managedVacancies_;
     /// The mob regions, in map order. Same shape as a band and rebuilt beside
     /// them, but kept apart because they own no population: a region says which
     /// ROSTER belongs to a patch of map, and a band standing on it with no
@@ -1092,7 +1128,12 @@ private:
     Realm prestigeJungleRealm_ = Realm::Arena; // No world-map candidate can match until loaded.
     Realm ordinaryJungleRealm_ = Realm::Arena;
     Realm prestigeSewersRealm_ = Realm::Arena;
-    std::array<bool, kMaxRealms> inactivePyramidRealms_{};
+    Realm prestigeHelRealm_ = Realm::Arena;
+    Realm prestigeFactoryRealm_ = Realm::Arena;
+    std::array<bool, kMaxRealms> riftRealms_{};
+    std::array<bool, kMaxRealms> inactiveRiftRealms_{};
+    double riftDifficulty_ = 0;
+    std::array<bool, kMaxRealms> inactiveLayoutRealms_{};
     struct MobPlacement { Vec2 position; double radius; };
     std::vector<MobPlacement> mobPlacements_;
     SpatialGrid placementGrid_;
@@ -1102,14 +1143,26 @@ private:
     /// Where each of this pass's dead fell, and which band is owed it.
     /// Collected before any of it is spent, because spending it creates
     /// entities and that moves the very rows the walk is holding.
-    struct Casualty { Entity entity = NULL_ENTITY; Vec2 position; std::uint16_t zone = kInvalidIndex; };
+    struct Casualty {
+        Entity entity = NULL_ENTITY;
+        Vec2 position;
+        std::uint16_t zone = kInvalidIndex;
+        std::uint16_t mobIndex = kInvalidIndex;
+        bool managedPopulation = false;
+    };
     std::vector<Casualty> casualtyList_;
     /// Every live band mob as of the last census, plus those that have come
     /// to life since, with the band holding its slot and where it was last
     /// counted. A KILLED one is taken off as it is banked, so whatever the
     /// next census cannot find any more went away without dying, and
     /// `vanished_` is that pass's list of them.
-    struct CensusMob { Entity entity = NULL_ENTITY; Vec2 position; std::uint16_t zone = kInvalidIndex; };
+    struct CensusMob {
+        Entity entity = NULL_ENTITY;
+        Vec2 position;
+        std::uint16_t zone = kInvalidIndex;
+        bool managedPopulation = false;
+        std::uint16_t mobIndex = kInvalidIndex;
+    };
     std::vector<CensusMob> censusMobs_;
     std::vector<CensusMob> vanished_;
     /// Current connected roots, independent of the chain's birth cohort.
@@ -1146,5 +1199,6 @@ void spawnMobRingSeeds(World& world, const ContentRegistry& content, Entity mob,
 } // namespace flix
 
 FLIX_COMPONENT(flix::AmbientMob);
+FLIX_COMPONENT(flix::NewLeechContactGrace);
 FLIX_COMPONENT(flix::SuperFarmMob);
 FLIX_COMPONENT(flix::NestWaves);

@@ -46,12 +46,16 @@ TEST(hyper_board_roundtrip_includes_offline_admins_and_pages_every_holding) {
     CHECK(h.stepUntil({&c},[&]{return !c.leaderboardPending();}));
     CHECK_EQ(c.hyperHoldingsTotal(),105u); CHECK_EQ(c.hyperBoard().size(),std::size_t(100));
     CHECK_EQ(c.hyperBoard()[0].name,std::string("offline")); CHECK_EQ(c.hyperBoard()[0].ownerTotal,105u);
+    CHECK_EQ(c.leaderboard().size(), std::size_t(1));
+    CHECK_EQ(c.dailyActiveUsers(), 0u);
     const auto last=c.hyperBoard().back().petal;
     c.requestLeaderboard(false,100);
     CHECK(h.stepUntil({&c},[&]{return !c.leaderboardPending();}));
     CHECK_EQ(c.hyperBoard().size(),std::size_t(5)); CHECK_EQ(c.hyperHoldingsOffset(),100u);
     CHECK(c.hyperBoard()[0].petal>last);
-    c.requestLeaderboard(false,UINT32_MAX);
+    c.requestLeaderboard(true,UINT32_MAX);
     CHECK(h.stepUntil({&c},[&]{return !c.leaderboardPending();}));
     CHECK_EQ(c.hyperHoldingsOffset(),100u);
+    CHECK_EQ(c.leaderboard().size(), std::size_t(2));
+    CHECK_EQ(c.dailyActiveUsers(), 0u);
 }

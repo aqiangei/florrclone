@@ -29,6 +29,131 @@ flix::GameServer* g_wasmServer = nullptr;
 extern "C" EMSCRIPTEN_KEEPALIVE void flix_server_wake() {
     if (g_wasmServer) g_wasmServer->serviceArrivals();
 }
+
+EM_JS(void, flix_copy_shared_skins, (char* out), {
+    HEAPU8.set(Module.flixSharedSkinSnapshot, out);
+});
+
+extern "C" EMSCRIPTEN_KEEPALIVE int flix_apply_shared_skins(int size) {
+    if (!g_wasmServer || size <= 0 || size > 8 * 1024 * 1024) return 0;
+    std::string json(static_cast<std::size_t>(size), '\0');
+    flix_copy_shared_skins(json.data());
+    return g_wasmServer->applySharedSkinSnapshot(flix::Json::parseOrNull(json)) ? 1 : 0;
+}
+
+EM_JS(int, flix_shared_skin_realm, (), {
+    const realm = process.env.FLIX_SHARED_SKIN_REALM;
+    return /^[123]$/.test(realm || '') ? Number(realm) : 0;
+});
+
+namespace {
+std::unordered_map<unsigned, std::function<void(flix::Json)>> skinReviewRequests;
+unsigned nextSkinReviewRequest = 0;
+}
+
+EM_JS(void, flix_copy_skin_review_reply, (char* out), {
+    HEAPU8.set(Module.flixSkinReviewReply, out);
+});
+
+extern "C" EMSCRIPTEN_KEEPALIVE void flix_finish_skin_review(unsigned id, int size) {
+    auto request = skinReviewRequests.extract(id);
+    if (request.empty() || !g_wasmServer) return;
+    flix::Json reply;
+    if (size > 0 && size <= 2 * 1024 * 1024) {
+        std::string body(static_cast<std::size_t>(size), '\0');
+        flix_copy_skin_review_reply(body.data());
+        reply = flix::Json::parseOrNull(body);
+    }
+    if (!reply.isObject()) {
+        reply = flix::Json::object();
+        reply["error"] = "跨服皮肤审核暂不可用，请刷新。";
+    }
+    request.mapped()(std::move(reply));
+}
+
+EM_JS(void, flix_read_skin_review_key, (char* out), {
+    const key = process.env.FLIX_SKIN_REVIEW_KEY || '';
+    stringToUTF8(/^[a-zA-Z0-9_-]{32,128}$/.test(key) ? key : '', out, 129);
+});
+
+EM_JS(void, flix_request_skin_review, (unsigned id, int realm, int local, const char* request), {
+    const body = JSON.stringify({...JSON.parse(UTF8ToString(request)), realm, local});
+    const fetchReply = async () => {
+        const response = await fetch('http://127.0.0.1:19571/internal/skin-review', {
+            method: 'POST', redirect: 'error', signal: AbortSignal.timeout(8000),
+            headers: {'Content-Type': 'application/json',
+                      'Authorization': 'Bearer ' + process.env.FLIX_SKIN_REVIEW_KEY},
+            body
+        });
+        if (!response.ok) throw Error('skin review HTTP status ' + response.status);
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+            size += chunk.byteLength;
+            if (size > 2 * 1024 * 1024) throw Error('skin review reply too large');
+            chunks.push(chunk);
+        }
+        return Buffer.concat(chunks, size);
+    };
+    fetchReply().catch(() => null).then(reply => {
+        // Allocate in C++ and copy bytes during the synchronous callback, as
+        // the shared gallery does. The release JS does not export malloc/free.
+        Module.flixSkinReviewReply = reply;
+        try {
+            _flix_finish_skin_review(id, reply ? reply.byteLength : 0);
+        } finally {
+            delete Module.flixSkinReviewReply;
+        }
+    }).catch(error => {
+        console.error('[skins] Skin review callback failed:', error);
+    });
+});
+
+EM_JS(void, flix_start_shared_skin_sync, (), {
+    if (!process.env.FLIX_SHARED_SKIN_URL) return;
+    let url;
+    try { url = new URL(process.env.FLIX_SHARED_SKIN_URL); }
+    catch (_) { console.error('[skins] Invalid shared gallery URL'); return; }
+    if (url.protocol !== 'https:' && !(url.protocol === 'http:' && url.hostname === '127.0.0.1')) {
+        console.error('[skins] Shared gallery requires HTTPS');
+        return;
+    }
+    let running = false;
+    let unavailable = false;
+    let etag = '';
+    const fetchGallery = async () => {
+        if (running) return;
+        running = true;
+        try {
+            const headers = etag ? {'If-None-Match': etag} : {};
+            const response = await fetch(url, {headers, redirect: 'error', signal: AbortSignal.timeout(10_000)});
+            if (response.status === 304) {
+                unavailable = false;
+                return;
+            }
+            if (!response.ok) throw Error();
+            const chunks = [];
+            let size = 0;
+            for await (const chunk of response.body) {
+                size += chunk.byteLength;
+                if (size > 8 * 1024 * 1024) throw Error();
+                chunks.push(chunk);
+            }
+            if (!size) throw Error();
+            Module.flixSharedSkinSnapshot = Buffer.concat(chunks, size);
+            try {
+                if (_flix_apply_shared_skins(size)) etag = response.headers.get('etag') || '';
+            } finally { delete Module.flixSharedSkinSnapshot; }
+            if (unavailable) console.log('[skins] Shared gallery connection restored');
+            unavailable = false;
+        } catch (error) {
+            if (!unavailable) console.warn('[skins] Shared gallery temporarily unavailable:', error.name);
+            unavailable = true;
+        } finally { running = false; }
+    };
+    fetchGallery();
+    setInterval(fetchGallery, 30_000).unref();
+});
 #endif
 
 namespace {
@@ -73,6 +198,7 @@ void usage(const char* program) {
         "  --load-shed        reduce ambient mobs, distant snapshots and volley load\n"
         "  --tick-probe       log aligned tick, timer and save diagnostics\n"
         "  --no-slow-protection keep the 20 Hz target under load shedding\n"
+        "  --full-mob-simulation run wild mob AI every tick throughout the map\n"
 #ifdef __EMSCRIPTEN__
         "  --cert <path>      TLS certificate. Without it, cert.crt then\n"
         "                     dev-cert.crt are looked for in the working\n"
@@ -374,8 +500,13 @@ int main(int argc, char** argv) {
         else if (arg == "--bots") config.botCount = std::atoi(next("--bots"));
         else if (arg == "--load-shed") config.loadShedding = true;
         else if (arg == "--no-slow-protection") config.adaptivePacing = false;
+        else if (arg == "--full-mob-simulation") config.fullMobSimulation = true;
         else if (arg == "--background-save") config.backgroundSave = true;
         else if (arg == "--tick-probe") config.tickProbe = true;
+        else if (arg == "--contact-visit-probe") {
+            config.tickProbe = true;
+            config.contactVisitProbe = true;
+        }
         else if (arg == "--cert") config.certPath = next("--cert");
         else if (arg == "--key") config.keyPath = next("--key");
         else if (arg == "--web-root") config.webRoot = next("--web-root");
@@ -394,6 +525,24 @@ int main(int argc, char** argv) {
     // already names -- and so is the one its backups go in, which is not
     // under it. Everything else stays in MEMFS.
     std::string error;
+    config.sharedSkinRealm = flix_shared_skin_realm();
+    char skinReviewKey[129]{};
+    flix_read_skin_review_key(skinReviewKey);
+    config.skinReviewKey = skinReviewKey;
+    if (config.sharedSkinRealm && !config.skinReviewKey.empty()) {
+        config.sharedSkinReview = [local = config.sharedSkinRealm](
+            int realm, const flix::Json& request, std::function<void(flix::Json)> callback) {
+            if (skinReviewRequests.size() >= 32) {
+                flix::Json response = flix::Json::object();
+                response["error"] = "皮肤审核请求过多，请稍后刷新。";
+                callback(std::move(response));
+                return;
+            }
+            const auto id = ++nextSkinReviewRequest;
+            skinReviewRequests.emplace(id, std::move(callback));
+            flix_request_skin_review(id, realm, local, request.dump(0).c_str());
+        };
+    }
     const int authorityMode = flix_authority_init();
     if (authorityMode < 0) {
         std::fprintf(stderr, "could not initialize authoritative account adapter\n");
@@ -454,6 +603,7 @@ int main(int argc, char** argv) {
     // has.
     flix_catch_stop_signals();
     g_wasmServer = server;
+    if (config.sharedSkinRealm) flix_start_shared_skin_sync();
     flix_wake_on_arrival(1);
     flix_start_loop(config.tickProbe);
     return 0;

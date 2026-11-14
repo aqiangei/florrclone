@@ -226,6 +226,7 @@ MobArt mobArtFor(const std::string& image) {
     if (name == "rock") return MobArt::Rock;
     if (name == "cactus") return MobArt::Cactus;
     if (name == "sandstorm") return MobArt::Sandstorm;
+    if (name == "arctic_snowstorm") return MobArt::Snowstorm;
     if (name == "crab") return MobArt::Crab;
     if (name == "leech") return MobArt::LeechHead;
     if (name == "leech_body") return MobArt::LeechBody;
@@ -261,6 +262,7 @@ MobArt mobArtFor(const std::string& image) {
         {"centipede_evil_body", MobArt::CentipedeEvilBody},
         {"centipede_desert", MobArt::CentipedeDesert},
         {"centipede_desert_body", MobArt::CentipedeDesertBody},
+        {"centipede_arctic", MobArt::CentipedeArctic},
         {"bubble", MobArt::Bubble},
         {"bumble_bee", MobArt::BumbleBee},
         {"shell", MobArt::Shell},
@@ -505,6 +507,43 @@ void paintMobArt(Canvas& canvas, MobArt art, const MobArtAttributes& attr) {
             }
             canvas.fill();
             canvas.stroke();
+            break;
+        }
+
+        case MobArt::Snowstorm: {
+            const double spin = attr.clockMs * 0.0017;
+            const auto ice = attr.pet ? 0x77D9D3u : 0x8CD2F2u;
+            const auto edge = attr.pet ? 0x286D72u : 0x396C91u;
+            canvas.save();
+            canvas.scale(static_cast<float>(attr.radius), static_cast<float>(attr.radius));
+            ui::disc(canvas, {}, 0.33, 0xDAF5FFu, edge, 0.055);
+            for (int arm = 0; arm < 3; ++arm) {
+                const double angle = spin + kTau * arm / 3.0;
+                const auto curve = [&](double offset) {
+                    canvas.beginPath();
+                    for (int step = 0; step <= 18; ++step) {
+                        const double t = step / 18.0;
+                        const Vec2 point = Vec2::fromAngle(angle + 1.8 * t + offset, 0.24 + 0.62 * t);
+                        if (step == 0) canvas.moveTo(point.x, point.y);
+                        else canvas.lineTo(point.x, point.y);
+                    }
+                    canvas.stroke();
+                };
+                roundStrokes(canvas, 0.22);
+                ui::setStroke(canvas, edge);
+                curve(0.0);
+                roundStrokes(canvas, 0.15);
+                ui::setStroke(canvas, ice);
+                curve(0.0);
+                roundStrokes(canvas, 0.055);
+                ui::setStroke(canvas, 0xF0FBFFu);
+                curve(0.065);
+
+                const Vec2 flake = Vec2::fromAngle(angle + 1.05, 0.94);
+                ui::disc(canvas, flake, 0.047, 0xF0FBFFu, edge, 0.025);
+            }
+            ui::disc(canvas, {}, 0.09, 0xFFFFFFu, ice, 0.035);
+            canvas.restore();
             break;
         }
 
@@ -1740,6 +1779,42 @@ void paintMobArt(Canvas& canvas, MobArt art, const MobArtAttributes& attr) {
             }
             canvas.restore();
             break;
+        }
+
+        case MobArt::CentipedeArctic:
+        case MobArt::CentipedeArcticBody: {
+            const auto fill = bodyColor(attr, 0xD4DDE1u);
+            canvas.save();
+            const float scale = static_cast<float>(attr.radius / 40.0);
+            canvas.scale(scale, scale);
+            ui::setFill(canvas, 0x333333u);
+            for (const float side : {-1.0f, 1.0f}) {
+                const float stride = attr.inWorld
+                    ? static_cast<float>(5.0 * std::sin(attr.distance / 11.0 + side * kPi * 0.5))
+                    : 0.0f;
+                canvas.beginPath();
+                canvas.ellipse(stride, side * 41.0f, 15.0f, 11.0f, side * 0.18f,
+                               0.0f, static_cast<float>(kTau));
+                canvas.fill();
+            }
+            ui::disc(canvas, {}, 40.0, fill, attr.pet ? outlineOf(fill) : 0xA7B9C3u, 8.0);
+            if (art == MobArt::CentipedeArctic) {
+                ui::setFill(canvas, 0x333333u);
+                ui::setStroke(canvas, 0x333333u);
+                roundStrokes(canvas, 7.5);
+                for (const float side : {-1.0f, 1.0f}) {
+                    canvas.beginPath();
+                    canvas.moveTo(25.0f, side * 10.0f);
+                    canvas.quadraticCurveTo(46.25f, side * 6.875f, 56.25f, side * 25.0f);
+                    canvas.stroke();
+                    canvas.beginPath();
+                    canvas.ellipse(56.25f, side * 25.0f, 8.75f, 11.25f, -side * 0.52f,
+                                   0.0f, static_cast<float>(kTau));
+                    canvas.fill();
+                }
+            }
+            canvas.restore();
+            return;
         }
 
         case MobArt::Centipede:

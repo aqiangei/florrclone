@@ -13,6 +13,7 @@ inline Json planHeldHyper(const Json& state,const Node& node,const Json& input,
     const auto user=input["account"].asString(),action=input["action"].asString();
     const auto material=input["input"].asString(),titan=input["titan"].asString();
     const auto forgeKey=input["forgeKey"].asString();
+    const bool apexHammer=input["apexHammer"].asBool();
     auto reject=[&](const char* reason){result=failure(reason);return Json();};
     if(!identifier(user)||material.size()>128||titan.size()>128||forgeKey.size()>257||now<0)
         return reject("bad_hyper_request");
@@ -20,7 +21,7 @@ inline Json planHeldHyper(const Json& state,const Node& node,const Json& input,
     const auto& forges=state["globals"]["hyperForges"];
     std::set<std::string> participants{user};
     if(action=="forge") {
-        const auto owner=forges[hyperForgeKey(hyperForgeOutput(material),titan)]["owner"].asString();
+        const auto owner=forges[hyperForgeKey(hyperForgeOutput(material),titan,apexHammer)]["owner"].asString();
         if(!owner.empty())participants.insert(owner);
     }
     Json seed=Json::object();seed["users"]=Json::object();seed["players"]=Json::object();
@@ -40,7 +41,7 @@ inline Json planHeldHyper(const Json& state,const Node& node,const Json& input,
     if(!scratch.loadAuthoritative(seed.dump(),[](const std::string&){return Database::CommitOutcome::Committed;},error))
         return reject("hyper_projection_invalid");
     HyperForgeResult business;
-    if(action=="forge")business=forgeHyper(scratch,user,material,now,input["operatorRequest"].asString(),titan);
+    if(action=="forge")business=forgeHyper(scratch,user,material,now,input["operatorRequest"].asString(),titan,apexHammer);
     else if(action=="abandon")business=abandonHyper(scratch,user,forgeKey);
     else {
         const auto request=input["operatorRequest"].asString();

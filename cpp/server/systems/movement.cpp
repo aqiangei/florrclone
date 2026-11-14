@@ -2,6 +2,7 @@
 #include "server/workers.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 #include "shared/game/config.h"
@@ -366,7 +367,10 @@ void MovementSystem::runPlayerPhase(World& world, const Terrain& terrain,
 }
 
 void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
-                                   double nowMillis, double dt) {
+                                   double nowMillis, double dt, bool profile) {
+    auto* timing = profile ? &worldPhaseTiming_ : nullptr;
+    if (timing) *timing = {};
+    using Clock = std::chrono::steady_clock;
     bind(world);
     seekTargetsReady_ = false;
     for (auto& discs : meteorDiscs_) discs.clear();
@@ -376,14 +380,17 @@ void MovementSystem::runWorldPhase(World& world, const Terrain& terrain,
         meteorDiscs_[realmIndex(at.realm)].push_back(
             {at.position, sanitizeCollisionRadius(body.radius), at.realm});
     });
-    moveMobs(world, terrain, nowMillis, dt);
+    const auto mobStepsStarted = timing ? Clock::now() : Clock::time_point{};
+    moveMobs(world, terrain, nowMillis, dt, timing ? &timing->mobStepJoinMs : nullptr);
+    if (timing) timing->mobStepsMs =
+        std::chrono::duration<double, std::milli>(Clock::now() - mobStepsStarted).count();
     // Projectiles after mobs: a shot fired this tick takes its launch bearing
     // from where the mobs ended up, not from where they were.
     moveProjectiles(world, terrain, dt);
     // Separation last, once everything has moved -- the reference resolves
     // mob-vs-mob overlap in its combat phase for the same reason. A pass run
     // before the movers would have its work undone the same tick.
-    separateMobs(world, terrain);
+    separateMobs(world, terrain, timing);
     // Summons must stop at the same solid NPC skin as flowers. Their AI
     // still presses toward a training target, maintaining contact damage.
     collectNpcDiscs();
@@ -552,9 +559,8 @@ void MovementSystem::movePlayers(World& world, const Terrain& terrain,
         // web, which is gardn's (speed_ratio 0.5 while the two overlap) and has
         // a field of its own.
         if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
-            if (afflictions->webbed(nowMillis)) {
-                maxSpeed *= clamp(afflictions->webbedFactor, 0.0, 1.0);
-            }
+            const double web = afflictions->webbed(nowMillis) ? afflictions->webbedFactor : 1.0;
+            maxSpeed *= std::min(clamp(web, 0.0, 1.0), afflictions->frostSpeed(nowMillis));
         }
         if (terrain.inWater(transform.position, transform.realm)) maxSpeed *= kWaterSpeedScale;
 
@@ -775,7 +781,7 @@ void MovementSystem::stepTeleporters(World& world, double nowMillis, double dt) 
         TeleporterState& state = world.ensure<TeleporterState>(e);
         transform = world.tryGet<Transform>(e);
         const MapData::TeleportStep step =
-            map->stepTeleporters(transform->position, dt, nowMillis, state);
+            map->stepTeleporters(transform->position, dt, nowMillis, state, riftOpen);
         // The suction is committed raw, with no wall resolution and no world
         // clamp, exactly as the reference commits it: the pull is small and
         // every pad is authored on open ground.
@@ -845,7 +851,7 @@ bool MovementSystem::stopMobAtMeteors(const Terrain& terrain, Realm realm, Vec2 
 }
 
 void MovementSystem::moveMobs(World& world, const Terrain& terrain,
-                              double nowMillis, double dt) {
+                              double nowMillis, double dt, double* joinMs) {
     const ContentRegistry& registry = content();
     const auto moveMob = [&](Entity e, Transform& transform, Motion& motion, const Body& body) {
         if (const auto* ai = world.tryGet<MobAi>(e); ai && ai->sleeping) return;
@@ -949,7 +955,7 @@ void MovementSystem::moveMobs(World& world, const Terrain& terrain,
         const auto& batch = mobMovementBatches_[index];
         for (std::size_t i = 0; i < batch.size; ++i)
             moveMob(batch.entities[i], batch.transforms[i], batch.motions[i], batch.bodies[i]);
-    });
+    }, joinMs);
 }
 
 void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, double dt) {
@@ -1113,7 +1119,7 @@ void MovementSystem::moveProjectiles(World& world, const Terrain& terrain, doubl
     }
 }
 
-void MovementSystem::collectSeekTargets() {
+void MovementSystem::collectSeekTargets(const World& world) {
     seekTargets_.clear();
     seekTargetsReady_ = true;
 
@@ -1123,7 +1129,7 @@ void MovementSystem::collectSeekTargets() {
     // the list here, since a pet is a mob on the players' team.
     queries_->mobTargets.each([&](Entity e, MobTag&, Transform& t, Faction& f, Health& h) {
         if (!h.alive()) return;
-        seekTargets_.push_back({e, t.position, f.team, t.realm});
+        seekTargets_.push_back({e, t.position, f.team, t.realm, world.has<GhostTag>(e) ? petalTier(world.tryGet<MobType>(e)->rarity) : -1});
     });
     // A target dummy draws a guided shot like the mob it is built from. The
     // players' own NPCs are not filed at all: a mob's volley that curled onto
@@ -1135,7 +1141,7 @@ void MovementSystem::collectSeekTargets() {
 }
 
 Entity MovementSystem::findSeekTarget(Entity self, const Projectile& projectile, Team team,
-                                      Vec2 position, double heading, Realm realm) const {
+                                      Vec2 position, double heading, Realm realm, int ghostSightTier) const {
     // A config with a range but no cone re-aims within 45 degrees of the
     // firing bearing -- the reference's default. A full circle would let a
     // shot leave along a bearing nothing was ever fired on.
@@ -1145,7 +1151,7 @@ Entity MovementSystem::findSeekTarget(Entity self, const Projectile& projectile,
     Entity best = NULL_ENTITY;
 
     for (const SeekTarget& candidate : seekTargets_) {
-        if (candidate.realm != realm) continue;
+        if (candidate.realm != realm || candidate.ghostTier > ghostSightTier) continue;
         if (candidate.entity == self || candidate.entity == projectile.owner) continue;
         if (candidate.entity == projectile.creditTo) continue;
         if (candidate.team == team || candidate.team == Team::Neutral) continue;
@@ -1166,7 +1172,7 @@ Entity MovementSystem::findSeekTarget(Entity self, const Projectile& projectile,
 
 Vec2 MovementSystem::aimAtLaunch(World& world, Entity self, Vec2 position,
                                  const Projectile& projectile, Vec2 velocity) {
-    if (!seekTargetsReady_) collectSeekTargets();
+    if (!seekTargetsReady_) collectSeekTargets(world);
 
     // A shot inherits its owner's team when it has none of its own, so a mob's
     // volley does not lock onto the mobs beside it.
@@ -1177,8 +1183,10 @@ Vec2 MovementSystem::aimAtLaunch(World& world, Entity self, Vec2 position,
     const double speed = velocity.length();
     const double heading = velocity.angle();
     const auto* at = world.tryGet<Transform>(self);
+    const Entity owner = projectile.creditTo != NULL_ENTITY ? projectile.creditTo : projectile.owner;
+    const auto* visuals = world.tryGet<PlayerVisuals>(owner);
     const Entity target = findSeekTarget(self, projectile, team, position, heading,
-        at ? at->realm : Realm::Overworld);
+        at ? at->realm : Realm::Overworld, visuals ? visuals->ghostSightTier : -1);
     if (target == NULL_ENTITY) return velocity;
 
     const Transform* targetTransform = world.tryGet<Transform>(target);
@@ -1223,6 +1231,7 @@ void MovementSystem::buildSeparationSet(World& world) {
     const ContentRegistry& registry = content();
     queries_->mobBodies.each([&](Entity e, MobTag&, Transform& transform, Body& body,
                                  MobType& type) {
+        if (world.has<GhostTag>(e)) return;
         const Vec2 position = transform.position;
         // A degenerate coordinate makes the cell walks non-terminating and
         // would put a NaN into every push the mob takes part in. Such a mob
@@ -1276,7 +1285,8 @@ void MovementSystem::buildSeparationSet(World& world) {
     });
 }
 
-void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
+void MovementSystem::separateMobs(World& world, const Terrain& terrain, WorldPhaseTiming* timing) {
+    using Clock = std::chrono::steady_clock;
     buildSeparationSet(world);
     if (separationSet_.empty()) return;
 
@@ -1350,16 +1360,20 @@ void MovementSystem::separateMobs(World& world, const Terrain& terrain) {
     constexpr std::size_t batchSize = 16;
     const unsigned limit = workers ? std::min(workerLimit, workers->count()) : 0;
     separationScratch_.resize(limit + 1);
+    const auto solveStarted = timing ? Clock::now() : Clock::time_point{};
     if (limit && separationSet_.size() >= 128) {
         workers->run((separationSet_.size() + batchSize - 1) / batchSize, limit,
                      [&](std::size_t batch, unsigned lane) {
             const auto end = std::min((batch + 1) * batchSize, separationSet_.size());
             for (std::size_t i = batch * batchSize; i < end; ++i)
                 accumulatePush(separationSet_[i], separationScratch_[lane]);
-        });
+        }, timing ? &timing->separationJoinMs : nullptr);
     } else {
         for (auto& entry : separationSet_) accumulatePush(entry, separationScratch_[0]);
     }
+
+    if (timing) timing->separationSolveMs =
+        std::chrono::duration<double, std::milli>(Clock::now() - solveStarted).count();
 
     // The cap is on the SUM, not on each pair: a mob wedged in a crowd would
     // otherwise be moved by every neighbour at once.

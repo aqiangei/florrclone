@@ -17,6 +17,7 @@
 #include "shared/game/map_elements.h"
 #include "test_data.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -72,16 +73,21 @@ struct TerrainScene {
     }
 
     std::vector<std::uint8_t> frame(Vec2 centre, double zoom) {
+        Camera camera;
+        camera.userZoom = zoom;
+        return frame(centre, camera);
+    }
+
+    std::vector<std::uint8_t> frame(Vec2 centre, Camera camera, bool readPixels = true) {
         Canvas canvas = Canvas::createVirtual(kPixelWidth, kPixelHeight);
         canvas.setLogicalSize(kDesignWidth, kDesignHeight);
         canvas.resetTransform();
         const float scale = static_cast<float>(kPixelWidth) / kDesignWidth;
         canvas.scale(scale, scale);
-        Camera camera;
         camera.setViewport(kDesignWidth, kDesignHeight);
-        camera.userZoom = zoom;
         camera.snapTo(centre);
         renderer.draw(canvas, view, camera, centre, 0.0);
+        if (!readPixels) return {};
         return canvas.getImageData(0, 0, kPixelWidth, kPixelHeight);
     }
 };
@@ -208,4 +214,30 @@ TEST(map_tiles_leave_no_seam_when_antennae_zoom_the_camera_far_out) {
         CHECK(blackLines(pixels, true) == 0);
         CHECK(blackLines(pixels, false) == 0);
     }
+}
+
+TEST(terrain_antenna_animation_does_not_bake_unreusable_chunks) {
+    TerrainScene animated;
+    CHECK(animated.load());
+    animated.renderer.setTerrainCache(true);
+    const Vec2 centre{16384.3, 16384.7};
+    Camera camera;
+    const auto start = std::chrono::steady_clock::now();
+    for (const double target : {0.1, 1.0, 1.0 / 11.0, 1.0}) {
+        for (int frame = 0; frame < 20; ++frame) {
+            camera.approachLoadoutZoom(target, 1.0 / 60.0);
+            animated.frame(centre, camera, false);
+            std::size_t chunks = 0, bytes = 0;
+            animated.renderer.terrainCacheStats(chunks, bytes);
+            if (frame == 0 || frame == 19) CHECK(chunks == 0);
+        }
+    }
+    std::printf("[antenna] 80 transition frames %.2f ms\n",
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - start).count());
+    camera.approachLoadoutZoom(camera.loadoutZoom, 1.0 / 60.0);
+    animated.frame(centre, camera, false);
+    std::size_t chunks = 0, bytes = 0;
+    animated.renderer.terrainCacheStats(chunks, bytes);
+    CHECK(chunks > 0);
 }

@@ -10,6 +10,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "client/ease.h"
@@ -107,11 +108,6 @@ const double kMobHeadingEaseSeconds = easeTimeConstant(0.2);
 /// correction, a realm hop -- and the legs should not race to cover it.
 constexpr double kMaxWalkUnitsPerMs = 3.0;
 
-/// The window the TypeScript server averaged a dummy's DPS over. This client
-/// works the figure out itself, from the viewer's own hits (dummyDamage_),
-/// over the same window.
-constexpr double kDpsWindowSeconds = 10.0;
-
 /// Explosion: a ring pair plus debris, all of it over one second.
 constexpr double kExplosionLifeSeconds = 1.0;
 constexpr std::uint32_t kExplosionOuter = 0xFF4500u;
@@ -159,6 +155,29 @@ constexpr double kWornCrownScale = kFlowerArtRadius / 30.0;
 
 /// The worn crown, in the flower's radius-25 art space and upright -- florr's
 /// sits on top of the head whichever way the flower faces.
+void drawWornAntennae(Canvas& canvas, std::uint16_t equipFlags) {
+    canvas.save();
+    canvas.translate(0, -35);
+    ui::setFill(canvas, 0x333333u);
+    ui::setStroke(canvas, 0x222222u);
+    canvas.setLineWidth(3.0f);
+    canvas.setLineCap("round");
+    canvas.setLineJoin("round");
+    canvas.beginPath();
+    canvas.moveTo(5, 12.5f); canvas.quadraticCurveTo(10, -2.5f, 15, -12.5f);
+    canvas.quadraticCurveTo(5, -2.5f, 5, 12.5f); canvas.closePath();
+    canvas.moveTo(-5, 12.5f); canvas.quadraticCurveTo(-10, -2.5f, -15, -12.5f);
+    canvas.quadraticCurveTo(-5, -2.5f, -5, 12.5f); canvas.closePath();
+    canvas.fill();
+    canvas.stroke();
+    if (equipFlags & EquipObserver) {
+        ui::setFill(canvas, 0xD01C1Du);
+        canvas.beginPath(); canvas.arc(15, -12.5f, 2.5f, 0, static_cast<float>(kTau)); canvas.fill();
+        canvas.beginPath(); canvas.arc(-15, -12.5f, 2.5f, 0, static_cast<float>(kTau)); canvas.fill();
+    }
+    canvas.restore();
+}
+
 void drawWornCrown(Canvas& canvas) {
     static const SvgDocument crown = SvgDocument::fromString(kWornCrownSvg);
     if (crown.empty()) return;
@@ -625,8 +644,19 @@ double numberSizeFor(double base, double value) {
 
 /// Damage is shown as a whole number however large it gets -- abbreviating it
 /// would read as a different game from the browser build.
-std::string formatDamage(double value) {
-    return std::to_string(static_cast<long long>(std::llround(value)));
+std::string formatDamage(double value, WorldRenderer::DamageNumberUnit unit) {
+    if (unit == WorldRenderer::DamageNumberUnit::Full || value < 1000.0)
+        return std::to_string(static_cast<long long>(std::llround(value)));
+    const bool millions = unit == WorldRenderer::DamageNumberUnit::Millions;
+    char label[64];
+    std::snprintf(label, sizeof(label), millions ? "%.3f" : "%.2f",
+                  value / (millions ? 1000000.0 : 1000.0));
+    std::string text(label);
+    if (text.find('.') != std::string::npos) {
+        text.erase(text.find_last_not_of('0') + 1);
+        if (text.back() == '.') text.pop_back();
+    }
+    return text + (millions ? "M" : "K");
 }
 
 /// Ultra and up glitter: florr's drop pass tests the rarity byte against 6,
@@ -827,9 +857,6 @@ bool WorldRenderer::hiddenByOptions(const RemoteEntity& entity) const {
 }
 
 void WorldRenderer::ingestEvents(WorldView& view) {
-    if(dummyViewerNetId_!=view.self().netId){
-        dummyViewerNetId_=view.self().netId;dummyDamage_.clear();dummyTotalDamage_.clear();
-    }
     const auto isPlayer = [&view](std::uint32_t netId) {
         const auto it = view.entities().find(netId);
         return it != view.entities().end() && it->second.kind == net::EntityKind::Player;
@@ -838,22 +865,6 @@ void WorldRenderer::ingestEvents(WorldView& view) {
     const auto isHidden = [this, &view](std::uint32_t netId) {
         const auto it = view.entities().find(netId);
         return it != view.entities().end() && hiddenByOptions(it->second);
-    };
-    // The dummy exists to be hit at, so it reports what it is being hit for --
-    // by YOU. The same ten-second window the browser build's server kept, but
-    // over the damage events the server marks as this viewer's own
-    // (net::DamageByViewer): a dummy is a measure of your build, and one that
-    // summed everybody's hits would credit you with the flower beside you.
-    const auto isTargetDummy = [this, &view](std::uint32_t netId) {
-        if (!content_) return false;
-        const auto it = view.entities().find(netId);
-        if (it == view.entities().end()) return false;
-        // The mob the admin spawns, or the NPC a map stands on its plot: the
-        // same dummy, counted the same way.
-        if (it->second.kind != net::EntityKind::Mob && it->second.kind != net::EntityKind::Npc) {
-            return false;
-        }
-        return content_->mob(it->second.typeIndex).id == "target_dummy";
     };
     const auto pushNumber = [this](Vec2 at, double value, double size, NumberChannel channel) {
         if (effects_.size() >= maxEffects) return;
@@ -952,10 +963,6 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                         shakeHeld_ = true;
                     }
                 }
-                if ((event.flag & net::DamageByViewer) != 0 && isTargetDummy(event.netId)) {
-                    dummyDamage_[event.netId].emplace_back(nowSeconds_, event.amount);
-                    if(std::isfinite(event.amount)&&event.amount>0)dummyTotalDamage_[event.netId]+=event.amount;
-                }
                 // A squadmate's hit far off screen is here for the party HUD's
                 // flash only (net::DamageOffView).
                 if (!options.damageNumbers || isHidden(event.netId) ||
@@ -1023,9 +1030,6 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                     }
                     damageTextAt_.erase(key);
                 }
-                dummyDamage_.erase(event.netId);
-                dummyTotalDamage_.erase(event.netId);
-
                 // The snapshot erased the entity before this event was read, so
                 // the death animation replays the last state it was DRAWN in:
                 // a petal's or a shot's the view set aside as it erased it,
@@ -1069,7 +1073,8 @@ void WorldRenderer::ingestEvents(WorldView& view) {
                 e.radius = event.radius > 0 ? event.radius : 60;
                 e.lifeSeconds = kExplosionLifeSeconds;
 
-                const int count = static_cast<int>(clamp(e.radius / 5.0, 10.0, 50.0));
+                const int count = options.simplifyCombatEffects ? 0
+                    : static_cast<int>(clamp(e.radius / 5.0, 10.0, 50.0));
                 e.particles.reserve(static_cast<std::size_t>(count));
                 for (int i = 0; i < count; ++i) {
                     const double angle = kTau * i / count + randomUnit() * 0.5;
@@ -1248,7 +1253,9 @@ void WorldRenderer::ingestEvents(WorldView& view) {
             continue;
         }
 
-        if (entity.kind != net::EntityKind::Petal || hiddenByOptions(entity)) continue;
+        if (entity.kind != net::EntityKind::Petal || options.disableUltraPetalParticles ||
+            options.simplifyCombatEffects ||
+            hiddenByOptions(entity)) continue;
         if (randomUnit() >= chance) continue;
         pushSparkle(entity.position, entity.rarity, kSparkleCount, 0.5, 0.5, 2000.0, 1000.0, 1.0,
                     2.0, kSparkleLifeSeconds);
@@ -1353,24 +1360,13 @@ void WorldRenderer::update(double dt) {
         }
     }
 
-    for (auto it = dummyDamage_.begin(); it != dummyDamage_.end();) {
-        std::deque<std::pair<double, double>>& log = it->second;
-        while (!log.empty() && nowSeconds_ - log.front().first > kDpsWindowSeconds) {
-            log.pop_front();
-        }
-        if (log.empty()) {
-            it = dummyDamage_.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
     // Shadows exist only to give a Killed event something to animate, and a
     // mob that walked out of view will never produce one. Clearing wholesale
     // past the cap costs at worst one frame of death animations.
     if (mobShadows_.size() > kMaxMobShadows) mobShadows_.clear();
     if (mobEyes_.size() > kMaxMobShadows) mobEyes_.clear();
     if (mobPaces_.size() > kMaxMobShadows) mobPaces_.clear();
+    if (centipedeTrails_.size() > kMaxMobShadows) centipedeTrails_.clear();
 }
 
 void WorldRenderer::foldHit(std::vector<HitFlash>& hits, double share) {
@@ -1879,7 +1875,9 @@ void WorldRenderer::drawTerrain(Canvas& canvas, const Camera& camera, Realm real
         if (layer.cells.size() != cellCount) return;
     }
 
-    if (terrainCache_ &&
+    // Animated loadout zoom changes the pixel scale every frame. Paint at
+    // the live scale without baking bitmaps that the next frame cannot reuse.
+    if (terrainCache_ && !camera.loadoutZoomInMotion() &&
         drawTerrainChunks(canvas, camera, *map, art, span.x0, span.y0, span.x1, span.y1)) {
         return;
     }
@@ -2864,8 +2862,9 @@ void WorldRenderer::drawPetalSprite(Canvas& canvas, const RemoteEntity& entity,
         // the server put it down at.
         rotation = entity.angle;
     } else if (config && config->id == "blood_stinger") {
-        // The artwork points along +X; follow each grain's outward bearing.
+        // The artwork points along +X. Turn clumped grains toward each other.
         rotation = entity.angle;
+        if (content_->petalStats(entity.typeIndex, entity.rarity).count > 1) rotation += kPi;
     } else if (config && config->hasFixedDirection) {
         rotation = config->fixedDirection;
     } else if (config && config->clumpFacesInward &&
@@ -2957,7 +2956,16 @@ void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
     // A user-created skin outranks a built-in one, as it does in
     // player-drawing.ts: the server keeps the two mutually exclusive, and this
     // is the tie-break if an old account row ever carries both.
-    if (const CustomSkin* skin = wornSkin(entity)) {
+    const CustomSkin* skin = wornSkin(entity);
+    const bool pumpkin = (entity.renderFlags & PlayerRenderPumpkin) != 0;
+    const bool robot = (entity.renderFlags & PlayerRenderRobot) != 0;
+    if (!skin && !pumpkin && !robot) {
+        drawDefaultFlower(canvas, entity, timeSeconds);
+        return;
+    }
+    if (entity.equipFlags & EquipCutter) drawCutterBlade(canvas, entity.equipFlags, timeSeconds);
+
+    if (skin) {
         // kFlowerArtRadius, not the flower's grown radius: the caller has
         // already scaled into the artwork's own radius-25 space, which is the
         // space the studio authors in.
@@ -2990,31 +2998,19 @@ void WorldRenderer::drawFlowerBody(Canvas& canvas, const RemoteEntity& entity,
                                })) {
             renderSkinShapes(canvas, skin->shapes, kFlowerArtRadius);
         }
-        // A worn bandage shows through any body: the face's wrap, over the
-        // skin.
-        if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
-            drawUndeadWrap(canvas, timeSeconds);
-        }
-        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
-        return;
-    }
-    // Registration order in player-skins.ts is Pumpkin, then Robot. Preserve
-    // that deterministic priority when a saved account somehow has both bits.
-    if (entity.renderFlags & PlayerRenderPumpkin) {
+    } else if (pumpkin) {
         drawPumpkin(canvas, entity);
-        if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
-            drawUndeadWrap(canvas, timeSeconds);
-        }
-        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
-    } else if (entity.renderFlags & PlayerRenderRobot) {
-        drawRobot(canvas, entity);
-        if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
-            drawUndeadWrap(canvas, timeSeconds);
-        }
-        if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
     } else {
-        drawDefaultFlower(canvas, entity, timeSeconds);
+        drawRobot(canvas, entity);
     }
+    if (!skin && (entity.equipFlags & EquipAntennae)) {
+        drawWornAntennae(canvas, entity.equipFlags);
+    }
+    if (wrappedInBandage(entity.faceFlags, entity.equipFlags)) {
+        drawUndeadWrap(canvas, timeSeconds);
+    }
+    if (!skin && (entity.equipFlags & EquipCrown)) drawWornCrown(canvas);
+    if (entity.equipFlags & EquipPharaohCrown) drawWornPharaohCrown(canvas);
 }
 
 void WorldRenderer::drawDefaultFlower(Canvas& canvas, const RemoteEntity& entity,
@@ -3149,28 +3145,7 @@ void WorldRenderer::drawFace(Canvas& canvas, std::uint8_t faceFlags, std::uint16
         canvas.restore();
     }
 
-    if (equipFlags & (EquipAntennae | EquipObserver)) {
-        canvas.save();
-        canvas.translate(0, -35);
-        ui::setFill(canvas, 0x333333u);
-        ui::setStroke(canvas, 0x222222u);
-        canvas.setLineWidth(3.0f);
-        canvas.setLineCap("round");
-        canvas.setLineJoin("round");
-        canvas.beginPath();
-        canvas.moveTo(5, 12.5f); canvas.quadraticCurveTo(10, -2.5f, 15, -12.5f);
-        canvas.quadraticCurveTo(5, -2.5f, 5, 12.5f); canvas.closePath();
-        canvas.moveTo(-5, 12.5f); canvas.quadraticCurveTo(-10, -2.5f, -15, -12.5f);
-        canvas.quadraticCurveTo(-5, -2.5f, -5, 12.5f); canvas.closePath();
-        canvas.fill();
-        canvas.stroke();
-        if (equipFlags & EquipObserver) {
-            ui::setFill(canvas, 0xD01C1Du);
-            canvas.beginPath(); canvas.arc(15, -12.5f, 2.5f, 0, static_cast<float>(kTau)); canvas.fill();
-            canvas.beginPath(); canvas.arc(-15, -12.5f, 2.5f, 0, static_cast<float>(kTau)); canvas.fill();
-        }
-        canvas.restore();
-    }
+    if (equipFlags & (EquipAntennae | EquipObserver)) drawWornAntennae(canvas, equipFlags);
 
     if (equipFlags & EquipThirdEye) {
         const std::uint16_t thirdEye = content_ ? content_->petalIndex("third_eye") : kInvalidIndex;
@@ -3621,6 +3596,7 @@ bool WorldRenderer::poseMob(const MobDraw& mob, const MobConfig* config, double 
     if (pose.diameter <= 0.5 || pose.alpha <= 0.0) return false;
 
     pose.rotation = (config && config->hideRotation) ? 0.0 : mob.angle;
+    if (config && config->id == "jungle_ladybug") pose.rotation += 3.0 * kPi / 4.0;
     pose.mirrored = config && config->reversed;
     // The server points `reversed` art backwards by adding pi to the facing.
     // The browser build MIRRORS it instead, which is a different transform for
@@ -3652,6 +3628,64 @@ double WorldRenderer::glitchFlowerReach(const MobConfig& config, const MobPose& 
            pose.bodyShift.length();
 }
 
+void WorldRenderer::drawArcticCentipedeTail(Canvas& canvas, const Camera& camera, const MobDraw& mob,
+                                          double diameter, double rotation, const MobMotion& motion) const {
+    constexpr std::size_t segmentCount = 8;
+    const double spacing = mob.radius * 1.5;
+    const Vec2 forward = Vec2::fromAngle(rotation);
+    auto& trail = centipedeTrails_[mob.netId];
+    if (mob.deathProgress < 0.0 && trail.frame + 1 < frame_) trail = {};
+    if (trail.points.empty() || distance(mob.position, trail.points.front()) > spacing * segmentCount) {
+        trail.points = {mob.position, mob.position - forward * (spacing * segmentCount)};
+        trail.distance = 0.0;
+        trail.frame = frame_;
+    } else if (trail.frame != frame_) {
+        const double walked = distance(mob.position, trail.points.front());
+        if (walked >= 1.0) {
+            trail.points.push_front(mob.position);
+            trail.distance += walked;
+        }
+        trail.frame = frame_;
+    }
+
+    // A segment samples the path its head walked. Keep only enough history
+    // for the tail plus one point to interpolate across.
+    struct Segment { Vec2 position; Vec2 facing; };
+    std::array<Segment, segmentCount> segments;
+    double walked = 0.0;
+    std::size_t part = 0;
+    std::size_t point = 1;
+    for (; point < trail.points.size() && part < segmentCount; ++point) {
+        const Vec2 from = trail.points[point - 1];
+        const Vec2 delta = trail.points[point] - from;
+        const double length = delta.length();
+        if (length <= 0.0) continue;
+        for (; part < segmentCount && spacing * (part + 1) <= walked + length; ++part) {
+            segments[part] = {from + delta * ((spacing * (part + 1) - walked) / length), -delta};
+        }
+        walked += length;
+    }
+    while (trail.points.size() > point) trail.points.pop_back();
+    for (; part < segmentCount; ++part) {
+        segments[part] = {trail.points.back() - forward * (spacing * (part + 1) - walked), forward};
+    }
+
+    MobArtAttributes attr;
+    attr.radius = diameter * 0.5;
+    attr.pet = motion.pet;
+    attr.inWorld = true;
+    for (std::size_t i = segmentCount; i-- > 0;) {
+        const auto& segment = segments[i];
+        const Vec2 at = camera.worldToScreen(segment.position);
+        attr.distance = trail.distance - spacing * (i + 1);
+        canvas.save();
+        canvas.translate(static_cast<float>(at.x), static_cast<float>(at.y));
+        canvas.rotate(static_cast<float>(segment.facing.angle()));
+        paintMobArt(canvas, MobArt::CentipedeArcticBody, attr);
+        canvas.restore();
+    }
+}
+
 void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobDraw& mob,
                                 double clockSeconds) const {
     const MobConfig* config = content_ ? &content_->mob(mob.typeIndex) : nullptr;
@@ -3669,7 +3703,7 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
     const double visualScale = (config && config->visualScale > 0) ? config->visualScale : 1.0;
     // The real clock, not the pose's: a florr painter keeps its own tempo and
     // blends in its own hurry from `aggro`.
-    const MobMotion motion = mobMotion(mob, clockSeconds);
+    MobMotion motion = mobMotion(mob, clockSeconds);
 
     canvas.save();
     if (alpha < 1.0) canvas.setGlobalAlpha(static_cast<float>(alpha));
@@ -3715,6 +3749,10 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
                                 angle, timeSeconds);
         }
     }
+    if (id == "arctic_centipede" && config->segmentCount == 0) {
+        drawArcticCentipedeTail(canvas, camera, mob, diameter, rotation, motion);
+        motion.distance = centipedeTrails_.at(mob.netId).distance;
+    }
     if (id == "garbage") {
         // Keep the original sack behind its deterministic visible contents.
         // Stable poses and softened colours avoid a flashing pile of icons.
@@ -3757,6 +3795,28 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
             paint(canvas);
             canvas.restore();
         }
+    } else if (id == "void_angel" && sprites_ && sprites_->mobDrawable(mob.typeIndex)) {
+        // The wings and halo stay upright. Only the pupil follows the existing heading.
+        sprites_->drawMob(canvas, mob.typeIndex, mob.rarity, art.x, art.y, diameter, 0.0,
+                          timeSeconds, false, mob.radius * visualScale, {1.0, 0.0}, &motion);
+        const Vec2 gaze = Vec2::fromAngle(mob.angle);
+        canvas.save();
+        canvas.translate(static_cast<float>(art.x), static_cast<float>(art.y));
+        const float scale = static_cast<float>(diameter / 128.0);
+        canvas.scale(scale, scale);
+        ui::setFill(canvas, 0xDEEAF6u);
+        canvas.beginPath();
+        canvas.ellipse(0.0f, 15.0f, 12.5f, 7.1f, 0.0f, 0.0f, static_cast<float>(kTau));
+        canvas.fill();
+        const float eyeX = static_cast<float>(gaze.x * 5.0);
+        const float eyeY = static_cast<float>(15.0 + gaze.y * 2.8);
+        ui::setFill(canvas, 0x7295BFu);
+        canvas.fillCircle(eyeX, eyeY, 3.8f);
+        ui::setFill(canvas, 0x14253F);
+        canvas.fillCircle(eyeX, eyeY, 2.5f);
+        ui::setFill(canvas, 0xFFFFFFu);
+        canvas.fillCircle(eyeX - 1.0f, eyeY - 1.0f, 0.85f);
+        canvas.restore();
     } else if (sprites_ && (sprites_->mobArt(mob.typeIndex) == MobArt::Oracle ||
                             sprites_->mobArt(mob.typeIndex) == MobArt::Trader ||
                             sprites_->mobArt(mob.typeIndex) == MobArt::Titan)) {
@@ -3785,7 +3845,8 @@ void WorldRenderer::drawMobBody(Canvas& canvas, const Camera& camera, const MobD
     canvas.restore();
 }
 
-void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const MobDraw& mob) const {
+void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const MobDraw& mob,
+                                 const WorldView* view) const {
     // The plate fades in with the mob and out once a chain bead heals: florr
     // multiplies everything on it, text included, by one eased opacity.
     if (mob.plateOpacity <= 0.0) return;
@@ -3901,32 +3962,89 @@ void WorldRenderer::drawMobLabel(Canvas& canvas, const Camera& camera, const Mob
         label(summon, kMobTierSize, gilded ? kDerivativeGold : kPetLabelColor, left, rowY);
         tierFloor = left + box + (gilded ? 6.0 : 1.0);
     }
-    if (labelled && options.names) {
+    const bool iceDragonSummon = mob.pet && config && config->id == "arctic_ice_dragon";
+    if (labelled && (options.names || (iceDragonSummon && options.healthBars))) {
         const std::string tier = ui::rarityTr(mob.rarity);
         const double box = boxWidth(tier, kMobTierSize);
         label(tier, kMobTierSize, rarityColor(mob.rarity), std::max(tierFloor, halfSpan - box),
               rowY);
     }
 
-    // The dummy is the one mob that reports what it is being hit for -- by
-    // this viewer -- and it reports a zero rather than disappearing when
-    // nothing is hitting it.
     if (config && config->id == "target_dummy") {
-        double total = 0;
-        const auto damage = dummyDamage_.find(mob.netId);
-        if (damage != dummyDamage_.end()) {
-            for (const auto& sample : damage->second) total += sample.second;
-        }
-        const std::string dps = "DPS: " + ui::formatCompact(total / kDpsWindowSeconds);
+        const auto meter = view ? view->practiceMeter(mob.netId) : net::PracticeMeter{};
+        const std::string dps = "DPS: " + ui::formatCompact(meter.dps);
         label(dps, kMobTierSize, ui::kPaper, halfSpan - boxWidth(dps, kMobTierSize),
               lineY + kMobDpsDrop);
-        const auto cumulative=dummyTotalDamage_.find(mob.netId);
-        const std::string sum=(ui::language()==ui::Language::Zh?"总伤害: ":"Total damage: ")+
-            ui::formatCompact(cumulative==dummyTotalDamage_.end()?0:cumulative->second);
-        label(sum,kMobTierSize,ui::kPaper,halfSpan-boxWidth(sum,kMobTierSize),lineY+kMobDpsDrop+kMobTierSize*1.4);
+        const std::string sum = (ui::language() == ui::Language::Zh ? "总伤害: " : "Total damage: ") +
+                                ui::formatCompact(meter.total);
+        label(sum, kMobTierSize, ui::kPaper, halfSpan - boxWidth(sum, kMobTierSize),
+              lineY + kMobDpsDrop + kMobTierSize * 1.4);
     }
     canvas.restore();
 }
+
+// Rift crack painter adapted from flowrix-io/florr_clone, AGPL-3.0.
+// See docs/current-status.md for the source revision.
+namespace {
+void drawPortalCracks(Canvas& canvas, double radius, std::uint32_t seed, double opening) {
+    constexpr std::uint64_t kModulus = 2147483647u;
+    std::uint64_t state = seed % kModulus;
+    if (state == 0) state = 1;
+    const auto next = [&state] { return state = state * 48271u % kModulus; };
+    const auto unit = [&next] { return static_cast<double>(next() - 1) / (kModulus - 2); };
+    const auto between = [&next](int lo, int hi) {
+        return lo + static_cast<int>(next() % static_cast<std::uint64_t>(hi - lo + 1));
+    };
+
+    const int branches = between(4, 5);
+    const double first = unit() * kTau;
+    const double open = std::clamp(opening, 0.0, 1.0);
+    const double taper = (1.0 - open) * 3.0 + open;
+    const double widest = opening * 0.2;
+    struct Point {
+        double x, y, width;
+    };
+    std::array<Point, 10> points;
+    for (int branch = 0; branch < branches; ++branch) {
+        const int count = between(5, 10);
+        double heading = kTau / branches * branch + first;
+        double reach = 0.0;
+        for (int i = 0; i < count; ++i) {
+            double width = std::pow(static_cast<double>(count - i - 1) / count, taper) * widest;
+            if (i == 0) width = 0.0;
+            if (i == 1) width *= 0.5;
+            points[static_cast<std::size_t>(i)] = {reach * std::cos(heading),
+                                                   reach * std::sin(heading), width};
+            reach += unit() * 0.2 + 0.2;
+            heading += (unit() * kPi * 0.5 - kPi * 0.25) * (count - i) / count;
+        }
+        // Up one side of the chain and back down the other.
+        const auto vertex = [&](int i, double side) {
+            const Point& here = points[static_cast<std::size_t>(i)];
+            const Point& before = points[static_cast<std::size_t>(std::max(i - 1, 0))];
+            const Point& after = points[static_cast<std::size_t>(std::min(i + 1, count - 1))];
+            const double dx = after.x - before.x;
+            const double dy = after.y - before.y;
+            const double length = std::max(std::sqrt(dx * dx + dy * dy), 1e-6);
+            return std::pair<float, float>(
+                static_cast<float>((here.x + side * dy / length * here.width) * radius),
+                static_cast<float>((here.y - side * dx / length * here.width) * radius));
+        };
+        canvas.beginPath();
+        for (int i = 0; i < count; ++i) {
+            const auto [x, y] = vertex(i, 1.0);
+            if (i == 0) canvas.moveTo(x, y);
+            else canvas.lineTo(x, y);
+        }
+        for (int i = count - 1; i >= 0; --i) {
+            const auto [x, y] = vertex(i, -1.0);
+            canvas.lineTo(x, y);
+        }
+        canvas.closePath();
+        canvas.fill();
+    }
+}
+} // namespace
 
 void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm realm,
                                     double timeSeconds) const {
@@ -3956,13 +4074,15 @@ void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm 
     for (const MapElement& element : map->elements()) {
         if (element.kind != MapElementKind::Teleporter) continue;
         ++pad;
+        const bool rift = element.padId == "rift";
+        if (rift && !riftOpen_) continue;
         const Vec2 centre = element.centre();
-        if (!camera.visibleWorld(element.padRadius * kTeleporterCullRadii).contains(centre)) {
+        if (!camera.visibleWorld(element.padRadius * (rift ? 4.5 : kTeleporterCullRadii)).contains(centre)) {
             continue;
         }
         const Vec2 at = camera.worldToScreen(centre);
         const double radius = element.padRadius * camera.zoom();
-        const std::uint32_t color = element.hasColor ? element.color : kTeleporterColor;
+        const std::uint32_t color = rift ? 0u : element.hasColor ? element.color : kTeleporterColor;
 
         canvas.save();
         canvas.translate(static_cast<float>(at.x), static_cast<float>(at.y));
@@ -3980,6 +4100,10 @@ void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm 
         // on sin(life * pi). florr rolls each spark when it is born and
         // steps it every frame; here the rolls are hashed from the pad and
         // the spark's birth slot, and the flight is that step's closed form.
+        if (rift) {
+            ui::setFill(canvas, color);
+            drawPortalCracks(canvas, radius, pad, 1.0);
+        }
         constexpr double kSparkSlotMs = 10.0;
         const auto newest = static_cast<std::int64_t>(std::floor(ms / kSparkSlotMs));
         for (std::int64_t slot = newest; slot > newest - 100; --slot) {
@@ -4031,6 +4155,25 @@ void WorldRenderer::drawMapElements(Canvas& canvas, const Camera& camera, Realm 
             canvas.stroke();
         }
         canvas.restore();
+        if (element.targetMap == "zorr_void" || element.targetMap == "zorr_astral" ||
+            element.targetMap == "zorr_null") {
+            const std::string fallback = element.targetMap == "zorr_void" ? "Void" :
+                                         element.targetMap == "zorr_astral" ? "Astral" : "Null";
+            ui::TextStyle label;
+            label.size = 18.0;
+            label.align = ui::Align::Centre;
+            label.baseline = ui::Baseline::Bottom;
+            ui::text(canvas, ui::biomeTr(element.targetMap, fallback.c_str()), at.x, at.y - radius - 8.0, label);
+        }
+        const char* label = nullptr;
+        if (element.padId == "bio-centre-entry") label = ui::trEnZh("To the centre", "前往中心");
+        if (element.padId == "bio-centre-return") label = ui::trEnZh("Back to the entrance", "返回入口");
+        if (label) {
+            ui::TextStyle style;
+            style.size = 14.0;
+            style.align = ui::Align::Centre;
+            ui::text(canvas, label, at.x, at.y + radius + 13.0, style);
+        }
     }
 }
 
@@ -4084,7 +4227,9 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // A Killed event arrives after the snapshot has already erased the
             // entity, so remember what the mob looked like while it is here.
             mobShadows_[entity.netId] = mob;
-            if (zoom < kLowDetailMobLabelZoom && mob.rarity <= Rarity::Mythic) break;
+            const MobConfig* type = content_ ? &content_->mob(mob.typeIndex) : nullptr;
+            const bool iceDragonSummon = mob.pet && type && type->id == "arctic_ice_dragon";
+            if (zoom < kLowDetailMobLabelZoom && mob.rarity <= Rarity::Mythic && !iceDragonSummon) break;
 
             // Bars, names and tiers all go down after every body, so a mob
             // drawn later cannot cover an earlier one's label.
@@ -4095,7 +4240,6 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             // the same thing -- stacked less than a diameter apart, over a
             // name and a tier that are equally redundant. The plate is one
             // block (see drawMobLabel), so it goes or stays whole.
-            const MobConfig* type = content_ ? &content_->mob(mob.typeIndex) : nullptr;
             if (type == nullptr || !type->sharedChainBody()) mobLabels_.push_back(mob);
             break;
         }
@@ -4198,6 +4342,27 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
             switch (static_cast<GroundEffectKind>(entity.typeIndex)) {
                 // Drawn in a pass of its own, over the mobs: see
                 // drawSacrificeRituals.
+                case GroundEffectKind::GhostSparkle: {
+                    const double phase = timeSeconds * 7.0 + entity.netId * 0.47;
+                    const float size = static_cast<float>(2.0 + 0.75 * (0.5 + 0.5 * std::sin(phase)));
+                    canvas.save();
+                    canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
+                    canvas.setGlobalAlpha(canvas.globalAlpha() * static_cast<float>(0.40 + 0.10 * std::sin(phase)));
+                    ui::setFill(canvas, 0xF2FFFFu);
+                    canvas.beginPath();
+                    canvas.moveTo(0, -size);
+                    canvas.lineTo(size * 0.26f, -size * 0.26f);
+                    canvas.lineTo(size, 0);
+                    canvas.lineTo(size * 0.26f, size * 0.26f);
+                    canvas.lineTo(0, size);
+                    canvas.lineTo(-size * 0.26f, size * 0.26f);
+                    canvas.lineTo(-size, 0);
+                    canvas.lineTo(-size * 0.26f, -size * 0.26f);
+                    canvas.closePath();
+                    canvas.fill();
+                    canvas.restore();
+                    break;
+                }
                 case GroundEffectKind::PyramidMap: {
                     canvas.save();
                     canvas.translate(static_cast<float>(screen.x), static_cast<float>(screen.y));
@@ -4295,8 +4460,31 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
 #endif
                     canvas.restore();break;
                 }
+                case GroundEffectKind::AcidSpill:
+                case GroundEffectKind::LavaSpill:
+                case GroundEffectKind::OilSpill:
+                case GroundEffectKind::BloodSpill:
+                case GroundEffectKind::ElixirSpill: {
+                    const std::uint32_t colors[] = {0x83cc35, 0xff6b27, 0x4b3f39, 0xc7273d, 0xc9ed62};
+                    const auto index = entity.typeIndex -
+                        static_cast<std::uint16_t>(GroundEffectKind::AcidSpill);
+                    ui::setFill(canvas, colors[index], 0.42);
+                    canvas.fillCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
+                                      static_cast<float>(radius));
+                    ui::setStroke(canvas, colors[index], 0.7);
+                    canvas.setLineWidth(static_cast<float>(2.0 * zoom));
+                    canvas.strokeCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
+                                        static_cast<float>(radius));
+                    break;
+                }
+                case GroundEffectKind::Cryo:
+                case GroundEffectKind::Plutonium:
+                case GroundEffectKind::Corium:
                 case GroundEffectKind::Radiation: {
-                    constexpr std::uint32_t kRadiationPurple = 0x9B59B6u;
+                    const auto kind = static_cast<GroundEffectKind>(entity.typeIndex);
+                    const std::uint32_t kRadiationPurple = kind == GroundEffectKind::Cryo ? 0xB2F3FFu :
+                        kind == GroundEffectKind::Plutonium ? 0xCD0D19u :
+                        kind == GroundEffectKind::Corium ? 0x443366u : 0x9B59B6u;
                     ui::setFill(canvas, kRadiationPurple, 0.22);
                     canvas.fillCircle(static_cast<float>(screen.x), static_cast<float>(screen.y),
                                       static_cast<float>(radius));
@@ -4320,6 +4508,13 @@ void WorldRenderer::drawEntity(Canvas& canvas, const RemoteEntity& entity, const
                     canvas.restore();
                     break;
                 }
+                case GroundEffectKind::Fire:
+                    ui::disc(canvas, screen, radius, 0xFFB530u, 0xE6572Au, 3.0 * zoom);
+                    ui::disc(canvas, screen, radius * .54, 0xFFE670u, 0xFFB530u, 2.0 * zoom);
+                    break;
+                case GroundEffectKind::Blood:
+                    ui::disc(canvas, screen, radius, 0xB63C3Cu, 0x7B2424u, 3.0 * zoom);
+                    break;
                 case GroundEffectKind::Poison:
                 default:
                     ui::disc(canvas, screen, radius, 0xFFE763u,
@@ -4423,7 +4618,7 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
                 // Linear over the whole life, exactly as the browser build's
                 // per-frame alpha decrement works out to.
                 canvas.setGlobalAlpha(static_cast<float>(1.0 - t));
-                ui::text(canvas, "-" + formatDamage(e.value), screen.x, screen.y, style);
+                ui::text(canvas, "-" + formatDamage(e.value, options.damageNumberUnit), screen.x, screen.y, style);
                 canvas.setGlobalAlpha(1.0f);
                 break;
             }
@@ -4445,6 +4640,7 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
                                     static_cast<float>(e.radius * t * 0.5 * zoom));
 
                 for (const EffectParticle& p : e.particles) {
+                    if (options.simplifyCombatEffects) break;
                     const double left = p.lifeSeconds / p.maxLifeSeconds;
                     if (left <= 0) continue;
                     if (!onScreen(p.position, p.size)) continue;
@@ -4458,6 +4654,7 @@ void WorldRenderer::drawEffects(Canvas& canvas, const Camera& camera) const {
                 break;
             }
             case Effect::Kind::Sparkle: {
+                if (options.disableUltraPetalParticles || options.simplifyCombatEffects) break;
                 // Particles only: the glint has no body of its own.
                 for (const EffectParticle& p : e.particles) drawPetalGlint(canvas, camera, p);
                 // The discs fade through globalAlpha, so the layer has to put
@@ -4612,12 +4809,12 @@ void WorldRenderer::draw(Canvas& canvas, const WorldView& view, const Camera& ca
                          Vec2 selfDrawn, double timeSeconds) const {
     realm_ = view.realm();
     if (shakeOffset_.x == 0.0 && shakeOffset_.y == 0.0) {
-        draw(canvas, view.entities(), camera, selfDrawn, timeSeconds);
+        draw(canvas, view.entities(), camera, selfDrawn, timeSeconds, &view);
         return;
     }
     // The world, the viewer's flower with it, is drawn through a camera
     // pushed by the shake; the caller's stays where the cursor expects it.
-    draw(canvas, view.entities(), shakenCamera(camera), selfDrawn, timeSeconds);
+    draw(canvas, view.entities(), shakenCamera(camera), selfDrawn, timeSeconds, &view);
 }
 
 Camera WorldRenderer::shakenCamera(const Camera& camera) const {
@@ -4644,7 +4841,7 @@ void WorldRenderer::chargeOps(int& bucket) const {
 }
 
 void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera& camera,
-                         Vec2 selfDrawn, double timeSeconds) const {
+                         Vec2 selfDrawn, double timeSeconds, const WorldView* view) const {
     // What lies under the entities is the realm's business. The arena and
     // the maze are generated and draw themselves; every other realm is an
     // authored map with a tile grid and annotations -- teleporters, spawn-zone
@@ -4898,6 +5095,32 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
                                  visibleDrops.end(), nearest);
             }
             for (const auto* drop : visibleDrops) drawLive(*drop);
+        } else if (kind == net::EntityKind::Effect) {
+            // Keep one actual ghost position per small screen cell. Nearby
+            // hints share a marker without inventing a location between mobs.
+            constexpr double kGhostHintCell = 10.0;
+            std::unordered_map<std::uint64_t, const RemoteEntity*> ghostHints;
+            for (const auto& entry : entities) {
+                const RemoteEntity& entity = entry.second;
+                if (layerOf(entity) != kind) continue;
+                if (entity.kind != net::EntityKind::Effect ||
+                    entity.typeIndex != static_cast<std::uint16_t>(GroundEffectKind::GhostSparkle) ||
+                    options.hitboxes) {
+                    drawLive(entity);
+                    continue;
+                }
+                const Vec2 at = camera.worldToScreen(entity.position);
+                if (!std::isfinite(at.x) || !std::isfinite(at.y) ||
+                    at.x < -3.0 || at.y < -3.0 ||
+                    at.x >= camera.viewportWidth() + 3.0 ||
+                    at.y >= camera.viewportHeight() + 3.0) continue;
+                const auto x = static_cast<std::uint32_t>(std::max(0.0, at.x) / kGhostHintCell);
+                const auto y = static_cast<std::uint32_t>(std::max(0.0, at.y) / kGhostHintCell);
+                const std::uint64_t cell = (static_cast<std::uint64_t>(y) << 32) | x;
+                auto [found, inserted] = ghostHints.emplace(cell, &entity);
+                if (!inserted && entity.netId < found->second->netId) found->second = &entity;
+            }
+            for (const auto& hint : ghostHints) drawLive(*hint.second);
         } else {
             for (const auto& entry : entities) {
                 const RemoteEntity& entity = entry.second;
@@ -4993,7 +5216,7 @@ void WorldRenderer::draw(Canvas& canvas, const EntityMap& entities, const Camera
             drawLive(entity);
         }
         chargeOps(ops_.mobs);
-        for (const MobDraw& mob : mobLabels_) drawMobLabel(canvas, camera, mob);
+        for (const MobDraw& mob : mobLabels_) drawMobLabel(canvas, camera, mob, view);
         chargeOps(ops_.labels);
     }
 

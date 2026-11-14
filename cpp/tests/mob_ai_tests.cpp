@@ -4,6 +4,7 @@
 #include "server/systems/combat.h"
 #include "server/systems/mob_ai.h"
 #include "server/systems/movement.h"
+#include "server/systems/spawning.h"
 #include "server/workers.h"
 
 // The hold below is sized against the CLIENT's facing ease, so the test that
@@ -271,6 +272,21 @@ struct Sim {
 
 /// Middle of the map, well away from the world edge that reads as wall.
 const Vec2 kOrigin{30000.0, 30000.0};
+
+TEST(baby_ant_switches_from_a_nearby_flower_to_visible_honey) {
+    if (!contentReady()) return;
+    Sim sim;
+    const Entity ant = sim.spawnMob("baby_ant", kOrigin);
+    const Entity flower = sim.spawnPlayer(kOrigin + Vec2{-60.0, 0.0});
+    sim.brainOf(ant).target = flower;
+    const Entity bait = sim.world.create();
+    sim.world.add<Transform>(bait, Transform{kOrigin + Vec2{400.0, 0.0}, 0.0});
+    sim.world.add<Health>(bait, Health{1000.0, 1000.0});
+    sim.world.add<HoneyBait>(bait, HoneyBait{flower});
+    sim.tick();
+    CHECK_EQ(sim.brainOf(ant).target, bait);
+    CHECK(sim.velocityOf(ant).x > 0.0);
+}
 
 /// Attaches `self` to the chain behind `ahead`.
 void link(Sim& sim, Entity self, Entity ahead, double spacing) {
@@ -1083,6 +1099,27 @@ TEST(sandstorm_ignores_a_player_standing_in_it) {
     CHECK_NEAR(sim.angleOf(mob), 0.0, 1e-12);
 }
 
+TEST(a_wild_sandstorm_follows_bulb_glow_and_resumes_wandering_when_it_goes_out) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity storm = sim.spawnMob("sandstorm", kOrigin);
+    const Entity flower = sim.spawnPlayer(kOrigin + Vec2{150, 0});
+    sim.spawnPlayer(kOrigin + Vec2{-50, 0});
+    sim.tickIntent();
+    sim.world.get<WanderTarget>(storm).destination = kOrigin + Vec2{-100, 0};
+
+    const auto bulb = content().petalIndex("bulb");
+    auto& modifiers = sim.world.get<PlayerModifiers>(flower);
+    modifiers.aggroRangeScale = content().petalStats(bulb, Rarity::Common).modifiers.aggroRange;
+    sim.tickIntent();
+    CHECK(sim.velocityOf(storm).x > 0.0);
+    CHECK_EQ(sim.brainOf(storm).target, NULL_ENTITY);
+
+    modifiers.aggroRangeScale = 1.0;
+    sim.tickIntent();
+    CHECK(sim.velocityOf(storm).x < 0.0);
+}
+
 TEST(a_sandstorm_holds_its_heading_until_its_own_clock_re_rolls_it) {
     // Re-rolled outright, three times a second, and never in between: a storm
     // that swung its old heading instead would cross the map as a cloud on a
@@ -1119,6 +1156,17 @@ TEST(nazar_beetle_and_shiny_ladybug_target_an_unprovoking_player) {
         CHECK_EQ(sim.brainOf(mob).target, player);
         CHECK(sim.gap(mob, player) < before - 30.0);
     }
+}
+
+TEST(shiny_ladybug_pursues_unprovoking_players_at_275_units) {
+    CHECK(contentReady());
+    Sim sim;
+    const auto mob = sim.spawnMob("shiny_ladybug", {5000.0, 5000.0});
+    const auto player = sim.spawnPlayer({5275.0, 5000.0});
+    const double before = sim.gap(mob, player);
+    sim.tick(30);
+    CHECK_EQ(sim.brainOf(mob).target, player);
+    CHECK(sim.gap(mob, player) < before - 30.0);
 }
 
 TEST(a_stationary_mob_never_moves) {
@@ -1204,6 +1252,18 @@ TEST(mobs_further_than_the_active_radius_think_one_tick_in_five) {
     // stays near where it was put.
     CHECK(distance(sim.positionOf(far), kOrigin + Vec2{kMobActiveRadius + 500.0, 0}) <
           kEnemyWanderRange);
+}
+
+TEST(full_mob_simulation_keeps_unwatched_ordinary_mobs_awake) {
+    CHECK(contentReady());
+    Sim sim;
+    const Entity mob = sim.spawnMob("soldier_ant", kOrigin + Vec2{0, kMobTargetRetainRadius + 1500.0});
+    sim.spawnPlayer(kOrigin);
+    sim.ai.setFullSimulation(true);
+    sim.tick(10);
+    CHECK_EQ(sim.totalConsidered, std::uint64_t(10));
+    CHECK_EQ(sim.totalSkipped, std::uint64_t(0));
+    CHECK(!sim.brainOf(mob).sleeping);
 }
 
 TEST(a_boss_thinks_every_tick_however_far_from_everybody_it_stands) {
@@ -1618,7 +1678,38 @@ TEST(a_sandstorm_pet_pulls_ahead_of_a_running_owner_but_stays_on_its_leash) {
     // One tick's travel is all it may overshoot the leash by before turning.
     const double step = kPlayerMaxSpeed * kSandstormPetReturnSpeedFactor * net::kTickSeconds;
     CHECK(farthest <= kSandstormPetLeash + step);
-    CHECK(farthest < kViewportHeight * 0.5);
+    CHECK(farthest > 500.0);
+}
+
+TEST(an_egg_summon_reaches_a_distant_wild_mob_then_returns) {
+    CHECK(contentReady());
+    Sim sim;
+    MovementSystem movement;
+    CombatSystem combat;
+    EventQueue events;
+    const Entity owner = sim.spawnPlayer(kOrigin);
+    const Entity pet = sim.spawnMob("soldier_ant", kOrigin + Vec2{100, 0});
+    sim.world.add<Pet>(pet, Pet{owner, 0});
+    sim.world.get<Faction>(pet).team = Team::Players;
+    sim.world.get<Health>(pet) = Health{1e6, 1e6};
+    const Entity prey = sim.spawnMob("rock", kOrigin + Vec2{1150, 0});
+    sim.world.get<Health>(prey) = Health{1e6, 1e6};
+    bool hit = false;
+    for (int i = 0; i < 400 && !hit; ++i) {
+        sim.tickIntent();
+        movement.runWorldPhase(sim.world, sim.terrain, sim.now, sim.dt);
+        sim.rebuildGrid();
+        combat.beginTick(sim.world, content(), sim.now, sim.dt, events);
+        combat.runContactPhase(sim.world, sim.grid, content(), sim.now);
+        hit = sim.world.get<Health>(prey).current < 1e6;
+        events.clear();
+    }
+    CHECK(hit);
+    CHECK(sim.gap(pet, owner) > 700.0);
+    sim.world.get<Transform>(owner).position.x -= 700.0;
+    sim.tickIntent();
+    CHECK(sim.brainOf(pet).petReturning);
+    CHECK(sim.velocityOf(pet).x < 0.0);
 }
 
 TEST(a_pet_prefers_mobs_nearer_its_owner_at_the_same_tier) {
@@ -1678,7 +1769,7 @@ TEST(egg_pet_attacks_same_tier_mob_at_its_edge) {
             sim.tickIntent();
             movement.runWorldPhase(sim.world, sim.terrain, sim.now, sim.dt);
             sim.rebuildGrid();
-            combat.beginTick(sim.world, sim.now, sim.dt, events);
+            combat.beginTick(sim.world, content(), sim.now, sim.dt, events);
             combat.runContactPhase(sim.world, sim.grid, content(), sim.now);
             events.clear();
         }
@@ -4158,4 +4249,56 @@ TEST(feedback1105_spider_waits_for_player_and_stops_after_death) {
     CHECK_EQ(websIn(sim.world).size(),std::size_t(1));
     sim.world.add<Dead>(p);sim.world.get<Health>(p).current=0;
     sim.tickIntent(180);CHECK_EQ(websIn(sim.world).size(),std::size_t(1));
+}
+
+TEST(deep_bulb_limits_notice_to_lit_bulbs_and_ordinary_enemies_in_deep_prestige_bands) {
+    CHECK(contentReady());
+    WorldMaps maps;
+    std::string error;
+    CHECK(maps.load(testsupport::dataDir(), nullptr, error));
+    if (!error.empty()) return;
+    bool found = false;
+    const Realm deep = maps.realmOfId("prestige_sewers", found);
+    CHECK(found);
+    if (!found) return;
+    const Realm normal = maps.realmOfId("sewers", found);
+    CHECK(found);
+    if (!found) return;
+    const Vec2 at{18000, 3800};
+    const auto check = [&](Realm realm, Vec2 origin, bool bulb, Rarity rarity, bool wall,
+                           double baseRange, double gap) {
+        Sim sim;
+        std::string terrainError;
+        CHECK(sim.terrain.loadTiledMap(testsupport::dataDir() + "/sewers.tmj", terrainError, realm));
+        sim.terrain.fill(Tile::Open, realm);
+        sim.ai.worldMaps = &maps;
+        sim.ai.setFullSimulation(true);
+        const Entity mob = sim.spawnMob("soldier_ant", origin, rarity);
+        const Entity flower = sim.spawnPlayer(origin + Vec2{gap, 0});
+        sim.world.get<Transform>(mob).realm = realm;
+        sim.world.get<Transform>(flower).realm = realm;
+        sim.world.get<MobAi>(mob).aggroRange = baseRange / 1.30;
+        sim.world.get<MobAi>(mob).kind = AiKind::Hostile;
+        sim.world.add<AmbientMob>(mob, AmbientMob{0.0, 0, 0});
+        auto& modifiers = sim.world.get<PlayerModifiers>(flower);
+        modifiers.litAggroBulb = bulb;
+        modifiers.aggroRangeScale = 1.2;
+        if (wall) {
+            const int tx = static_cast<int>((origin.x + gap * .5) / kTileSize);
+            const int ty = static_cast<int>(origin.y / kTileSize);
+            sim.terrain.setTile(tx, ty, Tile::Solid, realm);
+        }
+        sim.grid.insert(flower, realm, origin + Vec2{gap,0}, kPlayerBaseRadius);
+        CommandBuffer commands{sim.world};
+        sim.ai.run(sim.world, sim.terrain, sim.grid, {{origin,realm}}, 1000, net::kTickSeconds, commands);
+        return sim.world.get<MobAi>(mob).target == flower;
+    };
+    CHECK(check(deep, at, true, Rarity::Common, false, 500, 660));
+    CHECK(!check(deep, at, true, Rarity::Common, false, 500, 680));
+    CHECK(!check(deep, at, false, Rarity::Common, false, 500, 660));
+    CHECK(!check(normal, at, true, Rarity::Common, false, 500, 660));
+    CHECK(!check(deep, at, true, Rarity::Super, false, 500, 660));
+    CHECK(!check(deep, at, true, Rarity::Common, true, 500, 660));
+    CHECK(check(deep, at, true, Rarity::Common, false, 1400, 1820));
+    CHECK(!check(deep, at, true, Rarity::Common, false, 1400, 1840));
 }

@@ -141,7 +141,8 @@ std::uint8_t computeEntityState(World& world, Entity e, double nowMillis) {
     }
     if (const Afflictions* afflictions = world.tryGet<Afflictions>(e)) {
         if (afflictions->poisoned(nowMillis)) state |= net::StatePoisoned;
-        if (afflictions->slowed(nowMillis)) state |= net::StateSlowed;
+        if (afflictions->slowed(nowMillis) || afflictions->frostSpeed(nowMillis) < 1.0)
+            state |= net::StateSlowed;
     }
     if (const PlayerInput* input = world.tryGet<PlayerInput>(e)) {
         if (input->current.attacking()) state |= net::StateAttacking;
@@ -316,10 +317,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     const double reachX = halfExtent(viewport.x, kViewportWidth, outerReach);
     const double reachY = halfExtent(viewport.y, kViewportHeight, outerReach);
 
-    const auto outsideView = [&](Vec2 at) {
+    const auto outsideView = [&](Vec2 at, double padding = 0.0) {
         const double dx = at.x - centre.x;
         const double dy = at.y - centre.y;
-        return (dx < 0 ? -dx : dx) >= reachX || (dy < 0 ? -dy : dy) >= reachY;
+        return std::abs(dx) >= reachX + padding || std::abs(dy) >= reachY + padding;
     };
     // The inner box, on the same axes: inside it an entity is drawn, or close
     // enough to being drawn that it has to be current. Built the same way, so
@@ -337,12 +338,14 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // it is still in the far band, and step there at a quarter rate. The
     // extra quarter covers art drawn past the hitbox (visual_scale reaches
     // ~1.16) and the bar under the body.
-    constexpr double kDrawnReachPerRadius = 1.25;
-    const auto outsideNearBox = [&](Vec2 at, double radius) {
-        const double reach = radius * kDrawnReachPerRadius;
+    const double mobNearX = halfExtent(viewport.x, kViewportWidth, nearReach);
+    const double mobNearY = halfExtent(viewport.y, kViewportHeight, nearReach);
+    const auto outsideNearBox = [&](Vec2 at, double radius, bool mob = false) {
+        const double reach = radius * kMobVisualReachPerRadius;
         const double dx = at.x - centre.x;
         const double dy = at.y - centre.y;
-        return (dx < 0 ? -dx : dx) - reach >= nearX || (dy < 0 ? -dy : dy) - reach >= nearY;
+        return std::abs(dx) - reach >= (mob ? mobNearX : nearX) ||
+            std::abs(dy) - reach >= (mob ? mobNearY : nearY);
     };
     // At most three entries, scanned linearly: a set for a squad would cost
     // more to build each tick than it could ever save looking through.
@@ -367,14 +370,30 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     const PlayerAccount* viewerAccount = world.tryGet<PlayerAccount>(viewer);
     const net::ConnectionId viewerOwner =
         viewerAccount != nullptr ? viewerAccount->connection : 0;
+    const auto hidden = [&](std::uint8_t flags) {
+        if (!(flags & net::SpawnForeign)) return false;
+        const auto setting = (flags & net::SpawnIsPet) ? net::InputHideForeignPets
+                                                      : net::InputHideForeignPetals;
+        return (frame.visibility & setting) != 0;
+    };
     const auto gather = [&](Entity e, const NetId& id, const Transform& transform) {
         // Cull before looking up claim and ghost components. Only in-view
         // drops can consume a viewer's snapshot budget.
         if (e != viewer && transform.realm != realm) return;
-        if (e != viewer && outsideView(transform.position) && !exempt(e)) return;
-        if (world.has<GhostTag>(e)) {
+        const bool mob = world.get<Replicated>(e).kind == net::EntityKind::Mob;
+        const auto* body = mob ? world.tryGet<Body>(e) : nullptr;
+        const double radius = body && std::isfinite(body->radius) ? std::max(0.0, body->radius) : 0.0;
+        if (e != viewer && outsideView(transform.position, radius * kMobVisualReachPerRadius) && !exempt(e)) return;
+        if (frame.visibility && hidden(world.get<Replicated>(e).spawnFlags |
+                                       ownershipFlags(world, e, viewer, viewerOwner))) return;
+        if (const auto* sparkle = world.tryGet<GhostSparkle>(e)) {
+            if (!isStanding(world, sparkle->ghost)) return;
             const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
-            if (!visuals || !visuals->seesGhosts) return;
+            if (visuals && visuals->canSeeGhost(world.tryGet<MobType>(sparkle->ghost)->rarity)) return;
+        }
+        if (const auto* ghost = ghostBodyOrRing(world, e)) {
+            const auto* visuals = world.tryGet<PlayerVisuals>(viewer);
+            if (!visuals || !visuals->canSeeGhost(ghost->rarity)) return;
         }
         const DropItem* drop = world.tryGet<DropItem>(e);
         if (drop) {
@@ -388,7 +407,7 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // -- but only within the viewer's realm: a party member in the maze has
         // no position that means anything on an overworld screen.
         const double distanceSq = flix::distanceSq(transform.position, centre);
-        if (drop && world.get<Replicated>(e).rarity < Rarity::Ultra) {
+        if (drop && !frame.showAllVisibleLoot && world.get<Replicated>(e).rarity < Rarity::Ultra) {
             if (distanceSq > kNearbyLootReach * kNearbyLootReach) return;
             // Keep only the nearest low-tier stacks. High tiers and the
             // observer keep their existing priority in the snapshot.
@@ -407,13 +426,13 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         }
         // The observer and nearby claimable loot must survive a full
         // snapshot even if a barrage fills the remaining entity budget.
-        const double selectionKey = e == viewer ? -2.0 :
-            (drop && !outsideNearBox(transform.position, 0.0) ? -1.0 / (1.0 + distanceSq)
-                                                             : distanceSq);
+        const double selectionKey = e == viewer ? -3.0 :
+            (mob && !outsideNearBox(transform.position, radius, true) ? -2.0 - 1.0 / (1.0 + distanceSq)
+                : drop && !outsideNearBox(transform.position, 0.0) ? -1.0 / (1.0 + distanceSq) : distanceSq);
         candidates_.push_back({e, id.value, selectionKey});
     };
 
-    const Vec2 corner{reachX, reachY};
+    const Vec2 corner{reachX + frame.mobRadiusPadding, reachY + frame.mobRadiusPadding};
     const Vec2 min = centre - corner;
     const Vec2 max = centre + corner;
     if (frame.entityGrid &&
@@ -780,7 +799,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         // it (see Frame::alwaysVisible). The radius is the one the client
         // holds, which is the size it draws the body at.
         if (candidate.entity != viewer && !exempt(candidate.entity) &&
-            outsideNearBox(transform.position, tracked.radius) &&
+            outsideNearBox(transform.position, tracked.radius,
+                           world.get<Replicated>(candidate.entity).kind == net::EntityKind::Mob) &&
             (frame.snapshotIndex + candidate.netId) % static_cast<std::uint32_t>(farStride) != 0) {
             continue;
         }
@@ -924,6 +944,15 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
     // --- events -----------------------------------------------------------
     const std::size_t eventCountAt = out.reserveU16();
     std::uint16_t eventCount = 0;
+    for (const auto& meter : frame.practiceMeters) {
+        if (eventCount == UINT16_MAX) break;
+        if (view.tracked.find(meter.netId) == view.tracked.end()) continue;
+        out.u8(static_cast<std::uint8_t>(net::EventKind::PracticeMeter));
+        out.u32(meter.netId);
+        out.f64(meter.dps);
+        out.f64(meter.total);
+        ++eventCount;
+    }
     const auto writeEvent = [&](const WireEvent& event, std::uint32_t other, std::uint8_t flag,
                                 bool ownPickup) {
         out.u8(static_cast<std::uint8_t>(event.kind));
@@ -942,8 +971,10 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
         ++eventCount;
     };
     if (!view.deferredPickups.empty() && view.deferredPickups.front().dealtByConnection == viewerOwner) {
-        for (const auto& pickup : view.deferredPickups)
+        for (const auto& pickup : view.deferredPickups) {
+            if (eventCount == UINT16_MAX) break;
             writeEvent(pickup, pickup.otherNetId, pickup.flag, true);
+        }
         view.deferredPickups.clear();
     }
     if (frame.events) {
@@ -982,7 +1013,15 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 ((viewerOwner != 0 && event.dealtByConnection == viewerOwner) ||
                  (world.tryGet<NetId>(viewer) && event.otherNetId == world.get<NetId>(viewer).value));
             if (event.wearerOnly && !tile) continue;
-            const bool offView = event.positional && outsideView(event.position);
+            bool offView = event.positional && outsideView(event.position);
+            // Large mobs can strike a visible flower while their centre is
+            // outside the streamed view. Keep the bolt when an endpoint is
+            // visible, without exposing effects from another realm.
+            if (offView && event.kind == net::EventKind::Lightning) {
+                for (const Vec2& endpoint : event.points) {
+                    if (!outsideView(endpoint)) { offView = false; break; }
+                }
+            }
             if (event.positional && !tile && !ownPickup &&
                 (event.realm != realm || (offView && !squadmateHit(event)))) {
                 continue;
@@ -998,6 +1037,8 @@ void Replicator::build(World& world, Entity viewer, ClientView& view,
                 if (owned & net::SpawnForeign) flag |= net::LightningForeign;
                 if (owned & net::SpawnIsPet) flag |= net::LightningFromPet;
             }
+            if (event.kind == net::EventKind::Lightning && (flag & net::LightningForeign) &&
+                hidden(net::SpawnForeign | ((flag & net::LightningFromPet) ? net::SpawnIsPet : 0))) continue;
             if (dealtByViewer(event)) flag |= net::DamageByViewer;
             if (offView && event.kind == net::EventKind::Damage) flag |= net::DamageOffView;
             writeEvent(event, tile ? event.wornSlot + 1u : event.otherNetId, flag, ownPickup);

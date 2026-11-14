@@ -32,6 +32,7 @@
 #include "client/ui/item_tile.h"
 #include "client/ui/menu_icons.h"
 #include "client/ui/menu_theme.h"
+#include "client/ui/menu_widgets.h"
 #include "client/ui/menus.h"
 #include "client/ui/text.h"
 #include "client/ui/text_input.h"
@@ -46,9 +47,7 @@ namespace {
 
 // --- the window -------------------------------------------------------------
 
-/// Sized to the Shop tab's content: 13 + five 140 cells + 13 across; the title
-/// row, the tab strip, 8, the two header lines, two 160 rows, 10, the two
-/// footer lines and 13 down.
+/// Shared window size for the offers, daily bonus and star guide tabs.
 constexpr double kWindowWidth = 746.0;
 constexpr double kWindowHeight = 541.4;
 constexpr double kWindowPad = 13.0;
@@ -97,14 +96,14 @@ constexpr std::uint32_t kLockFace = 0x72D862u;
 
 // --- the store's grid -------------------------------------------------------
 
-/// Two rows of five 140x160 cells; each holds a 120x140 plate 20 in and 10
-/// down, the tile and the price button on it.
+/// Five 120x140 plates in a single row, spaced 140 units apart.
 constexpr double kGridLeft = kWindowPad + 20.0;
 constexpr double kGridTop = kHeaderTop + kHeaderHeight + 10.0;
 constexpr double kCellWidth = 140.0;
-constexpr double kCellHeight = 160.0;
+constexpr double kGridHeight = 320.0;
 constexpr double kPlateWidth = 120.0;
 constexpr double kPlateHeight = 140.0;
+constexpr double kPlateTop = kGridTop - 10.0 + (kGridHeight - kPlateHeight) * 0.5;
 constexpr double kPlateRadius = 5.0;
 constexpr double kTile = 80.0;
 constexpr double kTileLeft = 20.0;
@@ -131,7 +130,7 @@ constexpr double kBadgeSize = 20.0;
 /// The footer: the balance plate in the bottom-right corner -- 5 in, the star
 /// in a 20 box, the number at 20, 5 in -- and two 14 lines right-aligned 10
 /// left of it.
-constexpr double kFooterTop = kGridTop + 2.0 * kCellHeight + 10.0;
+constexpr double kFooterTop = kGridTop + kGridHeight + 10.0;
 constexpr double kFooterSize = 14.0;
 constexpr double kFooterMiddle = kFooterTop + kFooterSize * kLineHeight;
 constexpr double kBalanceHeight = 38.0;
@@ -270,6 +269,7 @@ struct ShopState {
     bool offersLocked = false;
     double nextOfferQuerySeconds = 0;
     std::vector<ShopOffer> offers;
+    TooltipDelay offerTooltip;
 
     std::vector<FallingStar> stars;
     Rng rng;
@@ -565,6 +565,7 @@ void ShopPanel::reset() {
     state.scrim = state.stage = state.grow = 0.0;
     state.lines.clear();
     state.pendingPetal = kNoPetal;
+    state.offerTooltip.reset();
     state.pressedAt = {-1e9, -1e9};
     // The shower belongs to the moment a code was redeemed. It can only be
     // drawn while the window is up, and a shower that resumed mid-air an hour
@@ -715,6 +716,8 @@ bool ShopPanel::render(MenuContext& ctx) {
     Rect redeemButton{};
     Rect bonusButton{};
     Rect lockButton{};
+    Rect offerAnchor{};
+    int hoveredOffer = -1;
 
     if (tab_ == Tab::Offers || tab_ == Tab::Current) {
         if (ctx.net.currentShopRotation != shopRotation(shopClockNow()) && ctx.timeSeconds >= state.nextOfferQuerySeconds) {
@@ -727,6 +730,9 @@ bool ShopPanel::render(MenuContext& ctx) {
         const std::int64_t rotation = showingLocked ? ctx.net.lockedShopRotation :
             (ctx.net.currentShopRotation >= 0 ? ctx.net.currentShopRotation : shopRotation(shopClockNow()));
         {
+            if (state.offersRotation != rotation || state.offersLocked != showingLocked) {
+                state.offerTooltip.reset();
+            }
             state.offersRotation = rotation;
             state.offersLocked = showingLocked;
             state.offers = showingLocked ? ctx.net.lockedShopOffers : ctx.net.currentShopOffers;
@@ -737,7 +743,7 @@ bool ShopPanel::render(MenuContext& ctx) {
         const std::int64_t remaining = shopRotationEnd(
             ctx.net.currentShopRotation >= 0 ? ctx.net.currentShopRotation : shopRotation(shopClockNow())) - shopClockNow();
         const std::string caption = showingLocked
-            ? trEnZh("Locked selection; unlimited stock", "商品已锁定，不限购买数量")
+            ? trEnZh("Super offers locked; Eternal offers rotate hourly", "超级商品已锁定 · 永恒商品每小时轮换")
             : rotationCaption(remaining) + (preview ? trEnZh(" — Preview; unlock in Shop to buy", " · 仅预览，购买请先在商店页解锁") : "");
         text(canvas, caption, panel.x + panel.w * 0.5, panel.y + kSubMiddle,
              shopText(kSubSize));
@@ -758,13 +764,17 @@ bool ShopPanel::render(MenuContext& ctx) {
         std::array<Rect, kShopOfferCount> tiles{};
         for (std::size_t i = 0; i < state.offers.size() && i < kShopOfferCount; ++i) {
             const ShopOffer& offer = state.offers[i];
-            const int column = static_cast<int>(i) % kShopOfferColumns;
-            const int row = static_cast<int>(i) / kShopOfferColumns;
-            const Vec2 plateAt = at(kGridLeft + column * kCellWidth, kGridTop + row * kCellHeight);
+            const Vec2 plateAt = at(kGridLeft + static_cast<double>(i % kShopTierOfferCount) * kCellWidth,
+                                   kGridTop + static_cast<double>(i / kShopTierOfferCount) * 151.0);
             fillQuadRound(canvas, {plateAt.x, plateAt.y, kPlateWidth, kPlateHeight}, kPlateRadius,
                           kWindowRim);
 
             tiles[i] = {plateAt.x + kTileLeft, plateAt.y + kTileTop, kTile, kTile};
+            if (state.shown == ShopState::Modal::None && !ctx.window.pointerIsTouch() &&
+                tiles[i].contains(under) && offer.petalIndex < content().petalCount()) {
+                hoveredOffer = static_cast<int>(i);
+                offerAnchor = tiles[i];
+            }
             ItemTile tile;
             tile.petalIndex = offer.petalIndex;
             tile.rarity = offer.rarity;
@@ -872,14 +882,9 @@ bool ShopPanel::render(MenuContext& ctx) {
                     "击杀这些稀有度的怪物时，参与者都会获得对应星星。"),
              panel.x + panel.w * 0.5, panel.y + kSubMiddle, shopText(kSubSize));
 
-        // One card a tier on the store's own grid, in the row centred down the
-        // two the store fills: the tier's colour framed florr's way where a
-        // petal would stand, and what it pays where a price would.
-        const double gridHeight = 2.0 * kCellHeight;
-        const double top = kGridTop - 10.0 + (gridHeight - kPlateHeight) * 0.5;
         for (std::size_t i = 0; i < kChallenges.size(); ++i) {
             const StarChallenge& challenge = kChallenges[i];
-            const Vec2 plateAt = at(kGridLeft + static_cast<double>(i) * kCellWidth, top);
+            const Vec2 plateAt = at(kGridLeft + static_cast<double>(i) * kCellWidth, kPlateTop);
             fillQuadRound(canvas, {plateAt.x, plateAt.y, kPlateWidth, kPlateHeight}, kPlateRadius,
                           kWindowRim);
 
@@ -897,6 +902,14 @@ bool ShopPanel::render(MenuContext& ctx) {
             drawStarRow(canvas, reward, "+" + std::to_string(challenge.stars), kPriceIconBox,
                         kPriceStar, kPriceSize);
         }
+    }
+
+    if (state.offerTooltip.update(hoveredOffer, ctx.timeSeconds, held || ctx.pressed())) {
+        const ShopOffer& offer = state.offers[static_cast<std::size_t>(hoveredOffer)];
+        const auto lines = petalTooltipLines(offer.petalIndex, offer.rarity, SkillSet{}, 1.0);
+        const Vec2 size = measureTooltip(lines, 0.0, 0.0, ctx.altMode);
+        const Vec2 anchor = tooltipAnchor(offerAnchor, size, canvas.width(), canvas.height());
+        paintTooltip(canvas, anchor.x, anchor.y, lines, 0.0, 0.0, ctx.altMode);
     }
 
     // --- dialog -------------------------------------------------------------

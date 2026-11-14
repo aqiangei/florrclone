@@ -125,6 +125,7 @@ enum class ControlAction : std::uint8_t {
     /// a binding by this enum's number, so a row inserted mid-list would hand
     /// every later row's saved key to its neighbour.
     SwapLoadoutRows,
+    ToggleAltDisplay,
     Count,
 };
 
@@ -171,7 +172,7 @@ inline constexpr const char* kAshflorQqGroupId = "227990150";
 inline constexpr const char* kAshflorQqInvite = "https://qm.qq.com/q/E0OG9CLIg";
 
 /// AshFlor public feedback board (opened by the title-screen Feedback button).
-inline constexpr const char* kAshflorFeedbackBoard = "https://ashflor.com/feedback.html?";
+inline constexpr const char* kAshflorFeedbackBoard = "https://154.8.157.208/feedback.html?v=prog5";
 
 /// Slots in the icon strip: across the top-left corner, three down the
 /// bottom-left one. Not every one is shown at once -- see drawIconStrip -- and
@@ -603,10 +604,11 @@ struct SlotCardLayout {
     double listInsetY = 10.0;
 };
 
-/// The window's width for a grid `columns` cells across (never narrower than
-/// florr's 610), and for one through unique or, `withApex`, apex.
+enum class SlotGridTiers { Hyper, PermanentHyper };
+
+/// The window's width for the selected grid columns, with a minimum of 610.
 double slotCardColumnsWidth(std::size_t columns);
-double slotCardWidth(bool withApex);
+double slotCardWidth(SlotGridTiers tiers);
 /// The window's height for a grid `rows` rows deep: as tall as the grid needs,
 /// up to 700, past which the grid scrolls.
 double slotCardHeight(std::size_t rows, double extraControlsHeight = 0.0);
@@ -667,18 +669,19 @@ public:
     struct Pick {
         std::uint16_t petalIndex = kNoPetal;
         Rarity rarity = Rarity::Common;
+        Rect bounds;
     };
 
     void reset() { scroll_ = {}; thumbGrab_.reset(); }
     /// How many rows the account's petals make: one a type held at a tier the
     /// grid has a column for.
-    static std::size_t rows(const Profile&, bool withApex);
+    static std::size_t rows(const Profile&, SlotGridTiers tiers);
     /// Scrolls, draws, and returns the cell under the cursor when `look` left
     /// it clickable -- held, and not greyed.
     std::optional<Pick> render(
-        MenuContext&, const SlotCardLayout&, const ui::PanelSkin&, bool withApex,
+        MenuContext&, const SlotCardLayout&, const ui::PanelSkin&, SlotGridTiers tiers,
         const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
-        bool showScrollbar = false);
+        bool showScrollbar = false, Pick* inspected = nullptr);
 
 private:
     ui::Scroller scroll_;
@@ -845,6 +848,8 @@ private:
     void animate(double dtMs);
 
     SlotGrid grid_;
+    ui::TooltipDelay tooltip_;
+    ui::TouchInspectDelay touchInspect_;
     /// What is staged. A craft consumes five at a time; `batches` is how many
     /// fives are queued, which is what the slot badge counts.
     std::uint16_t stagedPetal_ = kNoPetal;
@@ -1009,8 +1014,6 @@ private:
     std::string refusal_;
     double refusalUntil_ = 0;
     bool switchPressed_ = false;
-    bool recycle_ = false;
-    double lastRecycledStars_ = 0.0;
 };
 
 /// The oracle: what the craft card becomes while the flower stands at an
@@ -1136,6 +1139,7 @@ private:
     bool abandon_ = false;
     bool eternalFragment_ = true;
     bool permanentHyper_ = false;
+    bool apexHammer_ = false;
     bool confirmForge_ = false;
     bool confirmBatch_ = false;
     bool confirmAll_ = false;
@@ -1189,6 +1193,14 @@ public:
 
 private:
     enum class Phase : std::uint8_t { Idle, Assembling, Result };
+
+    bool renderSchedule(MenuContext&, const SlotCardLayout&, const NpcSpec&, int currentSlot,
+                        double refreshRemainingMillis);
+    bool showSchedule_ = false;
+    int scheduleOffset_ = 0;
+    std::string previewCount_ = "1";
+    ui::TextFieldState previewCountField_;
+    Rarity bioTier_ = Rarity::Common;
 
     SlotMotion motion_;
     /// The assembler last stood at: a different one drops what was showing.
@@ -1371,6 +1383,9 @@ private:
     bool hyper_ = false;
     bool playtime_ = false;
     bool damage_ = false;
+    std::uint32_t chartRecord_ = 0;
+    std::string chartPlayer_;
+    std::size_t chartSource_ = 0;
 };
 
 class WavePanel {
@@ -1691,6 +1706,7 @@ public:
     /// The first y below the top icon row, strip inset included.
     double stripBottom() const;
     double stripRight() const;
+    double feedbackRight() const;
 
     /// True while the strip's changelog button should shake: while the
     /// changelog holds more releases than the player had seen the last time

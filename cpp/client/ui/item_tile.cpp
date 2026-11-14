@@ -205,7 +205,7 @@ constexpr GardnIcon kGardnIcon[] = {
     {"yggdrasil",        26.5,   12,  0,     kPi, 0.932},   // art fills 93% of its box
     {"yin_yang",           23,   10,  0,       0, 0.926},   // art fills 93% of its box
     {"yucca",              31,   10,  0,      -1, 0.969},   // art fills 97% of its box
-    {"fang",              31,   10,  0,      1, 0.969},   // art fills 97% of its box
+    {"fang",              31,   10,  0, -1.5708, 0.969},   // The restored source lies horizontally.
     {"coral",              31,   10,  0,      1, 0.969},   // art fills 97% of its box
     {"golden_leaf",            38.25,   10,  0,      -1,     1},
     {"coin",              31,   10,  0,       0.2,     1},
@@ -435,11 +435,18 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
     // A configured count below one means "not a stack" -- third eye, antennae
     // and the observer all declare zero and are drawn as a single icon.
     const int drawCount = count >= 1 ? count : 1;
-    // Only the confirmed upright oval egg silhouettes share this slot layout.
-    // Other silhouettes retain their authored cluster (including world drops).
     const auto& iconId = content().petal(petalIndex).id;
-    const bool eggPair = equipmentFan && drawCount == 2 &&
-                         (iconId == "egg" || iconId == "beetle_egg");
+    const bool egg = iconId == "egg";
+    const bool beetleEgg = iconId == "beetle_egg";
+    const bool battery = iconId == "battery";
+    const bool canFan = equipmentFan && drawCount > 1;
+    const bool polygon = drawCount >= 3 &&
+        (iconId == "stinger" || iconId == "magic_stinger" ||
+         iconId == "blood_stinger" || iconId == "triangle");
+    const Vec2 extent = canFan || polygon ? sprites.petalExtent(petalIndex) : Vec2{1.0, 1.0};
+    const bool slender = std::max(extent.x, extent.y) >= 1.4 * std::min(extent.x, extent.y);
+    const bool fan = canFan && !polygon && (egg || beetleEgg || battery || slender);
+    const double upright = !egg && !beetleEgg && extent.x > extent.y ? -kPi * 0.5 : 0.0;
     ClusterShape shape = clusterShape(&sprites, petalIndex, sizeStat, drawCount);
     const int authoredCount = std::max(1, content().petalStats(petalIndex, rarity).count);
     if (drawCount > authoredCount) {
@@ -460,7 +467,9 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
 
     const double diameter = shape.diameter * fit;
     const double ring = shape.ring * fit;
-    const double eggDiameter = maxDiameter > 0.0 ? std::min(diameter, maxDiameter / 2.15) : diameter;
+    const double polygonRadius = (ring + diameter * 0.5) * .94;
+    const double fanDiameter = std::min(maxDiameter > 0.0 ? maxDiameter * .68 : diameter,
+                                        diameter * 1.35);
     // gardn measures its clump radius to each petal's own ORIGIN -- a
     // stinger's is the middle of its triangle -- while drawPetal centres the
     // viewBox, which for a stinger sits 1.75 units nearer the point. Turned
@@ -472,14 +481,51 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
 
     const auto paintCluster = [&](Canvas& into, double ox, double oy) {
         if (drawCount == 1) {
-            sprites.drawPetal(into, petalIndex, rarity, ox, oy, diameter, shape.tilt,
+            const double tilt = battery ? -kPi / 5.5 : shape.tilt;
+            sprites.drawPetal(into, petalIndex, rarity, ox, oy, diameter, tilt,
                               timeSeconds);
             return;
         }
-        if (eggPair) {
-            const double gap = eggDiameter * 0.55;
-            sprites.drawPetal(into, petalIndex, rarity, ox - gap, oy, eggDiameter, shape.tilt, timeSeconds);
-            sprites.drawPetal(into, petalIndex, rarity, ox + gap, oy, eggDiameter, shape.tilt, timeSeconds);
+        if (polygon) {
+            // Fit the triangles from the centre to each outer edge of the
+            // polygon, with a slight overlap to cover antialiased seams.
+            const double halfSector = kPi / drawCount;
+            const double apothem = polygonRadius * std::cos(halfSector);
+            const double edge = 2.0 * polygonRadius * std::sin(halfSector);
+            for (int i = 0; i < drawCount; ++i) {
+                const double angle = -kPi * 0.5 + halfSector + kTau * i / drawCount;
+                into.save();
+                into.translate(ox + std::cos(angle) * apothem * .5,
+                               oy + std::sin(angle) * apothem * .5);
+                into.rotate(angle + kPi);
+                into.scale(apothem / (diameter * extent.x),
+                           edge * 1.025 / (diameter * extent.y));
+                sprites.drawPetal(into, petalIndex, rarity, 0, 0, diameter, 0, timeSeconds);
+                into.restore();
+            }
+            return;
+        }
+        if (fan) {
+            // Fan the artwork around a common lower anchor.
+            const double anchorY = oy + fanDiameter * .32;
+            const double stem = fanDiameter * (egg ? .40 : beetleEgg ? .35 :
+                .42 * std::max(extent.x, extent.y));
+            const double spread = (egg || battery) ? .65 : .49;
+            for (int i = 0; i < drawCount; ++i) {
+                const double turn = spread * (2.0 * i / (drawCount - 1) - 1.0);
+                const double x = ox + std::sin(turn) * stem;
+                const double y = anchorY - std::cos(turn) * stem;
+                if (beetleEgg) {
+                    into.save();
+                    into.translate(x, y);
+                    into.rotate(turn);
+                    into.scale(1.08, 1.28);
+                    sprites.drawPetal(into, petalIndex, rarity, 0, 0, fanDiameter, 0, timeSeconds);
+                    into.restore();
+                } else {
+                    sprites.drawPetal(into, petalIndex, rarity, x, y, fanDiameter, turn + upright, timeSeconds);
+                }
+            }
             return;
         }
         for (int i = 0; i < drawCount; ++i) {
@@ -514,7 +560,9 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
         // A margin on the box: a petal's artwork may paint outside the circle
         // it is fitted into, and a bake that cropped it would be a visible
         // change rather than a free one.
-        const double side = (eggPair ? eggDiameter * 2.1 : ring * 2.0 + diameter) * kClusterBakeMargin;
+        const double bounds = fan ? std::max(ring * 2.0 + diameter, fanDiameter * 1.8)
+                                     : ring * 2.0 + diameter;
+        const double side = bounds * kClusterBakeMargin;
         // Quantised, because the size is part of the key and one that wobbled
         // in its last decimal would bake a new bitmap every frame.
         const auto q = [](double v) { return static_cast<std::uint64_t>(std::lround(v * 16.0)); };
@@ -527,7 +575,9 @@ void drawPetalCluster(Canvas& canvas, const SpriteCache& sprites, std::uint16_t 
         variant = variant * 1000003u + q(ring);
         variant = variant * 1000003u + q(shape.tilt);
         variant = variant * 2u + (facesInward ? 1u : 0u);
-        variant = variant * 2u + (eggPair ? 1u : 0u);
+        variant = variant * 2u + (fan ? 1u : 0u);
+        variant = variant * 2u + (polygon ? 1u : 0u);
+        if (fan) variant = variant * 1000003u + q(fanDiameter);
         if (drawCachedPicture(canvas, &sprites, variant, cx - side * 0.5, cy - side * 0.5, side,
                               side, [&](Canvas& bitmap) {
                                   paintCluster(bitmap, side * 0.5, side * 0.5);

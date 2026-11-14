@@ -55,6 +55,39 @@ TEST(shard_hyper_planner_commits_real_rules_once_and_replays_after_recovery) {
     CHECK_EQ(recovered.snapshot().dump(),after.dump());
 }
 
+TEST(shard_apex_hammer_transfer_is_atomic_and_replays_once) {
+    Json records = Json::object(), globals = Json::object();
+    const auto key = hyperForgeKey("mjolnir", "garden", true);
+    records["a"]["inventory"]["ascendant"]["petal_fragment"] = 5;
+    records["b"]["inventory"]["ascendant"]["petal_mjolnir"] = 1;
+    records["b"]["inventory"]["apex"]["petal_mjolnir"] = 1;
+    globals["hyperForges"][key]["owner"] = "b";
+    globals["hyperForges"][key]["paid"] = 5;
+    globals["hyperForges"][key]["input"] = "fragment";
+    globals["hyperForges"]["garden:mjolnir"]["owner"] = "b";
+    const Node node{"one", "transaction-actor"};
+    Authority authority(Authority::initial(records, globals),
+        [](const Json&) { return Durability::Committed; });
+    const auto a = acquireHyper(authority, node, "a");
+    const auto b = acquireHyper(authority, node, "b");
+    auto input = hyperInput(a, b);
+    input["input"] = "fragment";
+    input["titan"] = "garden";
+    input["apexHammer"] = true;
+    Json business;
+    const auto plan = [&](const Json& state) { return planHeldHyper(state, node, input, 1000, business); };
+    CHECK(authority.apply(node, input, plan)["ok"].asBool());
+    CHECK(business["ok"].asBool());
+    CHECK_EQ(business["consumed"].asInt(), 5);
+    const auto snapshot = authority.snapshot();
+    CHECK_EQ(snapshot["globals"]["hyperForges"][key]["owner"].asString(), "a");
+    CHECK_EQ(snapshot["globals"]["hyperForges"]["garden:mjolnir"]["owner"].asString(), "b");
+    CHECK_EQ(snapshot["accounts"]["a"]["record"]["inventory"]["ascendant"]["petal_mjolnir"].asInt(), 1);
+    CHECK_EQ(snapshot["accounts"]["b"]["record"]["inventory"]["ascendant"]["petal_fragment"].asInt(), 4);
+    CHECK_EQ(snapshot["accounts"]["b"]["record"]["inventory"]["apex"]["petal_mjolnir"].asInt(), 1);
+    CHECK(authority.apply(node, input, plan)["replayed"].asBool());
+    CHECK_EQ(authority.snapshot().dump(), snapshot.dump());
+}
 TEST(shard_hyper_planner_rejects_foreign_or_stale_owner_before_business_changes) {
     Node one{"one","boot"},two{"two","boot"};int saves=0;
     Authority authority(hyperSeed(),[&](const Json&){++saves;return Durability::Committed;});

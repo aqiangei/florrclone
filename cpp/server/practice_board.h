@@ -39,7 +39,8 @@ inline std::string practiceLoadout(const ContentRegistry& content, const Loadout
 // Keep the best result for each loadout. A public result is immutable until
 // the owner deliberately hides or replaces it; later private tests stay private.
 inline void savePracticeScore(Database& db, const std::string& userId,
-                              const std::string& loadout, double damage) {
+                              const std::string& loadout, double damage,
+                              Json breakdown = Json()) {
     if (!std::isfinite(damage) || damage <= 0.0) return;
     auto& record = db.progress(userId);
     auto& history = record.extra["practiceRecords"];
@@ -69,6 +70,7 @@ inline void savePracticeScore(Database& db, const std::string& userId,
     row["damage"] = damage;
     row["at"] = static_cast<double>(db.nowMillis());
     row["loadout"] = loadout;
+    if (breakdown.isArray()) row["breakdown"] = std::move(breakdown);
     if (replace == rows.size()) rows.push_back(std::move(row));
     else rows[replace] = std::move(row);
     db.markDirty();
@@ -149,6 +151,7 @@ inline void writePracticeBoard(ByteWriter& out, const Json& board) {
             out.f64(row["at"].asDouble());
             out.boolean(row["public"].asBool());
             out.str(row["loadout"].asString());
+            out.str(row["breakdown"].dump());
         }
     };
     list("own", net::kPracticeHistoryLimit);

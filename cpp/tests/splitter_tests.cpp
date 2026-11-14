@@ -814,6 +814,64 @@ TEST(splitter_parked_pickup_is_banked_once_and_bulk_blacklist_preserves_material
     CHECK_EQ(alice.profile().stackCount(petal, Rarity::Rare), initial + 7);
 }
 
+TEST(death_summary_uses_credited_splitter_loot_and_ignores_visual_cues) {
+    Harness h("splitter-death-loot", {}, flix::testsupport::dataDir(), 0);
+    NetClient alice;
+    if (!h.ready || !loginNew(h, alice, "alice", "hunter2!")) { CHECK(false); return; }
+    alice.joinGame(1280, 720, {}, "alice");
+    if (!h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; }) ||
+        !equipSplitter(h, alice, "alice", content().petalIndex(kSplitterPetalId))) {
+        CHECK(false); return;
+    }
+    auto& world = h.server.world();
+    auto* session = GameServerPeer::sessionOf(h.server, "alice");
+    if (!session || !h.stepUntil({&alice}, [&] { return session->split(); })) { CHECK(false); return; }
+
+    const auto active = session->entity;
+    const auto parked = session->splitOther;
+    const auto rock = content().petalIndex("rock");
+    const auto at = world.get<Transform>(parked);
+    auto& record = GameServerPeer::authorityDb(h.server).progress(session->userId);
+    record.setItemCount(Rarity::Rare, "petal_rock", kMaxStackCount - 1);
+    LootSystem fixtureLoot;
+    const auto drop = fixtureLoot.spawnDrop(world, rock, Rarity::Rare, at.position, at.realm, {parked});
+    world.add<NetId>(drop, NetId{4000000000u});
+    world.get<DropItem>(drop).quantity = 7;
+    if (!h.stepUntil({&alice}, [&] { return !world.isAlive(drop); })) { CHECK(false); return; }
+    CHECK_EQ(record.itemCount(Rarity::Rare, "petal_rock"), kMaxStackCount);
+
+    // The legacy event tally included the entire ground stack even though only
+    // one fit. Two plausible-width visual cues can also fabricate a 4.1B row
+    // without any inventory credit. Deliver both through the real death frame.
+    const auto activeId = world.get<NetId>(active).value;
+    auto& events = GameServerPeer::snapshotEvents(h.server);
+    for (std::uint32_t id : {4000000001u, 4000000002u}) {
+        events.pickedUp(id, activeId, at.position, at.realm, rock, Rarity::PermanentHyper,
+                        2050000000u, session->connection);
+    }
+    for (const auto body : {active, parked}) {
+        world.get<Health>(body).current = 0.0;
+        world.add<Dead>(body);
+    }
+    CHECK(h.stepUntil({&alice}, [&] { return alice.dead(); }));
+    h.step(4, {&alice});
+
+    std::uint64_t visualRock = 0, visualGold = 0;
+    for (const auto& cue : alice.view().events()) {
+        if (cue.kind != net::EventKind::PickedUp || !cue.pickupByAccount || cue.amount != rock) continue;
+        if (cue.flag == rarityIndex(Rarity::Rare)) visualRock += cue.pickupQuantity;
+        if (cue.flag == rarityIndex(Rarity::PermanentHyper)) visualGold += cue.pickupQuantity;
+    }
+    CHECK_EQ(visualRock, 7u);
+    CHECK_EQ(visualGold, 4100000000ull);
+    CHECK_EQ(record.itemCount(Rarity::PermanentHyper, "petal_rock"), 0);
+    CHECK_EQ(alice.runLoot().size(), 1u);
+    if (alice.runLoot().size() != 1u) return;
+    CHECK_EQ(alice.runLoot().front().petalIndex, rock);
+    CHECK_EQ(alice.runLoot().front().rarity, Rarity::Rare);
+    CHECK_EQ(alice.runLoot().front().count, 1u);
+}
+
 TEST(splitter_parked_kills_keep_loot_entitlement_for_the_active_body) {
     Harness h("splitter-kill-loot", {}, flix::testsupport::dataDir(), 0);
     CHECK(h.ready); if (!h.ready) return;
@@ -937,4 +995,62 @@ TEST(dice_real_equipment_server_ticks_deliver_critical_damage) {
     auto total=[&]{double sum=0;for(const auto& v:world.get<Bounty>(victim).contributors)sum+=v.damage;return sum;};
     for(int i=0;i<2400;++i){const auto before=total();h.step(1,{&alice});for(const auto& event:alice.view().events())if(event.kind==net::EventKind::Damage && event.netId==4000000001u){maximumOnClient=std::max(maximumOnClient,event.amount);if(event.amount>base*30)criticalFlag=criticalFlag||((event.flag&net::DamageCritical)!=0);}alice.view().events().clear();const double delta=total()-before;if(delta>0){++hits;maximum=std::max(maximum,delta);}}
     CHECK(hits>=100);CHECK(maximum>base*30);CHECK(maximumOnClient>base*30);CHECK(criticalFlag);
+}
+
+TEST(wave_splitter_switches_and_leaves_as_one_participant) {
+    Harness h("wave-splitter", {}, flix::testsupport::dataDir(), 0);
+    if (!h.ready) { CHECK(false); return; }
+    NetClient alice;
+    CHECK(loginNew(h, alice, "alice", "hunter2!"));
+    alice.joinGame(1280, 720, {}, "alice");
+    if (!h.stepUntil({&alice}, [&] { return alice.status() == NetClient::Status::Playing; })) {
+        CHECK(false);
+        return;
+    }
+    World& world = h.server.world();
+    const Entity original = soleBody(world, "alice");
+    if (original == NULL_ENTITY) { CHECK(false); return; }
+    const auto origin = world.get<Transform>(original).realm;
+    alice.sendChat("/wave start");
+    if (!h.stepUntil({&alice}, [&] { return world.has<WavePlayer>(original); })) {
+        CHECK(false);
+        return;
+    }
+    CHECK(equipSplitter(h, alice, "alice", content().petalIndex(kSplitterPetalId)));
+    if (!h.stepUntil({&alice}, [&] { return bodiesNamed(world, "alice").size() == 2; })) {
+        CHECK(false);
+        return;
+    }
+    for (const Entity body : bodiesNamed(world, "alice")) {
+        CHECK(world.has<WavePlayer>(body));
+        world.get<Health>(body).invulnerableUntilMillis = 1e12;
+    }
+    auto* session = GameServerPeer::sessionOf(h.server, "alice");
+    if (!session) { CHECK(false); return; }
+    const auto spare = session->splitOther;
+    CHECK(h.stepUntil({&alice}, [&] {
+        return !world.get<Loadout>(original).slots[0].broken;
+    }, 600));
+    alice.usePetal(0);
+    CHECK(h.stepUntil({&alice}, [&] { return session->entity == spare; }));
+    CHECK(h.stepUntil({&alice}, [&] { return alice.view().self().wave.durationMillis > 0; }));
+    alice.requestWaveRoomStatus();
+    CHECK(h.stepUntil({&alice}, [&] { return alice.waveRoomStatus.occupied == 1; }));
+    const double initialStars = world.get<PlayerProgress>(spare).stars;
+    const auto connection = world.get<PlayerAccount>(original).connection;
+    h.clock += 30000.0;
+    CHECK(h.stepUntil({&alice}, [&] {
+        if (world.get<PlayerProgress>(spare).stars > initialStars) return true;
+        for (const Entity enemy : Query<WaveEnemy>{world}.collect()) {
+            if (!isStanding(world, enemy)) continue;
+            world.get<Bounty>(enemy).credit(original, world.get<Health>(enemy).max, connection);
+            world.add<Dead>(enemy);
+        }
+        return false;
+    }, 850));
+    CHECK_NEAR(world.get<PlayerProgress>(spare).stars, initialStars + 7500.0, 1e-9);
+    alice.sendChat("/wave leave");
+    CHECK(h.stepUntil({&alice}, [&] { return alice.view().realm() == origin; }));
+    CHECK(!world.has<WavePlayer>(spare));
+    CHECK(h.stepUntil({&alice}, [&] { return alice.waveResultNotice().sequence > 0; }));
 }

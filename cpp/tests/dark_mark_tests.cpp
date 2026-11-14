@@ -148,3 +148,41 @@ TEST(dark_mark_real_petal_arms_once_and_cancels_on_revival) {
     CHECK_NEAR(w.get<Health>(mark).current, 0, 0);
     CHECK(w.get<Transform>(f.target).realm == Realm::Overworld);
 }
+TEST(arctic_frozen_mark_charges_and_transports_through_the_live_petal) {
+    MarkFixture f;
+    if (!f.ready) return;
+    auto& w = f.server.world();
+    CommandBuffer commands{w};
+    auto& petals = Peer::markPetals(f.server);
+    auto& slot = w.get<Loadout>(f.owner).slots[0];
+    const auto index = content().petalIndex("arctic_frozen_mark");
+    CHECK(index != kInvalidIndex);
+    slot.configIndex = index;
+    slot.rarity = Rarity::Common;
+    petals.run(w, content(), 1000000, 0, commands);
+    petals.run(w, content(), 1021000, 0, commands);
+    Entity mark = NULL_ENTITY;
+    for (const auto e : w.get<Loadout>(f.owner).spawned) {
+        if (w.get<PetalInstance>(e).configIndex == index) mark = e;
+    }
+    CHECK(mark != NULL_ENTITY);
+    if (!mark) return;
+    const auto originalRealm = w.get<Transform>(f.target).realm;
+    f.kill();
+    w.get<Transform>(f.target).position = w.get<Transform>(mark).position;
+    w.get<PlayerInput>(f.owner).current.flags = net::InputAttack;
+    Peer::markClock(f.server, 1021000);
+    petals.run(w, content(), 1021000, 0, commands);
+    CHECK(w.get<PetalInstance>(mark).markTarget == f.target);
+    CHECK_NEAR(w.get<PetalInstance>(mark).markReadyAtMillis, 1141000.0, 0);
+    Peer::markClock(f.server, 1140999);
+    petals.run(w, content(), 1140999, 0, commands);
+    CHECK(w.has<Dead>(f.target));
+    Peer::markClock(f.server, 1141000);
+    petals.run(w, content(), 1141000, 0, commands);
+    CHECK(isStanding(w, f.target));
+    const auto* destination = f.server.worldMaps().forRealm(w.get<Transform>(f.target).realm);
+    CHECK(destination && destination->id() == "zorr_arctic");
+    f.returnCommand();
+    CHECK(w.get<Transform>(f.target).realm == originalRealm);
+}

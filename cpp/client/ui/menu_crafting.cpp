@@ -183,15 +183,16 @@ double cloverBonus(const Profile& profile, Rarity rarity) {
 } // namespace
 
 Vec2 CraftingPanel::size(const Profile& profile) {
-    // Common through unique: nothing upgrades out of apex, so there is no
-    // column for it -- the same reason stage() refuses one.
-    return {slotCardWidth(false), slotCardHeight(SlotGrid::rows(profile, false), kBulkControlsHeight)};
+    constexpr auto tiers = SlotGridTiers::PermanentHyper;
+    return {slotCardWidth(tiers), slotCardHeight(SlotGrid::rows(profile, tiers), kBulkControlsHeight)};
 }
 
 void CraftingPanel::reset() {
     bulkArmed_=false;
     editingBlacklist_=false;
     grid_.reset();
+    tooltip_.reset();
+    touchInspect_.reset();
     stagedPetal_ = kNoPetal;
     batches_ = 0;
     heldPetal_ = kNoPetal;
@@ -209,7 +210,8 @@ void CraftingPanel::reset() {
 void CraftingPanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity rarity,
                           std::uint32_t addBatches) {
     const int possible = ownedCount(profile, petalIndex, rarity) / kBatch;
-    if (possible <= 0 || !craftsOutOf(rarity)) return;
+    if (possible <= 0 || !craftsOutOf(rarity) ||
+        (rarity == Rarity::PermanentHyper && (content().petal(petalIndex).id == "mjolnir" || petalHasOwnSource(content().petal(petalIndex))))) return;
 
     if (stagedPetal_ != petalIndex || stagedRarity_ != rarity) {
         stagedPetal_ = petalIndex;
@@ -450,7 +452,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
     std::string odds = language() == Language::Zh ? "成功率：?%" : "?% success chance";
     if (stagedPetal_ != kNoPetal) {
         const double percent = std::min(100.0, craftSuccessChance(stagedRarity_) * 100.0 +
-                                                   cloverBonus(profile, stagedRarity_));
+                                                   (stagedRarity_ == Rarity::PermanentHyper ? 0.0 : cloverBonus(profile, stagedRarity_)));
         odds = language() == Language::Zh ? "成功率：" + percentText(percent) : percentText(percent) + " success chance";
     }
     drawSlotChance(canvas, card, odds);
@@ -465,11 +467,16 @@ bool CraftingPanel::render(MenuContext& ctx) {
             std::to_string(outcome.crafted) + (chinese ? "，消耗 ×" : ", consumed x") +
             std::to_string(outcome.consumed));
     } else {
-        drawSlotLine(canvas, card, language() == Language::Zh ? "使用5个相同花瓣合成，最高至超级" : "Combine 5 of the same petal; upgrades stop at Super");
+        drawSlotLine(canvas, card, trEnZh("Select 5 matching petals to craft",
+                                           "选择 5 个相同花瓣进行合成"));
     }
     // The warning only once there is something to lose.
     if (stagedPetal_ != kNoPetal) {
         drawSlotLine(canvas, card, language() == Language::Zh ? "失败会消耗1至4个花瓣" : "Failure will destroy 1-4 petals", std::nullopt, true);
+    } else {
+        drawSlotLine(canvas, card, trEnZh("Apex: select Permanent Hyper in the last column",
+                                           "合成 Apex：选择最右列的永久超凡"),
+                     rarityColor(Rarity::Ascendant), true);
     }
 
     // --- the grid ----------------------------------------------------------
@@ -503,12 +510,14 @@ bool CraftingPanel::render(MenuContext& ctx) {
         const auto& ids = ctx.settings.craftBlacklist;
         return std::find(ids.begin(), ids.end(), content().petal(index).id) != ids.end();
     };
+    SlotGrid::Pick inspected;
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
-        ctx, bulkCard, kCraftingSkin, false,
+        ctx, bulkCard, kCraftingSkin, SlotGridTiers::PermanentHyper,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;
-            cell.greyed = !craftsOutOf(rarity);
+            cell.greyed = !craftsOutOf(rarity) ||
+                (rarity == Rarity::PermanentHyper && (content().petal(petalIndex).id == "mjolnir" || petalHasOwnSource(content().petal(petalIndex))));
             // Staged petals are gone from the player's point of view the
             // moment they land in the ring, so the badge counts down with each
             // click.
@@ -520,7 +529,7 @@ bool CraftingPanel::render(MenuContext& ctx) {
             if (cell.count > 1) cell.badge = "x" + stackCountText(cell.count);
             if (isExcluded(petalIndex)) cell.badge = bulkChinese ? "排除" : "Skip";
             return cell;
-        }, true);
+        }, true, &inspected);
 
     // Craft + Craft All toggle side by side, centred on the card's button
     // anchor. Craft All is a mode, not a one-shot: while on, a click on a
@@ -551,6 +560,23 @@ bool CraftingPanel::render(MenuContext& ctx) {
     // Tiles on their way out go over everything.
     fx_.drawVanishing(canvas, ctx.sprites, ctx.dt * 1000.0);
 
+    const int inspectedId = inspected.petalIndex == kNoPetal ? -1
+        : inspected.petalIndex * kRarityCount + rarityIndex(inspected.rarity);
+    const bool movedFromMaterial = touchInspect_.downBefore && touchInspect_.blocked;
+    const bool touchTooltip = touchInspect_.touch(ctx.window, ctx.timeSeconds, [&](Vec2 point) {
+        return inspected.bounds.contains(point) ? inspectedId : -1;
+    }, ctx.window.touchPan().active);
+    const bool mouseTooltip = tooltip_.update(ctx.window.pointerIsTouch() ? -1 : inspectedId,
+                                               ctx.timeSeconds, mouseDown);
+    if (touchTooltip || mouseTooltip) {
+        const double reloadScale = profile.skills.reloadScale() *
+            (1.0 - barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills));
+        const auto lines = petalTooltipLines(inspected.petalIndex, inspected.rarity, profile.skills, reloadScale);
+        const Vec2 size = measureTooltip(lines, 0.0, 0.0, ctx.altMode);
+        const Vec2 anchor = tooltipAnchor(inspected.bounds, size, canvas.width(), canvas.height());
+        paintTooltip(canvas, anchor.x, anchor.y, lines, 0.0, 0.0, ctx.altMode);
+    }
+
     // --- input -------------------------------------------------------------
     // Hold-repeat staging: same cadence as Absorb, in batches of five.
     if (heldPetal_ != kNoPetal) {
@@ -575,7 +601,12 @@ bool CraftingPanel::render(MenuContext& ctx) {
         heldPetal_ = kNoPetal;
         return true;
     }
-    if (!ctx.pressed() && !rightPressed) return true;
+    // A tap still stages one batch. Wait for release on touch so inspection
+    // and a scroll starting on a material cell cannot stage a batch.
+    if (ctx.window.pointerIsTouch() && (touchInspect_.downBefore || touchInspect_.consumedRelease || movedFromMaterial)) return true;
+    const bool materialTap = ctx.window.pointerIsTouch() && hovered && ctx.released() &&
+                             !ctx.window.touchScrolling();
+    if (!ctx.pressed() && !rightPressed && !materialTap) return true;
     if (card.close.contains(mouse) && ctx.pressed()) return false;
     if (switchRect.contains(mouse) && ctx.pressed()) {
         switchPressed_ = true;

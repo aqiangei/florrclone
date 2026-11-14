@@ -11,13 +11,16 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "server/admin_tiers.h"
 #include "server/db.h"
 #include "shared/core/entity.h"
+#include "shared/game/components.h"
 #include "shared/game/constants.h"
 #include "shared/game/realm.h"
 #include "shared/net/protocol.h"
@@ -40,6 +43,8 @@ enum class SessionStage : std::uint8_t {
 struct Session {
     net::ConnectionId connection = 0;
     SessionStage stage = SessionStage::Greeting;
+    /// Inventory credits since joining the world, shared by both split bodies.
+    std::map<std::pair<std::uint16_t, Rarity>, std::uint32_t> runLoot;
     /// Where the connection really comes from, worked out once when it opened:
     /// the TCP peer, or the address a trusted proxy in front of the server
     /// named (clientAddress, server/account_limits.h). What every abuse limit
@@ -52,7 +57,43 @@ struct Session {
         double endsAt = 0.0;
         double damage = 0.0;
         std::array<std::uint32_t, kLoadoutActiveSlots> loadout{};
+        struct Source {
+            std::uint16_t petal = kNoPetal;
+            Rarity rarity = Rarity::Common;
+            std::array<double, net::kPracticeWindowSeconds> seconds{};
+        };
+        std::vector<Source> sources;
     } practiceTrial;
+
+    struct DummyDamage {
+        struct Sample {
+            double atMillis;
+            double damage;
+        };
+        std::deque<Sample> recent;
+        double recentDamage = 0;
+        double total = 0;
+
+        void expire(double wallMillis) {
+            const double cutoff = wallMillis - 1000.0 * net::kPracticeWindowSeconds;
+            while (!recent.empty() && recent.front().atMillis <= cutoff) {
+                recentDamage -= recent.front().damage;
+                recent.pop_front();
+            }
+            if (recent.empty()) recentDamage = 0;
+        }
+
+        void record(double wallMillis, double damage) {
+            expire(wallMillis);
+            if (recent.empty() || recent.back().atMillis != wallMillis) {
+                recent.push_back({wallMillis, 0});
+            }
+            recent.back().damage += damage;
+            recentDamage += damage;
+            total += damage;
+        }
+    };
+    std::unordered_map<Entity, DummyDamage> dummyDamage;
 
     bool splitCreatedSoloSquad = false;
     bool pyramidMapRevealed = false;
@@ -163,7 +204,7 @@ struct Session {
     /// (shared/game/prestige.h). Kept beside spawnChoice so a respawn goes
     /// back to the prestige biome; never set for the arena or the maze, which
     /// have no twin.
-    bool prestige = false;
+    int prestige = 0;
 
     /// The coordinate space the body is in while Playing (realm.h). Overworld
     /// between bodies, so a title-screen session reads as ordinary ground.
@@ -184,6 +225,14 @@ struct Session {
     /// the run's loot reaches the real account when the run ends
     /// (src/server/playerManager.ts:99-158). Null outside the ring.
     std::unique_ptr<PlayerRecord> arena;
+    bool inRift = false;
+    bool riftEliminated = false;
+    bool riftPrizeRoom = false;
+    bool riftPrizeComplete = false;
+    bool riftPrizeFullNotice = false;
+    std::vector<Entity> riftPrizeDrops;
+    Vec2 riftReturnPosition{};
+    Realm riftReturnRealm = Realm::Overworld;
 
     /// The flower's name, typed on the title screen and sent with JoinGame.
     /// Separate from `username`: the account is who you are, this is what the
@@ -194,6 +243,7 @@ struct Session {
     /// Input sequence already applied. Inputs at or below this are replays and
     /// are dropped, so a duplicated packet cannot move the player twice.
     std::uint32_t lastInputSequence = 0;
+    std::uint8_t snapshotVisibility = 0;
 
     /// Whether this body's death has already been announced. A player's corpse
     /// KEEPS its Dead tag so the client goes on being sent a dead flower, so

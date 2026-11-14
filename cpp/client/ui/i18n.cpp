@@ -96,6 +96,8 @@ constexpr Entry kTable[] = {
     {"Account", "账户"},
     {"Stack", "堆叠"},
     {"No guild", "无公会"},
+    {"Tags use letters or digits. Three characters are allowed.", "标签可用英文字母或数字，3 位也可以。"},
+    {"Guild tag", "公会标签"},
     {"Drops:", "掉落："},
     {"Signed in as", "当前登录"},
     {"Log Out", "退出登录"},
@@ -221,13 +223,15 @@ const char* menuTitle(MenuId id) {
         case MenuId::AdminDb: return tr(Msg::Database);
         case MenuId::AdminDashboard: return tr(Msg::Admin);
         case MenuId::Assets: return tr(Msg::Assets);
-        case MenuId::Wave: return "Wave 试炼";
+        case MenuId::Wave: return "波次试炼";
         case MenuId::Account: return tr(Msg::Account);
         default: return "";
     }
 }
 
 const char* controlTitle(ControlAction action) {
+    if (action == ControlAction::ToggleAltDisplay)
+        return trEnZh("Toggle detail display (backup)", "详细显示备用键");
     switch (action) {
         case ControlAction::MoveUp: return tr(Msg::MoveUp);
         case ControlAction::MoveDown: return tr(Msg::MoveDown);

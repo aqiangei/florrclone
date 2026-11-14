@@ -136,10 +136,22 @@ double listWidth(std::size_t columns) {
     return static_cast<double>(columns) * kGridPitch + kListExtra;
 }
 
-/// Never a universal column: no card -- forge, oracle or trader -- takes one.
-std::size_t tierColumns(bool withApex) {
-    return withApex ? static_cast<std::size_t>(kLadderRarityCount)
-                    : static_cast<std::size_t>(Rarity::Unique) + 1;
+constexpr int kUpgradeBaseColumns = rarityIndex(Rarity::Unique) + 1;
+
+std::size_t tierColumns(SlotGridTiers tiers) {
+    return tiers == SlotGridTiers::PermanentHyper ? kUpgradeBaseColumns + 1 : kLadderRarityCount;
+}
+
+Rarity slotGridRarity(SlotGridTiers tiers, std::size_t column) {
+    if (tiers == SlotGridTiers::PermanentHyper && column == kUpgradeBaseColumns)
+        return Rarity::PermanentHyper;
+    return static_cast<Rarity>(column);
+}
+
+bool slotGridShows(SlotGridTiers tiers, Rarity rarity) {
+    return tiers == SlotGridTiers::PermanentHyper
+        ? rarityIndex(rarity) < kUpgradeBaseColumns || rarity == Rarity::PermanentHyper
+        : rarityIndex(rarity) < kLadderRarityCount;
 }
 
 /// Particle jitter. Not reproducible and not meant to be, exactly as the world
@@ -244,7 +256,7 @@ Rect drawSlotSwitch(Canvas& canvas, const SlotCardLayout& layout, std::uint32_t 
     return hit;
 }
 
-double slotCardWidth(bool withApex) { return slotCardColumnsWidth(tierColumns(withApex)); }
+double slotCardWidth(SlotGridTiers tiers) { return slotCardColumnsWidth(tierColumns(tiers)); }
 
 double slotCardColumnsWidth(std::size_t columns) {
     // florr's list is 576 wide in its 610: 17 either side. Our ladder has a
@@ -405,24 +417,19 @@ double contentHeightFor(std::size_t rows, double insetY) {
 
 } // namespace
 
-std::size_t SlotGrid::rows(const Profile& profile, bool withApex) {
-    const int columns = static_cast<int>(tierColumns(withApex));
-    return heldTypes(profile, [&](Rarity r) { return rarityIndex(r) < columns; }).size();
+std::size_t SlotGrid::rows(const Profile& profile, SlotGridTiers tiers) {
+    return heldTypes(profile, [&](Rarity rarity) { return slotGridShows(tiers, rarity); }).size();
 }
 
 std::optional<SlotGrid::Pick> SlotGrid::render(
-    MenuContext& ctx, const SlotCardLayout& layout, const PanelSkin& skin, bool withApex,
+    MenuContext& ctx, const SlotCardLayout& layout, const PanelSkin& skin, SlotGridTiers tiers,
     const std::function<SlotCell(std::uint16_t petalIndex, Rarity, std::uint32_t owned)>& look,
-    bool showScrollbar) {
+    bool showScrollbar, Pick* inspected) {
     Canvas& canvas = ctx.canvas;
     const Profile& profile = ctx.net.profile();
     const Vec2 mouse = ctx.mouse();
-    const std::size_t columns = tierColumns(withApex);
-
-    // A stack only a column the grid does not have would show -- an apex one
-    // on a card that stops at unique -- does not earn its type a row.
-    const std::vector<std::uint16_t> types = heldTypes(
-        profile, [&](Rarity r) { return rarityIndex(r) < static_cast<int>(columns); });
+    const std::size_t columns = tierColumns(tiers);
+    const auto types = heldTypes(profile, [&](Rarity rarity) { return slotGridShows(tiers, rarity); });
 
     const Rect clip = listClip(layout, columns);
     const double contentHeight = contentHeightFor(types.size(), layout.listInsetY);
@@ -481,7 +488,7 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
         // one, and painting that cell after it would cut the label off.
         for (std::size_t k = 0; k < columns; ++k) {
             const std::size_t column = columns - 1 - k;
-            const Rarity rarity = static_cast<Rarity>(column);
+            const Rarity rarity = slotGridRarity(tiers, column);
             const Rect rect{clip.x + kCellInsetX + static_cast<double>(column) * kGridPitch, y,
                             kGridCell, kGridCell};
             const SlotCell cell = look(petalIndex, rarity, profile.stackCount(petalIndex, rarity));
@@ -491,9 +498,11 @@ std::optional<SlotGrid::Pick> SlotGrid::render(
                 drawSlotPlate(canvas, ctx.sprites, rect, skin);
                 continue;
             }
-            const bool over = !thumbGrab_ && !(scrollable && hit.contains(mouse)) &&
-                              !cell.greyed && rect.contains(mouse) && clip.contains(mouse);
-            if (over) hovered = Pick{petalIndex, rarity};
+            const bool pointsAtCell = !thumbGrab_ && !(scrollable && hit.contains(mouse)) &&
+                                      rect.contains(mouse) && clip.contains(mouse);
+            if (inspected && pointsAtCell) *inspected = Pick{petalIndex, rarity, rect};
+            const bool over = pointsAtCell && !cell.greyed;
+            if (over) hovered = Pick{petalIndex, rarity, rect};
 
             ItemTile tile;
             tile.petalIndex = petalIndex;

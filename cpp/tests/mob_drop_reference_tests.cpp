@@ -4,6 +4,7 @@
 #include "server/systems/spawning.h"
 #include "server/systems/combat.h"
 #include "shared/game/drop_rates.h"
+#include "shared/game/hyper_petal_techniques.h"
 #include <map>
 
 using namespace flix;
@@ -30,6 +31,55 @@ Counts kills(const char* id,Rarity rarity,int count,bool orb=false,int bonus=1,i
 }
 int total(const Counts& counts,const std::string& name){int n=0;for(const auto&[key,value]:counts)if(key.first==name)n+=value;return n;}
 }
+TEST(apex_reward_roll_is_personal_and_independent_of_drop_bonus) {
+    constexpr int trials = 1200;
+    for (int bonus : {1, 3}) {
+        const auto result = kills("crab", Rarity::Ascendant, trials, false, bonus, nullptr, true);
+        int apex = 0;
+        for (const auto& [key, count] : result) {
+            if (key.second == rarityIndex(Rarity::Ascendant)) apex += count;
+        }
+        CHECK_NEAR(static_cast<double>(apex) / trials, 0.02, 0.012);
+    }
+}
+
+TEST(apex_uses_the_mobs_normal_petal_table) {
+    const auto result = kills("ladybug", Rarity::Ascendant, 1200);
+    int roses = 0;
+    int lights = 0;
+    for (const auto& [key, count] : result) {
+        if (key.second != rarityIndex(Rarity::Ascendant)) continue;
+        CHECK(key.first == "rose" || key.first == "light");
+        if (key.first == "rose") roses += count;
+        if (key.first == "light") lights += count;
+    }
+    CHECK(roses > 0);
+    CHECK(lights > 0);
+    CHECK_NEAR((roses + lights) / 1200.0, 0.02, 0.012);
+}
+
+TEST(apex_rarity_preserves_legacy_names_and_sets_craft_terms) {
+    CHECK_EQ(parseRarity("apex"), Rarity::Apex);
+    CHECK_EQ(parseRarity("permanent_hyper"), Rarity::PermanentHyper);
+    CHECK_EQ(parseRarity("ascendant"), Rarity::Ascendant);
+    CHECK_EQ(rarityColor(Rarity::Ascendant), 0xFF00FFu);
+    CHECK_EQ(upgradeRarity(Rarity::PermanentHyper), Rarity::Ascendant);
+    CHECK(!craftsOutOf(Rarity::Ascendant));
+    CHECK_NEAR(craftSuccessChance(Rarity::PermanentHyper), 0.025, 1e-12);
+    CHECK_EQ(oracleCraftCost(Rarity::PermanentHyper), 120);
+    const auto& c = registry();
+    const auto index = c.petalIndex("missile");
+    const auto hyper = c.petalStats(index, Rarity::PermanentHyper);
+    const auto apex = c.petalStats(index, Rarity::Ascendant);
+    CHECK_NEAR(apex.damage / hyper.damage, 1.25, 1e-12);
+    CHECK_NEAR(apex.health / hyper.health, 1.30, 1e-12);
+    CHECK_EQ(apex.reloadMillis, hyper.reloadMillis);
+    CHECK(hyperTechnique("missile", Rarity::Ascendant, false) == HyperTechnique::MissileSpeed);
+    const auto hornet = c.mobIndex("hornet");
+    CHECK_NEAR(c.mobStats(hornet, Rarity::Ascendant).health /
+               c.mobStats(hornet, Rarity::Apex).health, 1.25, 1e-12);
+}
+
 double expectedHyperEternals(const char* id) {
     const auto& c=registry();DropTables tables;tables.link(c);std::vector<HyperEternalDropWeight> weights;
     for(const auto& e:tables.guaranteedForMob(c.mobIndex(id)))

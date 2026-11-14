@@ -1104,3 +1104,23 @@ TEST(meteor_draws_its_blocking_edge_and_hyper_veins) {
     CHECK(testsupport::differingPixels(regular, hyper, 12) > 500);
     CHECK(testsupport::differingPixels(hyper, draw(Rarity::Apex, 0.6), 6) > 100);
 }
+
+
+TEST(shipped_wild_jellyfish_shock_players_in_range) {
+    const auto& registry = testsupport::shippedContent();
+    const auto id = registry.mobIndex("jellyfish");
+    CHECK(id != kInvalidIndex);
+    if (id == kInvalidIndex) return;
+    for (int tier = 0; tier < kLadderRarityCount; ++tier) {
+        const Rarity rarity = clampRarity(tier);
+        const auto stats = registry.mobStats(id, rarity);
+        Sim sim;
+        const Entity jelly = sim.mob({0, 0}, id, stats.damage, stats.radius);
+        sim.world.get<MobType>(jelly).rarity = rarity;
+        const Entity flower = sim.player({stats.radius + 100.0, 0});
+        sim.world.get<Health>(flower) = Health{1e9, 1e9};
+        sim.step(10000.0, registry);
+        CHECK_EQ(sim.bolts().size(), std::size_t(1));
+        CHECK(sim.health(flower) < 1e9);
+    }
+}

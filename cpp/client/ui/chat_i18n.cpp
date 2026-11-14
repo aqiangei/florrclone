@@ -1,9 +1,12 @@
 #include "client/ui/chat_i18n.h"
 
+#include "client/ui/content_i18n.h"
 #include "client/ui/i18n.h"
+#include "shared/game/config.h"
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 
 namespace flix {
 namespace ui {
@@ -24,6 +27,41 @@ constexpr Pair kNameTr[] = {
     {"Fragment", "碎片"},
     {"Mecha Missile", "机甲导弹"},
     {"Mark", "暗黑印记"},
+    {"Frozen Mark", "冰封印记"},
+    {"Arctic Centipede", "极地蜈蚣"},
+    {"Arctic Spider Cave", "极地蜘蛛洞"},
+    {"Arctic Spider", "极地蜘蛛"},
+    {"Frost Digger", "霜冻掘地者"},
+    {"Alien", "外星人"},
+    {"Alien Digger", "外星掘地者"},
+    {"Angel", "天使"},
+    {"Black Hole", "黑洞"},
+    {"Cicada 3301", "3301蝉"},
+    {"Eye", "眼球"},
+    {"Ghost", "幽灵"},
+    {"Grave Digger", "掘墓者"},
+    {"Gravestone", "墓碑"},
+    {"Illuminati", "光明会"},
+    {"Momy", "木乃伊"},
+    {"Rain Frog", "雨蛙"},
+    {"Tesla Coil", "特斯拉线圈"},
+    {"Troll", "巨魔"},
+    {"UFO", "飞碟"},
+    {"Unabomber", "炸弹客"},
+    {"White Hole", "白洞"},
+    {"Zatan", "撒旦"},
+    {"Ice Cube", "冰块"},
+    {"Ice Dragon", "冰龙"},
+    {"Ice Hornet", "冰胡蜂"},
+    {"Igloo", "冰屋"},
+    {"Nuke", "核弹"},
+    {"Snowbush", "雪灌木"},
+    {"Snowman", "雪人"},
+    {"Snowstorm", "暴风雪"},
+    {"Spider Digger", "掘地蜘蛛"},
+    {"Spider Yoba", "尤巴蜘蛛"},
+    {"Stalagmite", "石笋"},
+    {"Tick", "蜱虫"},
     {"Blood Sacrifice", "血祭"},
     {"Heavy", "重物"},
     {"Bean", "豆子"},
@@ -160,6 +198,7 @@ constexpr Pair kNameTr[] = {
     {"Glitch Flower", "故障花"},
     {"Glitch Flower Egg", "故障花蛋"},
     {"Golden Leaf", "金叶"},
+    {"Magic Golden Leaf", "魔法金叶"},
     {"Golden Leafbug", "金色叶虫"},
     {"Golden Leafbug Egg", "金色叶虫蛋"},
     {"Grapes", "葡萄"},
@@ -345,7 +384,7 @@ const char* rarityTrEn(const std::string& en) {
         {"Rare", "稀有"},       {"Epic", "史诗"},     {"Legendary", "传奇"},
         {"Mythic", "神话"},     {"Ultra", "究极"},    {"Super", "超级"},
         {"Permanent Hyper", "永久超凡"}, {"Eternal", "永恒"}, {"Unique", "唯一"},
-        {"Hyper", "超凡"}, {"Apex", "超凡"},
+        {"Hyper", "超凡"},
         {"Universal", "宇宙"},  {"Admin", "管理"},
     };
     for (const Pair& p : kR) {
@@ -405,6 +444,16 @@ std::string localizePlain(std::string text) {
         {"You cannot invite yourself.", "不能邀请自己。"},
         {"You are not in a guild.", "你不在公会中。"},
         {"You were revived.", "你已复活。"},
+        {"Rift is entered through the portals in Garden, Desert or Jungle. /rift shows the schedule.",
+         "请从花园、沙漠或丛林的裂隙传送门进入。输入 /rift 查看开放时间。"},
+        {"Void Mark: sent to Void. /mark-return is available in 30 seconds.",
+         "虚空印记已将你送到虚空。30 秒后可用 /mark-return 返回原处。"},
+        {"Void Mark: sent to Void. Use /mark-return to go back.",
+         "虚空印记已将你送到虚空。输入 /mark-return 返回原处。"},
+        {"Frozen Mark: sent to Arctic. /mark-return is available in 30 seconds.",
+         "冰封印记已将你送到极地。30 秒后可用 /mark-return 返回原处。"},
+        {"Frozen Mark: sent to Arctic. Use /mark-return to go back.",
+         "冰封印记已将你送到极地。输入 /mark-return 返回原处。"},
         {"Press Enter to chat...", "按 Enter 聊天…"},
     };
     for (const Exact& e : kExact) {
@@ -452,10 +501,34 @@ std::string localizePlain(std::string text) {
 }
 
 /// Translate entity phrase "Rarity Name" using rarity + name tables.
-std::string trEntity(const std::string& rarityAndName) {
+std::string trEntity(const std::string& rarityAndName, const std::string& mobId, bool mobAnnouncement) {
     std::string rarity, name;
     if (!splitRarityName(rarityAndName, rarity, name)) {
         return std::string(nameTr(rarityAndName));
+    }
+    if (!mobId.empty()) {
+        const auto index = content().mobIndex(mobId);
+        if (index < content().mobCount()) {
+            const auto& mob = content().mob(index);
+            if (mob.name == name)
+                return std::string(rarityTrEn(rarity)) + " " + mobNameTr(mob.id, mob.name.c_str());
+        }
+    }
+    // Older history rows carry the English mob name without a data-mob ID.
+    // Translate only when the announced name identifies a single mob.
+    if (mobAnnouncement && mobId.empty()) {
+        const MobConfig* match = nullptr;
+        for (std::size_t i = 0; i < content().mobCount(); ++i) {
+            const auto& mob = content().mob(static_cast<std::uint16_t>(i));
+            if (mob.name != name) continue;
+            if (match != nullptr) {
+                match = nullptr;
+                break;
+            }
+            match = &mob;
+        }
+        if (match != nullptr)
+            return std::string(rarityTrEn(rarity)) + " " + mobNameTr(match->id, match->name.c_str());
     }
     return std::string(rarityTrEn(rarity)) + " " + nameTr(name);
 }
@@ -495,6 +568,12 @@ std::string localizeMarkupAware(std::string text) {
             std::string prefix = text.substr(0, bodyStart);
             std::string suffix = text.substr(close); // includes </b>...
 
+            std::string mobId;
+            constexpr std::string_view mobTag = "<b data-mob='";
+            if (prefix.compare(0, mobTag.size(), mobTag) == 0) {
+                const auto end = prefix.find('\'', mobTag.size());
+                if (end != std::string::npos) mobId = prefix.substr(mobTag.size(), end - mobTag.size());
+            }
             auto tryVerb = [&](const char* enVerb, const char* zhVerbTpl) -> bool {
                 // zhVerbTpl uses %e for entity and optional trailing bits handled outside
                 const std::size_t at = body.find(enVerb);
@@ -502,7 +581,10 @@ std::string localizeMarkupAware(std::string text) {
                 std::string head = dropArticle(body.substr(0, at));
                 // trim trailing space already handled by verb starting with space? verbs include leading space
                 while (!head.empty() && head.back() == ' ') head.pop_back();
-                const std::string entity = trEntity(head);
+                const std::string_view verb = enVerb;
+                const bool mobAnnouncement = verb == " has spawned" ||
+                    verb == " has been summoned" || verb == " has been defeated";
+                const std::string entity = trEntity(head, mobId, mobAnnouncement);
                 const std::string rest = body.substr(at + std::char_traits<char>::length(enVerb));
                 // rest may be "!", " somewhere!", " by MARKUP", " by MARKUP!</b>" already cut
                 std::string zhBody;

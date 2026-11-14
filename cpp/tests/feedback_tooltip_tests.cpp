@@ -43,7 +43,7 @@ TEST(hammer_tooltip_matches_wild_lightning_recoil_and_reload) {
         const auto index = content().petalIndex(hyper ? "mjolnir" : "timed_mjolnir");
         const auto stats = content().petalStats(index, rarity);
         CHECK_NEAR(stats.lightningDamagePerHit * stats.wildLightningScale,
-                   (hyper ? 80.0 : 60.0) * petalStrengthScale(rarity), 1e-6);
+                   (hyper ? 80.0 : 70.0) * petalStrengthScale(rarity), 1e-6);
         CHECK_NEAR(stats.wildRecoilScale, hyper ? 0.35 : 0.5, 1e-9);
         CHECK_NEAR(stats.reloadMillis, hyper ? 4000.0 : 5000.0, 1e-6);
         CHECK_EQ(stats.lightningBounces, 0);
@@ -69,7 +69,7 @@ TEST(cpp_uses_42_damage_28_health_and_2500ms_reload_on_every_ladder_tier){
         CHECK_NEAR(stats.health,28*petalStrengthScale(rarity),1e-6);CHECK_NEAR(stats.reloadMillis,2500,1e-8);
         CHECK_NEAR(stats.health/blade.health,28.0/25,1e-9);
         const auto lines=ui::petalTooltipLines(cpp,rarity,{},1);bool reload=false;
-        for(const auto& badge:lines.front().badges)reload|=badge.text.find("2.5s")!=std::string::npos;CHECK(reload);
+        for(const auto& badge:lines.front().badges)reload|=badge.icon==ui::TooltipIcon::Reload && badge.text=="1.3s";CHECK(reload);
         const auto mimic=content().petalIndex("mimic");
         const auto copied=ui::equippedPetalTooltipLines(mimic,EquippedPetal{cpp,rarity,rarity},{},1);
         CHECK_EQ(copied.size(),lines.size());for(std::size_t i=1;i<copied.size();++i)CHECK_EQ(copied[i].altText,lines[i].altText);
@@ -100,18 +100,14 @@ TEST(mimic_wraps_within_its_row_and_all_mimic_rows_terminate) {
 }
 
 #include "server/shop_lock.h"
-TEST(shop_prices_double_even_discounted_locked_quotes_without_unlocking) {
+TEST(shop_locked_quotes_apply_current_price_without_unlocking) {
     std::string error; CHECK(loadContent(testsupport::dataDir(),error));
     PlayerRecord record; const auto rotation=shopRotation(1234567890);
     record.extra["lockedShopRotation"]=static_cast<double>(rotation);
     captureShopLock(record,rotation);
     const auto rows=record.extra.dump();
     for(const auto& offer:lockedShopOffers(record)) {
-        const double tierPrices[]={3,5,10,20,40,80,180,600};
-        const double base=std::max(1.0,content().petal(offer.petalIndex).price);
-        const double variety=std::max(clamp(1.0+std::log(base/20.0)*.1,.75,1.5),std::min(10.0,std::sqrt(base/20.0)));
-        const double old=std::ceil(std::max(1.0,std::floor(tierPrices[rarityIndex(offer.rarity)]*variety))*1.75);
-        CHECK_NEAR(offer.price,2*std::floor(old*(100-offer.discountPercent)/100),1e-9);
+        CHECK_NEAR(offer.price, shopOfferPrice(offer.petalIndex, offer.rarity, offer.discountPercent), 1e-9);
     }
     CHECK_EQ(record.extra.dump(),rows);
 }

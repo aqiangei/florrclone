@@ -668,7 +668,7 @@ const MapElement* MapData::playerSpawn(const std::string& spawnId) const {
 }
 
 MapData::TeleportStep MapData::stepTeleporters(Vec2 centre, double deltaSeconds, double nowMillis,
-                                               TeleporterState& state) const {
+                                               TeleporterState& state, bool riftOpen) const {
     TeleportStep step;
     step.position = centre;
 
@@ -680,6 +680,7 @@ MapData::TeleportStep MapData::stepTeleporters(Vec2 centre, double deltaSeconds,
         // A pad with no destination map is scenery: it draws, but it does not
         // charge and it does not pull. WorldMaps reports those at load.
         if (element.kind != MapElementKind::Teleporter || element.targetMap.empty()) continue;
+        if (element.padId == "rift" && !riftOpen) continue;
 
         const Vec2 offset = step.position - element.centre();
         const double distSq = offset.lengthSq();
@@ -882,6 +883,7 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
     std::vector<std::string> files;
     // How many realms each file is loaded into: 1, or the entry's `copies`.
     std::vector<int> copies;
+    std::vector<std::string> lateMaps;
     // Whether the entry also loads a prestige twin (`"prestige": true`).
     std::vector<bool> prestigeTwins;
     Json manifest;
@@ -893,6 +895,15 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
             return false;
         }
         for (const Json& entry : manifest["maps"].items()) {
+            if (entry.isObject() && entry["appendAfterPrestige"].asBool()) {
+                if (entry["file"].asString().empty() || entry.contains("copies") ||
+                    entry["prestige"].asBool()) {
+                    errorOut = dataDir + "/maps.json: appendAfterPrestige requires one named map without a twin";
+                    return false;
+                }
+                lateMaps.push_back(entry["file"].asString());
+                continue;
+            }
             files.push_back(entry.isObject() ? entry["file"].asString() : entry.asString());
             // An instanced map -- a dungeon a party enters privately -- is one
             // file loaded into several realms. The copies sit together in the
@@ -949,6 +960,16 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
         slots.push_back(files[i]);
         copyOf.push_back(-1);
     }
+    // Keep realm IDs in both existing tracks stable when appending a biome.
+    for (const auto& map : lateMaps) {
+        slots.push_back(map);
+        copyOf.push_back(0);
+    }
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        if (!prestigeTwins[i]) continue;
+        slots.push_back(files[i]);
+        copyOf.push_back(-2);
+    }
     if (static_cast<int>(slots.size()) > kMaxWorldMaps) {
         errorOut = "the manifest names " + std::to_string(slots.size()) +
                    " maps, copies included; at most " + std::to_string(kMaxWorldMaps) +
@@ -985,9 +1006,9 @@ bool WorldMaps::load(const std::string& dataDir, Terrain* terrain, std::string& 
         }
         if (twin) {
             MapData& map = maps_[i];
-            map.prestige_ = true;
-            map.setId(kPrestigeMapPrefix + stem);
-            map.displayName_ = std::string(kPrestigeLabel) + " " +
+            map.prestigeLevel_ = -copyOf[i];
+            map.setId((map.prestigeLevel() == 2 ? kPrestigeTwoMapPrefix : kPrestigeMapPrefix) + stem);
+            map.displayName_ = std::string(map.prestigeLevel() == 2 ? "Prestige II" : kPrestigeLabel) + " " +
                                (map.displayName_.empty() ? titleCase(stem) : map.displayName_);
         }
     }
@@ -1029,11 +1050,11 @@ std::vector<Realm> WorldMaps::copiesOf(const std::string& templateId) const {
     return out;
 }
 
-Realm WorldMaps::prestigeRealm(Realm plain, bool& found) const {
+Realm WorldMaps::prestigeRealm(Realm plain, bool& found, int level) const {
     const int slot = worldMapSlot(plain);
-    found = slot >= 0 && slot < static_cast<int>(twinSlot_.size()) &&
-            twinSlot_[static_cast<std::size_t>(slot)] >= 0;
-    return found ? worldRealm(twinSlot_[static_cast<std::size_t>(slot)]) : plain;
+    const auto& twins = twinSlots_[level == 2 ? 1 : 0];
+    found = slot >= 0 && slot < static_cast<int>(twins.size()) && twins[slot] >= 0;
+    return found ? worldRealm(twins[slot]) : plain;
 }
 
 bool WorldMaps::isPrestige(Realm realm) const {
@@ -1049,7 +1070,7 @@ void WorldMaps::retargetPrestigePads() {
             bool found = false;
             const Realm plain = realmOfId(pad.targetMap, found);
             if (!found) continue;
-            const Realm twin = prestigeRealm(plain, found);
+            const Realm twin = prestigeRealm(plain, found, map.prestigeLevel());
             if (found) pad.targetMap = forRealm(twin)->id();
         }
     }
@@ -1093,13 +1114,13 @@ void WorldMaps::index() {
 
     // Each twin to the plain map it copies: the one whose id it carries
     // behind the prefix.
-    twinSlot_.assign(maps_.size(), -1);
+    for (auto& twins : twinSlots_) twins.assign(maps_.size(), -1);
     for (std::size_t twin = 0; twin < maps_.size(); ++twin) {
         if (!maps_[twin].prestige()) continue;
         const std::string plainId = stripPrestigePrefix(maps_[twin].id());
         for (std::size_t plain = 0; plain < maps_.size(); ++plain) {
             if (!maps_[plain].prestige() && maps_[plain].id() == plainId) {
-                twinSlot_[plain] = static_cast<int>(twin);
+                twinSlots_[maps_[twin].prestigeLevel() - 1][plain] = static_cast<int>(twin);
             }
         }
     }

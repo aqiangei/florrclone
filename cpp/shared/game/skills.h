@@ -64,7 +64,7 @@ inline constexpr std::array<const char*, kSkillCount> kSkillLabelsZh = {
 
 /// How many buyable tiers each branch has (florrclone costs[].length).
 inline constexpr std::array<int, kSkillCount> kSkillTiers = {
-    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 1, 4, 1, 1, 9, 10, 10, 3, 1, 10, 9,
+    9, 5, 5, 3, 9, 9, 9, 9, 3, 9, 8, 2, 1, 4, 1, 1, 9, 10, 10, 3, 2, 10, 9,
 };
 
 /// Per-tier point costs from florrclone.
@@ -89,7 +89,7 @@ inline constexpr std::array<std::array<int, 10>, kSkillCount> kSkillCosts = {{
     {{1, 2, 3, 5, 8, 12, 18, 25, 26, 30}},     // reference Damage
     {{1, 2, 3, 5, 8, 12, 18, 25, 26, 30}},     // reference Absorption
     {{4, 8, 14}},                              // movement speed
-    {{175}},                                  // unlock the prestige worlds
+    {{175, 300}},                                  // unlock the prestige worlds
     {{2, 3, 5, 8, 12, 16, 20, 25, 30, 35}},   // pet damage
     {{2, 4, 6, 8, 10, 14, 18, 22, 26}}, // mana regeneration
 }};

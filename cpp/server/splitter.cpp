@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <string>
 
+#include "server/systems/dungeons.h"
 #include "server/systems/petals.h"
 #include "shared/game/config.h"
 #include "shared/game/constants.h"
@@ -232,6 +233,7 @@ bool GameServer::splitSession(Session& session) {
 
     const Entity clone = createPlayerBody(session, realm, right);
     if (clone == NULL_ENTITY) return false;
+    if (world_.has<WavePlayer>(session.entity)) world_.add<WavePlayer>(clone);
 
     // ONE FLOWER CUT IN TWO, not a second flower issued free. The clone
     // carries the health the original was standing at, in the same proportion
@@ -332,6 +334,7 @@ void GameServer::switchSplitHalf(Session& session, double nowMillis) {
     const net::InputFrame heldInput = oldInput ? oldInput->current : net::InputFrame{};
     parkBody(session.entity);
     std::swap(session.entity, session.splitOther);
+    if (dungeons_) dungeons_->switchWaveBody(session.splitOther, session.entity);
     // The steering frame belongs to the connection, not its previous body.
     // Retain held movement/defend so a ready magic bubble works immediately.
     if (auto* input = world_.tryGet<PlayerInput>(session.entity)) input->current = heldInput;
@@ -360,7 +363,7 @@ void GameServer::switchSplitHalf(Session& session, double nowMillis) {
 void GameServer::serviceSplitters(double nowMillis) {
     for (auto& entry : sessions_) {
         Session& session = entry.second;
-        if (!session.playing() || world_.has<WavePlayer>(session.entity)) continue;
+        if (!session.playing()) continue;
 
         if (session.split()) {
             const bool activeGone = bodyFinished(world_, session.entity);
@@ -375,6 +378,7 @@ void GameServer::serviceSplitters(double nowMillis) {
                 const Entity corpse = session.entity;
                 session.entity = session.splitOther;
                 session.splitOther = corpse;
+                if (dungeons_) dungeons_->switchWaveBody(corpse, session.entity);
                 endSplit(session, nowMillis, true);
                 const Transform* at = world_.tryGet<Transform>(session.entity);
                 session.realm = at != nullptr ? at->realm : session.realm;

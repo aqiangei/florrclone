@@ -79,10 +79,14 @@ struct AssemblyRecipe {
     struct Stack {
         std::uint16_t petal = kNoPetal;
         std::int64_t count = 1;
+        std::string previewName;
+        std::string previewNameZh;
     };
     std::vector<Stack> inputs;
     std::vector<Stack> outputs;
     std::optional<Rarity> outputRarity;
+    int rotationSlot = -1;
+    bool previewOnly = false;
 
     /// How many of `petalIndex` one run of the recipe takes.
     std::int64_t takes(std::uint16_t petalIndex) const {
@@ -113,6 +117,7 @@ struct NpcSpec {
     /// An assembler's recipes, in the order its window pages through them.
     /// Empty for every other NPC.
     std::vector<AssemblyRecipe> recipes;
+    int hourlyRecipeSlots = 0;
     /// Completely still: it never cruises, whatever its mob's `bee_ai`, and
     /// never turns to watch a flower -- it faces east, its drawing's own pose,
     /// from the moment it is put down. A machine, not a creature.
@@ -423,7 +428,22 @@ struct AmbushSpec {
 };
 
 /// A lingering damage field (uranium).
+enum class SpillKind { None, Acid, Lava, Oil, Blood, Elixir };
+
+struct SpillSpec {
+    SpillKind kind = SpillKind::None;
+    bool onHit = false;
+    double radius = 0.0;
+    double durationMillis = 0.0;
+    double chargeMillis = 0.0;
+    double strength = 0.0;
+    double lingerMillis = 0.0;
+    double frostFactor = 1.0;
+};
+
 struct RadiationSpec {
+    double poisonDamage = 0;
+    double burnDamage = 0;
     bool present = false;
     double radius = 0;
     double intervalMillis = 0;
@@ -436,6 +456,9 @@ struct RadiationSpec {
     /// -- not only inside it. Needs a
     /// poisonDurationMillis to have anything to last.
     double selfPoisonScale = 0;
+    double poisonPerSecond = 0;
+    double pulseDamage = 0;
+    int lightningBounces = 0;
 };
 
 /// Passive bonuses a petal grants its holder, exactly as the JSON writes them.
@@ -516,6 +539,7 @@ struct MobConfig {
     /// than zero -- every mob in the game is armoured, and mobs.json states
     /// only the exceptions (leafbug's 10).
     double armor = 1.0;
+    double massMultiplier = 1.0; ///< Body inertia independent of collision radius.
     /// Chance, 0..1, that a direct hit on this mob misses. Flat across the
     /// tiers: the fly's 0.9 dodges nine hits in ten at common and at apex.
     double evasion = 0.0;
@@ -635,6 +659,11 @@ struct MobConfig {
     /// than closing on it. A pet keeps the run and hops near its owner. See
     /// MobAiSystem::roam.
     bool diggerAi = false;
+    double blinkMillis = 0.0;
+    double gravityForce = 0.0;
+    double gravityRadius = 0.0;
+    double deathBlastRadius = 0.0;
+    double deathBlastDamage = 0.0;
 
     /// Circles its target while it holds its standoff, the way gardn's hornet
     /// does (`hornet_ai`), instead of hanging still in the air. Only a mob
@@ -985,6 +1014,13 @@ struct PetalConfig {
     /// nothing on the ring -- the petal still lunges with the rest of it.
     bool passiveHealDefendOnly = false;
     double burstShield = 0;
+    bool biomeDropOnly = false;
+    SpillSpec spill;
+    double burnPerSecond = 0.0;
+    double burnMillis = 0.0;
+    double armorDamageFraction = 0.0;
+    double passivePetHeal = 0.0;
+    double passivePetalHeal = 0.0;
 
     // --- mana ---------------------------------------------------------------
     //
@@ -1050,6 +1086,8 @@ struct PetalConfig {
     /// spawn path in the reference read this either.
     Rarity petMobRarity = Rarity::Common;
     int petCount = 1;
+    // Authored hatchling tier for each egg tier. Empty keeps the standard summon rules.
+    std::optional<std::array<Rarity, kLadderRarityCount>> petSummonTiers;
     /// A TIMED summon: non-zero, each action hatches `petCount` fresh pets that
     /// last this long, on top of any still out, instead of keeping one squad
     /// topped up. Uncounted against the squad cap a plain egg has -- what
@@ -1067,6 +1105,10 @@ struct PetalConfig {
     double attractionForce = 0;
     double webRadius = 0;
     RadiationSpec radiation;
+    double contactSelfDamage = 0;
+    double blastDamage = 0;
+    double blastRadiusPerTier = 0;
+    double blastChance = 1;
 
     /// A shot of this petal WEAVES instead of flying straight: it is carried
     /// sideways about the bearing it was launched on, `waveFrequency` times a
@@ -1259,6 +1301,13 @@ struct PetalStats {
 /// mechanic lives in code and a flag would only be a second place to forget.
 inline constexpr const char* kSplitterPetalId = "splitter";
 
+inline double petalContactDamage(const PetalConfig& config, const PetalStats& stats, Rarity rarity) {
+    const double damage = config.lightningDamage && stats.lightningDamagePerHit > 0.0
+        ? stats.lightningDamagePerHit : stats.damage;
+    return config.id == "magic_peas" && ladderIndex(rarity) >= rarityIndex(Rarity::Unique)
+        ? damage * 0.75 : damage;
+}
+
 /// Whether this petal DOES something when its slot is clicked on the bar.
 ///
 /// The TypeScript build reached the same action with a U+slot chord; this
@@ -1376,7 +1425,7 @@ inline bool petalBoostsHealing(const PetalConfig& config) { return config.id == 
 /// A golden leaf shortens the reload of every petal on its bar -- florr's
 /// "seems to allow you to use your other petals even more", and its tooltip's
 /// "Reload: -X%". Its own and other golden leaves' too (user's rule).
-inline bool petalCutsReload(const PetalConfig& config) { return config.id == "golden_leaf"; }
+inline bool petalCutsReload(const PetalConfig& config) { return config.id == "golden_leaf" || config.id == "magic_golden_leaf"; }
 
 /// A disc blunts the collisions its flower takes -- florr's "Reduces damage
 /// taken from collisions with mobs and flowers". Worn, never out: florr gives
@@ -1397,14 +1446,38 @@ double mobUndeadMillis(const MobConfig& config, Rarity rarity);
 inline bool petalDelaysDeath(const PetalConfig& config) { return config.id == "bandage"; }
 
 /// A compass's needle points at something interesting.
+inline constexpr double kIodineHealIntervalMillis = 1000.0;
+inline double iodineHealRadius(Rarity rarity) {
+    const int tier = std::min(petalTier(rarity), rarityIndex(Rarity::Apex));
+    return 300.0 + 35.0 * tier + 60.0 * std::max(0, tier - 7);
+}
+inline double iodineHealAmount(Rarity rarity) { return 0.6 * petalHealScale(rarity); }
+
 inline bool petalIsCompass(const PetalConfig& config) { return config.id == "compass"; }
 
 /// A cursor walks its flower's pets of a LOWER tier to the pointer instead of
 /// letting them fight on their own (MobAiSystem::steerPet).
-inline bool petalControlsPets(const PetalConfig& config) { return config.id == "cursor"; }
+inline bool petalControlsPets(const PetalConfig& config) { return config.id == "cursor" || config.id == "coordinate"; }
+// Shared by summoned bodies and the loadout stat preview.
+inline constexpr double kSummonedMobHealthScale = 5.0;
+
 inline bool petalIsEgg(const PetalConfig& config) {
     const auto& id = config.id;
     return id == "egg" || (id.size() >= 4 && id.compare(id.size() - 4, 4, "_egg") == 0);
+}
+
+/// Summons eligible for the Duplicator talent's extra copies.
+inline bool summonUsesDuplicator(const PetalConfig& config) {
+    return config.id == "egg" || config.id == "beetle_egg" || config.id == "void_momy_egg" ||
+           config.id == "jurassic_ankylosaurus_egg" || config.id == "arctic_ice_dragon_egg";
+}
+
+/// Ice dragons follow the egg's gameplay rarity, including the Apex tier
+/// beyond the ordinary mob ladder. Their authored incubation still applies.
+inline Rarity configuredSummonRarity(const PetalConfig& config, Rarity rarity) {
+    if (config.id == "arctic_ice_dragon_egg" || !config.petSummonTiers)
+        return petalGameplayRarity(rarity);
+    return (*config.petSummonTiers)[ladderIndex(rarity)];
 }
 
 /// The shell itself is a one-hit body with no contact damage; the summons are
@@ -1416,6 +1489,15 @@ inline double eggSummonHealthScale(const PetalConfig& config) {
 /// the shell's own stat block carries neither of them.
 inline double eggSummonCombatScale(const PetalConfig& config) {
     return petalIsEgg(config) ? 2.0 : 1.0;
+}
+
+inline double summonDamageScale(const PetalConfig& config) {
+    if (config.id == "void_alien_digger_egg") return 0.55;
+    if (config.id == "void_troll_egg") return 0.70;
+    if (config.id == "void_momy_egg") return 0.80;
+    if (config.id == "mysterious_stick") return 0.55;
+    if (config.id == "arctic_snow_stick") return 0.80;
+    return config.id == "magic_stick" ? 1.25 : 1.0;
 }
 
 /// Hyper boosts individual summons without adding entities or attack events.
@@ -1447,8 +1529,8 @@ inline bool petalIsSacrifice(const PetalConfig& config) {
 
 /// The Champion's Crown: florr's "Gives flowers around you a Super Basic. You
 /// receive credit for damage dealt using it." Worn on the head (EquipCrown),
-/// it takes no place on its wearer's ring and lends one Basic of the crown's
-/// own tier to its wearer and to every flower within kCrownLendRadius, up to
+/// it takes no place on its wearer's ring and lends Basics to its wearer and
+/// nearby flowers within kCrownLendRadius, up to
 /// kCrownMaxLoans in all, on that flower's own ring, for as long as it stays
 /// in reach (PetalSystem::serveLentPetal). Whatever the lent petal takes off a
 /// mob is entered in the mob's ledger under the crown's wearer -- the loot,
@@ -1464,10 +1546,13 @@ inline bool petalLendsBasic(const PetalConfig& config) {
     return config.id == kChampionCrownPetalId;
 }
 
-/// What the crown lends. At the crown's own tier, by the user's rule
-/// (2026-10-13) -- florr names a Super Basic outright, but has the crown at
-/// unique alone.
 inline constexpr const char* kCrownLentPetalId = "basic";
+inline constexpr Rarity crownBasicRarity(Rarity crown) {
+    return upgradeRarity(petalGameplayRarity(crown));
+}
+inline constexpr int crownBasicCount(Rarity crown) {
+    return isHyperPetal(crown) ? 2 : 1;
+}
 
 /// How far a flower may stand from the crown's wearer, centre to centre, and
 /// still be lent one. florr's figure is not in its client; this is a guess --
@@ -1483,13 +1568,14 @@ inline constexpr int kCrownMaxLoans = 25;
 /// player could otherwise reach it through has to leave out: the shop, the
 /// `random` drop rows, and the gallery's mirror of them.
 inline bool petalHasOwnSource(const PetalConfig& config) {
-    return petalIsSacrifice(config) || petalLendsBasic(config) || config.id == "timed_mjolnir" || config.id == "splitter";
+    return config.biomeDropOnly || config.id.rfind("void_", 0) == 0 || petalIsSacrifice(config) || petalLendsBasic(config) || config.id == "timed_mjolnir" || config.id == "splitter" || config.id == "fission";
 }
 
 /// Whether the world hands this petal out at this tier: at or above its
 /// `minRarity`. What a drop, a `random` row, the shop and the gallery's
 /// mirror of the drops all ask before they put one in front of a player.
 inline bool petalComesAt(const PetalConfig& config, Rarity rarity) {
+    if (rarity == Rarity::Ascendant && config.id == "mjolnir") return false;
     return petalTier(rarity) >= rarityIndex(config.minRarity);
 }
 
@@ -1709,21 +1795,23 @@ inline double equippedCameraZoom(const ContentRegistry& registry, const Equipped
 /// reload wedge by it.
 ///
 /// A run of mimics copies through: each is the first non-mimic to its left, at
-/// its own tier, on that petal's reload. An empty slot stops the search. The row wraps from its first slot to its last;
+/// its own tier, on that petal's reload. An empty slot stops the search. The row wraps from its first slot to its last unlocked slot;
 /// at most one circuit is searched, so an all-mimic row terminates safely.
 ///
 /// A mimic copying RAM is a sawblade instead, still at the mimic's tier and
 /// reloading at RAM's -- the sawblade's reload at that tier, as a mimic pays
 /// the reload of what it fields. Content with no sawblade leaves it a RAM.
 template <class SlotAt>
-EquippedPetal resolveEquippedPetal(const ContentRegistry& registry, int slot, SlotAt&& slotAt) {
+EquippedPetal resolveEquippedPetal(const ContentRegistry& registry, int slot, SlotAt&& slotAt,
+                                  int activeSlots = kLoadoutActiveSlots) {
     EquippedPetal self = slotAt(slot);
     self.reloadRarity = self.rarity;
     if (self.empty() || !petalMimicsLeft(registry.petal(self.configIndex))) return self;
     const int rowStart = slot - slot % kLoadoutActiveSlots;
+    if (slot - rowStart >= activeSlots) return self;
     EquippedPetal source = self;
-    for (int step = 1; step < kLoadoutActiveSlots; ++step) {
-        const int i = rowStart + (slot - rowStart - step + kLoadoutActiveSlots) % kLoadoutActiveSlots;
+    for (int step = 1; step < activeSlots; ++step) {
+        const int i = rowStart + (slot - rowStart - step + activeSlots) % activeSlots;
         const EquippedPetal left = slotAt(i);
         if (left.empty()) break;
         source = left;
@@ -1746,7 +1834,7 @@ inline EquippedPetal equippedPetal(const ContentRegistry& registry, const Loadou
         if (i < 0 || i >= kLoadoutSlots) return EquippedPetal{};
         const LoadoutSlot& at = loadout.slots[static_cast<std::size_t>(i)];
         return EquippedPetal{at.configIndex, at.rarity, at.rarity};
-    });
+    }, loadout.activeSlots);
 }
 
 /// The stats a resolved slot fields: the petal's at its tier, with the reload
@@ -1783,7 +1871,7 @@ inline double triangleBonusDamage(Rarity rarity, const TriangleCounts& counts) {
     const int tier = petalTier(rarity);
     const int matches = std::max(0, counts[tier] - 1);
     constexpr std::array<int, kRarityCount> bonus{
-        4, 12, 36, 108, 324, 972, 2916, 8748, 26244, 78732, 236196, 708588};
+        4, 12, 36, 108, 324, 972, 2916, 8748, 32805, 98415, 236196, 708588};
     return static_cast<double>(matches) * bonus[tier];
 }
 

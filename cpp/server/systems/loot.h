@@ -55,7 +55,7 @@ inline constexpr double kShortGroundDropSeconds = 8.0;
 inline constexpr std::array<double, kRarityCount> kDropLifetimeByRarity = {
     kShortGroundDropSeconds, kShortGroundDropSeconds, kShortGroundDropSeconds,
     kShortGroundDropSeconds, kShortGroundDropSeconds, kShortGroundDropSeconds,
-    80.0, 120.0, 300.0, 600.0, 600.0, 0.0, 600.0,
+    80.0, 120.0, 300.0, 600.0, 600.0, 0.0, 600.0, 600.0,
 };
 
 /// Collision radius a drop is given. It has no Motion and nothing pushes it;
@@ -219,6 +219,8 @@ public:
     /// is enough; the callback exists for a runtime that would rather not walk
     /// the list, the list for one that would rather not own a closure.
     std::function<void(const Pickup&)> onPickup;
+    // A Rift prize must be credited to the account before its drop is consumed.
+    std::function<bool(const Pickup&)> collectRiftPrize;
     std::function<int(Entity)> bonusMultiplier; // claimant-specific independent trials; Super+ uses 1.5x / 2x.
 
     /// Loads the shared JSON table during server startup. A missing or invalid

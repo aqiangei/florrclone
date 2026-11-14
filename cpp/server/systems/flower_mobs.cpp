@@ -31,13 +31,14 @@ void stepFlowerMobs(World& world,const ContentRegistry& registry,double now,doub
     Query<MobTag,MobType,Transform,Body,MobAi> mobs{world};
     std::vector<Entity> owners;
     mobs.each([&](Entity e,MobTag&,MobType& type,Transform&,Body&,MobAi&){
-        if(isFlowerMob(registry.mob(type.configIndex).id) && !world.has<Dead>(e) &&
-           !world.has<Pet>(e))owners.push_back(e);
+        if ((isFlowerMob(registry.mob(type.configIndex).id) || world.has<GhostTag>(e)) &&
+            !world.has<Dead>(e) && !world.has<Pet>(e)) owners.push_back(e);
     });
     static constexpr const char* gambling[]={"card","dice","poker_chip","domino","clover"};
     for(const auto owner:owners) {
         const auto type=world.get<MobType>(owner);
         const bool gambler=registry.mob(type.configIndex).id=="gambler";
+        const bool ghost=world.has<GhostTag>(owner);
         const auto at=world.get<Transform>(owner);
         const double radius=world.get<Body>(owner).radius;
         const auto ai=world.get<MobAi>(owner);
@@ -52,15 +53,19 @@ void stepFlowerMobs(World& world,const ContentRegistry& registry,double now,doub
             const double wanted=target && distance<=trigger ? 1:0;
             ring.attack+=(wanted-ring.attack)*-std::expm1(-20*dt);
             ring.phase+=dt*1.8;
-        }else{
+        } else if (ghost) {
+            ring.phase += dt * 1.8;
+        } else {
             ring.attack=target?1:0;
             const double phase=ring.cogPhase+1.8*dt;
             const double step=std::trunc(phase+1e-10);
             ring.cogPhase=phase-step;ring.phase+=step;
         }
         ring.phase=std::fmod(ring.phase,kTau);
-        const double orbit=radius+55+40*ring.attack;
-        const int count=std::min(10,5+std::max(0,rarityIndex(type.rarity)));
+        // The original Ghost sprite depicts five evenly spaced Basics around
+        // its face. Orbit just past the edge of the ghost at every rarity.
+        const double orbit=ghost ? radius + 18.0 : radius+55+40*ring.attack;
+        const int count=ghost ? 5 : std::min(10,5+std::max(0,rarityIndex(type.rarity)));
         for(int i=0;i<count;++i){
             Entity petal=ring.petals[i];
             if(petal!=NULL_ENTITY && (!world.isAlive(petal)||world.has<Dead>(petal))){
@@ -70,7 +75,7 @@ void stepFlowerMobs(World& world,const ContentRegistry& registry,double now,doub
             const double bearing=ring.phase+i*kTau/count;
             const Vec2 position=at.position+Vec2::fromAngle(bearing,orbit);
             if(petal==NULL_ENTITY && now>=ring.readyAt[i]){
-                const auto index=registry.petalIndex(gambler?gambling[i%5]:"cogwheel");
+                const auto index=registry.petalIndex(ghost ? "basic" : gambler ? gambling[i%5] : "cogwheel");
                 if(index==kInvalidIndex)continue;
                 const auto stats=registry.petalStats(index,type.rarity);
                 petal=world.create();ring.petals[i]=petal;ring.reloadMillis[i]=stats.reloadMillis;

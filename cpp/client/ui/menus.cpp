@@ -198,6 +198,7 @@ const std::array<ControlMeta, kControlCount> kControls = {{
     {"Extend petals",         Key::Space,      MenuId::None},
     {"Retract petals",        Key::LeftShift,  MenuId::None},
     {"Swap loadout rows",     Key::R,          MenuId::None},
+    {"Toggle detail display (backup)", Key::G, MenuId::None},
 }};
 
 /// The two icon groups, which are NOT the same button at two positions.
@@ -769,9 +770,13 @@ bool ClientSettings::load(const std::string& path) {
         else if (key == "names") render.names = number != 0;
         else if (key == "healthBars") render.healthBars = number != 0;
         else if (key == "damageNumbers") render.damageNumbers = number != 0;
+        else if (key == "damageNumberUnit" && number >= 0 && number <= 2)
+            render.damageNumberUnit = static_cast<WorldRenderer::DamageNumberUnit>(number);
         else if (key == "hitboxes") render.hitboxes = number != 0;
         else if (key == "hideOtherPetals") render.hideOtherPetals = number != 0;
         else if (key == "hideOtherPets") render.hideOtherPets = number != 0;
+        else if (key == "disableUltraPetalParticles") render.disableUltraPetalParticles = number != 0;
+        else if (key == "simplifyCombatEffects") render.simplifyCombatEffects = number != 0;
         else if (key == "screenShake") render.screenShake = number != 0;
         else if (key == "chat") showChat = number != 0;
         else if (key == "chatTabs") {
@@ -866,10 +871,13 @@ bool ClientSettings::save(const std::string& path) const {
     if (!file) return false;
     file << "names " << (render.names ? 1 : 0) << '\n'
          << "healthBars " << (render.healthBars ? 1 : 0) << '\n'
+         << "damageNumberUnit " << static_cast<int>(render.damageNumberUnit) << '\n'
          << "damageNumbers " << (render.damageNumbers ? 1 : 0) << '\n'
          << "hitboxes " << (render.hitboxes ? 1 : 0) << '\n'
          << "hideOtherPetals " << (render.hideOtherPetals ? 1 : 0) << '\n'
          << "hideOtherPets " << (render.hideOtherPets ? 1 : 0) << '\n'
+         << "disableUltraPetalParticles " << (render.disableUltraPetalParticles ? 1 : 0) << '\n'
+         << "simplifyCombatEffects " << (render.simplifyCombatEffects ? 1 : 0) << '\n'
          << "screenShake " << (render.screenShake ? 1 : 0) << '\n'
          << "chat " << (showChat ? 1 : 0) << '\n'
          << "chatTabs " << static_cast<int>(chatChannels) << '\n'
@@ -1261,8 +1269,6 @@ const SvgDocument* MenuSystem::icon(int index) {
 const std::array<MenuSystem::StripSlot, kStripSlotCount>& MenuSystem::strip() {
     using A = StripAction;
     static const std::array<StripSlot, kStripSlotCount> kSlots = {{
-        // Far-left like ashflor: Feedback (moss notepad) then QQ badge.
-        {MenuId::None,          A::Feedback, "feedback",      true,  0x4ECB71u, 0x3EA35Au},
         {MenuId::None,          A::Github,   "github",        true,  0x24292Fu, 0x161B22u},
         {MenuId::None,          A::Qq,       "qq",            true,  0x12B7F5u, 0x0E92C4u},
         {MenuId::Settings,      A::OpenMenu, "settings",      true,  0xB3B3B3u, 0x8F8F8Fu},
@@ -1278,6 +1284,7 @@ const std::array<MenuSystem::StripSlot, kStripSlotCount>& MenuSystem::strip() {
         {MenuId::Account,       A::OpenMenu, "account",       true,  kAccountSkin.fill,
          kAccountSkin.border},
         {MenuId::None,          A::Discord,  "discord",       true,  0x5865F2u, 0x4752C4u},
+        {MenuId::None,          A::Feedback, "feedback",      true,  0x4ECB71u, 0x3EA35Au},
         {MenuId::Debug,         A::OpenMenu, "debug",         true,  0x666666u, 0x4D4D4Du},
         // The panel's own card colours, so the button says which card it opens.
         {MenuId::AdminDashboard, A::OpenMenu, "admin",        true,  kAdminDashboardSkin.fill,
@@ -1341,9 +1348,24 @@ void MenuSystem::drawIconStrip(Canvas& canvas, Window& window, double timeSecond
     // from the left edge, so it needs the final x before anything is drawn.
     double x = kTopIcon.inset;
     int columnCount = 0;
+    const auto placeTopIcon = [&](std::size_t at) {
+        stripRects_[at] = {x, kTopIcon.inset, kTopIcon.side, kTopIcon.side};
+        x += kTopIcon.side + kTopIcon.gap;
+    };
+    // On narrow title screens the trailing icons can sit outside the canvas.
+    // Keep both links reachable together without moving the game HUD.
+    const bool compact = !inGame_ && canvas.width() < 850;
+    if (compact) {
+        for (std::size_t at = 0; at < strip().size(); ++at) {
+            const auto action = strip()[at].action;
+            if (visible[at] && (action == StripAction::Discord || action == StripAction::Feedback)) {
+                placeTopIcon(at);
+            }
+        }
+    }
     for (int i = 0; i < kStripSlotCount; ++i) {
         const auto at = static_cast<std::size_t>(i);
-        if (!visible[at]) continue;
+        if (!visible[at] || stripRects_[at].w > 0.0) continue;
         if (!strip()[at].topRow) { ++columnCount; continue; }
         stripRects_[at] = {x, kTopIcon.inset, kTopIcon.side, kTopIcon.side};
         x += kTopIcon.side + kTopIcon.gap;
@@ -1569,8 +1591,8 @@ double slotReloadProgress(const NetClient& net, int index) {
     const PetalStats stats = equippedPetalStats(content(), equipped);
     const double cut =
         barReloadCut(content(), [&](int i) { return profile.equipped(content(), i); }, &profile.skills);
-    const double total = (stats.reloadMillis > 0.0 ? stats.reloadMillis : kDefaultPetalReloadMillis) *
-                         profile.skills.reloadScale() * (1.0 - cut);
+    const double total = ordinaryPetalReloadMillis(stats.reloadMillis,
+                                                   profile.skills.reloadScale() * (1.0 - cut));
     // A remaining that outruns the total is a slot whose petal has just been
     // swapped for a slower one: clamped, it sweeps from the start rather than
     // showing an inverted wedge for a frame.
@@ -2238,13 +2260,13 @@ void MenuSystem::drawLoadoutBar(Canvas& canvas, Window& window, NetClient& net,
             const auto& at = shown[static_cast<std::size_t>(i)];
             return EquippedPetal{at.petalIndex, at.rarity, at.rarity};
         };
-        const auto equipped = resolveEquippedPetal(content(), tipIndex, slotAt);
+        const auto equipped = resolveEquippedPetal(content(), tipIndex, slotAt, visibleSlots);
         double triangleBonus = 0.0;
         if (tipIndex < profile.skills.loadoutSlots() &&
             content().petal(equipped.configIndex).id == "triangle") {
             TriangleCounts counts{};
             for (int i = 0; i < profile.skills.loadoutSlots(); ++i) {
-                const auto worn = resolveEquippedPetal(content(), i, slotAt);
+                const auto worn = resolveEquippedPetal(content(), i, slotAt, visibleSlots);
                 if (!worn.empty() && content().petal(worn.configIndex).id == "triangle")
                     ++counts[petalTier(worn.rarity)];
             }
@@ -3122,6 +3144,9 @@ void MenuSystem::render(Canvas& canvas, Window& window, NetClient& net, const Sp
     adminSlotShown_ = net.haveSession() && net.isSkinAdmin();
     accountSlotShown_ = net.haveSession();
     feedbackUsername_ = net.haveSession() ? net.profile().username : "";
+#ifdef __EMSCRIPTEN__
+    EM_ASM({Module.feedbackUsername=UTF8ToString($0);},feedbackUsername_.c_str());
+#endif
 
     // Guild / squad invites raise the top-left Accept/Decline toast instead of
     // forcing a panel open. Consume the edge so a later frame does not re-fire.
@@ -3481,6 +3506,13 @@ double MenuSystem::stripRight() const {
     for(std::size_t i=0;i<stripRects_.size();++i)
         if(strip()[i].topRow&&stripRects_[i].w>0) right=std::max(right,stripRects_[i].right());
     return right;
+}
+
+double MenuSystem::feedbackRight() const {
+    for (std::size_t i = 0; i < stripRects_.size(); ++i) {
+        if (strip()[i].action == StripAction::Feedback) return stripRects_[i].right();
+    }
+    return 0;
 }
 
 bool MenuSystem::capturesMouse(Vec2 mouse) const {

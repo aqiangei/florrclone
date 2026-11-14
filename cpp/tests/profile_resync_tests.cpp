@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "client/net_client.h"
@@ -152,6 +153,51 @@ bool checkBroughtProfile(Harness& h, NetClient& client) {
 }
 
 } // namespace
+
+TEST(an_idle_account_without_hammers_does_not_open_snapshot_rows_for_editing) {
+    Harness h("idle-hammer-sweep", [](const std::string& path) {
+        seedTinkerer(path, [](PlayerRecord&) {});
+    }, dataDir(), 0, [](ServerConfig& config) {
+        config.backgroundSave = true;
+        config.tickProbe = true;
+    });
+    NetClient client;
+    CHECK(h.ready);
+    if (!h.ready) return;
+    const bool loggedIn = login(h, client);
+    CHECK(loggedIn);
+    if (!loggedIn) return;
+
+    auto& db = const_cast<Database&>(h.server.database());
+    const auto* account = std::as_const(db).findUser(kName);
+    CHECK(account != nullptr);
+    if (!account) return;
+    const std::string userId = account->id;
+    {
+        // Login sends a Profile, which independently normalizes lease fields.
+        // Isolate the periodic sweep by restoring a record without metadata.
+        auto& extra = db.progress(userId).extra;
+        extra.erase("titanHammerLeases");
+        extra.erase("titanHammerExpiresAt");
+        extra.erase("temporaryHyperHammer");
+    }
+    const auto before = h.server.database().snapshotEdits();
+    // Cross two one-second hammer/council sweeps without entering the world.
+    h.step(45, {&client});
+    const auto after = h.server.database().snapshotEdits();
+    CHECK_EQ(after.attempts, before.attempts);
+    CHECK_EQ(after.copies, before.copies);
+
+    // A writable JSON lookup also materializes missing lease fields even
+    // when the background writer has already released its snapshot.
+    const auto* record = h.server.database().findProgress(userId);
+    CHECK(record != nullptr);
+    if (record) {
+        CHECK(!record->extra.contains("titanHammerLeases"));
+        CHECK(!record->extra.contains("titanHammerExpiresAt"));
+        CHECK(!record->extra.contains("temporaryHyperHammer"));
+    }
+}
 
 TEST(a_profile_digest_ignores_the_order_of_stacks_but_not_of_slots) {
     net::ProfileDigest a;
@@ -501,17 +547,48 @@ TEST(eternal_fragment_recipe_is_separate_from_the_timed_hammer){
 }
 
 TEST(goggles_reveal_ghosts_and_allow_hits_only_while_equipped){
-    Harness h("goggles",[](const std::string& path){seedTinkerer(path,[](PlayerRecord& r){r.addItem(Rarity::Common,"petal_paranormal_goggles",1);});},dataDir(),0);
+    Harness h("goggles",[](const std::string& path){seedTinkerer(path,[](PlayerRecord& r){r.addItem(Rarity::Common,"petal_paranormal_goggles",1);r.addItem(Rarity::Uncommon,"petal_paranormal_goggles",1);});},dataDir(),0);
     CHECK(h.ready);if(!h.ready)return;NetClient client;CHECK(login(h,client));client.joinGame(800,600);
     CHECK(h.stepUntil({&client},[&]{return client.status()==NetClient::Status::Playing;}));
     const auto player=bodyOf(h);auto& w=h.server.world();const auto ghost=w.create();auto at=w.get<Transform>(player);at.position.x+=100;
     w.add<MobTag>(ghost);w.add<GhostTag>(ghost);w.add<Transform>(ghost,at);w.add<Body>(ghost,Body{20,1});w.add<Health>(ghost,Health{100,100});w.add<Faction>(ghost,Faction{Team::Hostiles,false});
     w.add<MobType>(ghost,MobType{content().mobIndex("ghost"),Rarity::Common,1});w.add<NetId>(ghost,NetId{900000});w.add<Replicated>(ghost,Replicated{net::EntityKind::Mob});
-    h.step(10,{&client});CHECK(client.view().entities().count(900000)==0);CHECK(!CombatSystem::canHit(w,ghost,player,0));
+    const auto sparkle = w.create();
+    w.add<GhostSparkle>(sparkle, GhostSparkle{ghost});
+    w.add<Transform>(sparkle, at);
+    w.add<Body>(sparkle, Body{12, 1});
+    w.add<NetId>(sparkle, NetId{900001});
+    w.add<Replicated>(sparkle, Replicated{net::EntityKind::Effect, 0,
+        static_cast<std::uint16_t>(GroundEffectKind::GhostSparkle), Rarity::Common, 0});
+    h.step(50, {&client});
+    CHECK(client.view().entities().count(900000) == 0);
+    CHECK(client.view().entities().count(900001) == 1);
+    CHECK(!CombatSystem::canHit(w,ghost,player,0));
+    CHECK(!CombatSystem::canHit(w,player,ghost,0));
+    w.get<Transform>(ghost).position.x += 24;
+    h.step(6, {&client});
+    CHECK_NEAR(w.get<Transform>(sparkle).position.x, w.get<Transform>(ghost).position.x, 0.01);
     client.setLoadoutSlot(0,content().petalIndex("paranormal_goggles"),Rarity::Common);
     CHECK(h.stepUntil({&client},[&]{return client.view().entities().count(900000)>0;}));CHECK(CombatSystem::canHit(w,ghost,player,0));
+    w.get<MobType>(ghost).rarity = Rarity::Uncommon;
+    CHECK(h.stepUntil({&client}, [&] {
+        return client.view().entities().count(900000) == 0 &&
+               client.view().entities().count(900001) == 1;
+    }));
+    CHECK(!CombatSystem::canHit(w,ghost,player,0));
+    CHECK(!CombatSystem::canHit(w,player,ghost,0));
+    client.setLoadoutSlot(0,content().petalIndex("paranormal_goggles"),Rarity::Uncommon);
+    CHECK(h.stepUntil({&client},[&]{return client.view().entities().count(900000)>0;}));
+    CHECK(CombatSystem::canHit(w,ghost,player,0));
     client.setLoadoutSlot(0,kNoPetal,Rarity::Common);
-    CHECK(h.stepUntil({&client},[&]{return client.view().entities().count(900000)==0;}));CHECK(!CombatSystem::canHit(w,ghost,player,0));
+    CHECK(h.stepUntil({&client}, [&] {
+        return client.view().entities().count(900000) == 0 &&
+               client.view().entities().count(900001) == 1;
+    }));
+    CHECK(!CombatSystem::canHit(w,ghost,player,0));
+    w.destroy(ghost);
+    CHECK(h.stepUntil({&client}, [&] { return client.view().entities().count(900001) == 0; }));
+    CHECK(!w.isAlive(sparkle));
 }
 
 TEST(continue_acknowledges_a_live_body_without_healing_or_replacing_it){

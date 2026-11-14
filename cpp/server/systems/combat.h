@@ -22,6 +22,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 #include <memory>
 #include <optional>
@@ -184,6 +185,8 @@ struct DamageResult {
     /// was legitimate and spends whatever pacing a landed one would, but it
     /// touched nothing, so a caller lands none of its riders on the victim.
     bool dodged = false;
+    /// Post-mitigation damage beyond the 1 HP held by a risen wild mob.
+    double undeadMobOverkill = 0.0;
 };
 
 /// A summoning shot (ProjectileSpec::summonMobIndex) that landed on a mob this
@@ -197,6 +200,7 @@ struct ShotLanding {
     Realm realm = Realm::Overworld;
     /// The point on the shot's path closest to the mob it hit.
     Vec2 at;
+    Entity victim = NULL_ENTITY;
 };
 
 struct ContactBodyPlacement {
@@ -209,6 +213,11 @@ struct ContactBodyPlacement {
 class CombatSystem {
 public:
     CombatSystem();
+    static void ignite(World& world, Entity victim, Entity emitter, Entity owner,
+                       double rate, double duration, double now, bool fraction = false);
+    std::function<std::uint32_t()> allocateNetId;
+    static void createSpill(World& world, Entity owner, Vec2 at, Rarity rarity,
+                            const SpillSpec& spill, double scale, std::uint32_t netId);
     ~CombatSystem();
     CombatSystem(const CombatSystem&) = delete;
     CombatSystem& operator=(const CombatSystem&) = delete;
@@ -234,14 +243,40 @@ public:
              double nowMillis, double dt, CommandBuffer& commands, EventQueue& events);
 
     /// Opens a combat tick and applies poison/status expiry. Call exactly once.
-    void beginTick(World& world, double nowMillis, double dt, EventQueue& events);
+    void beginTick(World& world, const ContentRegistry& content,
+                   double nowMillis, double dt, EventQueue& events);
 
     /// Resolves body and petal contact from the pre-mob-movement world, which
     /// is where the TypeScript player pipeline performs those collisions.
     /// When provided, placements mirror a projectile-free main grid.
     void runContactPhase(World& world, const SpatialGrid& grid,
                          const ContentRegistry& content, double nowMillis,
-                         const std::vector<ContactBodyPlacement>* placements = nullptr);
+                         const std::vector<ContactBodyPlacement>* placements = nullptr, bool profile = false,
+                         bool sampleVisits = false);
+    static constexpr double kProbeHotspotRadius = 600.0;
+    static constexpr std::size_t kContactVisitSampleStride = 128;
+    enum class ContactVisitPhase { Lookup, Geometry, Eligibility, Formula, Writeback, Pvp, Count };
+    struct ContactVisitTiming {
+        std::size_t visits = 0;
+        static constexpr auto kPhases = static_cast<std::size_t>(ContactVisitPhase::Count);
+        std::array<double, kPhases> ms{};
+        std::array<std::size_t, kPhases> intervals{};
+    };
+    struct ContactDensity {
+        std::size_t sources = 0, raw = 0, visits = 0, overlaps = 0, peak = 0;
+        std::array<unsigned, 5> local{}, total{}; // players, mobs, petals, shots, pets
+        ContactVisitTiming sampled;
+        Vec2 hotspot{};
+    };
+    struct ContactTiming {
+        double setupMs = 0, parallelSearchMs = 0, fallbackSearchMs = 0, orderedMs = 0;
+        double aurasMs = 0, gatherBodiesMs = 0, hostileGridMs = 0, gatherPetalsMs = 0, fileShotsMs = 0;
+        double densityMs = 0, sampleClockNs = 0;
+        bool sampleVisits = false;
+        std::size_t planned = 0, fallback = 0;
+        std::array<ContactDensity, kMaxRealms> realms{};
+    };
+    const ContactTiming& contactTiming() const { return contactTiming_; }
     void sizeContactGrid(const Terrain& terrain) { hostileTargets_.sizeToRealms(terrain); }
 
     /// Resolves post-movement projectiles/ground fields and closes the tick.
@@ -361,7 +396,8 @@ public:
     /// max health as a shell's is. Every heal lands through here, for
     /// the reason healingBlocked is one function. Asks no gate itself: the
     /// caller has already decided the heal is allowed.
-    static void landHeal(World& world, Entity entity, Health& health, double amount);
+    static void landHeal(World& world, Entity entity, Health& health, double amount,
+                         double petalAmount = 0.0);
 
     /// What `victim` actually subtracts from a direct hit right now: its armour
     /// less whatever a bur has stripped. Negative means the strip out-ran the
@@ -394,7 +430,7 @@ public:
     static constexpr int kPracticeSeconds = net::kPracticeWindowSeconds;
     std::vector<PracticeDamage> practiceDamage(Entity player, double nowMillis, Entity dummy = NULL_ENTITY) const;
     void resetPracticeDamage(Entity player) { practiceDamage_.erase(player); }
-    std::function<void(Entity, Entity, double, double)> onPracticeHit;
+    std::function<void(Entity, Entity, const PracticeDamage&, double)> onPracticeHit;
 
     /// Whether `source` is allowed to hurt `victim` at all: different sides,
     /// or the same side with friendly fire on. Two things resolving to the
@@ -462,6 +498,10 @@ private:
         double noHealDurationMillis = 0;
         /// Armour this body strips on contact. Bur, and nothing else.
         double armorReduction = 0;
+        double armorDamageFraction = 0;
+        double burnPerSecond = 0;
+        double burnMillis = 0;
+        const SpillSpec* impactSpill = nullptr;
         /// Added to `damage` while the victim is above kClawCritHealthFraction.
         /// Claw, and nothing else; already on the flower's petal curve.
         double critDamage = 0;
@@ -469,6 +509,7 @@ private:
         double critMultiplier = 1;
         /// Fraction of what a hit actually took off that heals `owner`. Fang.
         double lifesteal = 0;
+        double selfDamage = 0;
         /// The flower a petal belongs to -- who a fang heals. NULL_ENTITY for
         /// every body that is not a petal.
         Entity owner = NULL_ENTITY;
@@ -589,6 +630,11 @@ private:
         Entity owner = NULL_ENTITY;
         double poisonDurationMillis = 0;
         double ownerPoisonPerSecond = 0;
+        double slowDurationMillis = 0;
+        double activatesAtMillis = 0;
+        double burnDamage = 0;
+        double armorReduction = 0;
+        double burnPerSecond = 0.0;
     };
 
     struct ShotSource {
@@ -661,7 +707,8 @@ private:
     /// hand over a different one, hence the rebind rather than a member.
     void bind(World& world);
 
-    void tickAfflictions(World& world, double nowMillis, double dt);
+    void tickAfflictions(World& world, const ContentRegistry& content, double nowMillis, double dt);
+    void applyBurn(World& world, Entity victim, Entity source, double perSecond, double nowMillis);
     void tickSpongeDamage(World& world, double nowMillis, double dt);
     /// Every shield shrinks by the same share of itself each second.
     void tickShieldDecay(World& world, double dt);
@@ -683,7 +730,7 @@ private:
     void gatherAuras(World& world, const ContentRegistry& content);
     void resolveAuras(World& world, const SpatialGrid& grid, double nowMillis);
     void gatherMeleeTargets();
-    void gatherContact(World& world, const ContentRegistry& content);
+    void gatherContact(World& world, const ContentRegistry& content, double nowMillis);
     /// One pass of lightning at RANGE: which mobs are charged and have somebody
     /// in reach, and the strikes they throw. Runs in the world phase, after
     /// movement. The CONTACT trigger is not here -- it fires inside
@@ -708,9 +755,9 @@ private:
                             double nowMillis);
     void gatherPetals(World& world, const ContentRegistry& content, double nowMillis);
     void resolveMelee(World& world, const SpatialGrid& grid, const ContentRegistry& registry,
-                      double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly);
+                      double nowMillis, const SpatialGrid& hostileTargets, bool bodyGridOnly, ContactTiming* timing);
     void prepareMeleeCandidates(const World& world, const SpatialGrid& grid,
-                                const SpatialGrid& hostileTargets, bool bodyGridOnly);
+                                const SpatialGrid& hostileTargets, bool bodyGridOnly, ContactTiming* timing);
     bool eligibleMeleeCandidate(const MeleeSource& source, Entity victim) const;
     /// A petal swinging at another flower, which is a different collision from
     /// the petal-vs-mob one beside it: gated by the arena/corruption rule
@@ -775,6 +822,7 @@ private:
     /// is thrown clear of it, as far as a bubble petal throws one
     /// (kBubblePopDistance). Run once the tick's deaths are all in.
     void popBubbles(World& world, const ContentRegistry& content);
+    void resolveMobDeathBlasts(World&, const SpatialGrid&, const ContentRegistry&, double nowMillis);
 
     void awardBounty(World& world, Entity victim);
 
@@ -842,6 +890,7 @@ private:
     std::vector<ShotPlan> shotPlans_;
     std::vector<ShotScratch> shotScratch_;
     std::vector<PoisonTick> poison_;
+    std::vector<PoisonTick> burns_;
     std::vector<PoisonTick> spongeTicks_;
 
     std::vector<Entity> candidates_;
@@ -919,9 +968,11 @@ private:
         bool hostileBody = false;
         bool contacted = false;
     };
+    ContactTiming contactTiming_;
     std::vector<MeleeTarget> meleeTargets_;
     SpatialGrid hostileTargets_;
     struct MeleePlan {
+        std::size_t raw = 0;
         Entity player = NULL_ENTITY;
         std::size_t begin = 0, end = 0;
         unsigned lane = 0;

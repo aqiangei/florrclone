@@ -319,7 +319,7 @@ TEST(a_damage_event_carries_the_share_of_max_health_the_hit_took) {
     const Entity mob = a.mob({1000, 1000}, 200.0);
     a.world.add<NetId>(mob, NetId{11});
 
-    a.combat.beginTick(a.world, 1000.0, net::kTickSeconds, a.events);
+    a.combat.beginTick(a.world, fixture().registry, 1000.0, net::kTickSeconds, a.events);
     a.combat.applyDamage(a.world, mob, player, 50.0, 1000.0);
     // Overkill: only what was left counts, against the same max.
     a.combat.applyDamage(a.world, mob, player, 500.0, 1001.0);
@@ -361,7 +361,7 @@ TEST(a_struck_petal_is_reported_to_flash_and_never_to_be_numbered) {
         return out;
     };
 
-    a.combat.beginTick(a.world, 1000.0, net::kTickSeconds, a.events);
+    a.combat.beginTick(a.world, fixture().registry, 1000.0, net::kTickSeconds, a.events);
     a.combat.applyDamage(a.world, petal, mob, 10.0, 1000.0, DamageKind::Recoil);
     a.combat.applyDamage(a.world, mob, petal, 10.0, 1000.0);
     std::vector<WireEvent> petalHits = eventsFor(21);
@@ -909,7 +909,7 @@ TEST(a_dead_body_stops_dealing_contact_damage_in_the_same_tick) {
 // Knockback
 // ---------------------------------------------------------------------------
 
-TEST(knockback_replaces_the_pending_displacement_and_is_scaled_by_mass) {
+TEST(knockback_keeps_the_strongest_pending_displacement_and_is_scaled_by_mass) {
     Arena a;
     const Entity light = a.actor({1000, 1000}, 10.0, 100.0, Team::Hostiles, 1.0);
     const Entity heavy = a.actor({1000, 1000}, 10.0, 100.0, Team::Hostiles, 4.0);
@@ -920,6 +920,9 @@ TEST(knockback_replaces_the_pending_displacement_and_is_scaled_by_mass) {
     // ring does not launch a mob farther for each overlapping instance.
     CHECK_NEAR(a.world.get<Knockback>(light).impulse.x, 5.0, 1e-9);
     CHECK_NEAR(a.world.get<Knockback>(light).impulse.y, 0.0, 1e-12);
+    a.combat.applyKnockback(a.world, light, Vec2{5, 0}, 500.0);
+    a.combat.applyKnockback(a.world, light, Vec2{-5, 0}, 5.0);
+    CHECK_NEAR(a.world.get<Knockback>(light).impulse.x, 500.0, 1e-9);
 
     a.combat.applyKnockback(a.world, heavy, Vec2{5, 0}, 5.0);
     CHECK_NEAR(a.world.get<Knockback>(heavy).impulse.x, 5.0 / 4.0, 1e-9);
@@ -1199,6 +1202,20 @@ TEST(each_ranked_contributor_receives_the_mobs_full_xp) {
 
     CHECK_NEAR(a.world.get<PlayerProgress>(first).totalXp, 120.0, 1e-9);
     CHECK_NEAR(a.world.get<PlayerProgress>(second).totalXp, 120.0, 1e-9);
+}
+
+TEST(monster_xp_uses_each_recipients_absorption_talent) {
+    Arena a;
+    const Entity trained = a.player({1000, 1000});
+    const Entity untrained = a.player({1000, 1000});
+    const Entity mob = a.mob({1000, 1000}, 100.0, 120.0);
+    a.world.add<PlayerSkillTree>(trained).skills.set(SkillId::Absorbing, 4);
+
+    a.combat.applyDamage(a.world, mob, trained, 75.0, 0.0);
+    a.combat.applyDamage(a.world, mob, untrained, 25.0, 10.0);
+
+    CHECK_NEAR(a.world.get<PlayerProgress>(trained).totalXp, 302.0, 1e-9);
+    CHECK_NEAR(a.world.get<PlayerProgress>(untrained).totalXp, 120.0, 1e-9);
 }
 
 TEST(a_squad_is_paid_the_mobs_xp_including_the_members_who_missed_it) {
@@ -3787,6 +3804,33 @@ TEST(a_fang_heals_its_flower_a_fraction_of_what_the_hit_took_off) {
     CHECK_NEAR(a.health(player), 50.0 + 15.0 * 0.35 + 4.0 * 0.35, 1e-9);
 }
 
+TEST(a_fang_feeds_on_a_risen_wild_mob_after_armor) {
+    const Fixture& f = fixture();
+    CHECK(f.ok);
+    if (f.fangy == kInvalidIndex) return;
+
+    Arena a;
+    const Entity player = a.player({1000, 1000});
+    a.world.get<Health>(player).current = 50.0;
+    const Entity mob = a.mob({1040, 1000}, 4.0);
+    a.world.add<RisesUndead>(mob, RisesUndead{2000.0});
+    equipPetal(a, player, f.fangy, Rarity::Common, {1025, 1000});
+
+    a.step(0.0, f.registry);
+    CHECK(a.world.has<Undead>(mob));
+    CHECK_NEAR(a.health(mob), 1.0, 1e-9);
+    CHECK_NEAR(a.health(player), 50.0 + 4.0 * 0.35, 1e-9);
+
+    a.world.add<Armor>(mob, Armor{5.0});
+    a.step(net::kTickMillis, f.registry);
+    CHECK_NEAR(a.health(mob), 1.0, 1e-9);
+    CHECK_NEAR(a.health(player), 50.0 + (4.0 + 10.0) * 0.35, 1e-9);
+
+    a.world.get<Armor>(mob).amount = 20.0;
+    a.step(2 * net::kTickMillis, f.registry);
+    CHECK_NEAR(a.health(player), 50.0 + (4.0 + 10.0) * 0.35, 1e-9);
+}
+
 TEST(a_fang_heals_nothing_through_armor_a_lockout_or_a_full_bar) {
     const Fixture& f = fixture();
     CHECK(f.ok);
@@ -4256,7 +4300,7 @@ TEST(crowded_melee_skips_peaceful_shots_but_preserves_pvp_and_corruption) {
         if (mode == 3) a.world.ensure<PlayerVisuals>(bob).corrupted = true;
 
         a.rebuildGrid();
-        a.combat.beginTick(a.world, 1000, net::kTickSeconds, a.events);
+        a.combat.beginTick(a.world, fixture().registry, 1000, net::kTickSeconds, a.events);
         a.combat.runContactPhase(a.world, a.grid, f.registry, 1000);
         const double damage = mode == 0 ? 0.0 : 18.0 * kPlankShotDamageScale;
         CHECK_NEAR(a.health(shot), 10000.0 - damage, 1e-9);

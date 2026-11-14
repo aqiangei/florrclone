@@ -80,6 +80,7 @@ struct AppConfig {
     /// which is the only way to photograph the title screen of a client that
     /// has credentials -- otherwise it joins before the first frame is drawn.
     bool autoJoin = true;
+    bool autoJoinGuest = false;
     /// Where a scripted join lands: a spawn-picker id -- a door such as
     /// `garden`, or a qualified `<map>:<door>` -- or "pvp"/"maze" for the two
     /// realms that are destinations rather than places on the map. Empty means
@@ -222,6 +223,8 @@ private:
         Rect ready;
         std::vector<Rect> tabs;
         std::vector<Rect> doors;
+        Rect pickerView;
+        double pickerMaxScroll = 0.0;
         /// The XP gauge's track: where the fill runs from empty to full. Its
         /// rounded ends stand out half its height past both sides of this.
         Rect xp;
@@ -367,9 +370,6 @@ private:
     void drawDeathCard(Canvas&, double time);
     /// The "Collected this run" panel the death card puts over the minimap.
     void drawRunLoot(Canvas&, double time);
-    /// Counts this frame's pickups by the viewer's own flower into runLoot_.
-    /// Before the renderer drains the events, which it does every frame.
-    void tallyRunLoot();
     void drawChat(Canvas&, double time);
     /// The channel strip over the open chat: a tab per channel, its checkbox
     /// filtering the transcript and its name choosing where Enter sends.
@@ -546,6 +546,7 @@ private:
     /// saved spawn choice when the client starts and only changes by clicking,
     /// so the settings file keeps naming a door and never a row.
     std::string pickerTab_ = "garden";
+    double pickerScroll_ = 0.0;
 
     Screen screen_ = Screen::Connecting;
     double timeSeconds_ = 0;
@@ -747,18 +748,6 @@ private:
     /// container animation, which translates the whole stack down from above
     /// the screen and eases it back up again when the card goes away.
     double deathCardSlide_ = 0.0;
-    /// Everything the flower has picked up since it joined, one entry per
-    /// petal and tier, for the death card's "Collected this run" panel.
-    /// Counted off the PickedUp cues -- each of the viewer's own is one item
-    /// into the inventory -- and emptied by the next join, not by dying: it is
-    /// the dead run the panel reports on.
-    struct RunLoot {
-        std::uint16_t petalIndex = 0;
-        Rarity rarity = Rarity::Common;
-        std::uint32_t count = 0;
-    };
-    std::vector<RunLoot> runLoot_;
-
     // -- HUD -----------------------------------------------------------------
     /// When invulnerability last ended, in app seconds; negative before the
     /// first time it does. The health bar fades from the invulnerable colour

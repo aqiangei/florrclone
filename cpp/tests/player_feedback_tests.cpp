@@ -30,16 +30,6 @@ TEST(feedback_hyper_loot_accepts_a_single_effective_hit_below_one_percent){
     w.add<Transform>(corpse,Transform{{1000,1000},0});w.add<Health>(corpse,Health{0,1e12});Bounty tally;tally.credit(player,1);w.add<Bounty>(corpse,tally);w.add<Dead>(corpse,Dead{player});
     loot.run(w,grid,c,rng,0,0,commands,events);commands.flush();int count=0;Query<DropTag,DropItem> drops{w};drops.each([&](Entity,DropTag&,DropItem& d){count+=d.quantity;});CHECK(count>0);
 }
-TEST(feedback_dummy_total_preserves_old_hits_and_excludes_other_players){
-    const auto& c=testsupport::shippedContent();WorldRenderer renderer;renderer.setContent(&c);WorldView view;
-    RemoteEntity dummy;dummy.netId=123;dummy.kind=net::EntityKind::Npc;dummy.typeIndex=c.mobIndex("target_dummy");view.seedForTest(dummy);
-    ViewEvent hit;hit.kind=net::EventKind::Damage;hit.netId=123;hit.amount=50;hit.flag=net::DamageByViewer;
-    view.events().push_back(hit);renderer.ingestEvents(view);renderer.update(20);
-    hit.flag=0;hit.amount=999;view.events().push_back(hit);renderer.ingestEvents(view);
-    hit.flag=net::DamageByViewer;hit.amount=25;view.events().push_back(hit);renderer.ingestEvents(view);
-    CHECK_NEAR(renderer.dummyTotalDamage(123),75,1e-8);
-    hit.kind=net::EventKind::Killed;view.events().push_back(hit);renderer.ingestEvents(view);CHECK_NEAR(renderer.dummyTotalDamage(123),0,1e-8);
-}
 TEST(feedback_ant_holes_use_lower_tier_soldiers_and_one_same_tier_queen_below_half){
     const auto& c=testsupport::shippedContent();
     for(int tier=0;tier<kLadderRarityCount;++tier){World w;CommandBuffer commands{w};SpawnSystem spawn;Terrain terrain;Rng rng{71};
@@ -212,18 +202,18 @@ TEST(feedback_talent_vision_changes_camera_and_does_not_stack_with_antennae) {
     p.loadout.resize(kLoadoutSlots);p.loadout[0].petalIndex=content().petalIndex("antennae");p.loadout[0].rarity=Rarity::Super;
     CHECK_NEAR(loadoutCameraZoom(p,content()),std::min(.5,petalCameraZoom(content(),p.loadout[0].petalIndex,Rarity::Super)),1e-9);
 }
-TEST(feedback_shop_each_hour_has_exactly_two_super_offers_at_the_shared_price) {
+TEST(feedback_shop_each_hour_has_five_offers_per_tier_at_the_shared_price) {
     CHECK(feedbackContent());
     for (int rotation=0;rotation<200;++rotation) {
-        const auto offers=shopOffers(rotation);int supers=0;
+        const auto offers=shopOffers(rotation);
         CHECK_EQ(offers.size(),static_cast<std::size_t>(kShopOfferCount));
-        for (const auto& offer:offers) {
-            supers += offer.rarity==Rarity::Super;
+        for (std::size_t i = 0; i < offers.size(); ++i) {
+            const auto& offer = offers[i];
+            CHECK(offer.rarity == (i < kShopTierOfferCount ? Rarity::Super : Rarity::Unique));
             CHECK(shopSellsPetal(offer.petalIndex));
             CHECK(shopSellsRarity(offer.rarity));
-            CHECK_NEAR(offer.price,std::floor(shopPrice(offer.petalIndex,offer.rarity)*(100-offer.discountPercent)/100.0),1e-9);
+            CHECK_NEAR(offer.price,shopOfferPrice(offer.petalIndex,offer.rarity,offer.discountPercent),1e-9);
         }
-        CHECK_EQ(supers,2);
         CHECK_EQ(shopRotationEnd(rotation)-shopRotationEnd(rotation-1),3600);
     }
 }
@@ -232,8 +222,8 @@ TEST(feedback_scarce_shop_petals_keep_their_authored_price_premium) {
     const auto mimic=content().petalIndex("mimic");
     const auto basic=content().petalIndex("basic");
     const double price=shopPrice(mimic,Rarity::Super);
-    CHECK_NEAR(price,10500,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*6);
-    CHECK(!shopSellsRarity(Rarity::Unique));
+    CHECK_NEAR(price,45000,1e-9);CHECK(price>shopPrice(basic,Rarity::Super)*6);
+    CHECK(shopSellsRarity(Rarity::Unique));
     CHECK(shopPrice(mimic,Rarity::Ultra)>shopPrice(basic,Rarity::Ultra)*4);
 }
 TEST(feedback_talent_wiki_values_and_duplicator_eligibility) {

@@ -28,6 +28,7 @@
 namespace flix {
 
 class Terrain;
+class WorldMaps;
 class EventQueue;
 struct ShotLanding;
 
@@ -84,6 +85,7 @@ struct PetalSlotState {
         /// the only safe answer -- the per-grain timers are sized to the count,
         /// and a shared pool would charge every new copy as one just lost.
         int count = 0;
+        double combinationStrength = 1.0;
 
         /// How much of the slot is still standing, 1.0 for untouched. Derived
         /// each tick from whichever of the two health models the slot uses, so
@@ -155,8 +157,7 @@ struct PetalSlotState {
     /// respawn must not fly its petals in from where it died.
     bool ringCentreValid = false;
 
-    /// The Basic a Champion's Crown lends this flower (petalLendsBasic), at
-    /// the crown's own tier.
+    /// The Basics a Champion's Crown lends this flower (petalLendsBasic).
     ///
     /// Not a loadout slot: nothing on the bar holds it, so it owns no
     /// LoadoutSlot and is never saved. It takes the ring's last place while a
@@ -177,10 +178,12 @@ struct PetalSlotState {
         /// over -- the wearer swapping theirs, or a nearer one -- is a new
         /// petal, as swapping a slot's tier is, and serves its own reload.
         Rarity rarity = Rarity::Common;
-        /// The lent petal on the field, or NULL_ENTITY while it reloads.
-        Entity petal = NULL_ENTITY;
-        /// When it comes (back) out; 0 while it is out.
-        double readyAtMillis = 0;
+        int count = 0;
+        struct Piece {
+            Entity petal = NULL_ENTITY;
+            double readyAtMillis = 0;
+        };
+        std::array<Piece, 2> pieces{};
     };
     Lent lent;
 
@@ -254,6 +257,7 @@ public:
     /// hook. Left unset, everything still simulates and simply is not
     /// replicated, which is what a headless test wants.
     std::function<std::uint32_t()> allocateNetId;
+    const WorldMaps* jurassicMaps = nullptr;
 
     /// Spend one slot outright: take its petals off the ring and start its
     /// reload, exactly as breaking the last of them would.
@@ -305,7 +309,7 @@ public:
     /// still stands up; its own client simply is not told.
     std::function<void(Entity revived, Entity reviver)> onPlayerRevived;
     std::function<bool(Entity target, Entity marker, Rarity rarity)> canMarkPlayer;
-    std::function<bool(Entity target, Entity marker, Rarity rarity)> onPlayerMarked;
+    std::function<bool(Entity target, Entity marker, Rarity rarity, bool toVoid, bool frozen)> onPlayerMarked;
 
 private:
     std::unordered_map<Entity, int> volleyEntitiesByOwner_;
@@ -315,6 +319,9 @@ private:
     struct Aggregate {
         PlayerModifiers modifiers;
         double spinScale = 1.0;
+        double jurassicWoundBonus = 0.0;
+        double featherCostPerSecond = 0.0;
+        double jurassicShieldPerSecond = 0.0;
     };
 
     void bindTo(World& world);
@@ -325,7 +332,7 @@ private:
     /// The mob a petal whose place on the ring is `orbit` should circle: the
     /// one it already is, `holding`, while that mob's edge is within `radius`
     /// of the place, otherwise the nearest such mob, or NULL_ENTITY for none.
-    Entity attractor(World& world, Vec2 orbit, Realm realm, double radius, Entity holding);
+    Entity attractor(World& world, Vec2 orbit, Realm realm, double radius, Entity holding, Entity owner);
 
     void clearRing(World& world, Entity player);
     void reconcileSlots(World& world, const ContentRegistry& registry, Entity player,
@@ -464,10 +471,12 @@ private:
     /// must not be spent for it.
     bool fireProjectiles(World& world, const ContentRegistry& registry, Entity player, Entity petal,
                          const PetalConfig& config, const PetalStats& stats, std::uint16_t configIndex,
-                         Rarity rarity, const ProjectileSpec* hyperShot);
+                         Rarity rarity, const ProjectileSpec* hyperShot,
+                         const Vec2* breakPosition = nullptr);
 
     /// Take a petal that spent itself firing off the ring and put its slot on
     /// the reload, whichever of the two health models the slot runs on.
+
     void spendPetal(World& world, const ContentRegistry& registry, Entity player, Entity petal,
                     std::uint8_t slotId, std::uint8_t subIndex, const PetalStats& stats,
                     double nowMillis);
@@ -490,13 +499,14 @@ private:
     /// about who it hits or how hard -- only the colour of the number combat
     /// reports for it.
     void emitDamageBurst(World& world, Entity player, Vec2 at, double radius, double damage,
-                         bool lightning = false);
+                         bool lightning = false, double activatesAtMillis = 0, bool showExplosion = false);
     /// One strike. `damage` is the petal's own stat, already up the rarity
     /// ladder; `rarity` is the tier it came from, which is what puts the
     /// fallback on that same ladder for a petal whose `damage` is 0.
     bool strikeLightning(World& world, Entity player, Vec2 at, double damage, Rarity rarity,
                          int bounces = -1, double reachScale = 1.0,
-                         std::optional<double> magicEyeCastAt = std::nullopt, Entity firstTarget = NULL_ENTITY);
+                         std::optional<double> magicEyeCastAt = std::nullopt, Entity firstTarget = NULL_ENTITY,
+                         bool fromBattery = false, double burnPerSecond = 0.0);
     /// The strike's visual half: one event carrying the bolts' endpoints. The
     /// damage half is a field, and a field has nothing on the wire the client
     /// could draw a strike from.
@@ -511,7 +521,7 @@ private:
     /// Checks overlap against wild mobs and hostile NPCs in the attraction grid.
     /// Parked contact petals also trigger on a hostile NPC's remaining body.
     bool touchesGridMob(World& world, Realm realm, Vec2 at, double radius,
-                        bool includeDeadNpcs = false);
+                        bool includeDeadNpcs = false, bool wildOnly = false);
     /// Where a compass at `at` points: the nearest magnet its flower wears,
     /// or else the highest-tier wild mob in its realm (the nearest of those),
     /// with florr's needle wobble on top. `fallback`, its place on the ring,

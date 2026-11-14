@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "shared/core/json.h"
@@ -31,6 +32,12 @@ inline constexpr int kMaxPolyPoints = 16;
 /// Per author, not per server: the catalog is shared, so one player cannot
 /// fill it.
 inline constexpr int kMaxSkinsPerUser = 64;
+
+// Minted by the destination server for public skins from another realm.
+inline int sharedSkinRealm(std::string_view id) {
+    return id.size() > 4 && id[0] == 'x' && id[1] == 's' && id[2] >= '1' && id[2] <= '3' && id[3] == '_'
+        ? id[2] - '0' : 0;
+}
 
 /// Local-space bound. The flower body radius is ~25, so 64 leaves room for a
 /// skin that overhangs it without letting one cover the screen.
@@ -60,6 +67,8 @@ struct SkinShape {
 
 /// A published skin. `id` and `createdAt` are the server's to assign; a client
 /// that invents them gets them overwritten.
+enum class SkinReviewState : std::uint8_t { Approved, Draft, Pending, Rejected };
+
 struct CustomSkin {
     std::string id;
     std::string name;
@@ -69,6 +78,7 @@ struct CustomSkin {
     /// through the JSON database the TypeScript build wrote.
     double createdAt = 0;
     bool published = false;
+    SkinReviewState review = SkinReviewState::Approved;
 };
 
 const char* skinShapeTypeName(SkinShapeType);

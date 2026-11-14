@@ -36,6 +36,38 @@ TEST(flower_mobs_have_real_breakable_replicated_petals_at_each_rarity){
         CHECK(data().mob(data().mobIndex(id)).image.find("clipPath")==std::string::npos);
     }
 }
+TEST(flower_mob_ghost_has_five_basic_petals_and_respects_goggles) {
+    World w;
+    const auto owner = mob(w, "ghost", Rarity::Super);
+    w.add<GhostTag>(owner);
+    stepFlowerMobs(w, data(), 1000, .1, {});
+    const auto ring = w.get<FlowerMobRing>(owner);
+    const auto petal = ring.petals[0];
+    CHECK(petal != NULL_ENTITY);
+    if (petal == NULL_ENTITY) return;
+    CHECK_EQ(std::count_if(ring.petals.begin(), ring.petals.end(),
+                           [](Entity e) { return e != NULL_ENTITY; }), 5);
+    CHECK_EQ(w.get<Replicated>(petal).typeIndex, data().petalIndex("basic"));
+    CHECK(ghostBodyOrRing(w, petal) == &w.get<MobType>(owner));
+    const auto start = w.get<Transform>(petal).position;
+    stepFlowerMobs(w, data(), 1100, .1, {});
+    CHECK((w.get<Transform>(petal).position - start).length() > 1);
+
+    const auto player = w.create();
+    w.add<PlayerTag>(player);
+    w.add<Health>(player, Health{1000000, 1000000});
+    w.add<Faction>(player, Faction{Team::Players, false});
+    w.add<PlayerVisuals>(player);
+    CombatSystem combat;
+    CHECK(!combat.applyDamage(w, player, petal, 1, 1200).applied);
+    CHECK(!combat.applyDamage(w, petal, player, 1, 1200).applied);
+    w.get<PlayerVisuals>(player).ghostSightTier = petalTier(Rarity::Super);
+    CHECK(combat.applyDamage(w, player, petal, 1, 1200).applied);
+    CHECK(combat.applyDamage(w, petal, player, 1, 1200).applied);
+    w.destroy(owner);
+    stepFlowerMobs(w, data(), 1300, .1, {});
+    CHECK(!w.isAlive(petal));
+}
 TEST(flower_mob_petals_rotate_break_reload_and_leave_no_orphan_hitboxes){
     World w;const auto owner=mob(w,"gambler");
     stepFlowerMobs(w,data(),1000,.1,{});const auto first=w.get<FlowerMobRing>(owner).petals[0];

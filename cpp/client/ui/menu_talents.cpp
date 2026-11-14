@@ -361,7 +361,8 @@ std::vector<TipRow> description(SkillId skill, int tier) {
             row({{cn ? "提升宠物体伤及发射物伤害，不增加数量或攻速。" : "Boosts pet contact and projectile damage, without more pets or faster attacks."}});
             break;
         case SkillId::Prestige:
-            row({{cn ? "解锁声望地图：普通怪物提高一个稀有度，最高为超级。" : "Unlock Prestige worlds: ordinary enemies rise one rarity, up to Super."}});
+            row({{tier == 1 ? (cn ? "解锁二级声望：普通怪物提高两个稀有度，最高永恒。" : "Unlock Prestige II: ordinary enemies rise two rarities, up to Eternal.")
+                            : (cn ? "解锁声望地图：普通怪物提高一个稀有度，最高为超级。" : "Unlock Prestige worlds: ordinary enemies rise one rarity, up to Super.")}});
             row({{cn ? "不提高经验档位；重置天赋会退出声望地图。" : "XP tiers stay unchanged; resetting talents returns you to ordinary worlds."}});
             break;
         case SkillId::Damage:
@@ -371,7 +372,7 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                  {fromTo(kDamageTalentPetalScale, tier), kStatDamage}});
             break;
         case SkillId::Absorbing:
-            row({{cn ? "吸收经验：" : "Absorbed XP: "},
+            row({{cn ? "打怪与吸收花瓣经验：" : "Monster and petal absorption XP: "},
                  {fromTo(kAbsorbTalentScale, tier), kStatHealth}});
             break;
         case SkillId::MovementSpeed:
@@ -453,6 +454,8 @@ std::vector<TipRow> description(SkillId skill, int tier) {
                                  (tier==0?"Adds one particle to multi-particle petals.":"Adds two particles to multi-particle petals.")}});
             else row({{cn ? (tier==2?"最左槽可叠加花瓣再增加1粒；不适用于永恒及以上。":"最左槽额外1粒的效果也适用于永恒及以上。") :
                              (tier==2?"Adds one particle to the leftmost stackable petal below Eternal.":"Allows the leftmost extra particle at Eternal and above.")}});
+            if (tier >= 2) row({{cn ? "复制出的单体花瓣各自损坏、各自重装。" :
+                                     "Duplicated single petals break and reload separately."}});
             break;
         case SkillId::Magnetism: {
             if (cn) {

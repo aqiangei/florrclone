@@ -5,6 +5,7 @@
 #include "client/render/mob_art.h"
 #include "client/render/sprites.h"
 #include "client/render/world_renderer.h"
+#include "client/ui/item_tile.h"
 #include "client/world_view.h"
 #include "shared/core/types.h"
 #include "shared/game/config.h"
@@ -335,6 +336,97 @@ TEST(a_dandelions_seeds_go_down_under_its_head) {
     CHECK(stem >= 200);
 }
 
+TEST(nazar_beetle_mandibles_face_its_heading) {
+    for (double angle : {0.0, kPi * 0.5, kPi, kPi * 1.5}) {
+        const auto frame = mobFrame("nazar_beetle", angle, 0, {});
+        Vec2 mandibles{};
+        int count = 0;
+        for (int y = 0; y < kRingSize; ++y) {
+            for (int x = 0; x < kRingSize; ++x) {
+                const auto i = static_cast<std::size_t>(4 * (y * kRingSize + x));
+                // The imported SVG uses #333 only for the mandibles.
+                if (frame[i] != 0x33 || frame[i + 1] != 0x33 || frame[i + 2] != 0x33) continue;
+                mandibles += Vec2{x + 0.5, y + 0.5};
+                ++count;
+            }
+        }
+        CHECK(count > 0);
+        if (count == 0) continue;
+        const Vec2 offset = mandibles / count - Vec2{kRingSize * 0.5, kRingSize * 0.5};
+        const Vec2 forward{std::cos(angle), std::sin(angle)};
+        const Vec2 sideways{-forward.y, forward.x};
+        CHECK(offset.x * forward.x + offset.y * forward.y > 5.0);
+        CHECK(std::abs(offset.x * sideways.x + offset.y * sideways.y) < 3.0);
+    }
+}
+
+TEST(cutter_remains_visible_with_builtin_and_custom_flower_skins) {
+    CustomSkin skin;
+    skin.id = "test-cutter";
+    SkinShape body;
+    body.t = SkinShapeType::Circle;
+    body.r = 25;
+    body.fill = "#e011cc";
+    skin.shapes.push_back(body);
+    const std::vector<CustomSkin> catalog{skin};
+    const Vec2 at{1000, 1000};
+    for (auto flags : {std::uint32_t{0}, std::uint32_t{PlayerRenderPumpkin},
+                       std::uint32_t{PlayerRenderRobot}, std::uint32_t{PlayerRenderPumpkin | PlayerRenderRobot}}) {
+        const auto frame = [&](std::uint16_t equip) {
+            WorldRenderer renderer;
+            renderer.setContent(&shipped());
+            renderer.setSprites(&shippedSprites());
+            renderer.setSkinCatalog(&catalog);
+            WorldView view;
+            RemoteEntity player;
+            player.netId = 1;
+            player.kind = net::EntityKind::Player;
+            player.position = player.targetPosition = at;
+            player.radius = playerRadiusForLevel(1);
+            player.level = 1;
+            player.renderFlags = flags;
+            player.equipFlags = equip;
+            if (flags == (PlayerRenderPumpkin | PlayerRenderRobot)) player.equippedSkinId = skin.id;
+            view.seedForTest(player);
+            Canvas canvas = Canvas::createVirtual(kRingSize, kRingSize);
+            renderer.draw(canvas, view, testsupport::frameCamera(kRingSize, at), at, 0.0);
+            return canvas.getImageData(0, 0, kRingSize, kRingSize);
+        };
+        CHECK(differingPixels(frame(EquipNone), frame(EquipCutter)) > 20);
+    }
+}
+
+TEST(mythic_blood_stinger_tile_forms_a_triangle_in_inventory_and_loadout) {
+    std::string error;
+    CHECK(loadContent(testsupport::dataDir(), error));
+    if (!error.empty()) return;
+    const auto petal = content().petalIndex("blood_stinger");
+    CHECK_EQ(content().petalStats(petal, Rarity::Mythic).count, 3);
+    for (int slot : {-1, 0}) {
+        Canvas canvas = Canvas::createVirtual(120, 120);
+        ui::ItemTile tile;
+        tile.petalIndex = petal;
+        tile.rarity = Rarity::Mythic;
+        tile.loadoutSlot = slot;
+        tile.showName = false;
+        ui::drawItemTile(canvas, shippedSprites(), {0, 0, 120, 120}, tile);
+        const auto frame = canvas.getImageData(0, 0, 120, 120);
+        std::vector<int> redWidths(120);
+        for (int y = 0; y < 120; ++y) for (int x = 0; x < 120; ++x) {
+            const auto i = static_cast<std::size_t>(4 * (y * 120 + x));
+            if (frame[i] > 50 && frame[i] > 2 * frame[i + 1] && frame[i] > 2 * frame[i + 2]) ++redWidths[y];
+        }
+        const auto top = std::find_if(redWidths.begin(), redWidths.end(), [](int n) { return n > 2; });
+        CHECK(top != redWidths.end());
+        if (top == redWidths.end()) continue;
+        const auto bottom = std::find_if(redWidths.rbegin(), redWidths.rend(), [](int n) { return n > 2; }).base();
+        CHECK(bottom - top > 20);
+        if (bottom - top > 20) {
+            CHECK(*(top + (bottom - top) / 5) < *(top + (bottom - top) * 4 / 5));
+        }
+    }
+}
+
 TEST(shooters_do_not_draw_a_separate_loaded_ammunition_overlay) {
     for (const char* id : {"hornet", "wasp", "hel_wasp", "mecha_wasp"}) {
         CHECK_EQ(differingPixels(mobFrame(id,0,0,{}),mobFrame(id,0,net::StateUnloaded,{})),0);
@@ -579,4 +671,47 @@ TEST(a_moon_is_one_picture_magnified_to_its_radius) {
     CHECK(crater > 50);
     // The disc is ~2900 pixels; the two may differ only along edges.
     CHECK(differingPixels(common, apex) < 60);
+}
+
+TEST(arctic_ice_dragon_summon_shows_rarity_at_low_zoom) {
+    CHECK(testsupport::fontsReady());
+    if (!testsupport::fontsReady()) return;
+    constexpr int side = 240;
+    const Vec2 at{1000.0, 1000.0};
+    auto camera = testsupport::frameCamera(side, at);
+    camera.userZoom = 0.55;
+    const auto type = shipped().mobIndex("arctic_ice_dragon");
+    CHECK(type != kInvalidIndex);
+    if (type == kInvalidIndex) return;
+
+    const auto frame = [&](bool healthBars, bool names, Rarity rarity) {
+        WorldRenderer renderer;
+        renderer.setContent(&shipped());
+        renderer.setSprites(&shippedSprites());
+        renderer.options.healthBars = healthBars;
+        renderer.options.names = names;
+        WorldView view;
+        view.setRealm(Realm::Overworld);
+        RemoteEntity mob;
+        mob.netId = 7;
+        mob.kind = net::EntityKind::Mob;
+        mob.position = mob.targetPosition = at;
+        mob.typeIndex = type;
+        mob.rarity = rarity;
+        mob.radius = shipped().mobStats(type, Rarity::Common).radius;
+        mob.healthFraction = 1.0;
+        mob.spawnFlags = net::SpawnIsPet;
+        mob.plate.snap(1.0, 0.0, true);
+        view.seedForTest(mob);
+        Canvas canvas = Canvas::createVirtual(side, side);
+        renderer.draw(canvas, view, camera, at, 1.0);
+        // Below the bar, on the right side where the rarity is printed.
+        const auto y = static_cast<int>(side / 2 + mob.radius * camera.zoom());
+        return canvas.getImageData(side / 2, y + 9, 100, 24);
+    };
+
+    CHECK(differingPixels(frame(false, true, Rarity::Mythic),
+                          frame(false, false, Rarity::Mythic)) > 5);
+    CHECK(differingPixels(frame(true, false, Rarity::Mythic),
+                          frame(true, false, Rarity::Rare)) > 5);
 }

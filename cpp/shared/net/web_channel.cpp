@@ -438,6 +438,7 @@ EM_JS(int, flix_ch_listen,
   const servedFiles = new Set([
     // The page: bundle.html as the link names it, index.html as it is staged.
     "index.html", "bundle.html", "council.html",
+    "workshop.html", "workshop.js", "workshop-model.js", "workshop-mobs.json", "workshop-preview.html",
     // The glue and the module, and the deflated copies the page prefers.
     "bundle.js", "bundle.js.bin", "bundle.wasm", "bundle.wasm.bin",
     // The icon the shell links to (client/web/shell.html).
@@ -520,7 +521,7 @@ EM_JS(int, flix_ch_listen,
   const councilLimits = new Map();
   const onRequest = (request, response) => {
     const url = (request.url || "/").split("?")[0];
-    if (url === "/api/council") {
+    if (url === "/api/council" || url === "/api/workshop-access") {
       // Production Nginx connects from loopback and overwrites X-Real-IP.
       // Rate-limit the visitor, not the shared proxy; never trust this header
       // from a public peer that can choose it themselves.
@@ -551,11 +552,14 @@ EM_JS(int, flix_ch_listen,
         let a=0,b=0;
         try {
           const parsed=JSON.parse(data);
+          if (url === "/api/workshop-access" && parsed?.action !== "workshop-access") {
+            response.writeHead(400); response.end(); return;
+          }
           if(!parsed || Array.isArray(parsed) || typeof parsed!=="object" ||
              Object.keys(parsed).some(key=>!["action","title","id","choice"].includes(key) || typeof parsed[key]!=="string")) {
             response.writeHead(400);response.end();return;
           }
-          if(Module.flixAuthority) {
+          if(Module.flixAuthority && !parsed.action?.startsWith("skin-review-")) {
             if(typeof Module.flixAuthority.council!=="function") {
               response.writeHead(503);response.end();return;
             }
@@ -756,12 +760,27 @@ EM_JS(int, flix_ch_listen,
     let acknowledged = 0;
     let marker = null;
     let markedBytes = 0;
-    const mark = () => {
-      if (marker || sent - acknowledged < markerInterval || !socket.writable) return;
-      marker = crypto.randomBytes(8);
-      markedBytes = sent;
+    const mark = (keepAlive = false) => {
+      if (!socket.writable) return;
+      if (keepAlive) {
+        // Do not add more frames to a stalled socket. Retry the same marker
+        // so a late Pong can still release the acknowledged snapshot bytes.
+        if (socket.writableLength !== 0) return;
+      } else if (marker || sent - acknowledged < markerInterval) {
+        return;
+      }
+      if (!marker) {
+        marker = crypto.randomBytes(8);
+        markedBytes = sent;
+      }
       socket.write(encode(0x9, marker));
     };
+    // Keep an idle upgraded path alive without requiring game input or a
+    // timely Pong. A suspended tab may take arbitrarily long to respond.
+    const keepAliveTimer = setInterval(() => {
+      if (channel.state === 1) mark(true);
+    }, 20_000);
+    keepAliveTimer.unref();
     channel.sender = (bytes) => {
       const frame = encode(0x2, bytes);
       socket.write(frame);
@@ -890,7 +909,11 @@ EM_JS(int, flix_ch_listen,
     // Waiting for close while continuing snapshots kept the old account lease
     // forever. EOF ends this WebSocket: notify C++ and close the writable half.
     socket.on("end", () => { open.delete(socket); net.fail(channel, "peer ended"); socket.destroy(); });
-    socket.on("close", () => { open.delete(socket); net.fail(channel, "peer closed"); });
+    socket.on("close", () => {
+      clearInterval(keepAliveTimer);
+      open.delete(socket);
+      net.fail(channel, "peer closed");
+    });
 
     listener.pending.push(net.alloc(channel));
     // The HTTP parser may have read past the handshake into the first frame.

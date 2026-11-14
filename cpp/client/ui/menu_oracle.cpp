@@ -30,7 +30,6 @@ using namespace flix::ui;
 
 namespace {
 
-constexpr const char* kLine = "The Oracle will guarantee a craft... for the right price.";
 
 /// The craft's spin: toward 10 rad/s while it is out, easing both ways at
 /// the same rate. The least it spins before its answer shows is ours.
@@ -49,7 +48,8 @@ constexpr double kRefusalSeconds = 3.0;
 } // namespace
 
 Vec2 OraclePanel::size(const Profile& profile) {
-    return {slotCardWidth(false), slotCardHeight(SlotGrid::rows(profile, false))};
+    constexpr auto tiers = SlotGridTiers::PermanentHyper;
+    return {slotCardWidth(tiers), slotCardHeight(SlotGrid::rows(profile, tiers))};
 }
 
 void OraclePanel::reset() {
@@ -64,7 +64,8 @@ void OraclePanel::reset() {
 
 void OraclePanel::stage(const Profile& profile, std::uint16_t petalIndex, Rarity rarity) {
     const int cost = oracleCraftCost(rarity);
-    if (cost <= 0 || rarityIndex(rarity) > rarityIndex(Rarity::Ultra)) return;
+    if (cost <= 0 ||
+        (rarity == Rarity::PermanentHyper && (content().petal(petalIndex).id == "mjolnir" || petalHasOwnSource(content().petal(petalIndex))))) return;
     if (profile.stackCount(petalIndex, rarity) < static_cast<std::uint32_t>(cost)) return;
     // One upgrade, so a click REPLACES what was staged rather than adding to
     // it: there is only ever one price in the slot.
@@ -232,7 +233,9 @@ bool OraclePanel::render(MenuContext& ctx) {
     if (waiting) {
         drawSlotLine(canvas, card, oracleCooldownText(cooldown), kSlotCardWaitInk);
     } else {
-        drawSlotLine(canvas, card, kLine);
+        drawSlotLine(canvas, card, trEnZh("Apex: 120 matching Permanent Hyper petals",
+                                           "兑换 Apex：需要 120 个相同的永久超凡"),
+                     rarityColor(Rarity::Ascendant));
     }
 
     // --- the grid ----------------------------------------------------------
@@ -248,7 +251,7 @@ bool OraclePanel::render(MenuContext& ctx) {
                   static_cast<std::uint32_t>(oracleCraftCost(stagedRarity_))
             : 0u;
     const std::optional<SlotGrid::Pick> hovered = grid_.render(
-        ctx, card, kOracleSkin, false,
+        ctx, card, kOracleSkin, SlotGridTiers::PermanentHyper,
         [&](std::uint16_t petalIndex, Rarity rarity, std::uint32_t owned) {
             SlotCell cell;
             cell.count = owned;
@@ -257,7 +260,8 @@ bool OraclePanel::render(MenuContext& ctx) {
             }
             const std::uint32_t price =
                 static_cast<std::uint32_t>(std::max(1, oracleCraftCost(rarity)));
-            cell.greyed = rarityIndex(rarity) > rarityIndex(Rarity::Ultra) || !craftsOutOf(rarity) || waiting || cell.count < price;
+            cell.greyed = oracleCraftCost(rarity) <= 0 || waiting || cell.count < price ||
+                (rarity == Rarity::PermanentHyper && (content().petal(petalIndex).id == "mjolnir" || petalHasOwnSource(content().petal(petalIndex))));
             cell.badge = waiting ? "x" + stackCountText(cell.count)
                                  : stackCountText(cell.count) + "/" + std::to_string(price);
             cell.badgeCentred = true;

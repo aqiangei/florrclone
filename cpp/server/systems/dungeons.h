@@ -74,6 +74,7 @@ public:
     std::string waveCommand(World& world, const Terrain& terrain, Entity player,
                             const std::string& action, Rng& rng, double nowMillis);
     bool inWave(const World& world, Entity player) const;
+    void switchWaveBody(Entity previous, Entity active);
     net::WaveHud waveHudFor(const World& world, Entity player, double nowMillis) const;
     bool waveExterior(const World& world, Entity player, Realm& realm) const;
     std::uint8_t waveOccupancy() const { return static_cast<std::uint8_t>(wave_.members.size()); }
@@ -151,6 +152,7 @@ private:
         std::uint64_t cleared = 0;
         double readyAtMillis = 0.0;
         double nextBatchMillis = 0.0;
+        double cleanupUntilMillis = 0.0;
         double lastProgressMillis = 0.0;
     } wave_;
     void runWave(World& world, const Terrain& terrain, const ContentRegistry& content,

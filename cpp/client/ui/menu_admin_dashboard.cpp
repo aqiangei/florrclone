@@ -132,6 +132,7 @@ enum class Act : std::uint8_t {
     Refresh,
     Control,
     Release,
+    SetMuted,
     PickItem,
     RarityDown,
     RarityUp,
@@ -565,7 +566,16 @@ bool AdminDashboardPanel::render(MenuContext& ctx) {
             }
 
             // The bag: the account's own record, best tier first.
-            const double bagTop = cy + kChipHeight + 26.0;
+            const double muteY = cy + kChipHeight + 22.0;
+            if (row != nullptr) {
+                const bool muted = (row->flags & net::AdminDashboardMuted) != 0;
+                const bool zh = language() == Language::Zh;
+                const Rect muteRect{right.x + 12.0, muteY, kActionChipWidth + 28.0, kChipHeight};
+                chip(canvas, muteRect, muted ? (zh ? "解除禁言" : "Unmute") : (zh ? "禁言" : "Mute"),
+                     muteRect.contains(mouse), muted ? kGoChip : kDangerChip);
+                addRegion(muteRect, Act::SetMuted);
+            }
+            const double bagTop = muteY + kChipHeight + 8.0;
             const std::string bagCaption =
                 d.bagGone ? std::string("That player has left.")
                 : d.bagPending && d.bag.empty() ? std::string("Loading the bag...")
@@ -941,6 +951,13 @@ bool AdminDashboardPanel::render(MenuContext& ctx) {
                 break;
             case Act::Release:
                 net.adminRelease();
+                break;
+            case Act::SetMuted:
+                if (const auto* row = selectedRow(d, s)) {
+                    net.adminSetMuted(row->connection, row->accountId,
+                                      (row->flags & net::AdminDashboardMuted) == 0);
+                    net.adminDashboardPlayers(d.playersSearch, 0);
+                }
                 break;
             case Act::PickItem:
                 if (region.index >= 0 && region.index < static_cast<int>(matches.size())) {

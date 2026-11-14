@@ -3,13 +3,13 @@
 // stores it in.
 //
 // Guilds live in the browser build's own `guilds` table -- an object keyed by
-// the upper-cased five-character name, each value carrying {name,
+// the upper-cased tag, each value carrying {name,
 // leaderUsername, memberUsernames, createdAt} -- and are held as JSON in that
 // shape, which existing database files carry, rather than mirrored into a
 // typed cache: a second copy is a second thing to keep true.
 //
 // Two optional fields ride beside those: `displayName`, the free-text name the
-// panel heads the card with, and `description`. The five-character `name` is
+// panel heads the card with, and `description`. The stored `name` is
 // the guild's TAG -- its key, and what hangs under a nameplate in brackets. A
 // record written before either field existed has neither, which reads as a
 // display name equal to the tag and no description.
@@ -17,8 +17,11 @@
 // Shared between the guild message handlers and the chat commands that reach
 // the same records (`/guild-info`, `/guild-list`, `/admin guild_force_join`).
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "server/text.h"
 #include "shared/core/json.h"
@@ -26,6 +29,7 @@
 namespace flix {
 
 inline constexpr std::size_t kMaxGuildSize = 200;
+inline constexpr std::size_t kMaxGuildDeputies = 2;
 /// A guild invitation lapses after a minute, as the reference's does.
 inline constexpr std::int64_t kGuildInviteMillis = 60000;
 
@@ -37,15 +41,20 @@ inline std::string normalizeGuildName(const std::string& raw) {
     return name;
 }
 
-/// Exactly five A-Z or 0-9, which is what makes the name short enough to hang
-/// under a nameplate as a tag.
+/// Nonempty ASCII A-Z or 0-9 after normalization.
 inline bool validGuildName(const std::string& name) {
-    if (name.size() != 5) return false;
+    if (name.empty()) return false;
     for (const char c : name) {
-        const auto byte = static_cast<unsigned char>(c);
-        if (!std::isupper(byte) && !std::isdigit(byte)) return false;
+        if (!(c >= 'A' && c <= 'Z') && !(c >= '0' && c <= '9')) return false;
     }
     return true;
+}
+
+/// A compact tag for the online roster, where it may appear once per member.
+inline std::string publicGuildTag(std::string_view tag) {
+    constexpr std::size_t width = 16;
+    if (tag.size() <= width) return std::string(tag);
+    return std::string(tag.substr(0, width - 3)) + "...";
 }
 
 inline constexpr std::size_t kMaxGuildDisplayName = 20;
@@ -88,6 +97,41 @@ inline int guildMemberIndex(const Json& guild, const std::string& username) {
         if (lowerCase(members[i].asString()) == key) return static_cast<int>(i);
     }
     return -1;
+}
+
+inline std::vector<std::string> guildDeputies(const Json& guild) {
+    std::vector<std::string> deputies;
+    const auto leader = lowerCase(guild["leaderUsername"].asString());
+    const auto add = [&](const Json& value) {
+        const auto name = value.asString();
+        if (name.empty() || lowerCase(name) == leader) return;
+        const int index = guildMemberIndex(guild, name);
+        if (index < 0) return;
+        const auto member = guild["memberUsernames"][static_cast<std::size_t>(index)].asString();
+        if (std::find(deputies.begin(), deputies.end(), member) == deputies.end())
+            deputies.push_back(member);
+    };
+    const auto& stored = guild["deputyUsernames"];
+    if (stored.isArray()) {
+        for (const auto& value : stored.items()) {
+            add(value);
+            if (deputies.size() == kMaxGuildDeputies) break;
+        }
+    } else {
+        add(guild["deputyUsername"]);
+    }
+    return deputies;
+}
+
+inline void setGuildDeputies(Json& guild, const std::vector<std::string>& deputies) {
+    guild.erase("deputyUsername");
+    if (deputies.empty()) {
+        guild.erase("deputyUsernames");
+        return;
+    }
+    Json roles = Json::array();
+    for (const auto& name : deputies) roles.push(name);
+    guild["deputyUsernames"] = std::move(roles);
 }
 
 } // namespace flix

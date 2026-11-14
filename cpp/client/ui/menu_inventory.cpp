@@ -1,5 +1,7 @@
 #include "shared/game/hyper_petal_techniques.h"
 #include "shared/game/computer_set.h"
+#include "shared/game/monstera.h"
+#include "shared/game/computer_set.h"
 // The petal inventory.
 //
 // The screen players spend the most time in, so the muscle memory is real and
@@ -317,13 +319,11 @@ namespace ui {
 std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
         const EquippedPetal& equipped, const SkillSet& skills, double reloadScale, int slot, double triangleBonus) {
     const auto effectiveStats = equippedPetalStats(content(), equipped);
-    const auto baseStats = content().petalStats(equipped.configIndex, equipped.rarity);
-    const double scale = baseStats.reloadMillis > 0.0
-        ? reloadScale * effectiveStats.reloadMillis / baseStats.reloadMillis : reloadScale;
     const bool copiedSawblade = originalIndex != equipped.configIndex &&
         content().petal(equipped.configIndex).id == "sawblade";
-    auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, scale, slot,
-                                   triangleBonus, samePetalTier(equipped.reloadRarity, equipped.rarity) && !copiedSawblade);
+    const bool showHyperTechnique = samePetalTier(equipped.reloadRarity, equipped.rarity) && !copiedSawblade;
+    auto lines = petalTooltipLines(equipped.configIndex, equipped.rarity, skills, reloadScale,
+                                   slot, triangleBonus, showHyperTechnique, effectiveStats.reloadMillis);
     if (originalIndex != equipped.configIndex && !lines.empty()) {
         lines.front().text = std::string(language() == Language::Zh ? "拟态 → " : "Mimic → ") + lines.front().text;
     }
@@ -332,15 +332,14 @@ std::vector<TooltipLine> equippedPetalTooltipLines(std::uint16_t originalIndex,
 
 std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rarity,
                                            const SkillSet& skills, double reloadScale, int slot, double triangleBonus,
-                                           bool showHyperTechnique) {
+                                           bool showHyperTechnique, std::optional<double> baseReloadMillis) {
     const PetalConfig& config = content().petal(petalIndex);
     const PetalStats stats = content().petalStats(petalIndex, rarity);
     const auto* technique = showHyperTechnique ? hyperTechniqueInfo(config.id, rarity) : nullptr;
     const double chargeScale = hyperAmount(technique, HyperTechnique::QuickCharge);
     const double health = std::round(stats.health > 1.0 ? stats.health * skills.healthScale(SkillId::PetalHealth) : stats.health);
     const double damageScale = skills.effectScale(SkillId::Damage);
-    const double baseDamage = config.lightningDamage && stats.lightningDamagePerHit > 0
-        ? stats.lightningDamagePerHit : stats.damage;
+    const double baseDamage = petalContactDamage(config, stats, rarity);
     const double damage = std::round((baseDamage + triangleBonus) * damageScale);
 
     std::vector<TooltipLine> lines;
@@ -356,7 +355,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
             title.badges.push_back({oneDecimal(stats.requiredMana), kStatMana, TooltipIcon::Mana});
             title.badges.push_back({" +"});
         }
-        std::string reload = reloadSeconds(stats.reloadMillis * reloadScale);
+        const double reloadMillis = ordinaryPetalReloadMillis(baseReloadMillis.value_or(stats.reloadMillis), reloadScale);
+        std::string reload = reloadMillis < 100.0
+            ? std::to_string(static_cast<int>(std::round(reloadMillis))) + "ms"
+            : reloadSeconds(std::round(reloadMillis / 100.0) * 100.0);
         const double charge = stats.mana > 0.0                         ? stats.manaChargeMillis
                               : (stats.heal > 0.0 || stats.shield > 0.0) ? stats.healChargeMillis
                                                                          : 0.0;
@@ -376,6 +378,16 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 ? "主栏中每多装备一枚永恒三角，所有永恒三角都会获得额外伤害。"
                 : "Each additional Eternal Triangle on the active bar adds damage to every Eternal Triangle.";
         }
+        if (petalLendsBasic(config)) {
+            const auto basicRarity = crownBasicRarity(rarity);
+            const std::string tier = colourMarkup(rarityTr(basicRarity), rarityColor(basicRarity));
+            const std::string count = std::to_string(crownBasicCount(rarity));
+            description = language() == Language::Zh
+                ? "为自己和附近花朵各附加 " + count + " 枚" + tier +
+                      "品质的基本花瓣。\n这些花瓣造成的伤害计入你的贡献。"
+                : "Adds " + count + " × " + tier +
+                      " Basic to your ring and each nearby flower's ring.\nYou receive credit for their damage.";
+        }
         static const std::string kRaritySlot = "{rarity}";
         for (std::size_t at = description.find(kRaritySlot); at != std::string::npos;
              at = description.find(kRaritySlot, at)) {
@@ -388,6 +400,25 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         body.maxWidth = kTooltipWrapWidth;
         body.markup = true;
         lines.push_back(body);
+    }
+
+    if (computerWeapon(config.id)) {
+        const bool zh = language() == Language::Zh;
+        const auto addSetLine = [&](const char* text) {
+            TooltipLine line{text, 12.0, kPaper};
+            line.maxWidth = kTooltipWrapWidth;
+            lines.push_back(line);
+        };
+        addSetLine(zh ? "电脑套装：主装备栏中，同阶或更高阶的组件按类别计数。"
+                      : "Computer set: count distinct part types of this tier or higher on the active bar.");
+        addSetLine(zh ? "六类组件：程序、内存、芯片、电容器、光标、几何体。"
+                      : "Six part types: software, RAM, chip, capacitor, cursor, and geometry.");
+        addSetLine(zh ? "3 类：基础伤害 +12%；4 类：额外增加 15% 耐久（原耐久须大于 1）；5 类：再缩短 10% 重装。"
+                      : "3 types: +12% base damage. 4: also +15% durability if above 1. 5: also 10% shorter reload.");
+        if (!computerPart(config.id)) {
+            addSetLine(zh ? "这枚花瓣享受套装加成，自身不计作组件。"
+                          : "This petal receives set bonuses and contributes no part type.");
+        }
     }
 
     if (technique) {
@@ -415,7 +446,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     lines.push_back(hp);
 
     const std::string damageLabel = config.id == "battery" || config.id == "lightning" ||
-        config.id == "mecha_missile"
+        config.id == "mecha_missile" || config.id == "magic_peas"
         ? (language() == Language::Zh ? "接触伤害：" : "Contact damage: ") : tipDamage();
     TooltipLine hit{damageLabel + abbreviate(damage), 12.0};
     hit.alpha = 0.56;
@@ -432,13 +463,23 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // Petal/Attribute/Damage/Lightning, "Damage: X (lightning)" with the
     // note in lightning cyan.
     if (config.lightningDamage) {
-        const std::string label = colourMarkup(tipDamage(), kStatDamage);
+        const std::string label = colourMarkup(damageLabel, kStatDamage);
         const std::string note = " " + colourMarkup(tipLightning(), kStatLightning);
         hit.text = label + " " + abbreviate(damage) + note;
         hit.altText = label + " " + exactNumber(damage) + note;
         hit.markup = true;
     }
     lines.push_back(hit);
+    if (config.projectile.present) {
+        const bool zh = language() == Language::Zh;
+        lines.push_back({zh ? "发射物伤害加成：宠物伤害天赋。" :
+            "Projectile damage scales with the Pet Damage talent.", 12.0});
+        lines.push_back({zh ? "耐久天赋提高环上花瓣耐久；已发射物使用该阶基础耐久。" :
+            "Health talents affect the ring petal. Shots use the tier's base health.", 12.0});
+    } else if (config.petMobIndex == kInvalidIndex && stats.damage > 0.0) {
+        lines.push_back({language() == Language::Zh ? "接触伤害加成：花瓣伤害天赋。" :
+            "Contact damage scales with the Petal Damage talent.", 12.0});
+    }
 
     // Burst / passive heal: field value includes kPlayerHealMultiplier (and the
     // Healing talent for the amount the flower actually receives).
@@ -499,6 +540,17 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         line.alpha = 0.72;line.labelColor = kStatGeneric;lines.push_back(line);
     };
     if (stats.flowerHealthBonus > 0) special("增加花朵生命：+", "Flower health: +", stats.flowerHealthBonus);
+    if (config.id == "monstera") {
+        special("范围治疗（每秒）：", "Area healing per second: ",
+                monsteraHealPerSecond(rarity) * healTalent * kPlayerHealMultiplier);
+        special("治疗半径：", "Healing radius: ", monsteraHealRadius(rarity));
+    }
+    if (config.id == "iodine") {
+        special("每跳基础治疗：", "Base healing per pulse: ",
+                iodineHealAmount(rarity) * kPlayerHealMultiplier);
+        special("治疗间隔：", "Healing interval: ", kIodineHealIntervalMillis / 1000.0, "s");
+        special("治疗半径：", "Healing radius: ", iodineHealRadius(rarity));
+    }
     if(config.burrowDurationMillis>0){
         special("潜地准备：", "Burrow charge: ",config.burrowChargeMillis/1000.0,"s");
         special("潜地持续：", "Burrow duration: ",config.burrowDurationMillis/1000.0,"s");
@@ -519,23 +571,33 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         const auto summonRarity = pharaohCrownSummonRarity(rarity);
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") +
                          rarityTr(summonRarity), 12.0, rarityColor(summonRarity)});
+        const auto mummy = content().mobIndex("mummy_beetle");
+        if (mummy != kInvalidIndex) {
+            const auto& mob = content().mob(mummy);
+            special("召唤物生命：", "Summon health: ", mob.health * petalStatScale(summonRarity) *
+                mob.petHealthScale * kSummonedMobHealthScale * skills.healthScale(SkillId::Summoner));
+        }
     }
     if (config.petMobIndex != kInvalidIndex) {
         const auto& summon=content().mob(config.petMobIndex);
         const bool apex=ladderRarity(rarity)==Rarity::Apex;
-        const auto summonRarity = petalGameplayRarity(rarity);
-        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config)*hyperSummonScale(config,rarity)*hyperSummonPromotionScale(config,rarity);
+        const auto summonRarity = configuredSummonRarity(config, rarity);
+        const double summonScale=petalStatScale(summonRarity)*strengthBoost(rarity)*eggSummonCombatScale(config)*hyperSummonScale(config,rarity)*hyperSummonPromotionScale(config,summonRarity);
         TooltipLine pet{std::string(chinese ? "召唤：" : "Summons: ") +
             mobNameTr(content().mob(config.petMobIndex).id, content().mob(config.petMobIndex).name.c_str()) +
-            " x" + std::to_string((config.id=="egg"||config.id=="beetle_egg"
+            " x" + std::to_string((summonUsesDuplicator(config)
                 ? petalCopies(config.petCount,&skills,slot,petalTier(rarity),config.stackable)
-                : config.petCount)*(apex?3:1)),12.0};lines.push_back(pet);
-        special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
+                : config.petCount)*(apex && !config.petSummonTiers ? 3 : 1)),12.0};lines.push_back(pet);
+        special("召唤物生命：", "Summon health: ",summon.health*summonScale*summon.petHealthScale*kSummonedMobHealthScale*skills.healthScale(SkillId::Summoner)*eggSummonHealthScale(config));
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") + rarityTr(summonRarity), 12.0});
-        special("召唤物伤害：", "Summon damage: ",summon.damage*summonScale*summon.petDamageScale*skills.effectScale(SkillId::PetDamage));
+        special("召唤物伤害：", "Summon damage: ",
+                summon.damage * summonScale * summon.petDamageScale * summonDamageScale(config) *
+                skills.effectScale(SkillId::PetDamage));
         if(apex && petalIsEgg(config))lines.push_back({chinese?"H护甲：己方召唤物受到不高于蛋稀有度的野怪体伤时，单次最多损失35%最大生命；不抵挡玩家、毒素或技能。":"H escort armour: wild body hits up to the egg tier deal at most 35% of summon max health per hit; no protection from players, poison or abilities.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"蛋壳不造成接触伤害；蛋壳破碎不会收回已孵化召唤物。":"The shell deals no contact damage; breaking it does not recall hatched pets.",12.0});
         if (config.petLifetimeMillis > 0) special("召唤持续：", "Summon lifetime: ", config.petLifetimeMillis / 1000.0, "s");
+        if (config.petSummonTiers)
+            special("孵化等待：", "Hatch delay: ", stats.reloadMillis / 1000.0, "s");
         if (config.id == "egg" || config.id == "beetle_egg") special("孵化等待：", "Hatch delay: ", 1.0, "s");
         if (config.petMobId != "sandstorm") lines.push_back({chinese ? "自动索敌优先主人600范围内的高阶怪，不超900；离主人700回跟，卡住会安全接回原召唤物。光标指挥优先。" : "Auto-targets high-tier mobs within 600 of the owner, capped at 900. Follows beyond 700; stuck summons recover. Cursor commands take priority.",12.0});
         if(config.id=="egg"||config.id=="beetle_egg")lines.push_back({chinese?"孵化准备的1秒内蛋壳受保护，不会被战斗打断。":"The shell is protected during its one-second incubation.",12.0});
@@ -546,7 +608,7 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back({std::string(chinese ? "召唤物稀有度：" : "Summon rarity: ") +
                          rarityTr(petalGameplayRarity(rarity)), 12.0});
         special("每人召唤上限：", "Summon cap per player: ", config.projectile.summonMax);
-        special("召唤物生命：", "Summon health: ", summon.health * scale * summon.petHealthScale * skills.healthScale(SkillId::Summoner));
+        special("召唤物生命：", "Summon health: ", summon.health * scale * summon.petHealthScale * kSummonedMobHealthScale * skills.healthScale(SkillId::Summoner));
         special("召唤物伤害：", "Summon damage: ", summon.damage * scale * summon.petDamageScale * skills.effectScale(SkillId::PetDamage));
     }
     if(computerWeapon(config.id)) {
@@ -659,7 +721,12 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
                 chinese ? "/秒，持续10秒，可叠加" : "/s for 10s, stacking");
     }
     if (stats.lightningDamagePerHit > 0) {
-        if(config.id=="magic_peas")lines.push_back({chinese?"四颗蓝莓分别造成闪电伤害，不会连锁跳跃。":"Four blueberries deal lightning damage individually, with no chain jumps.",12.0});
+        if (config.id == "magic_peas") {
+            lines.push_back({chinese ? "四颗蓝莓分别造成闪电伤害，不会连锁跳跃。" :
+                "Four blueberries deal lightning damage individually, with no chain jumps.", 12.0});
+            special("单颗发射伤害：", "Projectile damage per berry: ",
+                    stats.lightningDamagePerHit * skills.effectScale(SkillId::PetDamage));
+        }
         lines.push_back({chinese ? "闪电无视护甲和闪避。" : "Lightning bypasses armor and dodge.",12.0});
         special("基础闪电伤害：", "Base lightning damage: ", stats.lightningDamagePerHit);
         if (showHyperTechnique && stats.wildLightningScale > 1.0) {
@@ -672,8 +739,10 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         special("每段索敌范围：", "Range per jump: ", stats.lightningRange);
         if (stats.batteryCharges > 0) {
             special("每轮放电次数：", "Discharges per reload: ", stats.batteryCharges);
-            TooltipLine mechanism{chinese ? "花朵实际受伤时放电，每次间隔 0.5 秒。间隔内受伤会保留一次放电机会。每轮 3 次，用完重装。仅接触、护盾全吸收、自伤和无敌不触发。" :
-                "Damage taken can queue one discharge during the 0.5s interval. Reloads after 3 charges. Contact alone, fully shielded hits, self-damage and invulnerability do not trigger it.",12.0};
+            lines.push_back({chinese ? "装备槽数字显示当前剩余放电次数。"
+                                     : "The loadout counter shows remaining discharges.", 12.0});
+            TooltipLine mechanism{chinese ? "花朵实际掉血时触发。两次放电至少间隔 0.5 秒，期间受到的有效伤害最多保留一次，等间隔结束再放电。3 次用完才开始重装；重装天赋只缩短回满时间。仅接触、护盾全吸收、自伤和无敌不触发。" :
+                "Triggers on actual HP loss. Discharges are at least 0.5s apart, and one qualifying hit can wait until the interval ends. Reload talent only shortens the refill after all 3 charges are spent. Touching alone, fully shielded hits, self-damage and invulnerability do not trigger it.",12.0};
             mechanism.maxWidth=kTooltipWrapWidth; lines.push_back(mechanism);
         }
     }
@@ -773,6 +842,14 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
     // Bone. Its armour is the whole of what the petal is for and it climbs the
     // mob armour ladder, so the figure a player is weighing belongs here.
     if (config.id == "bone") lines.push_back({chinese ? "骨头的护甲不会因受击而衰减。" : "Bone keeps its armor after taking a hit.",12.0});
+    if (triangleBonus > 0.0) {
+        const double bonus = triangleBonus * damageScale;
+        const std::string label = chinese ? "三角叠加伤害：+" : "Triangle stacking damage: +";
+        TooltipLine line{label + abbreviate(bonus), 12.0};
+        line.altText = label + exactNumber(bonus);
+        lines.push_back(std::move(line));
+    }
+
     if (stats.petalArmor > 0.0) {
         TooltipLine armor{std::string(tipArmor()) + abbreviate(stats.petalArmor), 12.0};
         armor.alpha = 0.56;
@@ -862,8 +939,8 @@ std::vector<TooltipLine> petalTooltipLines(std::uint16_t petalIndex, Rarity rari
         lines.push_back(pool);
     }
     if (config.id == "honey") {
-        lines.push_back({chinese ? "投出的蜂蜜持续 8 秒，期间不会被怪物咬碎。" :
-                                   "Thrown honey lasts 8 seconds and cannot be broken by mobs.", 12.0});
+        lines.push_back({chinese ? "投出的蜂蜜持续 12 秒，期间不会被怪物咬碎。" :
+                                   "Thrown honey lasts 12 seconds and cannot be broken by mobs.", 12.0});
     }
     if (config.id == "magic_cotton") {
         TooltipLine absorption{

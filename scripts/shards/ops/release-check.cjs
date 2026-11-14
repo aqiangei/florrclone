@@ -1,7 +1,7 @@
 'use strict';
 // Read-only checks against one live endpoint; no player account is created.
 const assert=require('node:assert/strict');
-async function check(base,protocol,hash){
+async function check(base,protocol,hash,{councilRealm}={}){
   const url=new URL(base);assert(['http:','https:'].includes(url.protocol));
   assert(Number.isInteger(protocol)&&protocol>0&&protocol<=65535);
   assert(Number.isInteger(hash)&&hash>=0&&hash<=0xffffffff);
@@ -28,7 +28,20 @@ async function check(base,protocol,hash){
   }
   const council=await (await get('/api/council',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'view'})})).json();
   assert(!council.error&&Array.isArray(council.players)&&Array.isArray(council.polls),'Council unavailable');
-  if(council.players.length)assert.equal(council.players.reduce((sum,row)=>sum+row.units,0),1000000,'Council total must be exactly 100%');
+  if(councilRealm!==undefined){
+    assert([1,2,3].includes(councilRealm),'Invalid expected council realm');
+    assert.equal(council.realm,councilRealm,'Unexpected unified council realm');
+    assert.equal(council.totalUnits,3000000,'Unexpected unified council weight total');
+    const shares = council.realmShares;
+    assert(Array.isArray(shares) && shares.length === 3, 'Invalid global council shares');
+    assert(shares.every(row => row && Number.isSafeInteger(row.units) && row.units >= 0 &&
+                                Number.isSafeInteger(row.players) && row.players >= 0), 'Invalid council realm totals');
+    assert.deepEqual(shares.map(row => row.realm).sort(), [1,2,3], 'Expected one council share per realm');
+    assert.equal(shares.reduce((n,row) => n + row.units, 0), council.totalUnits, 'Council realm weights do not add up');
+    assert.equal(shares.reduce((n,row) => n + row.players, 0), council.playerCount, 'Council realm player counts do not add up');
+  }else if(council.players.length){
+    assert.equal(council.players.reduce((sum,row)=>sum+row.units,0),1000000,'Council total must be exactly 100%');
+  }
   const wsURL=new URL('/ws',url);wsURL.protocol=url.protocol==='https:'?'wss:':'ws:';
   await new Promise((resolve,reject)=>{
     const ws=new WebSocket(wsURL,'binary');ws.binaryType='arraybuffer';let buffer=Buffer.alloc(0),done=false;
@@ -47,5 +60,5 @@ async function check(base,protocol,hash){
   }finally{if(ticket)await fetch(new URL('/download-queue/release?ticket='+ticket,url),{method:'POST',signal:AbortSignal.timeout(5000)}).catch(()=>{});}
 
 }
-if(require.main===module)check(process.argv[2],Number(process.argv[3]),Number(process.argv[4])).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e.message);process.exitCode=1;});
+if(require.main===module)check(process.argv[2],Number(process.argv[3]),Number(process.argv[4]),process.argv[5] ? {councilRealm:Number(process.argv[5])} : undefined).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e.message);process.exitCode=1;});
 module.exports={check};

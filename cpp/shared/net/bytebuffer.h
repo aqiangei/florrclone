@@ -21,6 +21,8 @@ namespace flix {
 
 class ByteWriter {
 public:
+    static constexpr std::uint16_t kMaxStringBytes = 0xFFFF;
+
     ByteWriter() { bytes_.reserve(256); }
     explicit ByteWriter(std::size_t reserve) { bytes_.reserve(reserve); }
 
@@ -49,7 +51,7 @@ public:
 
     /// Length-prefixed UTF-8, capped at 64KB.
     void str(const std::string& v) {
-        const std::uint16_t n = static_cast<std::uint16_t>(v.size() > 0xFFFF ? 0xFFFF : v.size());
+        const std::uint16_t n = static_cast<std::uint16_t>(v.size() > kMaxStringBytes ? kMaxStringBytes : v.size());
         u16(n);
         raw(v.data(), n);
     }
